@@ -133,6 +133,11 @@ def run_setup(
         if not api_key:
             output_fn("No API key saved. Add OPENAI_API_KEY to the local .env file before using cloud tasks.")
 
+    if any("\n" in value or "\r" in value for value in secrets.values()):
+        raise ValueError("Provider settings must each fit on one line.")
+    if len(secrets.get("OPENAI_API_KEY", "")) > 4096:
+        raise ValueError("API key is unexpectedly long; setup was cancelled.")
+
     # Persist non-secret configuration separately from credentials.
     config_text = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
     _atomic_private_write(cfg_path, config_text)
