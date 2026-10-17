@@ -38,8 +38,10 @@ class PluginLoader:
             if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
-                report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
+            # Trust must be explicit per module. A wildcard is never a trust grant:
+            # importing a Python plugin executes its module with host-process privileges.
+            if self.trusted_modules is None or "*" in self.trusted_modules or name not in self.trusted_modules:
+                report["skipped"].append({"module": name, "reason": "module not in explicit per-module trust list"})
                 continue
             try:
                 module = importlib.import_module(self.package_name + "." + name)
