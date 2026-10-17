@@ -8,6 +8,7 @@ from core.mcp_client import MCPHTTPClient, MCPError
 from companion.proactive import summarize_habit_streaks
 from skills.registry import SkillRegistry
 from skills.youtube_skill import YouTubeSkill
+from voice.tts import LocalTTS
 
 
 class ProductionIntegrationTests(unittest.TestCase):
@@ -43,6 +44,20 @@ class ProductionIntegrationTests(unittest.TestCase):
         client.approver = None
         with self.assertRaises(MCPError):
             client.call_tool("calendar.create", {"title": "test"})
+
+    def test_tts_chunk_stream_stops_after_interruption(self):
+        class FakeTTS(LocalTTS):
+            def __init__(self):
+                super().__init__(enabled=True, backend="pyttsx3")
+                self.spoken = []
+            def speak(self, text):
+                self.spoken.append(text)
+                if text == "first":
+                    self.stop()
+        tts = FakeTTS()
+        result = tts.speak_stream(["first", "second"])
+        self.assertEqual(tts.spoken, ["first"])
+        self.assertTrue(result["interrupted"])
 
     def test_habit_streaks_use_explicit_logs_only(self):
         entries = [
