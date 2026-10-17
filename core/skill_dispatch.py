@@ -98,6 +98,22 @@ class SkillDispatcher:
             "capabilities": sorted(manifest.capabilities),
         }
 
+    def approval_preview(self, skill_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Return the exact action payload a trusted approval UI must display."""
+        registered = self._skills.get(skill_id)
+        if registered is None:
+            raise ValueError("Skill is not registered.")
+        manifest, _handler = registered
+        if not manifest.capabilities.issubset(self._grants):
+            raise PermissionError("Skill capability grant is missing.")
+        manifest.validate_input(arguments)
+        snapshot = json.loads(json.dumps(arguments, ensure_ascii=False, allow_nan=False))
+        action = self.action_for(manifest, snapshot)
+        requires_approval = bool(manifest.capabilities & _SIDE_EFFECT_CAPABILITIES) or manifest.risk in {"medium", "high"}
+        if not requires_approval:
+            raise ValueError("This skill does not require an approval token.")
+        return json.loads(json.dumps(action, ensure_ascii=False, allow_nan=False))
+
     def issue_approval(self, skill_id: str, arguments: dict[str, Any], *,
                        actor: str, session_id: str, approved: bool):
         """Issue approval only after the caller has displayed the exact action and received consent."""
