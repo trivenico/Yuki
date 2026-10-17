@@ -32,6 +32,16 @@ Yuki's only intended wake word is **“Yuki”** — not “Hey Yuki”. Voice a
 - Python 3.10 or newer
 - No third-party packages required
 
+## Installation and first run
+
+See [the complete installation guide](docs/INSTALLATION.md) and [project structure](docs/PROJECT_STRUCTURE.md).
+
+- **Windows:** run `install_windows.bat`, then `run_yuki_windows.bat`.
+- **macOS/Linux:** run `sh install_unix.sh`, then `sh run_yuki_unix.sh`.
+- **Manual run:** `python yuki.py` from the repository directory.
+
+The setup scripts create an isolated `.venv`, process `requirements.txt`, and run the test suite. Yuki currently uses only Python's standard library, so no third-party packages or model API key are needed for the prototype. A successful install is not a claim that voice, live AI, browser automation, or autonomous coding is ready.
+
 ## Run
 
 From the repository directory:
@@ -53,7 +63,7 @@ Useful commands:
 - `/audit`
 - `/quit`
 
-Run tests locally with:
+Run environment diagnostics with `python scripts/doctor.py` after installing. Run tests locally with:
 
 ```bash
 python -m unittest discover -s tests -v
