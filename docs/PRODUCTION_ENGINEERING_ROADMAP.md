@@ -48,7 +48,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
 
-- [ ] Wire OpenTelemetry at provider, skill, memory, and task boundaries; ensure no prompts, credentials, or raw tool arguments are exported.
+- [x] Wire privacy-conscious telemetry around the live `YukiCoreAgent.run_skill` boundary with result status/timing metadata, credential-shaped value redaction, and a non-fatal local event log.
+- [ ] Wire OpenTelemetry at provider, memory, task, and all external tool boundaries; configure an exporter and ensure no prompts, credentials, or raw tool arguments are exported.
 - [ ] Configure client-level connection/read timeouts. Circuit breakers and retries do not themselves stop a hung blocking call.
 - [ ] Add durable recovery budgets/cooldowns and safe recovery handlers with post-recovery verification.
 - [ ] Add idempotency keys for retried writes and distinguish retryable from non-retryable errors.
