@@ -18,16 +18,19 @@ dist/
 *.pem
 *.key
 
-# Local Yuki data (do not commit personal memory or task history)
+# Local Yuki data; do not commit personal memory, reminders, tasks, or audit logs
 yuki_memory.json
+yuki_reminders.json
 yuki_tasks.json
 yuki_learning.json
+yuki_audit.json
 *.tmp
 yuki_workspace/
+audio_private/
+models/
 
 # Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-yuki_audit.json
