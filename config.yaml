@@ -23,3 +23,6 @@ sandbox_allowed_images: []
 firewall_enabled: false
 firewall_dry_run: true
 web_allowed_hosts: []
+# Python plugins execute with Yuki's permissions. Keep disabled unless you trust the code.
+plugin_discovery_enabled: false
+trusted_plugin_modules: []
