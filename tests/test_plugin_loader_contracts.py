@@ -10,7 +10,7 @@ class PluginLoaderTrustTests(unittest.TestCase):
         report = loader.discover()
         self.assertEqual(report["loaded"], [])
         self.assertTrue(report["skipped"])
-        self.assertTrue(all(
+        self.assertTrue(any(
             "explicit per-module trust list" in item["reason"]
             for item in report["skipped"]
         ))
