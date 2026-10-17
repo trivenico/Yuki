@@ -5,13 +5,17 @@ The legacy feature-rich CLI remains available with: python yuki.py
 """
 from datetime import datetime
 from pathlib import Path
+import shlex
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from core.agent import YukiCoreAgent
 from core.config import load_config
-from core.permissions import PermissionGate
+from core.permissions import ApprovalRequest, PermissionGate
+from hackback.exploit_runner import ExploitRunner
+from hackback.recon import NmapRecon, ReconError
+from hackback.sandbox import DockerSandbox, SandboxError
 from skills.registry import SkillRegistry
 from voice.stt import FasterWhisperSTT, STTError
 from voice.tts import LocalTTS, TTSError
@@ -30,7 +34,6 @@ def _ask_approval(request):
 
 
 def _confirm(action, reason, risk="medium"):
-    from core.permissions import ApprovalRequest
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
@@ -52,16 +55,19 @@ def print_help():
   /memory delete ID             Delete a note (approval required)
   /memory clear                 Delete all notes (approval required)
   /reminder add ISO_DATETIME | TEXT
-                                Add an ISO-8601 reminder with timezone
   /reminders                    List reminders
   /reminders due                Show and mark due reminders delivered
   /voice status                 Show voice adapter status
   /voice speak TEXT             Speak text locally (requires voice opt-in)
   /voice transcribe AUDIO_PATH  Transcribe an audio file (requires voice opt-in)
+  /security status              Show authorized-lab status
+  /security recon PRIVATE_IP    Limited scan; requires enable + exact allow-list + approval
+  /sandbox status               Show Docker sandbox status
+  /sandbox run IMAGE | ARGS     Run approved argv in an allow-listed digest-pinned image
+  /metasploit status            Show status (execution is not implemented)
   /quit                         Exit
 
-Initial skills are read-only: time, system, files. Memory and reminders are local.
-Voice uses optional packages; it never opens a microphone. No shell or exploit execution is enabled.
+No model reasoning, microphone listener, or arbitrary host shell is enabled.
 """)
 
 
@@ -73,6 +79,18 @@ def main():
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"])
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
+    recon = NmapRecon(
+        enabled=config["security_lab_enabled"],
+        allowlisted_targets=config["recon_allowlisted_targets"],
+        approver=lambda reason: _confirm("security:recon", reason, "high"),
+    )
+    sandbox = DockerSandbox(
+        workspace,
+        allowed_images=config["sandbox_allowed_images"],
+        enabled=config["sandbox_enabled"],
+        approver=lambda reason: _confirm("sandbox:run", reason, "high"),
+    )
+    exploit_runner = ExploitRunner()
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
     while True:
@@ -92,7 +110,7 @@ def main():
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {config['workspace']}")
             print(f"AI provider: {config['provider']} (model not connected); voice enabled: {config['voice_enabled']}")
-            print(f"Security lab enabled: {config['security_lab_enabled']}")
+            print(f"Security lab enabled: {config['security_lab_enabled']}; sandbox enabled: {config['sandbox_enabled']}")
             print(f"Registered skills: {', '.join(agent.registry.names())}")
         elif command == "/skills":
             for skill in agent.available_skills():
@@ -176,6 +194,41 @@ def main():
                 print(f"Yuki transcript ({result['language']}): {result['text']}")
             except (STTError, ValueError) as exc:
                 print(f"Yuki > Speech recognition unavailable: {exc}")
+        elif command == "/security status":
+            print(f"Security lab enabled: {config['security_lab_enabled']}")
+            print(f"Explicit lab IP allow-list entries: {len(config['recon_allowlisted_targets'])}")
+            print("Recon uses a limited TCP connect scan and asks for approval each time.")
+        elif command.startswith("/security recon "):
+            target = command[len("/security recon "):].strip()
+            try:
+                result = recon.scan_common_tcp(target)
+                print(f"Yuki > Scan finished for {result['target']} (exit {result['returncode']}).")
+                print(result["output"])
+                if result["errors"]:
+                    print("Scanner messages:", result["errors"])
+            except (ReconError, ValueError) as exc:
+                print(f"Yuki > Recon blocked or unavailable: {exc}")
+        elif command == "/sandbox status":
+            print(f"Docker sandbox enabled: {config['sandbox_enabled']}")
+            print(f"Digest-pinned image allow-list entries: {len(config['sandbox_allowed_images'])}")
+        elif command.startswith("/sandbox run "):
+            payload = command[len("/sandbox run "):]
+            if "|" not in payload:
+                print("Yuki > Use /sandbox run IMAGE@sha256:DIGEST | program arg1 arg2")
+                continue
+            image, argv_text = payload.split("|", 1)
+            try:
+                argv = shlex.split(argv_text)
+                result = sandbox.run(image.strip(), argv)
+                print(f"Yuki > Sandbox exited with code {result['returncode']}.")
+                if result["stdout"]:
+                    print(result["stdout"])
+                if result["stderr"]:
+                    print("Sandbox stderr:", result["stderr"])
+            except (SandboxError, ValueError) as exc:
+                print(f"Yuki > Sandbox blocked or unavailable: {exc}")
+        elif command == "/metasploit status":
+            print(exploit_runner.status()["message"])
         else:
             print("Yuki > This runtime does not have an LLM connected yet. Use /help for available commands.")
 
