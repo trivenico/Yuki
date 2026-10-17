@@ -44,6 +44,14 @@ class SafeBrowser:
                 context = browser.new_context(accept_downloads=False, service_workers="block")
                 page = context.new_page()
                 page.set_default_navigation_timeout(self.timeout_ms)
+                def guard_request(route):
+                    target = urlsplit(route.request.url)
+                    host = (target.hostname or "").lower().rstrip(".")
+                    if target.scheme == "https" and host in self.allowed_hosts:
+                        route.continue_()
+                    else:
+                        route.abort()
+                page.route("**/*", guard_request)
                 response = page.goto(safe_url, wait_until="domcontentloaded")
                 final = urlsplit(page.url)
                 if final.scheme != "https" or not final.hostname or final.hostname.lower().rstrip(".") not in self.allowed_hosts:
@@ -51,9 +59,10 @@ class SafeBrowser:
                 status = response.status if response else None
                 title = page.title()[:300]
                 text = page.locator("body").inner_text(timeout=self.timeout_ms)[:12000]
+                final_url = page.url
                 context.close()
                 browser.close()
-                return {"url": page.url, "status": status, "title": title, "text": text,
+                return {"url": final_url, "status": status, "title": title, "text": text,
                         "untrusted_content": True, "interaction": "read-only"}
         except BrowserAutomationError:
             raise
