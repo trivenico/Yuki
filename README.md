@@ -17,6 +17,10 @@ Run `python main.py --setup` for first-run configuration. Yuki currently offers 
 
 `core/skill_manifest.py` defines a versioned manifest contract for stable skill IDs, input/output schemas, capability declarations, risk, execution budgets, and concurrency metadata. It rejects unsupported capabilities and side-effecting skills marked parallel-safe. The contract is not yet wired into the plugin loader, and it does not isolate code; do not treat schema validation as a sandbox.
 
+## Durable worker foundation
+
+`core/task_worker.py` runs one claimed SQLite job at a time through explicitly registered trusted handlers, stores results, applies bounded retry policy for declared retryable errors, and avoids persisting raw exception messages. Tests cover success, missing handlers, retries, cancellation, and redaction. It is currently a callable single-process worker primitive, not a background service: it is not wired into the CLI/API, has no hard execution timeout or graceful shutdown loop, and must not run untrusted plugin code.
+
 ## Durable task storage foundation
 
 `core/durable_jobs.py` provides a local SQLite job-store primitive with persisted job state, bounded JSON payloads/results, idempotency keys, attempt budgets, cancellation requests, and stale-running recovery. It is not yet wired to a background worker, CLI/API controls, or actual task execution; treat it as a foundation, not a complete scheduler. Do not place secrets in job payloads. Only enqueue validated task data and execute handlers through Yuki's existing permission and isolation boundaries.
