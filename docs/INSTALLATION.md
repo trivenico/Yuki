@@ -4,8 +4,8 @@
 
 - Python 3.10 or newer.
 - Git, if you are cloning the repository.
-- No AI API key is required for the current mock-provider prototype.
-- No third-party Python packages are currently required.
+- PyYAML, installed from `requirements.txt` for YAML configuration.
+- No AI API key is required for the mock-provider prototypes.
 
 ## Windows
 
@@ -13,7 +13,7 @@
 2. Download the repository ZIP from GitHub and extract it, or clone the repository.
 3. Open the extracted `Yuki` folder.
 4. Run `install_windows.bat`.
-5. When setup passes, run `run_yuki_windows.bat`.
+5. For the existing feature-rich prototype, run `run_yuki_windows.bat`.
 
 The setup script creates `.venv`, checks the Python version, processes `requirements.txt`, and runs the unit tests. It stops with a non-zero exit code if a required setup step or test fails.
 
@@ -26,6 +26,18 @@ sh install_unix.sh
 sh run_yuki_unix.sh
 ```
 
+## Run the new guarded core
+
+After dependencies are installed, run:
+
+```sh
+python main.py
+```
+
+On Windows, you can use `.venv\\Scripts\\python.exe main.py`; on macOS/Linux, use `.venv/bin/python main.py`.
+
+The core provides `/help`, `/status`, `/skills`, `/skill time`, `/skill system`, `/skill files .`, and `/quit`. Each skill invocation prompts for approval and is denied unless you type `y`. The initial skills are read-only. The files skill lists names inside its configured workspace; it does not read or modify file contents.
+
 ## Expected successful setup output
 
 Exact test names and counts may change as the project grows. A successful run should end with a unittest summary similar to:
@@ -35,33 +47,17 @@ Exact test names and counts may change as the project grows. A successful run sh
 Ran <number> tests in <duration>s
 
 OK
-
-==========================================
- Setup completed successfully.
- Start Yuki with: run_yuki_windows.bat
-==========================================
 ```
 
-The number and duration are intentionally placeholders, not a claim about a run on your computer. The installer prints the real results from your environment.
-
-## Expected first launch
-
-```text
-Yuki terminal prototype. Type /help for commands; /quit to exit.
-Safety note: tools are allow-listed; audit records contain metadata, not command arguments.
-
-You >
-```
-
-Try `/help`, `/status`, `/dashboard`, `/task add Build my first project`, `/task list`, and `/quit`.
+The number and duration are intentionally placeholders, not a claim about a run on your computer.
 
 ## Diagnostics and tests
 
 Windows:
 
 ```bat
-.venv\Scripts\python.exe scripts\doctor.py
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\\Scripts\\python.exe scripts\\doctor.py
+.venv\\Scripts\\python.exe -m unittest discover -s tests -v
 ```
 
 macOS/Linux:
@@ -73,4 +69,4 @@ macOS/Linux:
 
 ## Important limitations
 
-The current provider is an offline mock: it does not generate real AI answers, build a software project autonomously, or call an online AI service. Voice activation, speech recognition, text-to-speech, browser control, and cybersecurity lab automation are not implemented. Those features must be added and tested in later phases. Do not use Yuki for production or consequential security actions yet.
+The current provider is an offline mock: it does not generate real AI answers, build a software project autonomously, or call an online AI service. Voice activation, speech recognition, text-to-speech, browser control, graphical dashboard, and cybersecurity lab automation are not implemented. The `hackback/` folder describes safe design boundaries only. Those features must be implemented and tested in later phases. Do not use Yuki for production or consequential security actions yet.
