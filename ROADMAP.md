@@ -24,8 +24,9 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 
 ## Phase 3 — Agent execution engine
 
-- [ ] Represent work as explicit plans, steps, deadlines, and budgets.
-- [ ] Add tool schemas, typed outputs, per-tool permissions, and approval gates.
+- [x] Add a bounded workflow state machine for perception-to-report lifecycle tracking.
+- [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
+- [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
 - [ ] Add sandboxed developer tasks and human-reviewable patches.
 - [ ] Treat external content as untrusted; defend against prompt injection.
