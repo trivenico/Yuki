@@ -38,7 +38,7 @@ class PluginLoader:
             if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is not None and name not in self.trusted_modules:
+            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
                 report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
                 continue
             try:
