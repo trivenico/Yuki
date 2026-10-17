@@ -7,6 +7,7 @@ from .file_skill import FileSkill
 from .system_skill import SystemSkill
 from .time_skill import TimeSkill
 from .interview import InterviewSkill
+from .course_coach import CourseCoachSkill
 from .web_skill import WebSkill
 from .email_skill import GmailReadSkill
 from .web_deep_read import DeepReadSkill
@@ -60,7 +61,7 @@ class SkillRegistry:
                  gmail_token="token.json", web_allowed_hosts=()):
         root = Path(workspace).expanduser().resolve()
         return cls((
-            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
+            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
