@@ -47,14 +47,21 @@ class TaskOrchestrator:
             transition(workflow, stage)
         self.events.publish("task.prepared", {"workflow_id": workflow.id, "plan_id": plan.id})
 
-        requested = sorted({name for name in required_tools if isinstance(name, str)})
-        invalid = len(requested) != len(set(required_tools)) if not isinstance(required_tools, set) else False
-        if invalid or len(requested) != len(required_tools):
-            transition(workflow, Stage.BLOCKED, "Invalid or duplicate tool names.")
-            result = PreparedTask(workflow, plan, "blocked", message="Invalid or duplicate tool names.")
+        names = list(required_tools)
+        if any(not isinstance(name, str) or not name.strip() for name in names):
+            transition(workflow, Stage.BLOCKED, "Tool names must be non-empty strings.")
+            result = PreparedTask(workflow, plan, "blocked", message="Tool names must be non-empty strings.")
             self._tasks[workflow.id] = result
             self.events.publish("task.blocked", {"workflow_id": workflow.id, "reason": "invalid_tool_names"})
             return result
+        normalized_names = [name.strip() for name in names]
+        if len(set(normalized_names)) != len(normalized_names):
+            transition(workflow, Stage.BLOCKED, "Duplicate tool names are not allowed.")
+            result = PreparedTask(workflow, plan, "blocked", message="Duplicate tool names are not allowed.")
+            self._tasks[workflow.id] = result
+            self.events.publish("task.blocked", {"workflow_id": workflow.id, "reason": "duplicate_tool_names"})
+            return result
+        requested = sorted(normalized_names)
 
         denied = [name for name in requested if not self.policy.authorize_tool(name)]
         if denied:
