@@ -1,14 +1,21 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
-
 from providers import MockProvider
 
 
 class YukiAgent:
-    """Send prompts to a provider without exposing provider exceptions."""
+    """Send prompts to a selected provider without exposing provider exceptions."""
 
     def __init__(self, provider=None):
         self.provider = provider if provider is not None else MockProvider()
+
+    def set_provider(self, provider):
+        """Replace the active adapter after validating its interface."""
+        if not callable(getattr(provider, "generate", None)) or not callable(
+            getattr(provider, "is_available", None)
+        ):
+            raise TypeError("Provider must implement generate() and is_available().")
+        self.provider = provider
 
     def status(self):
         try:
