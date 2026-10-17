@@ -52,6 +52,24 @@ class SkillDispatcher:
             "capabilities": sorted(manifest.capabilities),
         }
 
+    def issue_approval(self, skill_id: str, arguments: dict[str, Any], *,
+                       actor: str, session_id: str, approved: bool):
+        """Issue approval only after the caller has displayed the exact action and received consent."""
+        registered = self._skills.get(skill_id)
+        if registered is None:
+            raise ValueError("Skill is not registered.")
+        manifest, _ = registered
+        if not manifest.capabilities.issubset(self._grants):
+            raise PermissionError("Skill capability grant is missing.")
+        manifest.validate_input(arguments)
+        snapshot = json.loads(json.dumps(arguments, ensure_ascii=False, allow_nan=False))
+        action = self.action_for(manifest, snapshot)
+        if not (manifest.capabilities & _SIDE_EFFECT_CAPABILITIES or manifest.risk in {"medium", "high"}):
+            raise ValueError("This skill does not require an approval token.")
+        if self._approval_store is None:
+            raise RuntimeError("No approval store is configured.")
+        return self._approval_store.issue(action, actor=actor, session_id=session_id, approved=approved)
+
     def dispatch(self, skill_id: str, arguments: dict[str, Any], *,
                  approval_token: str | None = None, actor: str | None = None,
                  session_id: str | None = None) -> DispatchResult:
