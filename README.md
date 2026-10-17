@@ -9,6 +9,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 Run `python main.py --setup` for first-run configuration. Yuki currently offers a mock/demo mode, local Ollama mode, and hybrid mode with explicitly allow-listed cloud task labels. The API key prompt is hidden; credentials are written to a local `.env` file with owner-only permissions on POSIX systems, never to `config.yaml` or terminal output. Shell environment variables take precedence over values in `.env`. Keep `.env` private and never commit it. Hybrid mode sends nothing to the cloud unless a task label is configured in `YUKI_CLOUD_TASKS` and the explicit cloud command is approved. This wizard configures providers; it does not install Ollama or download models for you.
 
+## Policy-enforced skill dispatch and operation approvals
+
+`core/skill_dispatch.py` is a standalone dispatcher that requires a validated manifest, explicit capability grants, schema-valid inputs/outputs, and approval for medium/high-risk or side-effecting capabilities. It is not yet wired into the existing `YukiCoreAgent` or plugin loader, and it does not sandbox handlers. `core/action_approvals.py` provides short-lived, one-time tokens bound to the exact canonical action, actor, and session; tokens are currently in-memory and are not yet integrated with runtime approval or durable audit storage. Do not register untrusted plugins with the standalone dispatcher until process isolation is implemented.
+
 ## Typed skill contracts
 
 `core/skill_manifest.py` defines a versioned manifest contract for stable skill IDs, input/output schemas, capability declarations, risk, execution budgets, and concurrency metadata. It rejects unsupported capabilities and side-effecting skills marked parallel-safe. The contract is not yet wired into the plugin loader, and it does not isolate code; do not treat schema validation as a sandbox.
