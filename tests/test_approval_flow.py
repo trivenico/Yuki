@@ -1,10 +1,14 @@
 import json
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.action_approvals import ActionApprovalStore
 from core.agent import YukiCoreAgent
 from core.approval_flow import ApprovalCoordinator
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.manifest_task_agent import ManifestTaskAgent
 from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
@@ -89,6 +93,24 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             planner, pending.pending_id, actor="owner", session_id="cli-session", confirm=mutate
         )
         self.assertTrue(approved.ok)
+
+    def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            planner = build()
+            pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit)
+            result = planner.run("Write note")
+            pending = coordinator.record(planner, result)
+            approved = coordinator.approve(
+                planner, pending.pending_id, actor="owner", session_id="cli-session",
+                confirm=lambda action: action["arguments"] == {"text": "exact note"},
+            )
+            self.assertTrue(approved.ok)
+            events = audit.list_events()
+            self.assertEqual([event["event_type"] for event in reversed(events)],
+                             ["requested", "approved", "executed"])
+            self.assertNotIn("exact note", str(events))
 
     def test_pending_capacity_is_bounded(self):
         planner = build()
