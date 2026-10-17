@@ -1,23 +1,23 @@
 """Validated registry for Yuki's explicitly enabled skills."""
 from __future__ import annotations
-
+from pathlib import Path
 from typing import Iterable
-
 from .base import Skill
 from .file_skill import FileSkill
 from .system_skill import SystemSkill
 from .time_skill import TimeSkill
+from .interview import InterviewSkill
+from .web_skill import WebSkill
+from .email_skill import GmailReadSkill
 
 
 class SkillRegistry:
-    """Owns a fixed set of named skills; duplicate names fail closed."""
-
     def __init__(self, skills: Iterable[Skill] = ()):
-        self._skills: dict[str, Skill] = {}
+        self._skills = {}
         for skill in skills:
             self.register(skill)
 
-    def register(self, skill: Skill) -> None:
+    def register(self, skill):
         name = getattr(skill, "name", None)
         if not isinstance(name, str) or not name or not name.replace("_", "").replace("-", "").isalnum():
             raise ValueError("Skill name must be a simple identifier.")
@@ -27,19 +27,24 @@ class SkillRegistry:
             raise TypeError("Registered skills must implement execute().")
         self._skills[name] = skill
 
-    def get(self, name: str) -> Skill | None:
+    def get(self, name):
         return self._skills.get(name)
 
-    def names(self) -> tuple[str, ...]:
+    def names(self):
         return tuple(sorted(self._skills))
 
-    def describe(self) -> list[dict[str, str]]:
+    def describe(self):
         return [{"name": s.name, "description": s.description, "risk": s.risk}
                 for s in sorted(self._skills.values(), key=lambda item: item.name)]
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self._skills)
 
     @classmethod
-    def defaults(cls, workspace):
-        return cls((TimeSkill(), SystemSkill(), FileSkill(workspace)))
+    def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
+                 gmail_token="token.json", web_allowed_hosts=()):
+        root = Path(workspace).expanduser().resolve()
+        return cls((
+            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
+            GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
+        ))
