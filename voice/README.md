@@ -1,5 +1,9 @@
-# Voice adapters (planned)
+# Voice adapters
 
-Voice is disabled by default. No microphone listener, wake-word detector, speech-to-text, or text-to-speech engine is currently implemented.
+Optional adapter code is present, but voice is **disabled by default**.
 
-Future adapters must be opt-in, visibly indicate listening, require microphone permission, have an immediate stop control, and keep wake-word detection separate from transcription. The product wake word is **Yuki**. A future lightweight local TTS adapter may be evaluated before heavier voice models.
+- `tts.py`: local pyttsx3 speech output, called only on an explicit CLI request.
+- `stt.py`: faster-whisper transcription of a user-selected audio file. It does not capture live microphone audio.
+- No wake-word detector, always-listening service, live duplex conversation, or stop-listening control exists yet because no microphone listener is implemented.
+
+Install optional dependencies with `python -m pip install -r requirements-voice.txt`, then explicitly set `YUKI_VOICE_ENABLED=true`. Speech-model downloads can be large. Keep audio files private and do not use untrusted audio paths.
