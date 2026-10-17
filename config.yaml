@@ -6,4 +6,6 @@ ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
 max_agent_steps: 3
 voice_enabled: false
+stt_model: small
+tts_rate: 170
 security_lab_enabled: false
