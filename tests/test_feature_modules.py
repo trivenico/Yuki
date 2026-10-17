@@ -76,7 +76,11 @@ class FeatureModuleTests(unittest.TestCase):
 
     def test_web_skill_rejects_non_https(self):
         with self.assertRaises(WebSkillError):
-            WebSkill().execute("http://example.com")
+            WebSkill(allowed_hosts=["example.com"]).execute("http://example.com")
+
+    def test_web_skill_requires_explicit_host_allowlist(self):
+        with self.assertRaises(WebSkillError):
+            WebSkill().execute("https://example.com")
 
 
 if __name__ == "__main__":
