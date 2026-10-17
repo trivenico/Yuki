@@ -34,6 +34,7 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertEqual(len(requests), 2)
+        self.assertIn("argument=", requests[0].reason)
 
 
 if __name__ == "__main__":
