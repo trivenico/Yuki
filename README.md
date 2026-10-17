@@ -5,6 +5,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+## Guided provider setup
+
+Run `python main.py --setup` for first-run configuration. Yuki currently offers a mock/demo mode, local Ollama mode, and hybrid mode with explicitly allow-listed cloud task labels. The API key prompt is hidden; credentials are written to a local `.env` file with owner-only permissions on POSIX systems, never to `config.yaml` or terminal output. Shell environment variables take precedence over values in `.env`. Keep `.env` private and never commit it. Hybrid mode sends nothing to the cloud unless a task label is configured in `YUKI_CLOUD_TASKS` and the explicit cloud command is approved. This wizard configures providers; it does not install Ollama or download models for you.
+
 ## Runtime health checks
 
 Run `/health` in the terminal for bounded, read-only checks of workspace access, provider configuration, the local Ollama model inventory (when applicable), plugin trust policy, and configured Piper model presence. These checks never restart services or modify system state and are not a full integration test or security audit.
