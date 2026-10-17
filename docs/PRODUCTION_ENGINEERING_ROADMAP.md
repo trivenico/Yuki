@@ -63,7 +63,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [ ] Add tests for path traversal, prompt injection, secret access, SSRF, process exhaustion, malicious imports, and permission bypass.
 - [x] Add `core/action_approvals.py` one-time tokens bound to canonical action hash, actor, session, expiry, and single consumption (in-memory primitive; not yet wired to runtime approval flow or durable audit storage).
 - [x] Enforce one-time action-bound approval tokens inside the standalone `SkillDispatcher`; token consumption binds exact canonical action, actor, session, and expiry.
-- [ ] Connect dispatcher/token issuance to the actual user approval UI and live `PermissionGate`; persist redacted approval audit events and authenticate actor/session identity. Current token store is in-memory.
+- [x] Add `core/approval_flow.py` to store a bounded server-side snapshot of the exact pending action, present a detached action payload to a trusted confirmation callback, consume pending IDs once, and issue/consume a one-time action-bound token only after explicit approval.
+- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; derive actor/session from authenticated identity, persist redacted approval audit events, and add expiry/restart semantics for pending actions. Current token and pending-action stores are in-memory primitives.
 
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
