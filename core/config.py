@@ -29,6 +29,15 @@ def _bool_setting(env_name, raw, key, default=False):
     return value
 
 
+def _string_list(raw, key):
+    value = raw.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise RuntimeError(f"{key} must be a list of non-empty strings.")
+    if len(value) > 100:
+        raise RuntimeError(f"{key} may contain at most 100 entries.")
+    return list(dict.fromkeys(item.strip() for item in value))
+
+
 def load_config(path=None):
     config_path = Path(path) if path else DEFAULT_CONFIG
     try:
@@ -61,6 +70,9 @@ def load_config(path=None):
         "workspace": str(workspace.resolve()),
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
         "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
+        "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
+        "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
+        "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
         "ollama_base_url": base_url,
         "ollama_model": model,
