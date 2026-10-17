@@ -1,10 +1,10 @@
-"""Optional Nmap inventory for one explicitly authorized private lab host."""
+"""Optional Nmap inventory restricted to exact, explicitly allow-listed private lab IPs."""
 from __future__ import annotations
 
 import ipaddress
 import shutil
 import subprocess
-from typing import Callable
+from typing import Callable, Iterable
 
 
 class ReconError(RuntimeError):
@@ -23,19 +23,25 @@ def validate_lab_target(target: str) -> str:
 
 class NmapRecon:
     def __init__(self, *, enabled: bool = False, approver: Callable[[str], bool] | None = None,
-                 nmap_binary: str = "nmap"):
+                 allowlisted_targets: Iterable[str] = (), nmap_binary: str = "nmap"):
         self.enabled = enabled
         self.approver = approver
+        normalized = []
+        for target in allowlisted_targets:
+            normalized.append(validate_lab_target(target))
+        self.allowlisted_targets = frozenset(normalized)
         self.nmap_binary = nmap_binary
 
     def scan_common_tcp(self, target: str, *, timeout: int = 45) -> dict:
         if not self.enabled:
             raise ReconError("Recon is disabled by configuration.")
         target = validate_lab_target(target)
+        if target not in self.allowlisted_targets:
+            raise ReconError("Target is not on the explicit lab IP allow-list.")
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 5 <= timeout <= 120:
             raise ReconError("timeout must be between 5 and 120 seconds.")
         if self.approver is None or self.approver(
-            f"Run a limited TCP connect scan of private lab host {target} (top 100 ports)."
+            f"Run a limited TCP connect scan of allow-listed lab host {target} (top 100 ports)."
         ) is not True:
             raise ReconError("Explicit authorization was not granted.")
         binary = shutil.which(self.nmap_binary)
