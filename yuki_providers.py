@@ -40,12 +40,12 @@ class ProviderManager:
             raise ValueError("Provider name cannot be empty.")
         if not isinstance(provider.auth_methods, tuple):
             raise TypeError("auth_methods must be a tuple.")
-        if provider.implemented and factory is None and key not in self._factories:
-            raise ValueError("An implemented provider must have an adapter factory.")
         if factory is not None:
             self._factories[key] = factory
-        else:
+        elif not provider.implemented:
             self._factories.pop(key, None)
+        elif key not in self._factories:
+            raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(
             name=key,
             auth_methods=provider.auth_methods,
