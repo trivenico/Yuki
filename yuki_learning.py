@@ -1,4 +1,4 @@
-"""Small local learning log based on task outcomes; not model self-training."""
+"""Local task-outcome memory; this does not train or modify an AI model."""
 
 import json
 import re
@@ -26,15 +26,39 @@ def _clean(value):
 def load_history():
     try:
         data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-        return data[-MAX_RECORDS:] if isinstance(data, list) else []
     except (OSError, json.JSONDecodeError):
         return []
+    if not isinstance(data, list):
+        return []
+    clean_records = []
+    for item in data[-MAX_RECORDS:]:
+        if not isinstance(item, dict):
+            continue
+        clean_records.append({
+            "task": _clean(item.get("task", "")),
+            "outcome": _clean(item.get("outcome", "")),
+            "approach": _clean(item.get("approach", "")),
+            "lesson": _clean(item.get("lesson", "")),
+            "created_at": _clean(item.get("created_at", ""))[:64],
+        })
+    return clean_records
 
 
 def save_history(history):
+    safe_history = []
+    for item in history[-MAX_RECORDS:]:
+        if not isinstance(item, dict):
+            continue
+        safe_history.append({
+            "task": _clean(item.get("task", "")),
+            "outcome": _clean(item.get("outcome", "")),
+            "approach": _clean(item.get("approach", "")),
+            "lesson": _clean(item.get("lesson", "")),
+            "created_at": _clean(item.get("created_at", ""))[:64],
+        })
     temp = HISTORY_FILE.with_suffix(".tmp")
     try:
-        temp.write_text(json.dumps(history[-MAX_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(json.dumps(safe_history, indent=2, ensure_ascii=False), encoding="utf-8")
         temp.replace(HISTORY_FILE)
         return True
     except OSError:
@@ -46,7 +70,7 @@ def save_history(history):
 
 
 def record_outcome(task, outcome, approach="", lesson=""):
-    if not str(task or "").strip():
+    if not isinstance(task, str) or not task.strip():
         return "Please provide a task description."
     history = load_history()
     history.append({
@@ -58,18 +82,19 @@ def record_outcome(task, outcome, approach="", lesson=""):
     })
     if not save_history(history):
         return "Could not save learning history."
-    return "Outcome recorded. Yuki stores lessons locally; this does not train or modify its AI model."
+    return "Outcome recorded. Lessons are stored locally; the AI model is not trained or modified."
 
 
 def suggest_lessons(task):
-    terms = {w.lower() for w in re.findall(r"[a-zA-Z0-9]{4,}", str(task or ""))}
+    terms = {word.lower() for word in re.findall(r"[a-zA-Z0-9]{4,}", str(task or ""))}
+    if not terms:
+        return []
     matches = []
     for item in reversed(load_history()):
-        lesson = item.get("lesson", "")
-        past = " ".join((item.get("task", ""), item.get("approach", ""))).lower()
-        if lesson and terms and any(term in past for term in terms):
-            if lesson not in matches:
-                matches.append(lesson)
+        lesson = item["lesson"]
+        past = " ".join((item["task"], item["approach"])).lower()
+        if lesson and any(term in past for term in terms) and lesson not in matches:
+            matches.append(lesson)
         if len(matches) >= 5:
             break
     return matches
