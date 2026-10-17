@@ -8,6 +8,7 @@ from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
+from core.output_guard import OutputGuard
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
@@ -102,6 +103,7 @@ def main():
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
+    output_guard = OutputGuard()
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
@@ -169,13 +171,15 @@ def main():
                 continue
             print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
             result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            guarded = output_guard.check(result.message)
+            print(f"Yuki > {guarded.text} [status={result.status}, steps={result.steps}]")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
                 print("Yuki > Provide a prompt: /ask explain a Python decorator")
                 continue
-            print("Yuki > " + ai.ask(prompt))
+            answer = ai.ask(prompt)
+            print("Yuki > " + output_guard.check(answer).text)
         elif command.startswith("/ask-cloud "):
             payload = command[len("/ask-cloud "):]
             if "|" not in payload:
@@ -198,7 +202,7 @@ def main():
                 continue
             try:
                 answer = provider.generate_for(task, prompt)
-                print("Yuki > " + answer)
+                print("Yuki > " + output_guard.check(answer).text)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
         elif command.startswith("/skill "):
@@ -346,7 +350,12 @@ def main():
                 if not _confirm("voice:speak", "Speak the supplied text using local TTS.", "low"):
                     print("Yuki > Speech cancelled.")
                     continue
-                tts.speak(command[len("/voice speak "):])
+                speech_text = command[len("/voice speak "):]
+                guarded_speech = output_guard.check(speech_text)
+                if not guarded_speech.allowed:
+                    print("Yuki > Speech withheld by safety policy.")
+                    continue
+                tts.speak(guarded_speech.text)
                 print("Yuki > Finished speaking.")
             except (TTSError, ValueError) as exc:
                 print(f"Yuki > Speech unavailable: {exc}")
