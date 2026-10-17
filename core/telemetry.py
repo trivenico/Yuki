@@ -118,9 +118,13 @@ class Telemetry:
                 self._events.append(event)
                 self._events = self._events[-5000:]
                 if self.event_log:
-                    self.event_log.parent.mkdir(parents=True, exist_ok=True)
-                    with self.event_log.open("a", encoding="utf-8") as stream:
-                        stream.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+                    try:
+                        self.event_log.parent.mkdir(parents=True, exist_ok=True)
+                        with self.event_log.open("a", encoding="utf-8") as stream:
+                            stream.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
+                    except OSError:
+                        # Telemetry is best-effort and must never break user work.
+                        _LOG.warning("Could not persist telemetry event", exc_info=True)
 
     def snapshot(self) -> list[dict]:
         with self._lock:
