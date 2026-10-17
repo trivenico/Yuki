@@ -64,7 +64,7 @@ class PersonalCapabilityTests(unittest.TestCase):
     def test_registry_includes_new_personal_skills(self):
         with tempfile.TemporaryDirectory() as directory:
             names = SkillRegistry.defaults(Path(directory)).names()
-            for name in ("wiki", "identity", "project", "content_marketer", "seo_audit", "monetization"):
+            for name in ("wiki", "identity", "project", "content_marketer", "seo_audit", "monetization", "course_coach"):
                 self.assertIn(name, names)
 
     def test_wiki_skill_fails_closed_when_not_allowlisted(self):
