@@ -26,6 +26,7 @@ from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
+from core.task_agent import ApprovedTaskAgent
 
 
 def _ask_approval(request):
@@ -61,6 +62,7 @@ def print_help():
   /status                        Show capability status
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
+  /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -100,6 +102,7 @@ def main():
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
+    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -159,6 +162,14 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/task "):
+            goal = command[len("/task "):].strip()
+            if not goal:
+                print("Yuki > Provide a task goal: /task summarize the available time and file skills")
+                continue
+            print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
+            result = task_agent.run(goal)
+            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
