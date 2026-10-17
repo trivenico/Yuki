@@ -7,7 +7,7 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 ## Connected capabilities in this revision
 
 - `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
-- `skills/registry.py`: registers read-only time/system/files plus interview practice, bounded public web fetch and optional read-only Gmail search.
+- `skills/registry.py`: registers read-only time/system/files plus interview practice, allow-listed public web fetch and optional read-only Gmail search.
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
 - `knowledge/indexer.py`: indexes supported text files explicitly selected inside the configured workspace.
@@ -43,7 +43,7 @@ python -m pip install -r requirements-email.txt
 
 Voice needs `YUKI_VOICE_ENABLED=true`, a local Piper executable/model (if using Piper), and a supported audio device. Wake-word detection also requires `YUKI_WAKEWORD_ENABLED=true` and a local compatible model file configured in `config.yaml`. No continuous listener runs in the background. faster-whisper can download model weights on first use.
 
-Gmail is disabled by default. To opt in, set `YUKI_GMAIL_ENABLED=true`, create your own OAuth client file locally, and complete Google's OAuth flow. Token files must remain private. The integration is read-only.
+Web fetch requires explicit hostnames in `web_allowed_hosts`; an empty list denies all requests.\n\nGmail is disabled by default. To opt in, set `YUKI_GMAIL_ENABLED=true`, create your own OAuth client file locally, and complete Google's OAuth flow. Token files must remain private. The integration is read-only.
 
 The Textual dashboard is launched from the guarded runtime with `/dashboard`. Browser-only GitHub cannot access local microphones, run Docker/Nmap, or run local voice models.
 
