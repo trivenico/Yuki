@@ -28,6 +28,7 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.runtime_health import build_runtime_health_manager, summarize_health
 
 
 def _ask_approval(request):
@@ -61,6 +62,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /health                        Run bounded local runtime health checks
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -127,6 +129,7 @@ def main():
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
+    health_manager = build_runtime_health_manager(config, workspace)
 
     def dashboard_command(command):
         if command == "/status":
@@ -152,6 +155,10 @@ def main():
             return
         if command == "/help":
             print_help()
+        elif command == "/health":
+            for name, status, message in summarize_health(health_manager):
+                print(f"Yuki > [{status.upper()}] {name}: {message}")
+            print("Yuki > These are bounded readiness checks, not a full end-to-end or security audit.")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
