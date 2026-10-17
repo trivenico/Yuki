@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from core.planner import Planner
+from core.config import load_config
+from main import build_agent
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
 from defense.ids import PortScanDetector
@@ -48,6 +50,21 @@ class FeatureModuleTests(unittest.TestCase):
         self.assertIsNone(detector.observe("192.0.2.4", 23, timestamp=2))
         alert = detector.observe("192.0.2.4", 80, timestamp=3)
         self.assertEqual(alert["type"], "possible_port_scan")
+
+
+    def test_main_runtime_registers_connected_skills(self):
+        agent = build_agent(load_config())
+        self.assertIn("interview", agent.registry.names())
+        self.assertIn("web_fetch", agent.registry.names())
+        self.assertIn("gmail_search", agent.registry.names())
+        result = agent.run_skill("interview", "technical")
+        self.assertTrue(result.ok)
+        self.assertIn("technical decision", result.data["prompt"])
+
+    def test_live_firewall_mutation_fails_closed(self):
+        manager = FirewallManager(enabled=True, dry_run=False, approver=lambda _: True)
+        with self.assertRaises(FirewallError):
+            manager.block_temporary("203.0.113.5", seconds=60)
 
     def test_wakeword_disabled_by_default(self):
         with self.assertRaises(WakeWordError):
