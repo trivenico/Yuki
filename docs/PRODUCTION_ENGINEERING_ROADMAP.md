@@ -49,8 +49,10 @@ Status: active engineering plan. A module is not considered production-ready unt
 
 - [x] Add a versioned typed skill manifest contract with declared capabilities, bounded input/output schemas, risk, time/output budgets, and parallel-safety checks (not yet integrated into the plugin dispatcher).
 - [x] Add `core/skill_dispatch.py` to enforce registered manifests, explicit capability grants, input/output validation, and approval for medium/high-risk or side-effecting capabilities (standalone dispatcher; existing runtime/plugin loader is not yet wired to it).
-- [x] Add `SkillDispatcher.register_subprocess()` to route manifest-validated handler calls through the bounded JSON subprocess executor with fixed deployment-configured argv/env; standalone dispatcher is now capable of subprocess-backed registration but is not yet connected to live `YukiCoreAgent`/plugin discovery.
-- [ ] Integrate dispatcher with the live `YukiCoreAgent`/plugin discovery path and add OS-level sandbox restrictions before third-party execution.
+- [x] Add `SkillDispatcher.register_subprocess()` to route manifest-validated handler calls through the bounded JSON subprocess executor with fixed deployment-configured argv/env.
+- [x] Add `YukiCoreAgent.dispatch_manifest_skill()` as a guarded live-agent entrypoint that invokes the dispatcher, requires pre-issued action-bound approval for consequential actions, and fails closed when no dispatcher is configured.
+- [ ] Route all model-planned tool calls and plugin discovery through this entrypoint; the legacy `run_skill()` registry path and existing plugin loader remain separate and must not be considered sandboxed.
+- [ ] Integrate the new entrypoint into all task/model-planned calls and plugin discovery; add OS-level sandbox restrictions before third-party execution.
 - [ ] Add dependency declarations, signature/trust verification, and isolated execution.
 - [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
 - [ ] Remove wildcard entries from example/user configuration and document exact module allowlisting.
