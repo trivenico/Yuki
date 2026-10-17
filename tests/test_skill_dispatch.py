@@ -1,5 +1,6 @@
 import unittest
 
+from core.action_approvals import ActionApprovalStore
 from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
 
@@ -24,9 +25,14 @@ def make_manifest(**overrides):
 
 
 class SkillDispatcherTests(unittest.TestCase):
+    def setUp(self):
+        self.store = ActionApprovalStore()
+        self.dispatcher = SkillDispatcher(capability_grants={"workspace.write", "workspace.read"},
+                                          approval_store=self.store)
+        self.dispatcher.register(make_manifest(), lambda args: {"saved": True})
+
     def test_denies_unregistered_skill(self):
-        dispatcher = SkillDispatcher(capability_grants={"workspace.write"})
-        self.assertEqual(dispatcher.dispatch("missing", {}).code, "skill_not_registered")
+        self.assertEqual(self.dispatcher.dispatch("missing", {}).code, "skill_not_registered")
 
     def test_denies_missing_capability_grant(self):
         dispatcher = SkillDispatcher(capability_grants={"workspace.read"})
@@ -35,44 +41,65 @@ class SkillDispatcherTests(unittest.TestCase):
 
     def test_validates_input_before_handler(self):
         called = []
-        dispatcher = SkillDispatcher(capability_grants={"workspace.write"})
+        dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=self.store)
         dispatcher.register(make_manifest(), lambda args: called.append(args) or {"saved": True})
         result = dispatcher.dispatch("notes.append", {"text": "hello", "extra": "no"})
         self.assertEqual(result.code, "invalid_input")
         self.assertEqual(called, [])
 
-    def test_side_effecting_skill_requires_approval_even_if_risk_misclassified_low(self):
+    def test_side_effecting_skill_requires_one_time_approval_token(self):
         called = []
-        dispatcher = SkillDispatcher(capability_grants={"workspace.write"})
+        dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=self.store)
         dispatcher.register(make_manifest(), lambda args: called.append(args) or {"saved": True})
         result = dispatcher.dispatch("notes.append", {"text": "hello"})
-        self.assertEqual(result.code, "approval_required")
+        self.assertEqual(result.code, "approval_token_required")
         self.assertEqual(called, [])
+        token = dispatcher.issue_approval("notes.append", {"text": "hello"},
+                                           actor="master", session_id="cli-1", approved=True)
+        result = dispatcher.dispatch("notes.append", {"text": "hello"}, approval_token=token.token,
+                                     actor="master", session_id="cli-1")
+        self.assertTrue(result.ok)
+        self.assertEqual(len(called), 1)
+        replay = dispatcher.dispatch("notes.append", {"text": "hello"}, approval_token=token.token,
+                                     actor="master", session_id="cli-1")
+        self.assertEqual(replay.code, "approval_invalid_or_expired")
 
-    def test_approval_receives_exact_action_and_can_deny(self):
-        seen = []
-        dispatcher = SkillDispatcher(capability_grants={"workspace.write"},
-                                      approval=lambda risk, action: seen.append((risk, action)) or False)
-        dispatcher.register(make_manifest(), lambda args: {"saved": True})
-        result = dispatcher.dispatch("notes.append", {"text": "hello"})
-        self.assertEqual(result.code, "approval_denied")
-        self.assertEqual(seen[0][1]["arguments"], {"text": "hello"})
+    def test_approval_is_bound_to_arguments_actor_and_session(self):
+        token = self.dispatcher.issue_approval("notes.append", {"text": "approved"},
+                                               actor="master", session_id="cli-1", approved=True)
+        result = self.dispatcher.dispatch("notes.append", {"text": "different"}, approval_token=token.token,
+                                          actor="master", session_id="cli-1")
+        self.assertEqual(result.code, "approval_invalid_or_expired")
+        token = self.dispatcher.issue_approval("notes.append", {"text": "approved"},
+                                               actor="master", session_id="cli-1", approved=True)
+        result = self.dispatcher.dispatch("notes.append", {"text": "approved"}, approval_token=token.token,
+                                          actor="other", session_id="cli-1")
+        self.assertEqual(result.code, "approval_invalid_or_expired")
 
-    def test_validated_output_returned(self):
-        dispatcher = SkillDispatcher(capability_grants={"workspace.read"},
-                                      approval=lambda risk, action: True)
+    def test_denied_approval_cannot_issue_token(self):
+        with self.assertRaises(PermissionError):
+            self.dispatcher.issue_approval("notes.append", {"text": "hello"},
+                                           actor="master", session_id="cli-1", approved=False)
+
+    def test_validated_output_returned_for_read_only_medium_risk_skill(self):
         manifest = make_manifest(skill_id="notes.read", capabilities=["workspace.read"], risk="medium")
+        dispatcher = SkillDispatcher(capability_grants={"workspace.read"}, approval_store=self.store)
         dispatcher.register(manifest, lambda args: {"saved": True})
-        result = dispatcher.dispatch("notes.read", {"text": "hello"})
+        token = dispatcher.issue_approval("notes.read", {"text": "hello"},
+                                          actor="master", session_id="cli-1", approved=True)
+        result = dispatcher.dispatch("notes.read", {"text": "hello"}, approval_token=token.token,
+                                     actor="master", session_id="cli-1")
         self.assertTrue(result.ok)
         self.assertEqual(result.output, {"saved": True})
 
     def test_rejects_invalid_handler_output(self):
-        dispatcher = SkillDispatcher(capability_grants={"workspace.read"},
-                                      approval=lambda risk, action: True)
         manifest = make_manifest(skill_id="notes.read", capabilities=["workspace.read"], risk="medium")
+        dispatcher = SkillDispatcher(capability_grants={"workspace.read"}, approval_store=self.store)
         dispatcher.register(manifest, lambda args: {"saved": "yes"})
-        self.assertEqual(dispatcher.dispatch("notes.read", {"text": "hello"}).code, "invalid_output")
+        token = dispatcher.issue_approval("notes.read", {"text": "hello"},
+                                          actor="master", session_id="cli-1", approved=True)
+        self.assertEqual(dispatcher.dispatch("notes.read", {"text": "hello"}, approval_token=token.token,
+                                             actor="master", session_id="cli-1").code, "invalid_output")
 
 
 if __name__ == "__main__":
