@@ -5,10 +5,10 @@ job payloads and execute handlers through the existing permission/sandbox bounda
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import sqlite3
 import threading
@@ -77,7 +77,7 @@ class JobStore:
         return conn
 
     def _initialize(self) -> None:
-        with self._init_lock, self._connect() as conn:
+        with self._init_lock, closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -129,14 +129,14 @@ class JobStore:
         if idempotency_key is not None:
             idempotency_key = _bounded_text(idempotency_key, "idempotency_key", 200)
         try:
-            payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
         except (TypeError, ValueError) as exc:
             raise ValueError("payload must contain only finite JSON-compatible values.") from exc
         if len(payload_json.encode("utf-8")) > 64 * 1024:
             raise ValueError("payload exceeds the 64 KiB limit.")
         now = _now()
         job_id = str(uuid.uuid4())
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 if idempotency_key:
@@ -164,7 +164,7 @@ class JobStore:
     def get_job(self, job_id: str) -> DurableJob | None:
         if not isinstance(job_id, str) or not job_id:
             return None
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             return self._decode(conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone())
 
     def list_jobs(self, *, limit: int = 100, statuses: set[str] | None = None) -> list[DurableJob]:
@@ -172,7 +172,7 @@ class JobStore:
             raise ValueError("limit must be between 1 and 1000.")
         if statuses is not None and not statuses.issubset(ACTIVE_STATES | TERMINAL_STATES):
             raise ValueError("Unknown job status.")
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             if statuses:
                 ordered = sorted(statuses)
                 placeholders = ",".join("?" for _ in ordered)
@@ -185,7 +185,7 @@ class JobStore:
 
     def claim_next(self) -> DurableJob | None:
         """Atomically claim one queued/retryable job, incrementing its attempt count."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute("""
@@ -221,7 +221,7 @@ class JobStore:
         if len(result_json.encode("utf-8")) > 64 * 1024:
             raise ValueError("result exceeds the 64 KiB limit.")
         now = _now()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             changed = conn.execute("""
                 UPDATE jobs SET status='succeeded',result_json=?,error_code=NULL,
                     finished_at=?,updated_at=?
@@ -234,7 +234,7 @@ class JobStore:
     def fail(self, job_id: str, *, error_code: str, retryable: bool = False) -> DurableJob:
         error_code = _bounded_text(error_code, "error_code", 100)
         now = _now()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             if row is None or row["status"] != "running":
                 raise ValueError("Job is missing or not running.")
@@ -253,7 +253,7 @@ class JobStore:
     def request_cancel(self, job_id: str) -> bool:
         """Cancel queued jobs immediately; running handlers must poll cancellation_requested()."""
         now = _now()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             if row is None or row["status"] in TERMINAL_STATES:
@@ -268,7 +268,7 @@ class JobStore:
             return True
 
     def cancellation_requested(self, job_id: str) -> bool:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute("SELECT cancel_requested FROM jobs WHERE job_id=?", (job_id,)).fetchone()
             return bool(row["cancel_requested"]) if row else True
 
@@ -280,7 +280,7 @@ class JobStore:
         cutoff = (datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)).isoformat()
         now = _now()
         counts = {"requeued": 0, "failed": 0, "cancelled": 0}
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute("SELECT * FROM jobs WHERE status='running' AND updated_at < ?", (cutoff,)).fetchall()
             for row in rows:
