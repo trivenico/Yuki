@@ -6,30 +6,30 @@ Yuki is an early-stage personal AI-agent project designed to combine a personal 
 
 ## What is implemented now
 
-- `main.py`: guarded terminal runtime wired to the skill registry, explicit approval gate, local memory, reminders, and opt-in voice adapters.
+- `main.py`: guarded terminal runtime wired to the skill registry, explicit approval gate, local memory, reminders, opt-in voice adapters, and optional security modules.
 - `yuki.py`: legacy prototype with task/learning records, mock provider, allow-listed tools, and metadata-only audit events.
 - `skills/registry.py`: validated registry that rejects duplicate or invalid skill names.
-- `companion/memory.py`: local, bounded JSON memory with add/list/delete/clear operations. The CLI asks before writes and destructive changes.
-- `companion/proactive.py`: timezone-aware local reminder queue. Due reminders are surfaced only when requested; no background scheduler or arbitrary task execution exists.
-- `voice/tts.py`: optional local pyttsx3 output; disabled unless explicitly enabled and approved.
-- `voice/stt.py`: optional faster-whisper transcription of a user-selected audio file. It does not open a microphone or detect the wake word.
-- `hackback/sandbox.py`: optional Docker command runner disabled by default, requiring a digest-pinned image allow-list and approval. Container isolation is not a guarantee of safety.
-- `hackback/recon.py`: optional limited Nmap TCP inventory for a private IP that is explicitly allow-listed and approved. No CIDR scans or hostname targets.
-- `hackback/exploit_runner.py`: **fail-closed placeholder only**. Metasploit exploit execution is not implemented and all run requests are blocked.
+- `companion/memory.py`: bounded local JSON memory with add/list/delete/clear. The CLI confirms writes and destructive actions.
+- `companion/proactive.py`: timezone-aware reminder queue; due reminders are surfaced only when requested, never used to trigger arbitrary actions.
+- `voice/tts.py`: optional local pyttsx3 speech output.
+- `voice/stt.py`: optional faster-whisper transcription of a selected audio file; no microphone or wake-word detector.
+- `hackback/sandbox.py`: optional Docker runner disabled by default, requiring a digest-pinned image allow-list and approval.
+- `hackback/recon.py`: optional limited Nmap inventory restricted to an explicitly allow-listed private IP and approval.
+- `hackback/exploit_runner.py`: fail-closed placeholder; Metasploit exploit execution is not implemented.
 - Unit tests and GitHub Actions checks.
 
-## What is not complete
+## Not complete yet
 
-- No real Ollama/OpenAI/other LLM tool-calling loop is connected to `main.py`; provider names/config are not proof of an active provider.
-- No autonomous project builder that edits code, runs tests, diagnoses failures, creates reviewable diffs, and rolls back changes end-to-end.
-- No microphone capture, wake-word detector, live speech conversation, or voice interruption control.
-- No graphical or Textual permission dashboard.
-- No Gmail/calendar integration, OSINT engine, general security scanner, or working Metasploit integration.
-- No production-grade installer, signed release, full threat model, or independent security review.
+- No real Ollama/OpenAI/other LLM tool-calling loop is connected to `main.py`.
+- No end-to-end autonomous project builder that edits code, runs tests, fixes failures, presents diffs, and rolls back.
+- No microphone capture, wake-word detector, live speech conversation, or voice interruption controls.
+- No graphical/Textual permission dashboard.
+- No Gmail/calendar integration, general OSINT engine, or production-grade security scanner.
+- No working Metasploit integration or independent security review.
 
 ## Install and run
 
-Requirements: Python 3.10+ and PyYAML.
+Python 3.10+ and PyYAML are required.
 
 ```bash
 python -m pip install -r requirements.txt
@@ -37,33 +37,29 @@ python -m unittest discover -s tests -v
 python main.py
 ```
 
-The legacy CLI remains available with `python yuki.py`. On Windows, use the included installer scripts if you have permission to run them. Browser-only GitHub cannot run local microphone, Docker, Nmap, or speech-model workloads.
+The legacy CLI remains available with `python yuki.py`. Browser-only GitHub cannot run local microphone, Docker, Nmap, or speech-model workloads.
 
-## Guarded runtime commands
+## Guarded core commands
 
 - `/help`, `/status`, `/skills`
 - `/skill time`, `/skill system`, `/skill files .`
 - `/memory add TEXT`, `/memory list`, `/memory delete ID`, `/memory clear`
 - `/reminder add ISO_DATETIME | TEXT`, `/reminders`, `/reminders due`
 - `/voice status`, `/voice speak TEXT`, `/voice transcribe AUDIO_PATH`
+- `/security status`, `/security recon PRIVATE_IP`
+- `/sandbox status`, `/sandbox run IMAGE | ARGS`, `/metasploit status`
 - `/quit`
 
-Each skill and voice action requests explicit approval. Voice remains disabled by default. To enable local TTS/STT, set `YUKI_VOICE_ENABLED=true` in the launch environment and install the optional dependencies:
-
-```bash
-python -m pip install -r requirements-voice.txt
-```
-
-faster-whisper may download a speech model on first transcription and can require substantial disk space. No microphone listening is implemented.
+Each skill, voice, scan, or sandbox action requests approval. Voice, recon, and sandbox are disabled by default. To use optional speech adapters, install `python -m pip install -r requirements-voice.txt` and set `YUKI_VOICE_ENABLED=true` in the launch environment. faster-whisper may download a large speech model on first transcription. No microphone listening is implemented.
 
 ## Security and privacy
 
-- No arbitrary shell tool is exposed through the agent.
-- The security lab is disabled by default and does not provide hack-back, retaliation, persistence, credential theft, or unrestricted exploitation.
-- Nmap requires a private literal IP in an explicit allow-list and per-scan approval. Use only assets you own or are expressly authorized to test.
+- No arbitrary host shell tool is exposed through the agent.
+- Nmap requires a private literal IP in an explicit allow-list and per-scan approval. A private IP is not proof of authorization.
+- Docker execution requires an exact digest-pinned image allow-list, explicit opt-in, and approval. Containerization is not a complete security boundary.
 - Metasploit execution is intentionally blocked in this build.
-- Memory and reminders are local files under the configured workspace; protect that directory and back it up only if desired.
-- Never commit credentials, personal memory, audio files, or real user data.
+- Never implement hack-back, retaliation, persistence, credential theft, or unrestricted exploitation.
+- Memory and reminders are local files under the configured workspace. Protect the directory and never commit secrets, personal memory, or private audio.
 
 See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
 
