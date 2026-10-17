@@ -9,42 +9,43 @@
 
 ## Windows
 
-1. Install Python 3.10+ from https://www.python.org/downloads/ if it is not already installed.
+1. Install Python 3.10+ from https://www.python.org/downloads/ if needed.
 2. Download the repository ZIP and extract it, or clone the repository.
 3. Open the repository directory.
 4. Run `install_windows.bat`.
-5. Run `run_yuki_windows.bat` for the legacy CLI, or run `.venv\\Scripts\\python.exe main.py` for the guarded core.
-
-The installer installs required dependencies and runs the unit tests. It does not install voice models, Docker, Nmap, or an AI model.
+5. Run `run_yuki_windows.bat` for the legacy CLI, or `.venv\\Scripts\\python.exe main.py` for the guarded core.
 
 ## macOS or Linux
 
 ```sh
 sh install_unix.sh
-sh run_yuki_unix.sh
+.venv/bin/python main.py
 ```
 
-Run the guarded core with `.venv/bin/python main.py`.
+## Commands in the guarded core
 
-## Guarded core commands
+Use `/help` for the complete list:
+- Skills: `/skills`, `/skill time`, `/skill system`, `/skill files .`
+- Memory: `/memory add TEXT`, `/memory list`, `/memory delete ID`, `/memory clear`
+- Reminders: `/reminder add 2026-12-31T18:00:00+00:00 | reminder text`, `/reminders`, `/reminders due`
+- Voice: `/voice status`, `/voice speak TEXT`, `/voice transcribe AUDIO_PATH`
+- Security: `/security status`, `/security recon PRIVATE_IP`, `/sandbox status`, `/sandbox run IMAGE | ARGS`, `/metasploit status`
 
-Use `/help` for all commands. The runtime connects:
-- Registered read-only skills: `time`, `system`, `files`.
-- Local memory commands: `/memory add TEXT`, `/memory list`, `/memory delete ID`, `/memory clear`.
-- Local reminders: `/reminder add 2026-12-31T18:00:00+00:00 | reminder text`, `/reminders`, `/reminders due`.
-- Optional voice adapters: `/voice speak TEXT` and `/voice transcribe AUDIO_PATH`.
-
-Memory writes and deletion require confirmation. Reminder times must include a timezone offset. Reminder delivery is checked by the user with `/reminders due`; the application does not run a background scheduler or trigger arbitrary actions.
+Memory changes and sensitive actions require confirmation. Reminder times must include a timezone offset. Reminders are surfaced when you ask; they do not run background actions.
 
 ## Optional voice dependencies
 
-Voice is disabled by default. If you explicitly want local speech output and audio-file transcription, install:
+Voice is disabled by default. To use local speech output and audio-file transcription:
 
 ```sh
 python -m pip install -r requirements-voice.txt
 ```
 
-Set `YUKI_VOICE_ENABLED=true` in the process environment before starting Yuki. The speech-to-text adapter uses faster-whisper and may download model weights on first use. The TTS adapter uses pyttsx3 and the available operating-system speech engine. There is no microphone capture, always-on listener, or wake-word detector.
+Set `YUKI_VOICE_ENABLED=true` in the launch environment before starting Yuki. faster-whisper may download model weights on first use. No microphone capture, always-on listener, or wake-word detector exists yet.
+
+## Security configuration
+
+Security features are disabled by default. For Nmap, set `security_lab_enabled: true` and list exact private lab IPs under `recon_allowlisted_targets` in `config.yaml`; every scan still requires approval. For Docker, set `sandbox_enabled: true` and list exact image references pinned by digest under `sandbox_allowed_images`; every run still requires approval. Use only systems you own or are authorized to test. Metasploit execution is not implemented and requests are blocked.
 
 ## Tests and diagnostics
 
@@ -54,15 +55,8 @@ python -m unittest discover -s tests -v
 python scripts/doctor.py
 ```
 
-A passing test suite checks only the tested behavior; it does not certify production readiness or verify optional hardware/software that is not installed.
+A passing test suite checks only tested behavior; it does not certify production readiness or verify optional hardware/software not installed.
 
-## Security module status
+## Limitations
 
-- Docker sandbox: disabled by default; requires an exact digest-pinned image allow-list and per-run approval.
-- Nmap recon: disabled by default; requires a private literal IP in an explicit allow-list and per-scan approval.
-- Metasploit: execution is not implemented and requests are blocked.
-- No hack-back or unauthorized third-party targeting is supported.
-
-## Important limitations
-
-The guarded core does not yet connect to a real LLM, autonomously build projects, or provide a full interactive voice assistant. There is no GUI permission dashboard, microphone listener, Gmail/calendar integration, or production-grade security engine. Do not treat this version as a finished production release or use it for consequential security actions.
+The guarded core does not yet connect to a real LLM, autonomously build projects, or provide a full interactive voice assistant. There is no GUI permission dashboard, microphone listener, Gmail/calendar integration, general OSINT engine, or production-grade security engine. Do not treat this version as a finished production release.
