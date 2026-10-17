@@ -1,6 +1,7 @@
 """Human-approved read-only browser skill."""
 from skills.base import Skill, SkillResult
 from automation.browser import SafeBrowser, BrowserAutomationError
+from core.prompt_guard import scan_untrusted_text
 
 
 class BrowserSkill(Skill):
@@ -15,6 +16,7 @@ class BrowserSkill(Skill):
     def run(self, argument=""):
         try:
             data = self.browser.read_page(argument.strip())
+            data["prompt_injection_scan"] = scan_untrusted_text(data.get("text", ""))
             return SkillResult(True, "Page read complete; page text is untrusted input.", data)
         except BrowserAutomationError as exc:
             return SkillResult(False, str(exc))
