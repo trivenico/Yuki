@@ -61,10 +61,12 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [ ] Execute third-party skills in an isolated worker/container with filesystem allowlists, network policy, resource limits, and a bounded protocol. Do not treat Python imports or a thread timeout as a sandbox.
 - [x] Add regression tests for disabled discovery, missing allowlist, and wildcard trust rejection.
 - [ ] Add tests for path traversal, prompt injection, secret access, SSRF, process exhaustion, malicious imports, and permission bypass.
-- [x] Add `core/action_approvals.py` one-time tokens bound to canonical action hash, actor, session, expiry, and single consumption (in-memory primitive; not yet wired to runtime approval flow or durable audit storage).
+- [x] Add `core/action_approvals.py` one-time tokens bound to canonical action hash, actor, session, expiry, and single consumption.
+- [x] Add `SQLiteActionApprovalStore` for restart-persistent one-time tokens, transactional single consumption, expiry cleanup, and storage of token hashes rather than raw bearer tokens; actor/session authentication and audit events remain external requirements.
+- [x] Add tests for persistence across store recreation, single-use consumption, token-hash persistence, action/identity mismatch, and denied issuance.
 - [x] Enforce one-time action-bound approval tokens inside the standalone `SkillDispatcher`; token consumption binds exact canonical action, actor, session, and expiry.
 - [x] Add `core/approval_flow.py` to store a bounded server-side snapshot of the exact pending action, present a detached action payload to a trusted confirmation callback, consume pending IDs once, and issue/consume a one-time action-bound token only after explicit approval.
-- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; derive actor/session from authenticated identity, persist redacted approval audit events, and add expiry/restart semantics for pending actions. Current token and pending-action stores are in-memory primitives.
+- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; derive actor/session from authenticated identity, persist redacted approval audit events, and add expiry/restart semantics for pending actions. The SQLite token store is available as a primitive, but runtime wiring/configuration is still pending; the pending-action coordinator remains in-memory, and actor/session values must come from trusted identity.
 
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
