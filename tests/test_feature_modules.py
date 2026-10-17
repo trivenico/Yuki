@@ -30,8 +30,9 @@ class FeatureModuleTests(unittest.TestCase):
             indexer = KnowledgeIndexer(VectorMemory(root / "memory.json"))
             result = indexer.index_file("notes.md", workspace=root)
             self.assertEqual(result["chunks_indexed"], 1)
+            (root / "image.bin").write_bytes(b"not text")
             with self.assertRaises(ValueError):
-                indexer.index_file("memory.json", workspace=root)
+                indexer.index_file("image.bin", workspace=root)
 
     def test_firewall_dry_run_requires_approval_and_no_os_changes(self):
         manager = FirewallManager(enabled=True, dry_run=True, approver=lambda _: True)
@@ -46,7 +47,7 @@ class FeatureModuleTests(unittest.TestCase):
         self.assertIsNone(detector.observe("192.0.2.4", 22, timestamp=1))
         self.assertIsNone(detector.observe("192.0.2.4", 23, timestamp=2))
         alert = detector.observe("192.0.2.4", 80, timestamp=3)
-        self.assertEqual(alert["type"], "port_scan_suspected")
+        self.assertEqual(alert["type"], "possible_port_scan")
 
     def test_wakeword_disabled_by_default(self):
         with self.assertRaises(WakeWordError):
