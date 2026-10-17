@@ -32,11 +32,10 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
         found = self.store.get(pending.pending_id)
         self.assertEqual(found.actor_hash, self.store._identity_hash("owner-secret"))
         self.assertEqual(found.session_hash, self.store._identity_hash("session-secret"))
-        with self.assertRaises(Exception):
-            with self.store._connect() as db:
-                raw = str(db.execute("SELECT * FROM pending_approvals").fetchall())
-                self.assertNotIn("owner-secret", raw)
-                self.assertNotIn("session-secret", raw)
+        with self.store._connect() as db:
+            raw = str(db.execute("SELECT * FROM pending_approvals").fetchall())
+        self.assertNotIn("owner-secret", raw)
+        self.assertNotIn("session-secret", raw)
 
     def test_wrong_identity_cannot_consume_pending_action(self):
         pending = self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
