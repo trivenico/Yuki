@@ -9,6 +9,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 Run `python main.py --setup` for first-run configuration. Yuki currently offers a mock/demo mode, local Ollama mode, and hybrid mode with explicitly allow-listed cloud task labels. The API key prompt is hidden; credentials are written to a local `.env` file with owner-only permissions on POSIX systems, never to `config.yaml` or terminal output. Shell environment variables take precedence over values in `.env`. Keep `.env` private and never commit it. Hybrid mode sends nothing to the cloud unless a task label is configured in `YUKI_CLOUD_TASKS` and the explicit cloud command is approved. This wizard configures providers; it does not install Ollama or download models for you.
 
+## Typed skill contracts
+
+`core/skill_manifest.py` defines a versioned manifest contract for stable skill IDs, input/output schemas, capability declarations, risk, execution budgets, and concurrency metadata. It rejects unsupported capabilities and side-effecting skills marked parallel-safe. The contract is not yet wired into the plugin loader, and it does not isolate code; do not treat schema validation as a sandbox.
+
 ## Durable task storage foundation
 
 `core/durable_jobs.py` provides a local SQLite job-store primitive with persisted job state, bounded JSON payloads/results, idempotency keys, attempt budgets, cancellation requests, and stale-running recovery. It is not yet wired to a background worker, CLI/API controls, or actual task execution; treat it as a foundation, not a complete scheduler. Do not place secrets in job payloads. Only enqueue validated task data and execute handlers through Yuki's existing permission and isolation boundaries.
