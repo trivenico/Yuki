@@ -15,6 +15,32 @@ from core.agent import YukiCoreAgent
 from core.permissions import PermissionGate
 from skills.base import Skill, SkillResult
 from core.self_healing import RecoveryStatus, SelfHealingManager
+from core.telemetry import Telemetry
+
+
+class TelemetryIntegrationTests(unittest.TestCase):
+    def test_agent_skill_call_records_status_without_arguments(self):
+        telemetry = Telemetry(enabled=True)
+        agent = YukiCoreAgent(telemetry=telemetry)
+        response = agent.run_skill("not-registered", "password=supersecret")
+        self.assertFalse(response.ok)
+        events = telemetry.snapshot()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["name"], "agent.run_skill")
+        self.assertEqual(events[0]["attributes"]["result_stage"], "blocked")
+        self.assertNotIn("supersecret", json.dumps(events))
+        self.assertNotIn("password=", json.dumps(events))
+
+    def test_telemetry_redacts_secrets_in_innocently_named_attributes(self):
+        safe = Telemetry._attributes({"label": "api_key=supersecret"})
+        self.assertNotIn("supersecret", json.dumps(safe))
+        self.assertIn("[REDACTED]", safe["label"])
+
+    def test_disabled_telemetry_does_not_record_events(self):
+        telemetry = Telemetry(enabled=False)
+        with telemetry.span("agent.run_skill", attributes={"skill_name": "test"}):
+            pass
+        self.assertEqual(telemetry.snapshot(), [])
 
 
 class OutputGuardContractTests(unittest.TestCase):
