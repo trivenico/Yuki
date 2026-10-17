@@ -17,6 +17,10 @@ Run `python main.py --setup` for first-run configuration. Yuki currently offers 
 
 `core/skill_manifest.py` defines a versioned manifest contract for stable skill IDs, input/output schemas, capability declarations, risk, execution budgets, and concurrency metadata. It rejects unsupported capabilities and side-effecting skills marked parallel-safe. The contract is not yet wired into the plugin loader, and it does not isolate code; do not treat schema validation as a sandbox.
 
+## Subprocess execution boundary foundation
+
+`core/subprocess_executor.py` adds fixed-argv execution without a shell, JSON request/response validation, a hard subprocess timeout, a child environment allowlist, and response-size checks. It is not yet integrated with `SkillDispatcher` or `TaskWorker`, and it is not a complete sandbox. Output-size checks happen after captured output returns, so OS-level memory/output limits and stronger streaming enforcement are still required before running untrusted code.
+
 ## Durable worker foundation
 
 `core/task_worker.py` runs one claimed SQLite job at a time through explicitly registered trusted handlers, stores results, applies bounded retry policy for declared retryable errors, and avoids persisting raw exception messages. Tests cover success, missing handlers, retries, cancellation, and redaction. It is currently a callable single-process worker primitive, not a background service: it is not wired into the CLI/API, has no hard execution timeout or graceful shutdown loop, and must not run untrusted plugin code.
