@@ -2,6 +2,16 @@
 
 Status: active engineering plan. A module is not considered production-ready until it is integrated into the runtime, covered by behavioral tests, and verified in CI.
 
+## Phase 0.5 — onboarding and configuration
+**Exit gate:** a first-run user can select a provider without editing YAML or exposing credentials in terminal output.
+
+- [x] Add `python main.py --setup` for mock/demo, local Ollama, and hybrid provider configuration.
+- [x] Keep API credentials out of YAML, hide interactive key entry, use an ignored local `.env`, and set owner-only file permissions on POSIX.
+- [x] Load supported local provider settings without overriding shell environment variables.
+- [x] Add behavioral tests for provider selection, credential separation, and environment precedence.
+- [ ] Add install/bootstrap automation, model installation guidance, dependency locking, and tested Windows/macOS/Linux onboarding.
+- [ ] Add credential rotation/removal UX and validate provider connectivity from the wizard without leaking sensitive diagnostics.
+
 ## Phase 0 — correctness baseline
 **Exit gate:** CI passes on the pull-request head; no test is disabled to get green.
 
