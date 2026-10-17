@@ -21,6 +21,8 @@ dist/
 # Local Yuki data; do not commit personal memory, reminders, tasks, or audit logs
 yuki_memory.json
 yuki_reminders.json
+yuki_health.json
+yuki_knowledge_graph.json
 yuki_tasks.json
 yuki_learning.json
 yuki_audit.json
