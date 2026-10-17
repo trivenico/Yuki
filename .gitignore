@@ -34,3 +34,11 @@ models/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local OAuth credentials/tokens and downloaded voice models
+/credentials.json
+/token.json
+google_oauth_client.json
+google_token.json
+*.onnx
+*.onnx.data
