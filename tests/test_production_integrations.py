@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date
 from pathlib import Path
 
@@ -16,7 +17,7 @@ class ProductionIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             registry = SkillRegistry.defaults(Path(directory), web_allowed_hosts=[])
             for name in ("web_deep_read", "knowledge", "health_log", "security_remediation",
-                         "browser_read", "youtube_transcript"):
+                         "browser_read", "youtube_transcript", "image_generate", "webcam_analyze"):
                 self.assertIn(name, registry.names())
 
     def test_browser_denies_navigation_without_allowlist(self):
@@ -44,6 +45,16 @@ class ProductionIntegrationTests(unittest.TestCase):
         client.approver = None
         with self.assertRaises(MCPError):
             client.call_tool("calendar.create", {"title": "test"})
+
+    def test_cloud_media_skills_fail_closed_without_api_key(self):
+        from skills.image_skill import ImageGenerationSkill
+        from skills.webcam_skill import WebcamSkill
+        with patch.dict("os.environ", {}, clear=True):
+            image_result = ImageGenerationSkill().execute("A quiet garden")
+            webcam_result = WebcamSkill().execute("")
+        self.assertFalse(image_result.ok)
+        self.assertFalse(webcam_result.ok)
+        self.assertIn("no frame was captured", webcam_result.message)
 
     def test_tts_chunk_stream_stops_after_interruption(self):
         class FakeTTS(LocalTTS):
