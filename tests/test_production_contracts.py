@@ -42,6 +42,13 @@ class TelemetryIntegrationTests(unittest.TestCase):
             pass
         self.assertEqual(telemetry.snapshot(), [])
 
+    def test_telemetry_write_failure_does_not_break_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            telemetry = Telemetry(enabled=True, event_log=tmp)
+            with telemetry.span("agent.run_skill", attributes={"skill_name": "test"}):
+                pass
+            self.assertEqual(len(telemetry.snapshot()), 1)
+
 
 class OutputGuardContractTests(unittest.TestCase):
     def test_private_key_material_is_withheld(self):
