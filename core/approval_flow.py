@@ -12,6 +12,7 @@ import threading
 from typing import Any, Callable
 
 from core.manifest_task_agent import ManifestTaskAgent, PlannedTaskResult
+from core.pending_approvals import SQLitePendingApprovalStore
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,11 @@ class PendingApproval:
 class ApprovalCoordinator:
     """Stores pending actions server-side and resumes only the stored snapshot."""
 
-    def __init__(self, *, max_pending: int = 128):
+    def __init__(self, *, max_pending: int = 128, pending_store: SQLitePendingApprovalStore | None = None):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
         self.max_pending = max_pending
+        self.pending_store = pending_store
         self._lock = threading.Lock()
         self._pending: dict[str, PendingApproval] = {}
 
@@ -43,6 +45,9 @@ class ApprovalCoordinator:
         # JSON round-trip produces a detached, finite JSON snapshot.
         arguments = json.loads(json.dumps(result.pending_arguments, ensure_ascii=False, allow_nan=False))
         action_snapshot = json.loads(json.dumps(action, ensure_ascii=False, allow_nan=False))
+        if self.pending_store is not None:
+            stored = self.pending_store.put(result.pending_skill, arguments, action_snapshot)
+            return PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
         pending = PendingApproval(
             pending_id=secrets.token_urlsafe(24),
             skill_id=result.pending_skill,
@@ -63,8 +68,13 @@ class ApprovalCoordinator:
             return PlannedTaskResult(False, "invalid_approval", "Approval callback is required.")
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             return PlannedTaskResult(False, "invalid_approval", "Trusted actor/session context is required.")
-        with self._lock:
-            pending = self._pending.get(pending_id)
+        if self.pending_store is not None:
+            stored = self.pending_store.get(pending_id)
+            pending = (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
+                       if stored is not None else None)
+        else:
+            with self._lock:
+                pending = self._pending.get(pending_id)
         if pending is None:
             return PlannedTaskResult(False, "pending_not_found", "Pending action is missing or already consumed.")
         # Confirm is given a detached copy so a UI callback cannot mutate the stored action.
@@ -74,12 +84,20 @@ class ApprovalCoordinator:
         except Exception:
             approved = False
         if not approved:
-            with self._lock:
-                self._pending.pop(pending_id, None)
+            if self.pending_store is not None:
+                self.pending_store.deny(pending_id)
+            else:
+                with self._lock:
+                    self._pending.pop(pending_id, None)
             return PlannedTaskResult(False, "approval_denied", "Action was not approved.")
         # Consume pending ID before executing, preventing concurrent/replayed approvals.
-        with self._lock:
-            current = self._pending.pop(pending_id, None)
+        if self.pending_store is not None:
+            stored = self.pending_store.consume(pending_id)
+            current = (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
+                       if stored is not None else None)
+        else:
+            with self._lock:
+                current = self._pending.pop(pending_id, None)
         if current is None:
             return PlannedTaskResult(False, "pending_not_found", "Pending action was already consumed.")
         try:
