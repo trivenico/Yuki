@@ -271,6 +271,27 @@ def main():
                     print("Yuki > Detector model loaded. No continuous microphone listener is active.")
                 except WakeWordError as exc:
                     print(f"Yuki > Wake-word detector unavailable: {exc}")
+        elif command.startswith("/voice wakeword listen "):
+            if not wakeword:
+                print("Yuki > No wake-word model path is configured.")
+                continue
+            try:
+                seconds = int(command[len("/voice wakeword listen "):].strip())
+                if not _confirm("voice:wakeword", f"Listen to the microphone for up to {seconds} seconds for the configured wake phrase.", "medium"):
+                    print("Yuki > Listening cancelled.")
+                    continue
+                wakeword.load()
+                result = wakeword.listen_once(seconds=seconds)
+                if not result["detected"]:
+                    print("Yuki > Wake phrase was not detected in this listening window.")
+                else:
+                    print(f"Yuki > Wake phrase detected: {result['scores']}. Starting a separate 5-second recording for transcription.")
+                    output = workspace / "audio" / f"wake-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
+                    recorded = stt.record_wav(output, seconds=5)
+                    transcript = stt.transcribe_file(recorded)
+                    print(f"Yuki transcript ({transcript['language']}): {transcript['text']}")
+            except (ValueError, WakeWordError, STTError) as exc:
+                print(f"Yuki > Wake-word flow unavailable: {exc}")
         elif command.startswith("/voice speaker-check "):
             try:
                 print(speaker_verifier.verify(command[len("/voice speaker-check "):].strip()))
