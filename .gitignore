@@ -30,3 +30,4 @@ yuki_workspace/
 .idea/
 .DS_Store
 Thumbs.db
+yuki_audit.json
