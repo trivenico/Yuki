@@ -102,9 +102,9 @@ def main():
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    ai = YukiAgent(create_provider(config), telemetry=agent.telemetry)
     output_guard = OutputGuard()
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"], telemetry=agent.telemetry)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -201,7 +201,15 @@ def main():
                 print("Yuki > Cloud request cancelled; no data was sent.")
                 continue
             try:
-                answer = provider.generate_for(task, prompt)
+                with agent.telemetry.span(
+                    "provider.cloud_request",
+                    attributes={"provider": type(provider.cloud_provider).__name__, "task": task},
+                ) as span:
+                    answer = provider.generate_for(task, prompt)
+                    if hasattr(span, "set_attribute"):
+                        span.set_attribute("response_received", isinstance(answer, str))
+                    elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                        span["set_attribute"]("response_received", isinstance(answer, str))
                 print("Yuki > " + output_guard.check(answer).text)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
