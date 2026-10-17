@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 import os
 import subprocess
+import threading
 from typing import Any, Mapping, Sequence
 
 
@@ -54,23 +55,80 @@ class SubprocessExecutor:
                     return WorkerResult(False, "environment_not_allowed")
                 child_env[key] = value
         try:
-            completed = subprocess.run(
-                list(argv), input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=self.timeout_seconds, cwd=cwd, env=child_env or {},
-                shell=False, check=False, close_fds=True,
+            process = subprocess.Popen(
+                list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=cwd, env=child_env or {}, shell=False, close_fds=True,
             )
-        except subprocess.TimeoutExpired:
-            return WorkerResult(False, "worker_timeout")
         except (OSError, ValueError):
             return WorkerResult(False, "worker_start_failed")
-        # Enforce output bounds after process completion; the process should also run
-        # under an OS-level memory/output limit to protect against excessive output.
-        if len(completed.stdout) > self.max_response_bytes or len(completed.stderr) > self.max_response_bytes:
+
+        captured: dict[str, bytes] = {"stdout": b"", "stderr": b""}
+        exceeded = threading.Event()
+
+        def drain(name: str, stream) -> None:
+            chunks: list[bytes] = []
+            total = 0
+            try:
+                while True:
+                    chunk = stream.read(min(8192, self.max_response_bytes + 1 - total))
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > self.max_response_bytes:
+                        exceeded.set()
+                        try:
+                            process.kill()
+                        except OSError:
+                            pass
+                        break
+                    chunks.append(chunk)
+                captured[name] = b"".join(chunks)
+            finally:
+                stream.close()
+
+        def send_input() -> None:
+            try:
+                assert process.stdin is not None
+                process.stdin.write(payload)
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+
+        assert process.stdout is not None and process.stderr is not None
+        readers = [
+            threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
+            threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True),
+        ]
+        writer = threading.Thread(target=send_input, daemon=True)
+        for thread in readers:
+            thread.start()
+        writer.start()
+        try:
+            process.wait(timeout=self.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            for thread in readers:
+                thread.join(timeout=1)
+            writer.join(timeout=1)
+            return WorkerResult(False, "worker_timeout")
+        for thread in readers:
+            thread.join(timeout=1)
+        writer.join(timeout=1)
+        if exceeded.is_set():
             return WorkerResult(False, "worker_output_too_large")
-        if completed.returncode != 0:
+        if any(thread.is_alive() for thread in readers) or writer.is_alive():
+            try:
+                process.kill()
+            except OSError:
+                pass
+            return WorkerResult(False, "worker_io_failed")
+        if process.returncode is None:
+            return WorkerResult(False, "worker_failed")
+        if process.returncode != 0:
             return WorkerResult(False, "worker_failed")
         try:
-            response = json.loads(completed.stdout.decode("utf-8"))
+            response = json.loads(captured["stdout"].decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return WorkerResult(False, "invalid_worker_response")
         if not isinstance(response, dict) or set(response) != {"ok", "result"} or type(response["ok"]) is not bool:
