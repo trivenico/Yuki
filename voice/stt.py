@@ -43,7 +43,7 @@ class FasterWhisperSTT:
         except Exception as exc:
             raise STTError("Recording failed; check microphone permission and device.") from exc
 
-    def transcribe_file(self, audio_path, *, language="en"):
+    def transcribe_file(self, audio_path, *, language=None):
         if not self.enabled:
             raise STTError("Speech recognition is disabled.")
         path = Path(audio_path).expanduser().resolve()
