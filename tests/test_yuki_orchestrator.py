@@ -66,6 +66,17 @@ class OrchestratorTests(unittest.TestCase):
                 "Consequential task", ["Review"], requires_approval=True
             )
 
+    def test_invalid_and_duplicate_tool_names_are_blocked(self):
+        invalid = self.orchestrator.prepare("Invalid tool", ["Review"], required_tools=["calculate", ""])
+        self.assertEqual(invalid.status, "blocked")
+        duplicate = self.orchestrator.prepare("Duplicate tool", ["Review"], required_tools=["calculate", "calculate"])
+        self.assertEqual(duplicate.status, "blocked")
+
+    def test_unhashable_tool_name_is_blocked_without_crashing(self):
+        result = self.orchestrator.prepare("Malformed tool", ["Review"], required_tools=[["calculate"]])
+        self.assertEqual(result.status, "blocked")
+        self.assertEqual(result.workflow.stage, Stage.BLOCKED)
+
     def test_required_tool_limit_is_enforced(self):
         with self.assertRaises(ValueError):
             self.orchestrator.prepare("Too many", ["Review"], required_tools=["x"] * 11)
