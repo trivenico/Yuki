@@ -19,6 +19,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
         config = load_config()
         self.assertEqual(config["name"], "Yuki")
         self.assertFalse(config["voice_enabled"])
+        self.assertFalse(config["security_lab_enabled"])
+        self.assertFalse(config["sandbox_enabled"])
         self.assertGreaterEqual(config["max_agent_steps"], 1)
         self.assertLessEqual(config["max_agent_steps"], 5)
 
