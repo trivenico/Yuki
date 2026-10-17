@@ -64,13 +64,14 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [ ] Configure client-level connection/read timeouts. Circuit breakers and retries do not themselves stop a hung blocking call.
 - [x] Add CLI `/health` checks for workspace access, provider configuration, local Ollama model inventory, plugin trust policy, and configured Piper model presence; checks are read-only and network access is restricted to loopback Ollama.
 - [ ] Add durable recovery budgets/cooldowns and safe recovery handlers with post-recovery verification.
-- [ ] Add idempotency keys for retried writes and distinguish retryable from non-retryable errors.
+- [x] Add operation-level idempotency keys and bounded retry-state transitions to the durable job-store primitive; callers must still provide idempotency at external side-effect boundaries.
+- [ ] Integrate the durable job store with a background worker, task API/CLI, shutdown coordination, and operation-specific recovery policies.
 - [ ] Integrate token/cost, latency, error rate, and resource metrics; test telemetry-disabled mode and exporter failure behavior.
 
 ## Phase 5 — durable daily-work automation
 **Exit gate:** jobs survive restarts and users can inspect, cancel, and revoke them.
 
-- [ ] Add a durable scheduler/job store with idempotency, cancellation, retry policy, and execution history.
+- [x] Add a transactional SQLite durable job store with bounded JSON payloads/results, idempotency keys, attempt budgets, cancellation requests, and stale-worker recovery primitives (not yet wired to a background scheduler or task runtime).
 - [ ] Build a local authenticated control plane with pairing, session revocation, rate limits, and scoped permissions.
 - [ ] Add one high-value messaging/productivity integration at a time; draft/read-only by default for email and calendar.
 - [ ] Add memory export/import, backup/restore, retention/deletion controls, and migration tests.
