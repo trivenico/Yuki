@@ -1,4 +1,4 @@
-# Safe defaults. Secrets belong in environment variables, never in this file.
+# Safe defaults; all privileged/integration features remain disabled.
 name: Yuki
 workspace: ./yuki_workspace
 provider: mock
@@ -8,7 +8,15 @@ max_agent_steps: 3
 voice_enabled: false
 stt_model: small
 tts_rate: 170
+tts_backend: piper
+piper_model_path: ""
+wakeword_enabled: false
+wakeword_model_path: ""
+gmail_enabled: false
 security_lab_enabled: false
 recon_allowlisted_targets: []
 sandbox_enabled: false
 sandbox_allowed_images: []
+firewall_enabled: false
+firewall_dry_run: true
+web_allowed_hosts: []
