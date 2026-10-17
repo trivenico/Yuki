@@ -15,7 +15,7 @@ import yaml
 
 from core.portable_paths import config_path, data_root
 
-_ALLOWED_SECRET_ENV = {"OPENAI_API_KEY"}
+_ALLOWED_ENV = {"OPENAI_API_KEY", "YUKI_CLOUD_MODEL", "YUKI_CLOUD_BASE_URL", "YUKI_CLOUD_TASKS"}
 _DEFAULT_CLOUD_BASE_URL = "https://api.openai.com/v1"
 
 
@@ -39,7 +39,7 @@ def load_local_env(path: str | Path | None = None) -> None:
             continue
         key, value = stripped.split("=", 1)
         key, value = key.strip(), value.strip()
-        if key in _ALLOWED_SECRET_ENV and value and key not in os.environ:
+        if key in _ALLOWED_ENV and value and key not in os.environ:
             os.environ[key] = value
 
 
@@ -150,7 +150,7 @@ def run_setup(
         existing.update(secrets)
         env_text = "# Yuki local credentials/settings. Never commit this file.\n" + "".join(
             f"{key}={value}\n" for key, value in sorted(existing.items())
-            if key in _ALLOWED_SECRET_ENV | {"YUKI_CLOUD_MODEL", "YUKI_CLOUD_BASE_URL", "YUKI_CLOUD_TASKS"}
+            if key in _ALLOWED_ENV
         )
         _atomic_private_write(secrets_path, env_text)
     output_fn(f"Configuration saved to {cfg_path}.")
