@@ -30,6 +30,12 @@ class SubprocessExecutorTests(unittest.TestCase):
         script = "print('x'*100)"
         self.assertEqual(executor.execute([sys.executable, "-c", script], {}).code, "worker_output_too_large")
 
+    def test_kills_worker_that_floods_stderr(self):
+        executor = SubprocessExecutor(timeout_seconds=3, max_response_bytes=128)
+        result = executor.execute([sys.executable, "-c", "import sys; sys.stderr.write('x'*10000000)"], {})
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "worker_output_too_large")
+
     def test_rejects_unapproved_environment(self):
         executor = SubprocessExecutor(allowed_env=("SAFE_FLAG",))
         result = executor.execute([sys.executable, "-c", "print('{}')"], {}, env={"API_KEY": "secret"})
