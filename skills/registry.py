@@ -17,6 +17,12 @@ from .browser_skill import BrowserSkill
 from .youtube_skill import YouTubeSkill
 from .image_skill import ImageGenerationSkill
 from .webcam_skill import WebcamSkill
+from .wiki_skill import WikiSkill
+from .identity_skill import IdentitySkill
+from .project_skill import ProjectSkill
+from .content_marketer import ContentMarketerSkill
+from .seo_optimizer import SEOOptimizerSkill
+from .monetization_advisor import MonetizationAdvisorSkill
 
 
 class SkillRegistry:
@@ -58,4 +64,6 @@ class SkillRegistry:
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
+            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(), ProjectSkill(),
+            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
         ))
