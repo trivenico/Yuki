@@ -1,0 +1,1 @@
+"""Local knowledge indexing helpers."""
