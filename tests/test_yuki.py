@@ -13,6 +13,43 @@ from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderManager
 from yuki import handle_command
+from yuki_planner import create_plan, plan_summary
+from yuki_events import EventBus
+from yuki_approvals import ApprovalGate
+
+
+
+class PlannerTests(unittest.TestCase):
+    def test_plan_is_bounded_and_does_not_execute(self):
+        plan = create_plan("Review repository", ["Inspect files", "Run tests"])
+        summary = plan_summary(plan)
+        self.assertIn("Plan is a proposal only", summary)
+        self.assertEqual([step.status for step in plan.steps], ["pending", "pending"])
+
+    def test_plan_rejects_too_many_steps(self):
+        with self.assertRaises(ValueError):
+            create_plan("Too large", [f"step {i}" for i in range(11)])
+
+
+class EventBusTests(unittest.TestCase):
+    def test_subscribe_publish_and_unsubscribe(self):
+        bus = EventBus()
+        received = []
+        unsubscribe = bus.subscribe("task.started", received.append)
+        self.assertEqual(bus.publish("task.started", {"id": "abc"}), 1)
+        self.assertEqual(received, [{"id": "abc"}])
+        unsubscribe()
+        self.assertEqual(bus.publish("task.started", {"id": "def"}), 0)
+
+
+class ApprovalTests(unittest.TestCase):
+    def test_approval_gate_records_decision_without_execution(self):
+        gate = ApprovalGate()
+        request = gate.request("Publish release", "User requested a release")
+        self.assertEqual(request.status, "pending")
+        self.assertEqual(gate.decide(request.id, True),
+                         f"Request {request.id} approved. No action was executed.")
+        self.assertEqual(gate.decide(request.id, False), "Request already approved.")
 
 
 class ProviderTests(unittest.TestCase):
