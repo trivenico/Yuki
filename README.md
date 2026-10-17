@@ -2,12 +2,16 @@
 
 Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
 
-**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
+**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. The new manifest planner is still an incremental foundation, not a fully autonomous project builder or production-grade tool runtime. There is no always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
 ## Guided provider setup
 
 Run `python main.py --setup` for first-run configuration. Yuki currently offers a mock/demo mode, local Ollama mode, and hybrid mode with explicitly allow-listed cloud task labels. The API key prompt is hidden; credentials are written to a local `.env` file with owner-only permissions on POSIX systems, never to `config.yaml` or terminal output. Shell environment variables take precedence over values in `.env`. Keep `.env` private and never commit it. Hybrid mode sends nothing to the cloud unless a task label is configured in `YUKI_CLOUD_TASKS` and the explicit cloud command is approved. This wizard configures providers; it does not install Ollama or download models for you.
+
+## Manifest-backed task planning (incremental)
+
+`core/manifest_task_agent.py` adds a bounded plan/act/observe loop that presents only explicitly granted manifest skills to the model, accepts strict JSON proposals, and routes actions through `YukiCoreAgent.dispatch_manifest_skill()`. Consequential actions pause with `approval_required`; a trusted UI must display the exact skill and arguments, obtain consent, issue a one-time action-bound token, then call `resume_approved()`. Regression tests cover unknown-tool denial, approval pause, valid approval, and mismatched-argument rejection. This planner is not yet wired into the main CLI/API or the existing `ApprovedTaskAgent`, and the approval UI/session identity is not yet implemented.
 
 ## Policy-enforced skill dispatch and operation approvals
 
