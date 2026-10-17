@@ -71,8 +71,9 @@ class SQLiteApprovalAuditLog:
         # Details are deliberately allowlisted scalar metadata; arbitrary strings
         # could accidentally carry prompts or sensitive arguments.
         safe_details: dict[str, str | int | float | bool | None] = {}
+        allowed_detail_keys = {"status", "steps", "stage", "risk", "attempt", "duration_ms", "retry_count", "reason_code"}
         for key, value in (details or {}).items():
-            if (not isinstance(key, str) or len(key) > 64
+            if (not isinstance(key, str) or key not in allowed_detail_keys or len(key) > 64
                     or type(value) not in (str, int, float, bool, type(None))
                     or (isinstance(value, str) and len(value) > 128)
                     or (isinstance(value, float) and (value != value or abs(value) == float("inf")))):
