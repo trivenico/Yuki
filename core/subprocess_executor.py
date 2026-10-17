@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import signal
 import subprocess
 import threading
 from typing import Any, Mapping, Sequence
@@ -54,13 +55,36 @@ class SubprocessExecutor:
                 if key not in self.allowed_env or not isinstance(value, str):
                     return WorkerResult(False, "environment_not_allowed")
                 child_env[key] = value
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
         try:
             process = subprocess.Popen(
                 list(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 cwd=cwd, env=child_env or {}, shell=False, close_fds=True,
+                start_new_session=(os.name == "posix"), creationflags=creationflags,
             )
         except (OSError, ValueError):
             return WorkerResult(False, "worker_start_failed")
+
+        def kill_worker_tree() -> None:
+            """Best-effort termination of the worker and descendants on supported OSes."""
+            if process.poll() is not None:
+                return
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                elif os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=2, check=False, shell=False,
+                    )
+                else:
+                    process.kill()
+            except (OSError, subprocess.SubprocessError):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
 
         captured: dict[str, bytes] = {"stdout": b"", "stderr": b""}
         exceeded = threading.Event()
@@ -76,10 +100,7 @@ class SubprocessExecutor:
                     total += len(chunk)
                     if total > self.max_response_bytes:
                         exceeded.set()
-                        try:
-                            process.kill()
-                        except OSError:
-                            pass
+                        kill_worker_tree()
                         break
                     chunks.append(chunk)
                 captured[name] = b"".join(chunks)
@@ -106,7 +127,7 @@ class SubprocessExecutor:
         try:
             process.wait(timeout=self.timeout_seconds)
         except subprocess.TimeoutExpired:
-            process.kill()
+            kill_worker_tree()
             process.wait()
             for thread in readers:
                 thread.join(timeout=1)
@@ -118,10 +139,7 @@ class SubprocessExecutor:
         if exceeded.is_set():
             return WorkerResult(False, "worker_output_too_large")
         if any(thread.is_alive() for thread in readers) or writer.is_alive():
-            try:
-                process.kill()
-            except OSError:
-                pass
+            kill_worker_tree()
             return WorkerResult(False, "worker_io_failed")
         if process.returncode is None:
             return WorkerResult(False, "worker_failed")
