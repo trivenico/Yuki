@@ -1,4 +1,12 @@
 """Golden regression scenarios that run offline without calling an LLM."""
+from pathlib import Path
+import sys
+
+# Support both direct script execution in CI and module-based test discovery.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from core.continuous_eval import EvalCase, run_dataset
 
 
@@ -32,8 +40,9 @@ def run_golden(evaluator):
 
 
 if __name__ == "__main__":
-    # Placeholder-safe baseline only validates dataset structure. CI should provide
-    # a fixture-backed evaluator before asserting product behavior.
+    # This verifies dataset shape, not application behavior. Fixture-backed behavior
+    # assertions must be added before these scenarios count as regression coverage.
     assert len(GOLDEN_CASES) >= 20
     assert len({case.case_id for case in GOLDEN_CASES}) == len(GOLDEN_CASES)
+    assert all(case.case_id and case.category and case.input_text for case in GOLDEN_CASES)
     print(f"Golden dataset structure OK: {len(GOLDEN_CASES)} cases")
