@@ -77,3 +77,41 @@ class ReminderQueue:
     def list(self) -> list[dict]:
         with self._lock:
             return [dict(item) for item in self._load()]
+
+
+
+def summarize_habit_streaks(entries, *, today=None):
+    """Summarize explicitly logged habit entries; never infer unrecorded behavior."""
+    from datetime import date, timedelta
+    if not isinstance(entries, (list, tuple)):
+        raise ValueError("entries must be a list of health log records.")
+    current = today or datetime.now(timezone.utc).date()
+    if isinstance(current, datetime):
+        current = current.date()
+    if not isinstance(current, date):
+        raise ValueError("today must be a date.")
+    dates_by_habit = {}
+    for item in entries:
+        if not isinstance(item, dict) or item.get("type") not in {"habit", "exercise"}:
+            continue
+        detail = item.get("detail")
+        stamp = item.get("occurred_at")
+        if not isinstance(detail, str) or not detail.strip() or not isinstance(stamp, str):
+            continue
+        try:
+            day = datetime.fromisoformat(stamp).date()
+        except ValueError:
+            continue
+        dates_by_habit.setdefault(detail.strip().casefold(), {"label": detail.strip(), "dates": set()})["dates"].add(day)
+    summaries = []
+    for item in dates_by_habit.values():
+        dates = item["dates"]
+        streak = 0
+        cursor = current
+        while cursor in dates:
+            streak += 1
+            cursor -= timedelta(days=1)
+        summaries.append({"habit": item["label"], "logged_days": len(dates), "current_streak_days": streak,
+                          "last_logged_date": max(dates).isoformat() if dates else None,
+                          "source": "explicit_user_logs"})
+    return sorted(summaries, key=lambda x: (-x["current_streak_days"], -x["logged_days"], x["habit"].casefold()))
