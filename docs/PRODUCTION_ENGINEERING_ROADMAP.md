@@ -16,6 +16,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 
 - [x] Apply OutputGuard to user-visible skill messages.
 - [x] Inspect structured skill result data as well as message text, so secrets cannot bypass a message-only guard.
+- [x] Extend credential-pattern detection to common quoted dictionary/JSON-like key-value output and cover it with runtime contract tests.
 - [x] Add behavioral tests for credential/private-key filtering, output truncation, fail-closed governance, recovery approval/verification, strict evaluator status, and agent signature verification where the optional crypto dependency is installed.
 - [ ] Wire output policy into every other response path (/ask, /task, cloud/provider responses, voice speech output) before claiming global output protection.
 - [ ] Add structured-data redaction beyond simple pattern matching and document false positives/false negatives. Regex output checks are defense-in-depth, not a DLP guarantee.
