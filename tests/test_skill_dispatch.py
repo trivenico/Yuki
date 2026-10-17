@@ -1,8 +1,11 @@
+import json
+import sys
 import unittest
 
 from core.action_approvals import ActionApprovalStore
 from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
+from core.subprocess_executor import SubprocessExecutor
 
 
 def make_manifest(**overrides):
@@ -30,6 +33,30 @@ class SkillDispatcherTests(unittest.TestCase):
         self.dispatcher = SkillDispatcher(capability_grants={"workspace.write", "workspace.read"},
                                           approval_store=self.store)
         self.dispatcher.register(make_manifest(), lambda args: {"saved": True})
+
+    def test_subprocess_registration_runs_validated_handler_through_worker(self):
+        manifest = make_manifest(skill_id="notes.worker", capabilities=["workspace.read"], risk="low")
+        dispatcher = SkillDispatcher(capability_grants={"workspace.read"})
+        script = (
+            "import json,sys; req=json.load(sys.stdin); "
+            "print(json.dumps({'ok':True,'result':{'output':{'saved':True}}}))"
+        )
+        dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
+                                        executor=SubprocessExecutor(timeout_seconds=3))
+        result = dispatcher.dispatch("notes.worker", {"text": "hello"})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.output, {"saved": True})
+
+    def test_subprocess_failure_does_not_expose_worker_diagnostics(self):
+        manifest = make_manifest(skill_id="notes.worker", capabilities=["workspace.read"], risk="low")
+        dispatcher = SkillDispatcher(capability_grants={"workspace.read"})
+        script = "import sys; sys.stderr.write('token=private-secret'); sys.exit(2)"
+        dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
+                                        executor=SubprocessExecutor(timeout_seconds=3))
+        result = dispatcher.dispatch("notes.worker", {"text": "hello"})
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "handler_failed")
+        self.assertNotIn("private-secret", str(result))
 
     def test_denies_unregistered_skill(self):
         self.assertEqual(self.dispatcher.dispatch("missing", {}).code, "skill_not_registered")
