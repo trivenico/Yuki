@@ -37,27 +37,33 @@ class YukiCoreAgent:
 
     @property
     def skills(self):
-        """Compatibility mapping for older callers; registry remains authoritative."""
         return {name: self.registry.get(name) for name in self.registry.names()}
 
     def available_skills(self):
         return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
-        """Run exactly one registered skill; never chain or infer tool calls."""
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
         if skill.requires_approval:
             approved = self.permission_gate.request(
-                action=f"skill:{skill.name}",
-                reason=f"User requested: {skill.description}",
-                risk=skill.risk,
+                action=f"skill:{skill.name}", reason=f"User requested: {skill.description}", risk=skill.risk
             )
             if not approved:
                 return AgentResponse(False, "Not executed: explicit human approval was not granted.",
                                      name, stage="permission_denied")
-        result = skill.execute(argument)
-        if not result.ok:
-            return AgentResponse(False, result.message, name, result.data, stage="observe")
-        return AgentResponse(True, result.message, name, result.data, stage="report")
+        try:
+            result = skill.execute(argument)
+            if isinstance(result, dict):
+                ok = bool(result.get("ok", True))
+                message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
+                data = {key: value for key, value in result.items() if key not in {"ok", "message"}}
+            else:
+                ok = bool(getattr(result, "ok", False))
+                message = str(getattr(result, "message", "Skill returned an unsupported result."))
+                data = getattr(result, "data", None)
+            return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
+        except Exception:
+            return AgentResponse(False, "Skill failed safely; detailed exception was not exposed.", name,
+                                 stage="observe")
