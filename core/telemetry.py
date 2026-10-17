@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import threading
 import time
@@ -62,7 +63,17 @@ class Telemetry:
             if isinstance(value, bool) or isinstance(value, (int, float)):
                 safe[key] = value
             elif isinstance(value, str):
-                safe[key] = value[:160]
+                # Redact credential-shaped values even if a caller puts them in
+                # an innocently named attribute.
+                cleaned = re.sub(
+                    r"""(?i)(api[_-]?key|access[_-]?token|password|client_secret)\s*[:=]\s*[^\s,;}'"]+""",
+                    r"\1=[REDACTED]", value,
+                )
+                cleaned = re.sub(
+                    r"-----BEGIN (?:RSA |EC |OPENSSH |PRIVATE )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |PRIVATE )?PRIVATE KEY-----",
+                    "[PRIVATE KEY REDACTED]", cleaned, flags=re.I | re.S,
+                )
+                safe[key] = cleaned[:160]
         return safe
 
     @contextmanager
@@ -82,12 +93,14 @@ class Telemetry:
                     span.set_attribute(key, value)
                 class SpanHandle:
                     def set_attribute(self, key, value):
-                        if key not in {"prompt", "completion", "secret", "token", "password", "credential", "arguments", "content"}:
-                            if isinstance(value, (str, int, float, bool)):
-                                span.set_attribute(str(key)[:80], value if not isinstance(value, str) else value[:160])
+                        clean = self_outer._attributes({key: value})
+                        metadata.update(clean)
+                        for safe_key, safe_value in clean.items():
+                            span.set_attribute(safe_key, safe_value)
+                self_outer = self
                 handle = SpanHandle()
             else:
-                handle = {"set_attribute": lambda *_: None}
+                handle = {"set_attribute": lambda key, value: metadata.update(self._attributes({key: value}))}
             yield handle
             ok = True
         except Exception as exc:
