@@ -15,7 +15,7 @@ class WikiSkill(Skill):
         if not query or len(query) > 180:
             return SkillResult(False, "Provide a short Wikipedia article title.")
         if "en.wikipedia.org" not in self.reader.allowed_hosts:
-            return SkillResult(False, "Add en.wikipedia.org to web_allowed_hosts to enable Wikipedia lookup.")
+            return SkillResult(False, "Wikipedia is not enabled. Add en.wikipedia.org to web_allowed_hosts to enable lookup.")
         url = "https://en.wikipedia.org/wiki/" + quote(query.replace(" ", "_"), safe="()_,-")
         try:
             result = self.reader.execute(url)
