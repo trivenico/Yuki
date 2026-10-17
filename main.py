@@ -46,6 +46,8 @@ def build_agent(config):
         gmail_credentials=workspace / "google_oauth_client.json",
         gmail_token=workspace / "google_token.json",
         web_allowed_hosts=config["web_allowed_hosts"],
+        plugin_discovery_enabled=config["plugin_discovery_enabled"],
+        trusted_plugin_modules=config["trusted_plugin_modules"] or None,
     )
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
