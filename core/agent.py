@@ -50,7 +50,7 @@ class YukiCoreAgent:
         # intentionally stricter than per-skill defaults so model output cannot
         # invoke a state-changing or external capability without human confirmation.
         approved = self.permission_gate.request(
-            action=f"skill:{skill.name}", reason=f"User requested: {skill.description}", risk=skill.risk
+            action=f"skill:{skill.name}", reason=f"Invoke {skill.name} ({skill.description}); argument={argument[:500]!r}", risk=skill.risk
         )
         if not approved:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
