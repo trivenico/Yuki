@@ -73,6 +73,20 @@ class SkillDispatcher:
 
         self.register(manifest, invoke)
 
+    def describe_skills(self) -> list[dict[str, Any]]:
+        """Return bounded, non-executable catalog metadata for a model planner."""
+        return [
+            {
+                "skill_id": skill_id,
+                "version": manifest.version,
+                "risk": manifest.risk,
+                "capabilities": sorted(manifest.capabilities),
+                "input_schema": manifest.input_schema,
+            }
+            for skill_id, (manifest, _handler) in sorted(self._skills.items())
+            if manifest.capabilities.issubset(self._grants)
+        ]
+
     @staticmethod
     def action_for(manifest: SkillManifest, arguments: dict[str, Any]) -> dict[str, Any]:
         """Canonical approval target; UI must display this exact operation before issuing approval."""
