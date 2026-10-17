@@ -103,7 +103,7 @@ class YukiCoreAgent:
                         )
                     else:
                         response = AgentResponse(True, "Skill completed successfully.",
-                                                  skill_id, data_guard.text, stage="report")
+                                                  skill_id, result.output, stage="report")
             for key, value in (("result_ok", response.ok), ("result_stage", response.stage)):
                 if hasattr(span, "set_attribute"):
                     span.set_attribute(key, value)
