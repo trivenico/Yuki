@@ -48,6 +48,8 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
+  /provider select NAME           Select an implemented provider adapter
+  /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /task add DESCRIPTION           Add a task
   /task list                      List tasks
@@ -82,6 +84,34 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     if command == "/status":
         current = providers.current()
         return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'none'}."
+    if command == "/provider" or command.startswith("/provider "):
+        parts = command.split(maxsplit=2)
+        if len(parts) != 3 or parts[1] != "select":
+            return "Usage: /provider select NAME"
+        result = providers.select(parts[2])
+        if result.startswith("Selected provider:"):
+            try:
+                adapter = providers.create_selected_adapter()
+                if adapter is None:
+                    return "Provider selection failed: no adapter is available."
+                agent.set_provider(adapter)
+            except Exception:
+                return "Provider selection failed. The previous provider remains active."
+        write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
+        return result
+    if command == "/dashboard":
+        current = providers.current()
+        available_tools = ", ".join(policy.allowed_tools())
+        tasks_open = sum(1 for item in tasks if isinstance(item, dict) and not item.get("completed", False))
+        return (
+            "Yuki dashboard\\n"
+            f"Provider: {current.name if current else 'none'} ({agent.status()})\\n"
+            f"Allowed tools: {available_tools or 'none'}\\n"
+            f"Open tasks: {tasks_open}\\n"
+            f"Saved notes: {len(memory)}\\n"
+            f"Learning records: {len(load_history())}\\n"
+            f"Recent audit events: {len(load_audit_events())}"
+        )
     if command == "/providers":
         return "\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
@@ -172,8 +202,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 
 def main():
-    agent = YukiAgent()
     providers = ProviderManager()
+    agent = YukiAgent(provider=providers.create_selected_adapter())
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
