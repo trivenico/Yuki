@@ -23,6 +23,7 @@ from .project_skill import ProjectSkill
 from .content_marketer import ContentMarketerSkill
 from .seo_optimizer import SEOOptimizerSkill
 from .monetization_advisor import MonetizationAdvisorSkill
+from companion.identity_manager import IdentityManager
 
 
 class SkillRegistry:
@@ -64,6 +65,6 @@ class SkillRegistry:
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
-            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(), ProjectSkill(),
+            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / 'yuki_identities.json')), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
         ))
