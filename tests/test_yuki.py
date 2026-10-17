@@ -10,7 +10,7 @@ import yuki_security
 from providers import MockProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
-from yuki_security import SecurityPolicy, write_audit_event
+from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 
 
 class ProviderTests(unittest.TestCase):
@@ -45,6 +45,10 @@ class ToolTests(unittest.TestCase):
 
 
 class SecurityTests(unittest.TestCase):
+    def test_sanitizer_redacts_credentials(self):
+        self.assertNotIn("supersecretvalue123", sanitize_text("api_key=supersecretvalue123"))
+        self.assertIn("[REDACTED]", sanitize_text("api_key=supersecretvalue123"))
+
     def test_policy_defaults_to_allow_list(self):
         policy = SecurityPolicy(allowed_tools=TOOLS.keys())
         self.assertTrue(policy.authorize_tool("calculate"))
