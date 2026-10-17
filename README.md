@@ -16,11 +16,12 @@ The current Python prototype includes:
 - A local metadata-only audit log for selected actions
 - Bounded plan objects that do not execute actions
 - Explicit perception-to-report workflow state machine with guarded transitions
+- Guarded task preparation connecting plan, workflow, tool policy, approval requests, and lifecycle events (preparation only; no execution)
 - A small in-process event bus for agent lifecycle events
 - An in-memory human-approval gate for consequential actions
 - Unit tests and a GitHub Actions workflow
 
-**The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries are registry metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, or cybersecurity scanning engine are implemented yet. The planner, event bus, approval gate, and workflow state machine are foundations only: they are not yet connected into an end-to-end autonomous execution loop, and approval requests are currently in-memory. The workflow state machine tracks state and never executes tools itself. No API key is required to develop or test the current foundation.
+**The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries are registry metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, or cybersecurity scanning engine are implemented yet. The planner, event bus, approval gate, workflow state machine, and guarded task-preparation orchestrator are foundations only: they are not yet connected into an end-to-end autonomous execution loop, and approval requests are currently in-memory. The orchestrator can prepare a plan, check required tool names against policy, emit lifecycle events, and record approval decisions, but it never executes a tool. The workflow state machine tracks state and never executes tools itself. No API key is required to develop or test the current foundation.
 
 ## Voice identity
 
