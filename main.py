@@ -23,6 +23,9 @@ from voice.stt import FasterWhisperSTT, STTError
 from voice.tts import LocalTTS, TTSError
 from voice.wakeword import WakeWordDetector, WakeWordError
 from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
+from providers.factory import create_provider
+from providers.hybrid import HybridProvider
+from yuki_agent import YukiAgent
 
 
 def _ask_approval(request):
@@ -57,6 +60,8 @@ def print_help():
   /help                          Show commands
   /status                        Show capability status
   /skills                        List registered skills
+  /ask PROMPT                    Ask the configured AI provider (no tools executed)
+  /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
   /memory add TEXT               Save a local note (approval required)
@@ -85,7 +90,7 @@ def print_help():
   /dashboard                     Open optional Textual supervision dashboard
   /quit
 
-No LLM reasoning loop, always-on microphone, autonomous project editing, or automatic firewall response is enabled.
+No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
 """)
 
 
@@ -94,6 +99,7 @@ def main():
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
+    ai = YukiAgent(create_provider(config))
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -144,7 +150,7 @@ def main():
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
-            print(f"Provider: {config['provider']} (no live LLM loop connected)")
+            print(f"Provider: {config['provider']} (configured adapter; availability depends on runtime/model credentials)")
             print(f"Voice: {config['voice_enabled']}; language behavior: {config['language_behavior']}; voice style preference: {config['voice_style']}")
             print(f"Spoken reply policy: {config['spoken_reply_policy']} (end-to-end reply loop not connected)")
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
@@ -153,6 +159,37 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/ask "):
+            prompt = command[len("/ask "):].strip()
+            if not prompt:
+                print("Yuki > Provide a prompt: /ask explain a Python decorator")
+                continue
+            print("Yuki > " + ai.ask(prompt))
+        elif command.startswith("/ask-cloud "):
+            payload = command[len("/ask-cloud "):]
+            if "|" not in payload:
+                print("Yuki > Use /ask-cloud TASK | PROMPT")
+                continue
+            task, prompt = payload.split("|", 1)
+            task, prompt = task.strip(), prompt.strip()
+            provider = ai.provider
+            if not isinstance(provider, HybridProvider):
+                print("Yuki > Cloud task routing requires provider: hybrid.")
+                continue
+            if not task or not prompt:
+                print("Yuki > Provide both a task name and prompt.")
+                continue
+            if task.lower() not in provider.cloud_tasks:
+                print("Yuki > This task is not in YUKI_CLOUD_TASKS; no data was sent.")
+                continue
+            if not _confirm("ai:cloud_request", f"Send this prompt to the configured cloud provider for task {task!r}? Prompt length: {len(prompt)} characters.", "medium"):
+                print("Yuki > Cloud request cancelled; no data was sent.")
+                continue
+            try:
+                answer = provider.generate_for(task, prompt)
+                print("Yuki > " + answer)
+            except Exception as exc:
+                print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
         elif command.startswith("/skill "):
             parts = command.split(maxsplit=2)
             name, argument = parts[1], parts[2] if len(parts) > 2 else ""
