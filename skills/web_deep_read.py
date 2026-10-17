@@ -1,6 +1,7 @@
 """Bounded deep-read skill for explicitly allow-listed public HTTPS hosts."""
 from skills.base import Skill, SkillResult
 from skills.web_skill import WebSkill, WebSkillError
+from core.prompt_guard import scan_untrusted_text
 
 
 class DeepReadSkill(Skill):
@@ -24,4 +25,5 @@ class DeepReadSkill(Skill):
             "text": text[:12000],
             "characters_returned": min(len(text), 12000),
             "untrusted_content": True,
+            "prompt_injection_scan": scan_untrusted_text(text),
         })
