@@ -7,10 +7,16 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 ## Connected capabilities in this revision
 
 - `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
-- `skills/registry.py`: registers read-only time/system/files plus interview practice, allow-listed public web fetch and optional read-only Gmail search.
+- `skills/registry.py`: registers time/system/files, interview practice, allow-listed web fetch/deep-read, local knowledge graph, local health log, defensive remediation suggestions, optional Playwright browser reading, YouTube caption retrieval, and optional read-only Gmail search. Optional integrations fail safely when dependencies are missing.
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
 - `knowledge/indexer.py`: indexes supported text files explicitly selected inside the configured workspace.
+- `knowledge/knowledge_graph.py`: local entities, typed relations, and Obsidian Markdown export. This is explicit CRUD/export; no automatic “dream cycle” is implemented.
+- `companion/health_tracker.py`: opt-in local health/habit notes and CSV export. It is not medical advice; medication reminders, streak analytics and proactive health recommendations are not implemented.
+- `automation/workflow_engine.py`: bounded allow-listed step runner with approval gates; it does not start schedulers, webhooks, or background jobs.
+- `core/prompt_guard.py`: heuristic prompt-injection signal scanning for untrusted browser/deep-read text. It is not a security boundary or proof that text is safe.
+- `automation/browser.py` / `skills/browser_skill.py`: optional visible Playwright Chromium page reader restricted to configured HTTPS hosts. It reads page text only; no form submission, arbitrary clicking, downloads, or authenticated browser profile is exposed.
+- `skills/youtube_skill.py`: optional caption fetcher for a YouTube video ID/URL when captions are available.
 - `voice/stt.py`: opt-in finite recording and faster-whisper transcription; language defaults to automatic detection, and detected language/probability are returned by STT. Recording is only initiated by an explicit command and approval.
 - `voice/language.py`: tested language-tag normalization, same-language reply instruction helper, and spoken-reply policy gate. These helpers do not supply an LLM or guarantee detection accuracy.
 - Multilingual voice preference defaults: `language_behavior: auto_detect`, `voice_style: natural_realistic_female`, and `spoken_reply_policy: every_reply_when_voice_mode_active`. The current runtime has no conversational LLM response loop, so automatic same-language answers and speaking every generated answer are not yet end-to-end wired. A natural female voice depends on selecting and testing a compatible local voice model; the project does not bundle or claim one.
