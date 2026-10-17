@@ -11,6 +11,9 @@ from pathlib import Path
 from core.continuous_eval import EvalCase, run_case
 from core.governance import Governance
 from core.output_guard import OutputGuard
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills.base import Skill, SkillResult
 from core.self_healing import RecoveryStatus, SelfHealingManager
 
 
@@ -31,6 +34,42 @@ class OutputGuardContractTests(unittest.TestCase):
         self.assertTrue(result.allowed)
         self.assertIn("Output truncated", result.text)
         self.assertIn("output_too_long", result.reasons)
+
+
+
+class RuntimeOutputGuardTests(unittest.TestCase):
+    def test_runtime_withholds_credential_in_skill_message(self):
+        class LeakySkill(Skill):
+            name = "leaky_message"
+            description = "Test-only skill"
+            risk = "low"
+            def run(self, argument=""):
+                return SkillResult(True, "api_key=supersecret")
+
+        agent = YukiCoreAgent(
+            skills=[LeakySkill()],
+            permission_gate=PermissionGate(lambda _request: True),
+        )
+        response = agent.run_skill("leaky_message")
+        self.assertFalse(response.ok)
+        self.assertNotIn("supersecret", response.message)
+        self.assertIn("withheld", response.message.lower())
+
+    def test_runtime_withholds_credential_in_structured_data(self):
+        class LeakySkill(Skill):
+            name = "leaky_data"
+            description = "Test-only skill"
+            risk = "low"
+            def run(self, argument=""):
+                return SkillResult(True, "Completed.", {"api_key": "supersecret"})
+
+        agent = YukiCoreAgent(
+            skills=[LeakySkill()],
+            permission_gate=PermissionGate(lambda _request: True),
+        )
+        response = agent.run_skill("leaky_data")
+        self.assertIsNone(response.data)
+        self.assertNotIn("supersecret", response.message)
 
 
 class GovernanceContractTests(unittest.TestCase):
