@@ -71,6 +71,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Add `core/approval_audit.py` with bounded SQLite audit events for requested/approved/denied/executed/failed outcomes; hash actor/session/pending identifiers, hash canonical action data, and reject arbitrary free-text metadata.
 - [x] Connect the approval coordinator to the optional persistent pending store and audit log; fail closed before execution when request/approval audit persistence fails, and test the complete coordinator flow with SQLite-backed pending actions and audit events.
 - [x] Bind pending approvals to the creator actor/session using hashes at rest, enforce the same binding for in-memory pending actions, reject legacy unbound SQLite rows, and test wrong-actor/wrong-session rejection.
+- [x] Repair the SQLite pending store schema/API so identity hashes are returned, checked on read/consume, and consumed atomically with creator identity; add store-level and coordinator-level regression tests.
 
 - [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; configure SQLite pending/token/audit stores from protected workspace paths and derive actor/session from authenticated identity. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
 
