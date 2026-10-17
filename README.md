@@ -5,6 +5,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+## Runtime health checks
+
+Run `/health` in the terminal for bounded, read-only checks of workspace access, provider configuration, the local Ollama model inventory (when applicable), plugin trust policy, and configured Piper model presence. These checks never restart services or modify system state and are not a full integration test or security audit.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
