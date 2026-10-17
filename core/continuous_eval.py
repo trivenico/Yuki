@@ -47,8 +47,13 @@ def run_case(case: EvalCase, evaluator: Callable[[str], object]) -> EvalResult:
     for forbidden in case.expected_not_contains:
         if forbidden.casefold() in folded:
             failures.append(f"contains forbidden phrase: {forbidden!r}")
-    if case.expected_ok is not None and ok is not None and bool(ok) != case.expected_ok:
-        failures.append(f"expected ok={case.expected_ok}, got {ok}")
+    if case.expected_ok is not None:
+        if ok is None:
+            failures.append("expected an explicit ok status, but evaluator returned none")
+        elif not isinstance(ok, bool):
+            failures.append("expected ok status to be a boolean")
+        elif ok != case.expected_ok:
+            failures.append(f"expected ok={case.expected_ok}, got {ok}")
     return EvalResult(case.case_id, not failures, tuple(failures), output[:2000])
 
 
