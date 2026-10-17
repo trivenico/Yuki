@@ -13,6 +13,14 @@ Yuki now has portable data/config path resolution and starter launchers for Wind
 
 The registered `course_coach` skill provides bounded workflows for `explain TOPIC`, `lab TASK`, `quiz TOPIC`, `study_plan GOAL`, and `interview ROLE`. It is a workflow scaffold, not a connected AI tutor: it does not execute lab commands, access course accounts, or submit assessments. Tailored explanations, interactive quiz evaluation, and adaptive interview feedback require a real LLM provider integration.
 
+## Ruflo-inspired capability infrastructure
+
+- `skills/discovery.py` is a discovery prototype that scans skill modules and reports import failures. It is **not wired into the default registry** because importing arbitrary Python executes it with Yuki's permissions; a reviewed plugin trust policy is required first.
+- `core/capabilities.py` exports registered skill descriptions as JSON for future UI use. It does not create a web dashboard.
+- `core/token_usage.py` records local session token counts, distinguishes estimates from exact provider metadata, and reports threshold/spike alerts. It is not yet connected to Ollama or a real LLM provider, so no actual model usage is being monitored yet.
+- `core/mcp_client.py` supports allow-listed HTTPS MCP discovery and approved tool calls, but it is not connected to the runtime command/registry/UI flow. Discovery never grants permission to execute a tool.
+- See [Ruflo adoption audit](docs/RUFLO_ADOPTION_AUDIT.md) for limitations and security requirements.
+
 ## Connected capabilities in this revision
 
 - `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
