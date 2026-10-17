@@ -1,10 +1,11 @@
-"""Bounded, permission-gated tool loop. No arbitrary shell or autonomous tool chaining."""
+"""Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
+from skills.registry import SkillRegistry
 
 
 @dataclass(frozen=True)
@@ -17,26 +18,34 @@ class AgentResponse:
 
 
 class YukiCoreAgent:
-    """One intent -> one allow-listed skill -> explicit approval -> observed result."""
+    """One intent -> registered skill -> explicit approval -> observed result."""
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
-                 permission_gate: Optional[PermissionGate] = None):
-        available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
-        self.skills = {skill.name: skill for skill in available}
-        if len(self.skills) != len(available):
-            raise ValueError("Skill names must be unique.")
+                 permission_gate: Optional[PermissionGate] = None,
+                 registry: Optional[SkillRegistry] = None):
+        if registry is not None and skills is not None:
+            raise ValueError("Pass either skills or registry, not both.")
+        if registry is not None:
+            self.registry = registry
+        else:
+            available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
+            self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
 
+    @property
+    def skills(self):
+        """Compatibility mapping for older callers; registry remains authoritative."""
+        return {name: self.registry.get(name) for name in self.registry.names()}
+
     def available_skills(self):
-        return [{"name": skill.name, "description": skill.description, "risk": skill.risk}
-                for skill in self.skills.values()]
+        return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
-        """Plan/check/ask/act/observe/report for exactly one registered skill."""
-        skill = self.skills.get(name)
+        """Run exactly one registered skill; never chain or infer tool calls."""
+        skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
         if skill.requires_approval:
