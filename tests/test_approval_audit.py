@@ -45,10 +45,10 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
     def test_event_order_and_limit(self):
         for i in range(3):
             self.audit.record(event_type="requested", skill_id="notes.read",
-                              action={"step": i}, outcome="pending", details={"step": i})
+                              action={"step": i}, outcome="pending", details={"attempt": i})
         events = self.audit.list_events(limit=2)
         self.assertEqual(len(events), 2)
-        self.assertEqual(events[0]["details"]["step"], 2)
+        self.assertEqual(events[0]["details"]["attempt"], 2)
 
 
 if __name__ == "__main__":
