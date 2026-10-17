@@ -18,15 +18,19 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Inspect structured skill result data as well as message text, so secrets cannot bypass a message-only guard.
 - [x] Extend credential-pattern detection to common quoted dictionary/JSON-like key-value output and cover it with runtime contract tests.
 - [x] Add behavioral tests for credential/private-key filtering, output truncation, fail-closed governance, recovery approval/verification, strict evaluator status, and agent signature verification where the optional crypto dependency is installed.
-- [ ] Wire output policy into every other response path (/ask, /task, cloud/provider responses, voice speech output) before claiming global output protection.
+- [x] Wire output policy into terminal /ask, /task, allow-listed /ask-cloud, and explicit /voice speak paths.
+- [ ] Wire output policy into every other response path, including any future dashboard, API, or automatic spoken-reply paths, before claiming global output protection.
 - [ ] Add structured-data redaction beyond simple pattern matching and document false positives/false negatives. Regex output checks are defense-in-depth, not a DLP guarantee.
 
 ## Phase 2 — real evaluation and CI quality gates
 **Exit gate:** golden scenarios invoke deterministic fixtures or a configured test runtime and fail on behavior regressions.
 
-- [ ] Replace placeholder scenario inputs/expected phrases with executable fixtures tied to real Yuki behavior.
-- [ ] Add coverage reporting for safety-critical modules and a documented minimum threshold.
-- [ ] Add dependency vulnerability and secret scanning to CI; pin production dependencies with a reviewed update policy.
+- [ ] Replace all 20 placeholder scenario inputs/expected phrases with executable fixtures tied to real Yuki behavior.
+- [x] Add executable behavior checks for real agent unknown-skill denial, approval denial, secret withholding, and output truncation using the golden case IDs.
+- [x] Add output-guard coverage reporting and an 85% minimum CI threshold.
+- [ ] Expand coverage thresholds to permissions, agent runtime, providers, and other safety-critical modules.
+- [x] Add pip-audit dependency vulnerability scanning to CI.
+- [ ] Add secret scanning, pin production dependencies with hashes, and establish a reviewed update policy.
 - [ ] Add supported Python version matrix and package/startup smoke tests.
 - [ ] Publish test reports as CI artifacts without including prompts, secrets, or personal data.
 
@@ -76,4 +80,4 @@ Status: active engineering plan. A module is not considered production-ready unt
 
 ## Current scope of the active pull request
 
-The current PR is still a draft. The new output guard integration covers YukiCoreAgent.run_skill only; it does not yet cover every CLI/provider/task/voice response path. The new contract tests exercise safety helpers but do not constitute a full end-to-end benchmark. Do not merge until CI has passed for the latest head SHA.
+The current PR is still a draft. OutputGuard now covers YukiCoreAgent.run_skill plus terminal /ask, /task, allow-listed /ask-cloud, and explicit /voice speak outputs. This is not a guarantee for future API/dashboard or automatic voice paths. Four golden case IDs now have executable behavior tests; the remaining golden cases still need behavior fixtures. CI includes pip-audit and an 85% output-guard coverage gate. Do not merge until CI has passed for the latest head SHA.
