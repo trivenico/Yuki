@@ -47,6 +47,13 @@ class TelemetryIntegrationTests(unittest.TestCase):
         self.assertTrue(any(event["name"] == "provider.task_plan" for event in events))
         self.assertNotIn("confidential user goal", json.dumps(events))
 
+    def test_provider_answer_is_guarded_at_yuki_agent_boundary(self):
+        telemetry = Telemetry(enabled=True)
+        ai = YukiAgent(self.FakeProvider("api_key=supersecret"), telemetry=telemetry)
+        answer = ai.ask("what is my key?")
+        self.assertNotIn("supersecret", answer)
+        self.assertIn("withheld", answer.lower())
+
 
     def test_agent_skill_call_records_status_without_arguments(self):
         telemetry = Telemetry(enabled=True)
