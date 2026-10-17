@@ -27,7 +27,8 @@ class SecurityPolicy:
     """Default-deny policy for tool names; never permits arbitrary shell execution."""
 
     def __init__(self, allowed_tools=None):
-        self._allowed_tools = set(allowed_tools or {"time", "list_files", "save_note", "calculate"})
+        defaults = {"time", "list_files", "save_note", "calculate"}
+        self._allowed_tools = set(defaults if allowed_tools is None else allowed_tools)
 
     def authorize_tool(self, name):
         return isinstance(name, str) and name in self._allowed_tools
