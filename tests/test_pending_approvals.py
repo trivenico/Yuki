@@ -16,27 +16,27 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                        "capabilities": ["workspace.write"]}
 
     def test_pending_action_survives_recreation(self):
-        pending = self.store.put("notes.write", self.arguments, self.action)
+        pending = self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
         restarted = SQLitePendingApprovalStore(self.path, ttl_seconds=60, max_pending=2)
         found = restarted.get(pending.pending_id)
         self.assertIsNotNone(found)
         self.assertEqual(found.action, self.action)
 
     def test_consume_is_one_time(self):
-        pending = self.store.put("notes.write", self.arguments, self.action)
+        pending = self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
         self.assertIsNotNone(self.store.consume(pending.pending_id))
         self.assertIsNone(self.store.consume(pending.pending_id))
 
     def test_deny_removes_pending(self):
-        pending = self.store.put("notes.write", self.arguments, self.action)
+        pending = self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
         self.assertTrue(self.store.deny(pending.pending_id))
         self.assertFalse(self.store.deny(pending.pending_id))
 
     def test_capacity_is_bounded(self):
-        self.store.put("notes.write", self.arguments, self.action)
-        self.store.put("notes.write", self.arguments, self.action)
+        self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
+        self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
         with self.assertRaises(RuntimeError):
-            self.store.put("notes.write", self.arguments, self.action)
+            self.store.put("notes.write", self.arguments, self.action, actor="owner", session_id="cli-session")
 
     def test_oversized_snapshot_rejected(self):
         with self.assertRaises(ValueError):
