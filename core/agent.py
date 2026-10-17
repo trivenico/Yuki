@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
 from core.output_guard import OutputGuard
+from core.skill_dispatch import SkillDispatcher
 from core.telemetry import Telemetry
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
@@ -25,7 +26,8 @@ class YukiCoreAgent:
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
                  registry: Optional[SkillRegistry] = None,
-                 telemetry: Optional[Telemetry] = None):
+                 telemetry: Optional[Telemetry] = None,
+                 dispatcher: Optional[SkillDispatcher] = None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -36,6 +38,7 @@ class YukiCoreAgent:
         self.permission_gate = permission_gate or PermissionGate()
         self.output_guard = OutputGuard()
         self.telemetry = telemetry if telemetry is not None else Telemetry(enabled=True)
+        self.dispatcher = dispatcher
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
@@ -57,6 +60,51 @@ class YukiCoreAgent:
                 "result_stage": response.stage,
             }
             for key, value in attributes.items():
+                if hasattr(span, "set_attribute"):
+                    span.set_attribute(key, value)
+                elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                    span["set_attribute"](key, value)
+            return response
+
+    def dispatch_manifest_skill(self, skill_id: str, arguments: dict, *,
+                                approval_token: str | None = None,
+                                actor: str | None = None,
+                                session_id: str | None = None) -> AgentResponse:
+        """Run a manifest-backed skill through the policy dispatcher.
+
+        Consequential actions require a pre-issued, action-bound approval token.
+        This method never prompts for or fabricates consent.
+        """
+        with self.telemetry.span("agent.dispatch_manifest_skill",
+                                attributes={"skill_id": skill_id}) as span:
+            if self.dispatcher is None:
+                response = AgentResponse(False, "Blocked: the policy dispatcher is not configured.",
+                                         skill_id, stage="blocked")
+            else:
+                result = self.dispatcher.dispatch(
+                    skill_id, arguments, approval_token=approval_token,
+                    actor=actor, session_id=session_id,
+                )
+                if not result.ok:
+                    response = AgentResponse(
+                        False, f"Skill not executed ({result.code}).", skill_id,
+                        stage="blocked" if result.code in {
+                            "skill_not_registered", "capability_denied",
+                            "approval_token_required", "approval_invalid_or_expired",
+                            "invalid_input",
+                        } else "observe",
+                    )
+                else:
+                    data_guard = self.output_guard.check(result.output)
+                    if not data_guard.allowed or "output_too_long" in data_guard.reasons:
+                        response = AgentResponse(
+                            False, "[Skill output withheld by safety policy.]",
+                            skill_id, stage="observe",
+                        )
+                    else:
+                        response = AgentResponse(True, "Skill completed successfully.",
+                                                  skill_id, data_guard.text, stage="report")
+            for key, value in (("result_ok", response.ok), ("result_stage", response.stage)):
                 if hasattr(span, "set_attribute"):
                     span.set_attribute(key, value)
                 elif isinstance(span, dict) and callable(span.get("set_attribute")):
