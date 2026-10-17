@@ -1,66 +1,73 @@
 # Yuki
 
-Yuki is an early-stage personal AI-agent project designed to combine a personal companion, developer assistance, and defensive cybersecurity tools behind a modular architecture.
+Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
 
-**Honest readiness status:** Yuki is not yet a full, production-ready autonomous assistant. The repository contains working foundations and guarded modules, but the real LLM reasoning loop, end-to-end project building, always-on wake-word pipeline, desktop dashboard, and production-hardening are not complete. Do not treat CI passing as proof that all features are production-ready.
+**Readiness status: not production-ready yet.** There is no live LLM-driven ReAct/tool-calling loop, autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
-## What is implemented now
+## Connected capabilities in this revision
 
-- `main.py`: guarded terminal runtime wired to the skill registry, explicit approval gate, local memory, reminders, opt-in voice adapters, and optional security modules.
-- `yuki.py`: legacy prototype with task/learning records, mock provider, allow-listed tools, and metadata-only audit events.
-- `skills/registry.py`: validated registry that rejects duplicate or invalid skill names.
-- `companion/memory.py`: bounded local JSON memory with add/list/delete/clear. The CLI confirms writes and destructive actions.
-- `companion/proactive.py`: timezone-aware reminder queue; due reminders are surfaced only when requested, never used to trigger arbitrary actions.
-- `voice/tts.py`: optional local pyttsx3 speech output.
-- `voice/stt.py`: optional faster-whisper transcription of a selected audio file; no microphone or wake-word detector.
-- `hackback/sandbox.py`: optional Docker runner disabled by default, requiring a digest-pinned image allow-list and approval.
-- `hackback/recon.py`: optional limited Nmap inventory restricted to an explicitly allow-listed private IP and approval.
-- `hackback/exploit_runner.py`: fail-closed placeholder; Metasploit exploit execution is not implemented.
-- Unit tests and GitHub Actions checks.
+- `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
+- `skills/registry.py`: registers read-only time/system/files plus interview practice, bounded public web fetch and optional read-only Gmail search.
+- `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
+- `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
+- `knowledge/indexer.py`: indexes supported text files explicitly selected inside the configured workspace.
+- `voice/stt.py`: opt-in finite recording and faster-whisper transcription; recording is only initiated by an explicit command and approval.
+- `voice/wakeword.py`: optional openWakeWord adapter for a locally supplied model; finite listening is explicit. It does not train a custom model.
+- `voice/tts.py`: optional Piper local speech generation/playback, or the pyttsx3 backend. Piper executable and compatible model must be installed separately.
+- `voice/speaker_verification.py`: fail-closed placeholder; no real speaker model is claimed.
+- `defense/ids.py`: bounded packet capture and port-scan alerts; alerts never automatically change firewall rules.
+- `defense/firewall.py`: human-approval boundary and dry-run simulation. **Live firewall mutation is disabled** until durable rule tracking, expiry, and recovery are implemented.
+- `hackback/sandbox.py`: opt-in Docker runner with a digest-pinned allow-list, network disabled, read-only root, dropped capabilities, resource limits, and explicit approval.
+- `hackback/recon.py`: limited Nmap scan of an explicitly allow-listed private IP with approval.
+- `hackback/exploit_runner.py`: fail-closed; Metasploit execution is not implemented.
+- `skills/email_skill.py`: read-only Gmail search using user-owned OAuth credentials; sending email is not implemented.
+- `ui/dashboard.py`: optional Textual status/supervision interface; sensitive operations remain in the approval-gated terminal.
 
-## Not complete yet
+## Install
 
-- No real Ollama/OpenAI/other LLM tool-calling loop is connected to `main.py`.
-- No end-to-end autonomous project builder that edits code, runs tests, fixes failures, presents diffs, and rolls back.
-- No microphone capture, wake-word detector, live speech conversation, or voice interruption controls.
-- No graphical/Textual permission dashboard.
-- No Gmail/calendar integration, general OSINT engine, or production-grade security scanner.
-- No working Metasploit integration or independent security review.
+Python 3.10+ and PyYAML:
 
-## Install and run
-
-Python 3.10+ and PyYAML are required.
-
-```bash
+```sh
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 python main.py
 ```
 
-The legacy CLI remains available with `python yuki.py`. Browser-only GitHub cannot run local microphone, Docker, Nmap, or speech-model workloads.
+Optional dependencies are separate:
 
-## Guarded core commands
+```sh
+python -m pip install -r requirements-voice.txt
+python -m pip install -r requirements-ui.txt
+python -m pip install -r requirements-email.txt
+```
 
-- `/help`, `/status`, `/skills`
-- `/skill time`, `/skill system`, `/skill files .`
-- `/memory add TEXT`, `/memory list`, `/memory delete ID`, `/memory clear`
+Voice needs `YUKI_VOICE_ENABLED=true`, a local Piper executable/model (if using Piper), and a supported audio device. Wake-word detection also requires `YUKI_WAKEWORD_ENABLED=true` and a local compatible model file configured in `config.yaml`. No continuous listener runs in the background. faster-whisper can download model weights on first use.
+
+Gmail is disabled by default. To opt in, set `YUKI_GMAIL_ENABLED=true`, create your own OAuth client file locally, and complete Google's OAuth flow. Token files must remain private. The integration is read-only.
+
+The Textual dashboard is launched from the guarded runtime with `/dashboard`. Browser-only GitHub cannot access local microphones, run Docker/Nmap, or run local voice models.
+
+## Runtime commands
+
+- `/help`, `/status`, `/skills`, `/skill NAME [ARG]`
+- `/plan GOAL` — proposal only, no automatic execution
+- `/memory add TEXT`, `/memory list`, `/memory search QUERY`, `/memory delete ID`, `/memory clear`
+- `/knowledge index RELATIVE_PATH`
 - `/reminder add ISO_DATETIME | TEXT`, `/reminders`, `/reminders due`
-- `/voice status`, `/voice speak TEXT`, `/voice transcribe AUDIO_PATH`
-- `/security status`, `/security recon PRIVATE_IP`
-- `/sandbox status`, `/sandbox run IMAGE | ARGS`, `/metasploit status`
-- `/quit`
-
-Each skill, voice, scan, or sandbox action requests approval. Voice, recon, and sandbox are disabled by default. To use optional speech adapters, install `python -m pip install -r requirements-voice.txt` and set `YUKI_VOICE_ENABLED=true` in the launch environment. faster-whisper may download a large speech model on first transcription. No microphone listening is implemented.
+- `/voice status`, `/voice record SECONDS`, `/voice transcribe AUDIO_PATH`, `/voice speak TEXT`, `/voice wakeword status`, `/voice wakeword listen SECONDS`
+- `/security status`, `/security recon PRIVATE_IP`, `/sandbox status`, `/sandbox run IMAGE | ARGS`
+- `/defense status`, `/defense sniff`, `/defense block IP`, `/defense remove RULE_ID`
+- `/metasploit status`, `/dashboard`, `/quit`
 
 ## Security and privacy
 
-- No arbitrary host shell tool is exposed through the agent.
-- Nmap requires a private literal IP in an explicit allow-list and per-scan approval. A private IP is not proof of authorization.
-- Docker execution requires an exact digest-pinned image allow-list, explicit opt-in, and approval. Containerization is not a complete security boundary.
-- Metasploit execution is intentionally blocked in this build.
-- Never implement hack-back, retaliation, persistence, credential theft, or unrestricted exploitation.
-- Memory and reminders are local files under the configured workspace. Protect the directory and never commit secrets, personal memory, or private audio.
+- Security, microphone access, Gmail and firewall controls are opt-in; approval callbacks fail closed.
+- The firewall implementation is dry-run only; do not assume that a host has been blocked.
+- The IDS alerts on suspicious port patterns but does not independently block an IP.
+- Use recon and sandbox features only on systems you own or are explicitly authorized to test.
+- No hack-back, retaliation, unrestricted exploit execution, credential theft, or arbitrary host shell skill is supported.
+- Local memory, reminders, recordings, OAuth credentials, and tokens should never be committed to Git.
 
 See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
 
-Yuki is a work in progress. The goal is to earn trust through verified functionality, least privilege, explicit permissions, and testing—not to claim capabilities that have not been implemented.
+Yuki is still under active engineering. Passing CI verifies tested code paths, not production readiness or optional local hardware/software.
