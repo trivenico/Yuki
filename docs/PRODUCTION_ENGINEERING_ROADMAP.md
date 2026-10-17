@@ -1,5 +1,7 @@
 # Yuki production engineering roadmap
 
+See [JARVIS_GAP_ANALYSIS.md](JARVIS_GAP_ANALYSIS.md) for the capability comparison and phased acceptance criteria.
+
 Status: active engineering plan. A module is not considered production-ready until it is integrated into the runtime, covered by behavioral tests, and verified in CI.
 
 ## Phase 0.5 — onboarding and configuration
