@@ -6,7 +6,7 @@ from pathlib import Path
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
-from yuki_security import SecurityPolicy, load_audit_events, write_audit_event
+from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
 
@@ -22,12 +22,12 @@ def load_memory():
         return []
     if not isinstance(data, list):
         return []
-    return [item[:MAX_MEMORY_TEXT] for item in data[-MAX_MEMORY_ITEMS:]
+    return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]
             if isinstance(item, str) and item.strip()]
 
 
 def save_memory(memory):
-    safe_memory = [item[:MAX_MEMORY_TEXT] for item in memory[-MAX_MEMORY_ITEMS:]
+    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
                    if isinstance(item, str) and item.strip()]
     temp = MEMORY_FILE.with_suffix(".tmp")
     try:
@@ -117,7 +117,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     if command == "/memory":
         return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
     if command.startswith("/memory add "):
-        note = command[len("/memory add "):].strip()
+        note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
             return "Please provide a note."
         memory.append(note[:MAX_MEMORY_TEXT])
