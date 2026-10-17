@@ -6,6 +6,9 @@ ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
 max_agent_steps: 3
 voice_enabled: false
+language_behavior: auto_detect
+voice_style: natural_realistic_female
+spoken_reply_policy: every_reply_when_voice_mode_active
 stt_model: small
 tts_rate: 170
 tts_backend: piper
