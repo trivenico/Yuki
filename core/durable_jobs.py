@@ -150,9 +150,8 @@ class JobStore:
                 conn.execute("""
                     INSERT INTO jobs(job_id,task_type,payload_json,status,attempts,max_attempts,
                         idempotency_key,created_at,updated_at)
-                    VALUES(?,?,?,'queued',0,?,?,?,?,?)
-                """.replace("VALUES(?,?,?,'queued',0,?,?,?,?,?)",
-                            "VALUES(?,?,?,'queued',0,?,?,?,?)"),
+                    VALUES(?,?,?,'queued',0,?,?,?,?)
+                """,
                     (job_id, task_type, payload_json, max_attempts, idempotency_key, now, now))
                 row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
                 conn.commit()
