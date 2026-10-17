@@ -139,7 +139,8 @@ def main():
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
             print(f"Provider: {config['provider']} (no live LLM loop connected)")
-            print(f"Voice: {config['voice_enabled']}; wake-word detector configured: {wakeword is not None}")
+            print(f"Voice: {config['voice_enabled']}; language behavior: {config['language_behavior']}; voice style preference: {config['voice_style']}")
+            print(f"Spoken reply policy: {config['spoken_reply_policy']} (end-to-end reply loop not connected)")
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
             print(f"Firewall: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']}); Gmail: {config['gmail_enabled']}")
             print(f"Skills: {', '.join(agent.registry.names())}")
@@ -230,6 +231,9 @@ def main():
             for item in due: print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
         elif command == "/voice status":
             print(f"Voice opt-in: {config['voice_enabled']}; recording starts only on explicit request.")
+            print(f"Language behavior: {config['language_behavior']}; STT uses automatic detection by default.")
+            print(f"Voice style preference: {config['voice_style']} (actual voice depends on installed TTS model).")
+            print(f"Spoken reply policy: {config['spoken_reply_policy']} (automatic speaking of conversation replies is not yet wired because no LLM reply loop exists).")
             print(f"TTS backend: {config['tts_backend']}; Piper model configured: {bool(config['piper_model_path'])}")
             print(f"Wake word configured: {wakeword is not None}; continuous listening is not implemented.")
         elif command.startswith("/voice record "):
