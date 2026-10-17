@@ -38,6 +38,8 @@ class FirewallManager:
         ip = _validated_ip(address)
         if not self.enabled:
             raise FirewallError("Firewall changes are disabled.")
+        if not self.dry_run:
+            raise FirewallError("Live firewall mutation is not enabled in this release; dry-run only until durable expiry and recovery are implemented.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 30 <= seconds <= 3600:
             raise FirewallError("Temporary block must be 30-3600 seconds.")
         if self.approver is None or self.approver(f"Temporarily block source IP {ip} for {seconds} seconds.") is not True:
