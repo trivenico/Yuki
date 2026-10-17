@@ -1,0 +1,2 @@
+# Optional interactive terminal dashboard
+textual>=0.80,<2.0
