@@ -1,0 +1,2 @@
+# Optional cloud image generation only; never required for Yuki core.
+openai>=1.68,<3.0
