@@ -11,7 +11,8 @@ class IdentitySkill(Skill):
         parts=argument.strip().split(maxsplit=1); cmd=parts[0].lower() if parts else "list"
         if cmd=="list": return SkillResult(True,"Saved consented identity labels.",self.manager.list())
         if cmd=="delete" and len(parts)==2:
-            return SkillResult(self.manager.delete(parts[1]),"Identity deleted." if self.manager.delete(parts[1]) else "Identity not found.")
+            deleted = self.manager.delete(parts[1])
+            return SkillResult(deleted, "Identity deleted." if deleted else "Identity not found.")
         if cmd=="add" and len(parts)==2:
             return SkillResult(False,"Adding an identity requires a separate explicit consent flow; no record was created.")
         return SkillResult(False,"Use identity list or identity delete ID.")
