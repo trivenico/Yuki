@@ -62,13 +62,13 @@ class SkillRegistry:
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
                  gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None):
         root = Path(workspace).expanduser().resolve()
-        return cls((
+        registry = cls((
             TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
-            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / 'yuki_identities.json')), ProjectSkill(),
+            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(), RoleSkill(),
         ))
         if plugin_discovery_enabled:
@@ -80,3 +80,4 @@ class SkillRegistry:
                         registry.register(skill)
                     except (ValueError, TypeError):
                         continue
+        return registry
