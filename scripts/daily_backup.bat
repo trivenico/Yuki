@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "if ($src.StartsWith($dst.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Source must not be inside backup destination.' };" ^
  "New-Item -ItemType Directory -Force -Path $dst | Out-Null;" ^
  "$stamp=Get-Date -Format 'yyyyMMdd_HHmmss'; $archive=Join-Path $dst ('yuki-data-' + $stamp + '.zip'); $temp=$archive + '.tmp.zip';" ^
- "try { Compress-Archive -LiteralPath (Join-Path $src '*') -DestinationPath $temp -CompressionLevel Optimal; if (!(Test-Path -LiteralPath $temp) -or (Get-Item -LiteralPath $temp).Length -eq 0) { throw 'Archive was not created or is empty.' }; Move-Item -LiteralPath $temp -Destination $archive; } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } };" ^
+ "try { Compress-Archive -Path (Join-Path $src '*') -DestinationPath $temp -CompressionLevel Optimal; if (!(Test-Path -LiteralPath $temp) -or (Get-Item -LiteralPath $temp).Length -eq 0) { throw 'Archive was not created or is empty.' }; Move-Item -LiteralPath $temp -Destination $archive; } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } };" ^
  "Get-ChildItem -LiteralPath $dst -File -Filter 'yuki-data-*.zip' | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$days) } | Remove-Item -Force;" ^
  "Write-Output ('Backup completed: ' + $archive); Write-Output ('Retention: ' + $days + ' days. Keep the drive encrypted and store another copy separately.')"
 if errorlevel 1 (
