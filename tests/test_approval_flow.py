@@ -51,7 +51,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result)
+        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         shown = []
         approved = coordinator.approve(
             planner, pending.pending_id, actor="owner", session_id="cli-session",
@@ -66,7 +66,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result)
+        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         denied = coordinator.approve(
             planner, pending.pending_id, actor="owner", session_id="cli-session",
             confirm=lambda action: False,
@@ -83,7 +83,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result)
+        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
 
         def mutate(action):
             action["arguments"]["text"] = "changed by UI"
@@ -101,7 +101,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
             coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit)
             result = planner.run("Write note")
-            pending = coordinator.record(planner, result)
+            pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
             approved = coordinator.approve(
                 planner, pending.pending_id, actor="owner", session_id="cli-session",
                 confirm=lambda action: action["arguments"] == {"text": "exact note"},
@@ -116,9 +116,9 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator(max_pending=1)
-        coordinator.record(planner, result)
+        coordinator.record(planner, result, actor="owner", session_id="cli-session")
         with self.assertRaises(RuntimeError):
-            coordinator.record(planner, result)
+            coordinator.record(planner, result, actor="owner", session_id="cli-session")
 
 
 if __name__ == "__main__":
