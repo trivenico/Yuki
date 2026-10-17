@@ -19,7 +19,7 @@ Run `python main.py --setup` for first-run configuration. Yuki currently offers 
 
 ## Subprocess execution boundary foundation
 
-`core/subprocess_executor.py` adds fixed-argv execution without a shell, JSON request/response validation, a hard subprocess timeout, a child environment allowlist, and response-size checks. It is not yet integrated with `SkillDispatcher` or `TaskWorker`, and it is not a complete sandbox. Output-size checks happen after captured output returns, so OS-level memory/output limits and stronger streaming enforcement are still required before running untrusted code.
+`core/subprocess_executor.py` adds fixed-argv execution without a shell, JSON request/response validation, a hard subprocess timeout, a child environment allowlist, and response-size checks. The standalone `SkillDispatcher.register_subprocess()` can now route a manifest-validated call through this executor using a fixed, trusted argv and deployment-configured environment. The dispatcher is still not wired into `YukiCoreAgent` or the existing plugin loader, and this is not a complete sandbox. OS-level filesystem/network/resource limits and robust process-tree cleanup are still required before running untrusted code.
 
 ## Durable worker foundation
 
