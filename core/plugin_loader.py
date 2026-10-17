@@ -7,7 +7,6 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import re
-from skills.base import Skill
 
 EXCLUDED = {"base", "registry", "discovery", "role_skill", "__init__"}
 
@@ -33,6 +32,7 @@ class PluginLoader:
             report["failed"].append({"module": self.package_name, "error": type(exc).__name__})
             self.last_report = report
             return report
+        from skills.base import Skill
         for item in sorted(pkgutil.iter_modules(paths), key=lambda x: x.name):
             name = item.name
             if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
