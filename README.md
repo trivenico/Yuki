@@ -8,7 +8,7 @@ The ambition is to learn from the best publicly observable ideas in projects suc
 
 The current Python prototype includes:
 - A terminal command loop
-- Canonical product identity with the default voice phrase “Hey Yuki” (wake-word detection is not implemented yet)
+- Canonical product identity with the single wake word “Yuki” (wake-word detection is not implemented yet)
 - A provider interface and an offline mock provider
 - An explicit allow-list for basic local tools
 - Local task, memory, and outcome-learning records
@@ -23,7 +23,7 @@ The current Python prototype includes:
 
 ## Voice identity
 
-Yuki's intended default wake phrase is **“Hey Yuki”**. Voice activation is optional and disabled by default in the current identity configuration. Microphone access, wake-word detection, speech recognition, and speech output are not implemented yet. Text and CLI remain the current interfaces.
+Yuki's only intended wake word is **“Yuki”** — not “Hey Yuki”. Voice activation is optional and disabled by default in the current identity configuration. The intended greeting is “Hai, Master. I'm here. How may I help you?” in a Japanese female voice speaking English. Microphone access, wake-word detection, speech recognition, and speech output are not implemented yet. Text and CLI remain the current interfaces.
 
 ## Requirements
 
