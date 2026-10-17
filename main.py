@@ -13,6 +13,8 @@ from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import PermissionGate
 from skills.registry import SkillRegistry
+from voice.stt import FasterWhisperSTT, STTError
+from voice.tts import LocalTTS, TTSError
 
 
 def _ask_approval(request):
@@ -28,9 +30,8 @@ def _ask_approval(request):
 
 
 def _confirm(action, reason, risk="medium"):
-    return _ask_approval(type("ApprovalPrompt", (), {
-        "action": action, "reason": reason, "risk": risk
-    })())
+    from core.permissions import ApprovalRequest
+    return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
 def build_agent(config):
@@ -54,18 +55,24 @@ def print_help():
                                 Add an ISO-8601 reminder with timezone
   /reminders                    List reminders
   /reminders due                Show and mark due reminders delivered
+  /voice status                 Show voice adapter status
+  /voice speak TEXT             Speak text locally (requires voice opt-in)
+  /voice transcribe AUDIO_PATH  Transcribe an audio file (requires voice opt-in)
   /quit                         Exit
 
 Initial skills are read-only: time, system, files. Memory and reminders are local.
-Voice, model reasoning, arbitrary shell execution, and security scanning are not enabled.
+Voice uses optional packages; it never opens a microphone. No shell or exploit execution is enabled.
 """)
 
 
 def main():
     config = load_config()
+    workspace = Path(config["workspace"])
     agent = build_agent(config)
-    memory = MemoryStore(Path(config["workspace"]) / "yuki_memory.json")
-    reminders = ReminderQueue(Path(config["workspace"]) / "yuki_reminders.json")
+    memory = MemoryStore(workspace / "yuki_memory.json")
+    reminders = ReminderQueue(workspace / "yuki_reminders.json")
+    tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"])
+    stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
     while True:
@@ -84,7 +91,8 @@ def main():
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {config['workspace']}")
-            print("AI provider: not connected; voice: disabled; security lab: disabled")
+            print(f"AI provider: {config['provider']} (model not connected); voice enabled: {config['voice_enabled']}")
+            print(f"Security lab enabled: {config['security_lab_enabled']}")
             print(f"Registered skills: {', '.join(agent.registry.names())}")
         elif command == "/skills":
             for skill in agent.available_skills():
@@ -126,13 +134,13 @@ def main():
             if "|" not in payload:
                 print("Yuki > Use /reminder add 2026-12-31T18:00:00+00:00 | reminder text")
                 continue
-            timestamp, text = payload.split("|", 1)
+            timestamp, reminder_text = payload.split("|", 1)
             try:
                 due_at = datetime.fromisoformat(timestamp.strip())
                 if due_at.tzinfo is None or due_at.utcoffset() is None:
                     raise ValueError("include a timezone offset, such as +00:00")
-                item = reminders.add(text.strip(), due_at)
-                print(f"Yuki > Reminder saved ({item['id']}). Yuki does not run scheduled actions.")
+                item = reminders.add(reminder_text.strip(), due_at)
+                print(f"Yuki > Reminder saved ({item['id']}). No scheduled actions will run.")
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Reminder was not saved: {exc}")
         elif command == "/reminders":
@@ -145,6 +153,29 @@ def main():
                 print("Yuki > No reminders are due.")
             for item in due:
                 print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
+        elif command == "/voice status":
+            print(f"Voice opt-in: {config['voice_enabled']}; microphone listening: not implemented")
+            print("TTS: optional pyttsx3 adapter; STT: optional faster-whisper audio-file adapter")
+        elif command.startswith("/voice speak "):
+            text = command[len("/voice speak "):]
+            try:
+                if not _confirm("voice:speak", "Play the supplied text through local speech output.", "low"):
+                    print("Yuki > Voice request cancelled.")
+                    continue
+                tts.speak(text)
+                print("Yuki > Finished speaking.")
+            except (TTSError, ValueError) as exc:
+                print(f"Yuki > Voice output unavailable: {exc}")
+        elif command.startswith("/voice transcribe "):
+            audio_path = command[len("/voice transcribe "):].strip()
+            try:
+                if not _confirm("voice:transcribe", "Transcribe the explicitly supplied audio file locally.", "medium"):
+                    print("Yuki > Transcription cancelled.")
+                    continue
+                result = stt.transcribe_file(audio_path)
+                print(f"Yuki transcript ({result['language']}): {result['text']}")
+            except (STTError, ValueError) as exc:
+                print(f"Yuki > Speech recognition unavailable: {exc}")
         else:
             print("Yuki > This runtime does not have an LLM connected yet. Use /help for available commands.")
 
