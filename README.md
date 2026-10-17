@@ -1,85 +1,70 @@
 # Yuki
 
-Yuki is an early-stage personal AI-agent project aiming to unite a helpful **personal companion**, a **developer agent**, and a **defensive cybersecurity assistant** behind one provider-independent architecture.
+Yuki is an early-stage personal AI-agent project designed to combine a personal companion, developer assistance, and defensive cybersecurity tools behind a modular architecture.
 
-The ambition is to learn from the best publicly observable ideas in projects such as Hermes, OpenClaw, Moltbot, AutoClaw, and OpenJarvis while building Yuki's own reliable, privacy-aware product. This is a roadmap, not a claim of feature parity today.
+**Honest readiness status:** Yuki is not yet a full, production-ready autonomous assistant. The repository contains working foundations and guarded modules, but the real LLM reasoning loop, end-to-end project building, always-on wake-word pipeline, desktop dashboard, and production-hardening are not complete. Do not treat CI passing as proof that all features are production-ready.
 
-## Current implementation status
+## What is implemented now
 
-The repository now has two Python entry points:
-- `main.py`: new guarded core runtime connecting YAML configuration, Yuki persona, registered read-only skills, and explicit per-action approval.
-- `yuki.py`: existing feature-rich prototype with tasks, local notes, outcome-learning records, mock provider, allow-listed tools, and metadata-only audit events.
+- `main.py`: guarded terminal runtime wired to the skill registry, explicit approval gate, local memory, reminders, and opt-in voice adapters.
+- `yuki.py`: legacy prototype with task/learning records, mock provider, allow-listed tools, and metadata-only audit events.
+- `skills/registry.py`: validated registry that rejects duplicate or invalid skill names.
+- `companion/memory.py`: local, bounded JSON memory with add/list/delete/clear operations. The CLI asks before writes and destructive changes.
+- `companion/proactive.py`: timezone-aware local reminder queue. Due reminders are surfaced only when requested; no background scheduler or arbitrary task execution exists.
+- `voice/tts.py`: optional local pyttsx3 output; disabled unless explicitly enabled and approved.
+- `voice/stt.py`: optional faster-whisper transcription of a user-selected audio file. It does not open a microphone or detect the wake word.
+- `hackback/sandbox.py`: optional Docker command runner disabled by default, requiring a digest-pinned image allow-list and approval. Container isolation is not a guarantee of safety.
+- `hackback/recon.py`: optional limited Nmap TCP inventory for a private IP that is explicitly allow-listed and approved. No CIDR scans or hostname targets.
+- `hackback/exploit_runner.py`: **fail-closed placeholder only**. Metasploit exploit execution is not implemented and all run requests are blocked.
+- Unit tests and GitHub Actions checks.
 
-The shared foundations also include a provider interface, bounded planning and workflow models, an event bus, a task-preparation orchestrator, an approval gate, and unit tests. The guarded runtime currently supports read-only `time`, `system`, and workspace-only `files` skills. Approval is denied by default if the user does not explicitly answer yes.
+## What is not complete
 
-**The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries in the legacy provider registry are metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, microphone, speech recognition, text-to-speech, graphical permission dashboard, or cybersecurity scanning engine are implemented yet. The new core runtime is a safe integration seam, not an LLM-driven ReAct loop.
+- No real Ollama/OpenAI/other LLM tool-calling loop is connected to `main.py`; provider names/config are not proof of an active provider.
+- No autonomous project builder that edits code, runs tests, diagnoses failures, creates reviewable diffs, and rolls back changes end-to-end.
+- No microphone capture, wake-word detector, live speech conversation, or voice interruption control.
+- No graphical or Textual permission dashboard.
+- No Gmail/calendar integration, OSINT engine, general security scanner, or working Metasploit integration.
+- No production-grade installer, signed release, full threat model, or independent security review.
 
-## Voice identity
+## Install and run
 
-Yuki's only intended wake word is **“Yuki”** — not “Hey Yuki”. Voice activation is disabled by default. The intended greeting is “Hai, Master. I'm here. How may I help you?” Microphone access, wake-word detection, speech recognition, and speech output are not implemented yet. Text and CLI remain the current interfaces.
-
-## Requirements
-
-- Python 3.10 or newer
-- PyYAML (installed from `requirements.txt` for the new YAML config loader)
-- No AI API key is required for the current mock-provider prototypes
-
-## Installation and first run
-
-See [the installation guide](docs/INSTALLATION.md) and [project structure](docs/PROJECT_STRUCTURE.md).
-
-- **Windows:** run `install_windows.bat`, then `run_yuki_windows.bat` for the existing terminal prototype.
-- **macOS/Linux:** run `sh install_unix.sh`, then `sh run_yuki_unix.sh`.
-- **Guarded core:** after dependencies are installed, run `python main.py`.
-- **Existing prototype:** run `python yuki.py`.
-
-The setup scripts create an isolated `.venv`, install `requirements.txt`, and run the test suite. No model API key is needed. A successful install is not a claim that voice, live AI, browser automation, or autonomous coding is ready.
-
-## Guarded core commands
-
-Run `python main.py` and use:
-- `/help`
-- `/status`
-- `/skills`
-- `/skill time`
-- `/skill system`
-- `/skill files .`
-- `/quit`
-
-Each skill request asks for approval; only a literal `y` approves that one action. File skill only lists entries within the configured workspace and never reads file contents. Set `YUKI_WORKSPACE` to override the workspace. See `config.yaml` and `.env.example` for non-secret configuration examples. The current code does not automatically load a `.env` file; environment variables must be set by the shell or launch environment.
-
-## Existing prototype commands
-
-Run `python yuki.py` and use `/help`, `/status`, `/providers`, `/tool calculate 12 * (3 + 4)`, `/task add Test Yuki`, `/task list`, `/memory add My first note`, `/learn Organize files | success | Group related files before reviewing them`, `/lessons Organize files`, `/audit`, and `/quit`.
-
-Run diagnostics with `python scripts/doctor.py`. Run tests locally with:
+Requirements: Python 3.10+ and PyYAML.
 
 ```bash
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
+python main.py
 ```
 
-GitHub Actions runs tests on pushes and pull requests.
+The legacy CLI remains available with `python yuki.py`. On Windows, use the included installer scripts if you have permission to run them. Browser-only GitHub cannot run local microphone, Docker, Nmap, or speech-model workloads.
 
-## Product tracks
+## Guarded runtime commands
 
-1. **Companion:** user-controlled memory, conversational continuity, adjustable personality, privacy and deletion controls.
-2. **Developer:** repository understanding, code navigation, test-driven changes, sandboxed execution, reviewable diffs, and rollback.
-3. **Defensive cybersecurity:** authorized asset inventory, secure configuration checks, dependency and secret scanning, findings with evidence, and remediation guidance. Security actions must be scoped and authorized.
+- `/help`, `/status`, `/skills`
+- `/skill time`, `/skill system`, `/skill files .`
+- `/memory add TEXT`, `/memory list`, `/memory delete ID`, `/memory clear`
+- `/reminder add ISO_DATETIME | TEXT`, `/reminders`, `/reminders due`
+- `/voice status`, `/voice speak TEXT`, `/voice transcribe AUDIO_PATH`
+- `/quit`
 
-## Production principles
+Each skill and voice action requests explicit approval. Voice remains disabled by default. To enable local TTS/STT, set `YUKI_VOICE_ENABLED=true` in the launch environment and install the optional dependencies:
 
-- Default-deny for tools; never expose arbitrary shell or Python execution to the model by default.
-- Require explicit approval for consequential actions such as publishing changes, deleting data, accessing sensitive resources, or changing security settings.
-- Treat webpage, repository, and file contents as untrusted input; do not let prompt injection override system policy.
-- Store credentials only through a dedicated secure mechanism when real provider adapters are implemented. Never commit keys or tokens.
-- Keep audit records useful but minimal; current audit events intentionally omit prompts and tool arguments.
-- Local memory and task files are user data. They are ignored by Git and must remain under user control.
-- Learning history retrieves lessons from outcomes; it does not silently train or rewrite the model.
-- The `hackback/` directory documents a safe, authorized Security Lab Engine boundary only. No hack-back functionality is implemented.
+```bash
+python -m pip install -r requirements-voice.txt
+```
 
-## Development sequence
+faster-whisper may download a speech model on first transcription and can require substantial disk space. No microphone listening is implemented.
 
-See [ROADMAP.md](ROADMAP.md) for the staged engineering plan and [SECURITY.md](SECURITY.md) for security boundaries.
+## Security and privacy
 
-Yuki is not production-ready yet. The goal is to earn trust through tests, threat modelling, transparent permissions, and verified capabilities before enabling more autonomy.
+- No arbitrary shell tool is exposed through the agent.
+- The security lab is disabled by default and does not provide hack-back, retaliation, persistence, credential theft, or unrestricted exploitation.
+- Nmap requires a private literal IP in an explicit allow-list and per-scan approval. Use only assets you own or are expressly authorized to test.
+- Metasploit execution is intentionally blocked in this build.
+- Memory and reminders are local files under the configured workspace; protect that directory and back it up only if desired.
+- Never commit credentials, personal memory, audio files, or real user data.
+
+See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
+
+Yuki is a work in progress. The goal is to earn trust through verified functionality, least privilege, explicit permissions, and testing—not to claim capabilities that have not been implemented.
