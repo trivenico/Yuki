@@ -72,8 +72,11 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Connect the approval coordinator to the optional persistent pending store and audit log; fail closed before execution when request/approval audit persistence fails, and test the complete coordinator flow with SQLite-backed pending actions and audit events.
 - [x] Bind pending approvals to the creator actor/session using hashes at rest, enforce the same binding for in-memory pending actions, reject legacy unbound SQLite rows, and test wrong-actor/wrong-session rejection.
 - [x] Repair the SQLite pending store schema/API so identity hashes are returned, checked on read/consume, and consumed atomically with creator identity; add store-level and coordinator-level regression tests.
+- [x] Add `core/approval_runtime.py` to construct the local CLI approval coordinator with SQLite pending/audit stores under `.yuki/state`, POSIX owner-only directory/database permissions, OS-account actor context, and a fresh per-process session identifier; this is a local CLI context, not API authentication.
+- [x] Add runtime-factory tests for store placement, POSIX permissions, per-process session rotation, and invalid configuration.
 
-- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; configure SQLite pending/token/audit stores from protected workspace paths and derive actor/session from authenticated identity. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
+
+- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; the local CLI factory exists but is not yet connected to `/task`. Configure SQLite pending/token/audit stores from protected workspace paths and derive actor/session from authenticated identity. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
 
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
