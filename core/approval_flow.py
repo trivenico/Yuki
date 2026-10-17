@@ -6,6 +6,7 @@ must come from trusted identity, never from model output or arbitrary request da
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import secrets
 import threading
@@ -22,6 +23,8 @@ class PendingApproval:
     skill_id: str
     arguments: dict[str, Any]
     action: dict[str, Any]
+    actor_hash: str
+    session_hash: str
 
 
 class ApprovalCoordinator:
@@ -64,11 +67,13 @@ class ApprovalCoordinator:
         action = planner.dispatcher.approval_preview(result.pending_skill, result.pending_arguments)
         arguments = json.loads(json.dumps(result.pending_arguments, ensure_ascii=False, allow_nan=False))
         action_snapshot = json.loads(json.dumps(action, ensure_ascii=False, allow_nan=False))
+        actor_hash = hashlib.sha256(actor.encode("utf-8")).hexdigest()
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if self.pending_store is not None:
             stored = self.pending_store.put(result.pending_skill, arguments, action_snapshot, actor=actor, session_id=session_id)
-            pending = PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
+            pending = PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action, stored.actor_hash, stored.session_hash)
         else:
-            pending = PendingApproval(secrets.token_urlsafe(24), result.pending_skill, arguments, action_snapshot)
+            pending = PendingApproval(secrets.token_urlsafe(24), result.pending_skill, arguments, action_snapshot, actor_hash, session_hash)
             with self._lock:
                 if len(self._pending) >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
@@ -133,22 +138,31 @@ class ApprovalCoordinator:
         return result
 
     def _get(self, pending_id: str, *, actor: str, session_id: str) -> PendingApproval | None:
+        actor_hash = hashlib.sha256(actor.encode("utf-8")).hexdigest()
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if self.pending_store is not None:
             stored = self.pending_store.get(pending_id)
-            if stored is not None and (stored.actor_hash != self.pending_store._identity_hash(actor)
-                                       or stored.session_hash != self.pending_store._identity_hash(session_id)):
+            if stored is None or stored.actor_hash != actor_hash or stored.session_hash != session_hash:
                 return None
-            return (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
-                    if stored is not None else None)
+            return PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action,
+                                   stored.actor_hash, stored.session_hash)
         with self._lock:
-            return self._pending.get(pending_id)
+            pending = self._pending.get(pending_id)
+            if pending is None or pending.actor_hash != actor_hash or pending.session_hash != session_hash:
+                return None
+            return pending
 
     def _consume(self, pending_id: str, *, actor: str, session_id: str) -> PendingApproval | None:
+        actor_hash = hashlib.sha256(actor.encode("utf-8")).hexdigest()
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if self.pending_store is not None:
             stored = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
-            return (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
-                    if stored is not None else None)
+            return (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action,
+                                    stored.actor_hash, stored.session_hash) if stored is not None else None)
         with self._lock:
+            pending = self._pending.get(pending_id)
+            if pending is None or pending.actor_hash != actor_hash or pending.session_hash != session_hash:
+                return None
             return self._pending.pop(pending_id, None)
 
     def deny(self, pending_id: str) -> bool:
