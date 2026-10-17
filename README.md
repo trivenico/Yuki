@@ -15,11 +15,12 @@ The current Python prototype includes:
 - A default-deny tool-name policy at the command boundary
 - A local metadata-only audit log for selected actions
 - Bounded plan objects that do not execute actions
+- Explicit perception-to-report workflow state machine with guarded transitions
 - A small in-process event bus for agent lifecycle events
 - An in-memory human-approval gate for consequential actions
 - Unit tests and a GitHub Actions workflow
 
-**The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries are registry metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, or cybersecurity scanning engine are implemented yet. The planner, event bus, and approval gate are foundations only: they are not yet connected into an end-to-end autonomous execution loop, and approval requests are currently in-memory. No API key is required to develop or test the current foundation.
+**The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries are registry metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, or cybersecurity scanning engine are implemented yet. The planner, event bus, approval gate, and workflow state machine are foundations only: they are not yet connected into an end-to-end autonomous execution loop, and approval requests are currently in-memory. The workflow state machine tracks state and never executes tools itself. No API key is required to develop or test the current foundation.
 
 ## Voice identity
 
