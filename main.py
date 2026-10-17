@@ -6,6 +6,7 @@ import shlex
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
+from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
@@ -62,6 +63,8 @@ def print_help():
   /knowledge index RELATIVE_PATH Index a text file inside workspace (approval required)
   /reminder add ISO_DATETIME | TEXT
   /reminders | /reminders due
+  /evolution status | /evolution record CATEGORY | SUMMARY
+  /evolution run | /evolution review PROPOSAL_ID accept|reject
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -95,6 +98,7 @@ def main():
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
+    evolution = DailyEvolutionCycle(workspace)
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
@@ -229,6 +233,45 @@ def main():
             due = reminders.due()
             if not due: print("Yuki > No reminders are due.")
             for item in due: print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
+        elif command == "/evolution status":
+            print(evolution.status())
+        elif command.startswith("/evolution record "):
+            payload = command[len("/evolution record "):]
+            if "|" not in payload:
+                print("Yuki > Use /evolution record feedback | concise observation")
+                continue
+            category, summary = payload.split("|", 1)
+            try:
+                item = evolution.record(category.strip(), summary.strip())
+                print(f"Yuki > Recorded local evolution observation {item['id']}; secret-like strings are redacted.")
+            except (ValueError, RuntimeError) as exc:
+                print(f"Yuki > Observation was not recorded: {exc}")
+        elif command == "/evolution run":
+            if not _confirm("evolution:run", "Analyze explicitly recorded local observations and create review proposals. No actions or code changes will run."):
+                print("Yuki > Evolution cycle cancelled.")
+                continue
+            try:
+                report = evolution.run_cycle()
+                print(f"Yuki > Reviewed {report['observations_reviewed']} observations; {len(report['proposals'])} proposals await review.")
+                for proposal in report["proposals"]:
+                    print(f"- {proposal['id']} [{proposal['kind']}] {proposal['title']}: {proposal['detail']}")
+                print(f"Report saved locally: {evolution.report_path}")
+            except (ValueError, RuntimeError) as exc:
+                print(f"Yuki > Evolution cycle failed safely: {exc}")
+        elif command.startswith("/evolution review "):
+            parts = command.split(maxsplit=3)
+            if len(parts) != 4 or parts[3].split()[-1] not in {"accept", "reject"}:
+                print("Yuki > Use /evolution review PROPOSAL_ID accept|reject")
+                continue
+            proposal_id, decision = parts[2], parts[3].strip()
+            decision = "accepted_for_manual_followup" if decision == "accept" else "rejected"
+            if not _confirm("evolution:review", f"Record review decision {decision!r} for proposal {proposal_id}."):
+                print("Yuki > Proposal review cancelled.")
+                continue
+            try:
+                print("Yuki > " + str(evolution.review(proposal_id, decision)))
+            except (ValueError, RuntimeError) as exc:
+                print(f"Yuki > Proposal was not changed: {exc}")
         elif command == "/voice status":
             print(f"Voice opt-in: {config['voice_enabled']}; recording starts only on explicit request.")
             print(f"Language behavior: {config['language_behavior']}; STT uses automatic detection by default.")
