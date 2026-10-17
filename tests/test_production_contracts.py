@@ -16,9 +16,38 @@ from core.permissions import PermissionGate
 from skills.base import Skill, SkillResult
 from core.self_healing import RecoveryStatus, SelfHealingManager
 from core.telemetry import Telemetry
+from core.task_agent import ApprovedTaskAgent
+from yuki_agent import YukiAgent
 
 
 class TelemetryIntegrationTests(unittest.TestCase):
+    class FakeProvider:
+        def __init__(self, response='{"type":"final","message":"done"}'):
+            self.response = response
+        def is_available(self):
+            return True
+        def generate(self, prompt):
+            return self.response
+
+    def test_user_ask_records_provider_timing_without_prompt(self):
+        telemetry = Telemetry(enabled=True)
+        ai = YukiAgent(self.FakeProvider("safe answer"), telemetry=telemetry)
+        self.assertEqual(ai.ask("private prompt content"), "safe answer")
+        event = telemetry.snapshot()[0]
+        self.assertEqual(event["name"], "provider.ask")
+        self.assertNotIn("private prompt content", json.dumps(event))
+
+    def test_task_agent_records_model_planning_call_without_goal(self):
+        telemetry = Telemetry(enabled=True)
+        agent = YukiCoreAgent(telemetry=telemetry)
+        task = ApprovedTaskAgent(self.FakeProvider(), agent, telemetry=telemetry)
+        result = task.run("confidential user goal")
+        self.assertTrue(result.ok)
+        events = telemetry.snapshot()
+        self.assertTrue(any(event["name"] == "provider.task_plan" for event in events))
+        self.assertNotIn("confidential user goal", json.dumps(events))
+
+
     def test_agent_skill_call_records_status_without_arguments(self):
         telemetry = Telemetry(enabled=True)
         agent = YukiCoreAgent(telemetry=telemetry)
