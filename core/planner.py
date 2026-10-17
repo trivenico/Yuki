@@ -1,10 +1,4 @@
-"""Bounded, deterministic planner foundation with memory context.
-
-This is not an LLM reasoning engine. It produces inspectable proposals and never
-executes tools. A model-driven loop must call the same policy gate before execution.
-"""
-from __future__ import annotations
-
+"""Bounded inspectable planner. It proposes work; it does not autonomously execute tools."""
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -24,7 +18,7 @@ class Plan:
 
 
 class Planner:
-    def __init__(self, *, max_steps: int = 5, max_goal_chars: int = 2000):
+    def __init__(self, *, max_steps=5, max_goal_chars=2000):
         if isinstance(max_steps, bool) or not isinstance(max_steps, int) or not 1 <= max_steps <= 10:
             raise ValueError("max_steps must be between 1 and 10")
         self.max_steps, self.max_goal_chars = max_steps, max_goal_chars
@@ -33,12 +27,12 @@ class Planner:
         if not isinstance(goal, str) or not goal.strip() or len(goal) > self.max_goal_chars:
             raise ValueError("Goal must be non-empty and bounded.")
         context = tuple(str(item)[:500] for item in list(memory_context)[:10])
-        cleaned = goal.strip()
         steps = (
-            PlanStep("understand", f"Clarify expected outcome for: {cleaned}"),
-            PlanStep("plan", "Propose a minimal, reviewable sequence of changes"),
-            PlanStep("policy_check", "Check scope, permissions, and workspace boundaries"),
-            PlanStep("execute", "Execute one approved action at a time"),
-            PlanStep("verify", "Run relevant checks and report evidence"),
-        )[:self.max_steps]
-        return Plan(cleaned, steps, context)
+            PlanStep("understand", "Clarify acceptance criteria and constraints"),
+            PlanStep("plan", "Propose the smallest reviewable sequence"),
+            PlanStep("policy_check", "Check permissions, target scope, and workspace boundaries"),
+            PlanStep("execute_one", "Perform one approved action at a time"),
+            PlanStep("verify", "Inspect output and run relevant tests"),
+            PlanStep("report", "Summarize verified outcomes and remaining risks", False),
+        )
+        return Plan(goal.strip(), steps[:self.max_steps], context)
