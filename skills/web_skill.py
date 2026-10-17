@@ -36,6 +36,8 @@ class WebSkill:
         host = parts.hostname.lower()
         if host in {"localhost", "localhost.localdomain"} or host.endswith((".local", ".internal")):
             raise WebSkillError("Local hosts are blocked.")
+        if not self.allowed_hosts or host not in self.allowed_hosts:
+            raise WebSkillError("Configure an explicit web_allowed_hosts allow-list before fetching pages.")
         try:
             addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
