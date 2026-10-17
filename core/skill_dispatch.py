@@ -53,7 +53,8 @@ class SkillDispatcher:
             "arguments": arguments,
             "capabilities": sorted(manifest.capabilities),
         }
-        if manifest.risk in {"medium", "high"}:
+        side_effecting = bool(manifest.capabilities & {"workspace.write", "memory.write", "messaging.send", "process.spawn"})
+        if side_effecting or manifest.risk in {"medium", "high"}:
             if self._approval is None:
                 return DispatchResult(False, "approval_required")
             try:
