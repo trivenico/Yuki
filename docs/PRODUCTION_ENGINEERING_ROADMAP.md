@@ -48,13 +48,16 @@ Status: active engineering plan. A module is not considered production-ready unt
 **Exit gate:** an untrusted skill cannot access host files, credentials, or network except through explicitly granted capabilities.
 
 - [x] Add a versioned typed skill manifest contract with declared capabilities, bounded input/output schemas, risk, time/output budgets, and parallel-safety checks (not yet integrated into the plugin dispatcher).
-- [ ] Integrate manifests with plugin discovery/dispatch, dependency declarations, signature/trust verification, and isolated execution.
+- [x] Add `core/skill_dispatch.py` to enforce registered manifests, explicit capability grants, input/output validation, and approval for medium/high-risk or side-effecting capabilities (standalone dispatcher; existing runtime/plugin loader is not yet wired to it).
+- [ ] Integrate dispatcher with the live `YukiCoreAgent`/plugin discovery path and add subprocess isolation before third-party execution.
+- [ ] Add dependency declarations, signature/trust verification, and isolated execution.
 - [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
 - [ ] Remove wildcard entries from example/user configuration and document exact module allowlisting.
 - [ ] Execute third-party skills in an isolated worker/container with filesystem allowlists, network policy, resource limits, and a bounded protocol. Do not treat Python imports or a thread timeout as a sandbox.
 - [x] Add regression tests for disabled discovery, missing allowlist, and wildcard trust rejection.
 - [ ] Add tests for path traversal, prompt injection, secret access, SSRF, process exhaustion, malicious imports, and permission bypass.
-- [ ] Bind approvals to the exact operation and target, with expiry, replay protection, and audit records.
+- [x] Add `core/action_approvals.py` one-time tokens bound to canonical action hash, actor, session, expiry, and single consumption (in-memory primitive; not yet wired to runtime approval flow or durable audit storage).
+- [ ] Bind the approval store to the live permission/dispatch path and persist redacted approval audit events; verify actor identity and target canonicalization.
 
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
