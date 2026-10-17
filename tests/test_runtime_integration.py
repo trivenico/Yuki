@@ -100,7 +100,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             path = Path(directory) / "config.yaml"
             for url in cases:
                 with self.subTest(url=url):
-                    path.write_text("ollama_base_url: " + url + "\\n", encoding="utf-8")
+                    path.write_text("ollama_base_url: " + url + "\n", encoding="utf-8")
                     with self.assertRaises(RuntimeError):
                         load_config(path)
 
@@ -109,7 +109,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             path = Path(directory) / "config.yaml"
             for url in ["http://127.0.0.1:11434", "http://[::1]:11434", "https://models.example.com"]:
                 with self.subTest(url=url):
-                    path.write_text("ollama_base_url: " + url + "\\n", encoding="utf-8")
+                    path.write_text("ollama_base_url: " + url + "\n", encoding="utf-8")
                     self.assertEqual(load_config(path)["ollama_base_url"], url)
 
 if __name__ == "__main__":
