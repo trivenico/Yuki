@@ -38,8 +38,33 @@ class OllamaProvider:
         self.timeout = timeout
 
     def is_available(self):
-        # A configured endpoint is not proof the server/model is reachable.
-        return True
+        """Return true only when the local server responds and the model is installed."""
+        request = urllib.request.Request(
+            self.base_url + "/api/tags",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+                raw = response.read(500_001)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return False
+        if len(raw) > 500_000:
+            return False
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        models = body.get("models") if isinstance(body, dict) else None
+        if not isinstance(models, list):
+            return False
+        for item in models:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                continue
+            installed = item["name"]
+            if installed == self.model or installed.startswith(self.model + ":"):
+                return True
+        return False
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
