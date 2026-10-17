@@ -81,6 +81,11 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("supersecretvalue123", sanitize_text("api_key=supersecretvalue123"))
         self.assertIn("[REDACTED]", sanitize_text("api_key=supersecretvalue123"))
 
+    def test_empty_policy_denies_every_tool(self):
+        policy = SecurityPolicy(allowed_tools=[])
+        self.assertEqual(policy.allowed_tools(), [])
+        self.assertFalse(policy.authorize_tool("calculate"))
+
     def test_policy_defaults_to_allow_list(self):
         policy = SecurityPolicy(allowed_tools=TOOLS.keys())
         self.assertTrue(policy.authorize_tool("calculate"))
