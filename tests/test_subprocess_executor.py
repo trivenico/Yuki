@@ -13,6 +13,15 @@ class SubprocessExecutorTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.result, {"value": 5})
 
+    def test_timeout_kills_spawned_descendant(self):
+        executor = SubprocessExecutor(timeout_seconds=0.3)
+        child = "import time; time.sleep(20)"
+        script = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',"
+            + repr(child) + "]); time.sleep(20)"
+        result = executor.execute([sys.executable, "-c", script], {})
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "worker_timeout")
+
     def test_hard_timeout_terminates_wait(self):
         executor = SubprocessExecutor(timeout_seconds=0.2)
         result = executor.execute([sys.executable, "-c", "import time; time.sleep(5)"], {})
