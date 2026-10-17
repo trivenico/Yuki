@@ -1,1 +1,2 @@
-# Yuki currently uses only the Python standard library.
+# YAML parser used by core/config.py. No AI API key or model SDK is required.
+PyYAML>=6.0.2,<7.0
