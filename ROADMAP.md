@@ -25,8 +25,10 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 ## Phase 3 — Agent execution engine
 
 - [x] Add a bounded workflow state machine for perception-to-report lifecycle tracking.
+- [x] Connect plan preparation, required-tool policy checks, approval requests, and lifecycle events in a non-executing orchestrator.
 - [ ] Connect the workflow to explicit plans, steps, deadlines, and budgets.
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
+- [ ] Add a separately reviewed execution adapter with cancellation, deadlines, bounded retries, and re-authorization immediately before every tool call.
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
 - [ ] Add sandboxed developer tasks and human-reviewable patches.
 - [ ] Treat external content as untrusted; defend against prompt injection.
