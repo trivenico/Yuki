@@ -112,6 +112,31 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                              ["requested", "approved", "executed"])
             self.assertNotIn("exact note", str(events))
 
+    def test_persistent_approval_rejects_wrong_actor_and_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            planner = build()
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            pending = coordinator.record(
+                planner, planner.run("Write note"), actor="owner", session_id="cli-session"
+            )
+            wrong_actor = coordinator.approve(
+                planner, pending.pending_id, actor="other", session_id="cli-session",
+                confirm=lambda action: True,
+            )
+            self.assertEqual(wrong_actor.status, "pending_not_found")
+            wrong_session = coordinator.approve(
+                planner, pending.pending_id, actor="owner", session_id="other-session",
+                confirm=lambda action: True,
+            )
+            self.assertEqual(wrong_session.status, "pending_not_found")
+            accepted = coordinator.approve(
+                planner, pending.pending_id, actor="owner", session_id="cli-session",
+                confirm=lambda action: True,
+            )
+            self.assertTrue(accepted.ok)
+
     def test_pending_capacity_is_bounded(self):
         planner = build()
         result = planner.run("Write note")
