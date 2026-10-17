@@ -115,6 +115,12 @@ class MCPHTTPClient:
             raise MCPError("MCP tool is not explicitly allow-listed.")
         if not isinstance(arguments, dict):
             raise MCPError("MCP tool arguments must be an object.")
+        try:
+            encoded_arguments = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise MCPError("MCP tool arguments must be JSON-serializable.") from exc
+        if len(encoded_arguments) > 64000:
+            raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
             raise MCPError("MCP tool call was not explicitly approved.")
         result = self._rpc("tools/call", {"name": name, "arguments": arguments})
