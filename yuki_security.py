@@ -21,6 +21,22 @@ class SecurityPolicy:
         return sorted(self._allowed_tools)
 
 
+def load_audit_events():
+    try:
+        data = json.loads(AUDIT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        {"timestamp": str(item.get("timestamp", ""))[:64],
+         "action": str(item.get("action", ""))[:80],
+         "outcome": str(item.get("outcome", ""))[:32]}
+        for item in data[-MAX_AUDIT_RECORDS:]
+        if isinstance(item, dict)
+    ]
+
+
 def write_audit_event(action, outcome):
     """Store only bounded metadata. Do not pass prompts, arguments, or secrets."""
     if not isinstance(action, str) or not isinstance(outcome, str):
@@ -30,17 +46,11 @@ def write_audit_event(action, outcome):
         "action": action[:80],
         "outcome": outcome[:32],
     }
-    try:
-        data = json.loads(AUDIT_FILE.read_text(encoding="utf-8")) if AUDIT_FILE.exists() else []
-        if not isinstance(data, list):
-            data = []
-    except (OSError, json.JSONDecodeError):
-        data = []
-    data = [item for item in data if isinstance(item, dict)][-(MAX_AUDIT_RECORDS - 1):]
+    data = load_audit_events()
     data.append(event)
     temp = AUDIT_FILE.with_suffix(".tmp")
     try:
-        temp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8")
         temp.replace(AUDIT_FILE)
         return True
     except OSError:
