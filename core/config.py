@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import yaml
 
+from core.portable_paths import config_path as resolve_config_path, workspace_path
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
 
@@ -34,11 +36,11 @@ def _string_list(raw, key):
 
 
 def load_config(path=None):
-    config_path = Path(path) if path else DEFAULT_CONFIG
+    selected_config_path = Path(path) if path else resolve_config_path()
     try:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
-        raise RuntimeError(f"Cannot read configuration file: {config_path}") from exc
+        raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except yaml.YAMLError as exc:
         raise RuntimeError("Configuration YAML is invalid.") from exc
     if not isinstance(raw, dict): raise RuntimeError("Configuration must be a YAML mapping.")
@@ -46,7 +48,7 @@ def load_config(path=None):
     if not isinstance(workspace_value, str) or not workspace_value.strip():
         raise RuntimeError("workspace must be a non-empty path.")
     workspace = Path(workspace_value).expanduser()
-    if not workspace.is_absolute(): workspace = ROOT / workspace
+    if not workspace.is_absolute(): workspace = workspace_path(str(workspace))
     base_url = os.environ.get("YUKI_OLLAMA_BASE_URL", str(raw.get("ollama_base_url", "http://127.0.0.1:11434"))).strip().rstrip("/")
     if not base_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]", "https://")):
         raise RuntimeError("Ollama URL must be loopback HTTP or HTTPS.")
