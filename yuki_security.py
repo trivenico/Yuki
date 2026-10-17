@@ -1,11 +1,26 @@
 """Small local security controls and metadata-only audit logging for Yuki."""
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 AUDIT_FILE = Path(__file__).with_name("yuki_audit.json")
 MAX_AUDIT_RECORDS = 1000
+_SECRET_PATTERNS = [
+    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"(?i)\b(api[_ -]?key|password|secret|access[_ -]?token)\s*[:=]\s*\S+"),
+    re.compile(r"(?i)\bbearer\s+\S+"),
+]
+
+
+def sanitize_text(value, limit=1000):
+    """Bound text and redact common token/credential patterns before local storage."""
+    text = str(value or "")[:max(0, limit)]
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
+    return text
 
 
 class SecurityPolicy:
@@ -43,8 +58,8 @@ def write_audit_event(action, outcome):
         return False
     event = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "action": action[:80],
-        "outcome": outcome[:32],
+        "action": sanitize_text(action, 80),
+        "outcome": sanitize_text(outcome, 32),
     }
     data = load_audit_events()
     data.append(event)
