@@ -85,7 +85,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_ollama_url_rejects_hostname_prefix_spoofing(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("ollama_base_url: http://127.0.0.1.attacker.example:11434\\n", encoding="utf-8")
+            path.write_text("ollama_base_url: http://127.0.0.1.attacker.example:11434\n", encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
