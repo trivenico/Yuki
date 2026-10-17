@@ -49,7 +49,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 
 - [x] Add a versioned typed skill manifest contract with declared capabilities, bounded input/output schemas, risk, time/output budgets, and parallel-safety checks (not yet integrated into the plugin dispatcher).
 - [x] Add `core/skill_dispatch.py` to enforce registered manifests, explicit capability grants, input/output validation, and approval for medium/high-risk or side-effecting capabilities (standalone dispatcher; existing runtime/plugin loader is not yet wired to it).
-- [ ] Integrate dispatcher with the live `YukiCoreAgent`/plugin discovery path and add subprocess isolation before third-party execution.
+- [x] Add `SkillDispatcher.register_subprocess()` to route manifest-validated handler calls through the bounded JSON subprocess executor with fixed deployment-configured argv/env; standalone dispatcher is now capable of subprocess-backed registration but is not yet connected to live `YukiCoreAgent`/plugin discovery.
+- [ ] Integrate dispatcher with the live `YukiCoreAgent`/plugin discovery path and add OS-level sandbox restrictions before third-party execution.
 - [ ] Add dependency declarations, signature/trust verification, and isolated execution.
 - [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
 - [ ] Remove wildcard entries from example/user configuration and document exact module allowlisting.
