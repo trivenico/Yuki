@@ -24,6 +24,18 @@ from .project_skill import ProjectSkill
 from .content_marketer import ContentMarketerSkill
 from .seo_optimizer import SEOOptimizerSkill
 from .monetization_advisor import MonetizationAdvisorSkill
+from .video_generator import VideoGeneratorSkill
+from .auto_personalizer import AutoPersonalizerSkill
+from .chat_organizer import ChatOrganizerSkill
+from .smart_home_full import SmartHomeFullSkill
+from .device_scanner import DeviceScannerSkill
+from .car_integration import CarIntegrationSkill
+from .canvas_workspace import CanvasWorkspaceSkill
+from .financial_manager import FinancialManagerSkill
+from .health_agent import HealthAgentSkill
+from .home_security import HomeSecuritySkill
+from .messaging_expanded import MessagingExpandedSkill
+from .tiered_autonomy_skill import TieredAutonomySkill
 from companion.identity_manager import IdentityManager
 from skills.role_skill import RoleSkill
 from core.plugin_loader import PluginLoader
@@ -69,7 +81,12 @@ class SkillRegistry:
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
             WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
-            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(), RoleSkill(),
+            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
+            VideoGeneratorSkill(root), AutoPersonalizerSkill(root), ChatOrganizerSkill(root),
+            SmartHomeFullSkill(), DeviceScannerSkill(root), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
+            FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
+            MessagingExpandedSkill(root), TieredAutonomySkill(root),
+            RoleSkill(),
         ))
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
