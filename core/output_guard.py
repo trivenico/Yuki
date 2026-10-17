@@ -14,7 +14,7 @@ class GuardResult:
 
 _PATTERNS = (
     ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PRIVATE )?PRIVATE KEY-----", re.I)),
-    ("credential_assignment", re.compile(r"(?i)\b(api[_-]?key|access[_-]?token|password|client_secret)\s*[:=]\s*[^\s,;]+")),
+    ("credential_assignment", re.compile(r"""(?i)["']?\b(api[_-]?key|access[_-]?token|password|client_secret)["']?\s*[:=]\s*["']?[^\s,;}'"]+""")),
     ("unsafe_claim", re.compile(r"(?i)\b(i have|i've) (?:successfully )?(?:deleted|sent|purchased|transferred|executed)\b")),
 )
 
