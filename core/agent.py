@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
 from core.output_guard import OutputGuard
+from core.telemetry import Telemetry
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
 
@@ -23,7 +24,8 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None,
+                 telemetry: Optional[Telemetry] = None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -33,6 +35,7 @@ class YukiCoreAgent:
             self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
         self.output_guard = OutputGuard()
+        self.telemetry = telemetry if telemetry is not None else Telemetry(enabled=True)
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
@@ -45,6 +48,22 @@ class YukiCoreAgent:
         return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
+        """Execute a skill and record redacted timing/status metadata."""
+        with self.telemetry.span("agent.run_skill", attributes={"skill_name": name}) as span:
+            response = self._run_skill(name, argument)
+            attributes = {
+                "skill_name": name,
+                "result_ok": response.ok,
+                "result_stage": response.stage,
+            }
+            for key, value in attributes.items():
+                if hasattr(span, "set_attribute"):
+                    span.set_attribute(key, value)
+                elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                    span["set_attribute"](key, value)
+            return response
+
+    def _run_skill(self, name: str, argument: str = "") -> AgentResponse:
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
