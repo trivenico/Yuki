@@ -8,6 +8,7 @@ The ambition is to learn from the best publicly observable ideas in projects suc
 
 The current Python prototype includes:
 - A terminal command loop
+- Canonical product identity with the default voice phrase “Hey Yuki” (wake-word detection is not implemented yet)
 - A provider interface and an offline mock provider
 - An explicit allow-list for basic local tools
 - Local task, memory, and outcome-learning records
@@ -19,6 +20,10 @@ The current Python prototype includes:
 - Unit tests and a GitHub Actions workflow
 
 **The mock provider does not call an AI service.** OpenAI, Anthropic, Gemini, and local-runtime entries are registry metadata only. No real model integrations, provider login flows, browser automation, autonomous coding, or cybersecurity scanning engine are implemented yet. The planner, event bus, and approval gate are foundations only: they are not yet connected into an end-to-end autonomous execution loop, and approval requests are currently in-memory. No API key is required to develop or test the current foundation.
+
+## Voice identity
+
+Yuki's intended default wake phrase is **“Hey Yuki”**. Voice activation is optional and disabled by default in the current identity configuration. Microphone access, wake-word detection, speech recognition, and speech output are not implemented yet. Text and CLI remain the current interfaces.
 
 ## Requirements
 
