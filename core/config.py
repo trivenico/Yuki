@@ -52,8 +52,16 @@ def load_config(path=None):
         raise RuntimeError("Ollama URL must be loopback HTTP or HTTPS.")
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
+    if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
+    voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
+    if voice_style != "natural_realistic_female": raise RuntimeError("voice_style must be natural_realistic_female.")
+    spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
+    if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
     return {
         "name": "Yuki", "workspace": str(workspace.resolve()),
+        "language_behavior": language_behavior, "voice_style": voice_style,
+        "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
         "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
         "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
