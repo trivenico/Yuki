@@ -82,5 +82,35 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(queue.due()[0]["id"], item["id"])
             self.assertEqual(queue.due(), [])
 
+    def test_ollama_url_rejects_hostname_prefix_spoofing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text("ollama_base_url: http://127.0.0.1.attacker.example:11434\\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+    def test_ollama_url_rejects_remote_plain_http_and_credentials(self):
+        cases = [
+            "http://example.com:11434",
+            "http://localhost.attacker.example:11434",
+            "http://user:pass@localhost:11434",
+            "https://example.com:bad",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            for url in cases:
+                with self.subTest(url=url):
+                    path.write_text("ollama_base_url: " + url + "\\n", encoding="utf-8")
+                    with self.assertRaises(RuntimeError):
+                        load_config(path)
+
+    def test_ollama_url_accepts_loopback_http_and_remote_https(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            for url in ["http://127.0.0.1:11434", "http://[::1]:11434", "https://models.example.com"]:
+                with self.subTest(url=url):
+                    path.write_text("ollama_base_url: " + url + "\\n", encoding="utf-8")
+                    self.assertEqual(load_config(path)["ollama_base_url"], url)
+
 if __name__ == "__main__":
     unittest.main()
