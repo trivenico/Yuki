@@ -25,6 +25,8 @@ from .content_marketer import ContentMarketerSkill
 from .seo_optimizer import SEOOptimizerSkill
 from .monetization_advisor import MonetizationAdvisorSkill
 from companion.identity_manager import IdentityManager
+from skills.role_skill import RoleSkill
+from core.plugin_loader import PluginLoader
 
 
 class SkillRegistry:
@@ -58,7 +60,7 @@ class SkillRegistry:
 
     @classmethod
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=()):
+                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None):
         root = Path(workspace).expanduser().resolve()
         return cls((
             TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
@@ -67,5 +69,14 @@ class SkillRegistry:
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
             WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / 'yuki_identities.json')), ProjectSkill(),
-            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
+            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(), RoleSkill(),
         ))
+        if plugin_discovery_enabled:
+            loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
+            discovered = loader.discover()
+            for skill in discovered["loaded"]:
+                if skill.name not in registry._skills:
+                    try:
+                        registry.register(skill)
+                    except (ValueError, TypeError):
+                        continue
