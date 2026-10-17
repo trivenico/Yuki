@@ -13,6 +13,14 @@ Yuki now has portable data/config path resolution and starter launchers for Wind
 
 The registered `course_coach` skill provides bounded workflows for `explain TOPIC`, `lab TASK`, `quiz TOPIC`, `study_plan GOAL`, and `interview ROLE`. It is a workflow scaffold, not a connected AI tutor: it does not execute lab commands, access course accounts, or submit assessments. Tailored explanations, interactive quiz evaluation, and adaptive interview feedback require a real LLM provider integration.
 
+## Conversational roles and trusted skill plugins
+
+Yuki includes a `role` skill with `list`, `current`, and profile names such as `companion`, `tutor`, `interviewer`, `developer`, `security`, and `marketing`. These profiles guide interaction style only; they never grant tool permissions.
+
+A controlled plugin loader is available in `core/plugin_loader.py`. Plugin discovery is **disabled by default** in `config.yaml`. To enable discovery after reviewing the code, set `plugin_discovery_enabled: true`. With `trusted_plugin_modules: []`, no external module is trusted; add exact module names (without `.py`) to that list. For example, a reviewed `skills/my_helper.py` module would be listed as `my_helper`.
+
+A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(self, argument="")`, and provide a unique simple `name`, `description`, and safe input validation. The loader imports the module and instantiates the class with no arguments. Plugin imports execute Python with Yuki's permissions: this is **not a sandbox**. Never trust downloaded or user-supplied plugin code without reviewing it. Duplicate skill names are skipped; discovery failures do not crash core startup.
+
 ## Ruflo-inspired capability infrastructure
 
 - `skills/discovery.py` is a discovery prototype that scans skill modules and reports import failures. It is **not wired into the default registry** because importing arbitrary Python executes it with Yuki's permissions; a reviewed plugin trust policy is required first.
