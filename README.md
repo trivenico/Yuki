@@ -11,7 +11,9 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
 - `knowledge/indexer.py`: indexes supported text files explicitly selected inside the configured workspace.
-- `voice/stt.py`: opt-in finite recording and faster-whisper transcription; recording is only initiated by an explicit command and approval.
+- `voice/stt.py`: opt-in finite recording and faster-whisper transcription; language defaults to automatic detection, and detected language/probability are returned by STT. Recording is only initiated by an explicit command and approval.
+- `voice/language.py`: tested language-tag normalization, same-language reply instruction helper, and spoken-reply policy gate. These helpers do not supply an LLM or guarantee detection accuracy.
+- Multilingual voice preference defaults: `language_behavior: auto_detect`, `voice_style: natural_realistic_female`, and `spoken_reply_policy: every_reply_when_voice_mode_active`. The current runtime has no conversational LLM response loop, so automatic same-language answers and speaking every generated answer are not yet end-to-end wired. A natural female voice depends on selecting and testing a compatible local voice model; the project does not bundle or claim one.
 - `voice/wakeword.py`: optional openWakeWord adapter for a locally supplied model; finite listening is explicit. It does not train a custom model.
 - `voice/tts.py`: optional Piper local speech generation/playback, or the pyttsx3 backend. Piper executable and compatible model must be installed separately.
 - `voice/speaker_verification.py`: fail-closed placeholder; no real speaker model is claimed.
@@ -41,7 +43,7 @@ python -m pip install -r requirements-ui.txt
 python -m pip install -r requirements-email.txt
 ```
 
-Voice needs `YUKI_VOICE_ENABLED=true`, a local Piper executable/model (if using Piper), and a supported audio device. Wake-word detection also requires `YUKI_WAKEWORD_ENABLED=true` and a local compatible model file configured in `config.yaml`. No continuous listener runs in the background. faster-whisper can download model weights on first use.
+Voice needs `YUKI_VOICE_ENABLED=true`, a local Piper executable/model (if using Piper), and a supported audio device. The STT call defaults to automatic language detection; accuracy depends on the installed faster-whisper model and audio quality. Piper voices are model-specific and are not automatically female or natural-sounding. Choose a legally obtained model that matches the desired voice/language and test it locally before treating that language/voice as supported. Wake-word detection also requires `YUKI_WAKEWORD_ENABLED=true` and a local compatible model file configured in `config.yaml`. No continuous listener runs in the background. faster-whisper can download model weights on first use.
 
 Web fetch requires explicit hostnames in `web_allowed_hosts`; an empty list denies all requests.\n\nGmail is disabled by default. To opt in, set `YUKI_GMAIL_ENABLED=true`, create your own OAuth client file locally, and complete Google's OAuth flow. Token files must remain private. The integration is read-only.
 
