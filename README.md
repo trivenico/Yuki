@@ -133,3 +133,16 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
 
 Yuki is still under active engineering. Passing CI verifies tested code paths, not production readiness or optional local hardware/software.
+
+
+## Real provider and approved task-loop milestone
+
+The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. Provider selection is opt-in:
+
+- Keep `provider: mock` for offline tests.
+- Set `provider: ollama` and configure `ollama_model` (or `YUKI_OLLAMA_MODEL`) to use a locally running Ollama instance.
+- Set `provider: hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
+- Cloud requests are never an automatic fallback. Use `/ask-cloud TASK | PROMPT` only for a configured task; Yuki asks for approval before sending prompt text to the cloud provider.
+- `/ask PROMPT` is a text-only model request and does not invoke tools. `/task GOAL` uses a bounded JSON-only model loop over registered skills, with a maximum of `max_agent_steps` (1–5) steps. Each skill invocation requires a fresh human approval. Model output cannot run shell commands or arbitrary code; unregistered skills and malformed responses are rejected.
+
+**Limitations:** this is an initial guarded provider/task-loop integration, not a production-grade general autonomous agent. No native provider tool-calling protocol, durable task queue, retries/cancellation, sandboxed plugin execution, or independent security review is claimed. The Ollama server/model and cloud credentials must be configured by the user. Keep prompts containing private data on the local route unless you explicitly approve disclosure.
