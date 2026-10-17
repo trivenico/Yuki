@@ -38,8 +38,10 @@ Status: active engineering plan. A module is not considered production-ready unt
 **Exit gate:** an untrusted skill cannot access host files, credentials, or network except through explicitly granted capabilities.
 
 - [ ] Define a versioned skill manifest (identifier, version, entry point, permissions, inputs/outputs, dependencies, time/resource budgets).
-- [ ] Keep discovery disabled by default and remove wildcard trust from recommended configurations.
+- [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
+- [ ] Remove wildcard entries from example/user configuration and document exact module allowlisting.
 - [ ] Execute third-party skills in an isolated worker/container with filesystem allowlists, network policy, resource limits, and a bounded protocol. Do not treat Python imports or a thread timeout as a sandbox.
+- [x] Add regression tests for disabled discovery, missing allowlist, and wildcard trust rejection.
 - [ ] Add tests for path traversal, prompt injection, secret access, SSRF, process exhaustion, malicious imports, and permission bypass.
 - [ ] Bind approvals to the exact operation and target, with expiry, replay protection, and audit records.
 
