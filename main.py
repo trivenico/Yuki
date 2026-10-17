@@ -29,6 +29,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.runtime_health import build_runtime_health_manager, summarize_health
+from core.setup_wizard import load_local_env, run_setup
 
 
 def _ask_approval(request):
@@ -100,6 +101,11 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 
 def main():
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--setup":
+        run_setup()
+        return
+    load_local_env()
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
