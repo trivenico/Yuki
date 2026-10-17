@@ -146,3 +146,21 @@ The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTT
 - `/ask PROMPT` is a text-only model request and does not invoke tools. `/task GOAL` uses a bounded JSON-only model loop over registered skills, with a maximum of `max_agent_steps` (1–5) steps. Each skill invocation requires a fresh human approval. Model output cannot run shell commands or arbitrary code; unregistered skills and malformed responses are rejected.
 
 **Limitations:** this is an initial guarded provider/task-loop integration, not a production-grade general autonomous agent. No native provider tool-calling protocol, durable task queue, retries/cancellation, sandboxed plugin execution, or independent security review is claimed. The Ollama server/model and cloud credentials must be configured by the user. Keep prompts containing private data on the local route unless you explicitly approve disclosure.
+
+## Production phase capability foundations (guarded scaffolds)
+
+The registry includes the following new skills, but **registration is not the same as a fully integrated product feature**:
+
+- `video_generator`: writes a local job manifest; it does not render video until a local generation backend is implemented and configured.
+- `auto_personalizer`: stores only explicitly opted-in preference signals locally; no silent conversation profiling.
+- `chat_organizer`: indexes user-provided snippets locally; it does not import or scrape account chat history.
+- `smart_home_full` and `car_integration`: fail closed without an injected, reviewed adapter. No smart-home devices or vehicle are contacted by default.
+- `device_scanner`: reviews a user-supplied device posture inventory; it is not an on-device or network vulnerability scanner.
+- `canvas_workspace`: local Markdown documents only; no real-time multi-user collaboration service.
+- `financial_manager`: manual local ledger only; no bank sync, payments, investment recommendations, or trading.
+- `health_agent`: local wellness notes only; not diagnosis, treatment, or emergency monitoring.
+- `home_security`: manually entered event log only; no live camera, sensor, alarm, or monitoring integration.
+- `messaging_expanded`: local drafts only; no message delivery.
+- `core/tiered_autonomy.py` and `tiered_autonomy`: label the autonomy tier but never bypass the global fresh-approval requirement for state-changing or external actions.
+
+These modules use bounded inputs and local persistence where applicable. Treat sensitive files in the workspace as private. Integrations that can affect devices, external accounts, health, finances, or communications require separate threat modeling, reviewed adapters, explicit approvals, and dedicated integration tests before production use.
