@@ -9,3 +9,6 @@ voice_enabled: false
 stt_model: small
 tts_rate: 170
 security_lab_enabled: false
+recon_allowlisted_targets: []
+sandbox_enabled: false
+sandbox_allowed_images: []
