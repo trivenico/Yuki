@@ -164,3 +164,18 @@ The registry includes the following new skills, but **registration is not the sa
 - `core/tiered_autonomy.py` and `tiered_autonomy`: label the autonomy tier but never bypass the global fresh-approval requirement for state-changing or external actions.
 
 These modules use bounded inputs and local persistence where applicable. Treat sensitive files in the workspace as private. Integrations that can affect devices, external accounts, health, finances, or communications require separate threat modeling, reviewed adapters, explicit approvals, and dedicated integration tests before production use.
+
+## Next production phase: prediction, critique, mentoring, content and engineering
+
+The following modules are registered as bounded foundations, not claims of full external integration:
+
+- `prediction_engine`: aggregates 2–12 forecasts explicitly supplied in the request and reports disagreement. It does not instantiate six independent agents or validate a BlackSwanX-style forecast process.
+- `multi_model_critique`: requires two injected model callbacks. It fails closed if they are not configured and makes no model calls by default.
+- `ai_mentor`: stores local learning goals and progress; adaptive tutoring/quiz generation still needs a configured model.
+- `ai_humanizer`: returns a clarity/editing brief. It does not rewrite text by itself, evade AI detectors, or certify authorship.
+- `youtube_shorts` and `long_video_generator`: produce production outlines only; TTS, media generation, FFmpeg rendering, and YouTube upload are not implemented by these wrappers.
+- `seo_geo_optimizer`: performs an offline heuristic checklist against supplied content; it does not crawl sites, validate schema, predict rankings, or publish `llms.txt`.
+- `conversation_analyzer`: reads bounded JSON exports from inside the configured workspace; no HTML/ZIP/attachment parsing or semantic model analysis is included.
+- `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
+
+The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.

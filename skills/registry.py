@@ -24,6 +24,15 @@ from .project_skill import ProjectSkill
 from .content_marketer import ContentMarketerSkill
 from .seo_optimizer import SEOOptimizerSkill
 from .monetization_advisor import MonetizationAdvisorSkill
+from .prediction_engine import PredictionEngineSkill
+from .multi_model_critique import MultiModelCritiqueSkill
+from .ai_mentor import AIMentorSkill
+from .ai_humanizer import AIHumanizerSkill
+from .youtube_shorts import YouTubeShortsSkill
+from .seo_geo_optimizer import SEOGEOOptimizerSkill
+from .conversation_analyzer import ConversationAnalyzerSkill
+from .vibe_coder import VibeCoderSkill
+from .long_video_generator import LongVideoGeneratorSkill
 from .video_generator import VideoGeneratorSkill
 from .auto_personalizer import AutoPersonalizerSkill
 from .chat_organizer import ChatOrganizerSkill
@@ -82,6 +91,8 @@ class SkillRegistry:
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
             WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
+            PredictionEngineSkill(), MultiModelCritiqueSkill(), AIMentorSkill(root), AIHumanizerSkill(),
+            YouTubeShortsSkill(), SEOGEOOptimizerSkill(), ConversationAnalyzerSkill(root), VibeCoderSkill(), LongVideoGeneratorSkill(),
             VideoGeneratorSkill(root), AutoPersonalizerSkill(root), ChatOrganizerSkill(root),
             SmartHomeFullSkill(), DeviceScannerSkill(root), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
