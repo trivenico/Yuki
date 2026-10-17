@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from core.action_approvals import ActionApprovalStore
 from core.skill_manifest import SkillManifest
+from core.subprocess_executor import SubprocessExecutor
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,37 @@ class SkillDispatcher:
         if manifest.skill_id in self._skills:
             raise ValueError("Duplicate skill identifier.")
         self._skills[manifest.skill_id] = (manifest, handler)
+
+    def register_subprocess(self, manifest: SkillManifest, argv: tuple[str, ...] | list[str], *,
+                            executor: SubprocessExecutor | None = None,
+                            cwd: str | None = None,
+                            env: dict[str, str] | None = None) -> None:
+        """Register a trusted, fixed executable behind the bounded subprocess protocol.
+
+        argv/cwd/env are deployment configuration, not model/plugin-controlled values.
+        This provides process separation and bounded IPC, but not an OS sandbox.
+        """
+        if not isinstance(argv, (tuple, list)) or not argv or any(not isinstance(arg, str) or not arg for arg in argv):
+            raise ValueError("argv must be a non-empty fixed sequence of strings.")
+        fixed_argv = tuple(argv)
+        fixed_env = dict(env or {})
+        if any(not isinstance(key, str) or not isinstance(value, str) for key, value in fixed_env.items()):
+            raise ValueError("env must map strings to strings.")
+        bounded_executor = executor or SubprocessExecutor(
+            timeout_seconds=min(max(float(manifest.timeout_seconds), 0.1), 300.0),
+            max_response_bytes=min(max(int(manifest.max_output_bytes), 1), 1024 * 1024),
+        )
+
+        def invoke(arguments: dict[str, Any]) -> Any:
+            result = bounded_executor.execute(fixed_argv, {"arguments": arguments}, cwd=cwd, env=fixed_env)
+            if not result.ok:
+                raise RuntimeError(result.code)
+            response = result.result
+            if not isinstance(response, dict) or set(response) != {"output"}:
+                raise ValueError("Worker response must contain only output.")
+            return response["output"]
+
+        self.register(manifest, invoke)
 
     @staticmethod
     def action_for(manifest: SkillManifest, arguments: dict[str, Any]) -> dict[str, Any]:
