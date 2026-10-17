@@ -53,16 +53,19 @@ class ApprovalCoordinator:
         except Exception:
             return False
 
-    def record(self, planner: ManifestTaskAgent, result: PlannedTaskResult) -> PendingApproval:
+    def record(self, planner: ManifestTaskAgent, result: PlannedTaskResult, *, actor: str, session_id: str) -> PendingApproval:
         if result.status != "approval_required" or not result.pending_skill:
             raise ValueError("Only a task result awaiting approval can be recorded.")
+        if (not isinstance(actor, str) or not actor.strip()
+                or not isinstance(session_id, str) or not session_id.strip()):
+            raise ValueError("Trusted actor and session identity are required.")
         if not isinstance(result.pending_arguments, dict):
             raise ValueError("Pending action arguments must be an object.")
         action = planner.dispatcher.approval_preview(result.pending_skill, result.pending_arguments)
         arguments = json.loads(json.dumps(result.pending_arguments, ensure_ascii=False, allow_nan=False))
         action_snapshot = json.loads(json.dumps(action, ensure_ascii=False, allow_nan=False))
         if self.pending_store is not None:
-            stored = self.pending_store.put(result.pending_skill, arguments, action_snapshot)
+            stored = self.pending_store.put(result.pending_skill, arguments, action_snapshot, actor=actor, session_id=session_id)
             pending = PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
         else:
             pending = PendingApproval(secrets.token_urlsafe(24), result.pending_skill, arguments, action_snapshot)
@@ -70,7 +73,7 @@ class ApprovalCoordinator:
                 if len(self._pending) >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 self._pending[pending.pending_id] = pending
-        if not self._audit(event_type="requested", pending=pending, outcome="pending"):
+        if not self._audit(event_type="requested", pending=pending, outcome="pending", actor=actor, session_id=session_id):
             self.deny(pending.pending_id)
             raise RuntimeError("Approval audit unavailable; action was not queued.")
         return pending
@@ -83,7 +86,7 @@ class ApprovalCoordinator:
         if (not isinstance(actor, str) or not actor.strip()
                 or not isinstance(session_id, str) or not session_id.strip()):
             return PlannedTaskResult(False, "invalid_approval", "Trusted actor/session context is required.")
-        pending = self._get(pending_id)
+        pending = self._get(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return PlannedTaskResult(False, "pending_not_found", "Pending action is missing or already consumed.")
         shown_action = json.loads(json.dumps(pending.action, ensure_ascii=False))
@@ -99,7 +102,7 @@ class ApprovalCoordinator:
             self.deny(pending_id)
             return PlannedTaskResult(False, "approval_denied", "Action was not approved.")
 
-        current = self._consume(pending_id)
+        current = self._consume(pending_id, actor=actor, session_id=session_id)
         if current is None:
             return PlannedTaskResult(False, "pending_not_found", "Pending action was already consumed.")
         # Fail closed if the approval decision cannot be durably recorded.
@@ -129,17 +132,20 @@ class ApprovalCoordinator:
                                      result.steps)
         return result
 
-    def _get(self, pending_id: str) -> PendingApproval | None:
+    def _get(self, pending_id: str, *, actor: str, session_id: str) -> PendingApproval | None:
         if self.pending_store is not None:
             stored = self.pending_store.get(pending_id)
+            if stored is not None and (stored.actor_hash != self.pending_store._identity_hash(actor)
+                                       or stored.session_hash != self.pending_store._identity_hash(session_id)):
+                return None
             return (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
                     if stored is not None else None)
         with self._lock:
             return self._pending.get(pending_id)
 
-    def _consume(self, pending_id: str) -> PendingApproval | None:
+    def _consume(self, pending_id: str, *, actor: str, session_id: str) -> PendingApproval | None:
         if self.pending_store is not None:
-            stored = self.pending_store.consume(pending_id)
+            stored = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
             return (PendingApproval(stored.pending_id, stored.skill_id, stored.arguments, stored.action)
                     if stored is not None else None)
         with self._lock:
