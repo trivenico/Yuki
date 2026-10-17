@@ -11,6 +11,8 @@ from providers import MockProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
+from yuki_providers import ProviderManager
+from yuki import handle_command
 
 
 class ProviderTests(unittest.TestCase):
@@ -28,6 +30,36 @@ class ProviderTests(unittest.TestCase):
                 raise AssertionError("should not be called")
         self.assertEqual(YukiAgent(BrokenProvider()).ask("hello"),
                          "Yuki: The provider encountered an error.")
+
+
+class ProviderManagerTests(unittest.TestCase):
+    def test_only_implemented_provider_can_be_selected(self):
+        manager = ProviderManager()
+        self.assertEqual(manager.select("mock"), "Selected provider: mock")
+        result = manager.select("openai")
+        self.assertIn("not implemented", result)
+        self.assertEqual(manager.current().name, "mock")
+
+    def test_selected_adapter_is_created(self):
+        manager = ProviderManager()
+        adapter = manager.create_selected_adapter()
+        self.assertIsInstance(adapter, MockProvider)
+
+    def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command("/provider select openai", [], [], agent, manager,
+                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+        self.assertIn("not implemented", result)
+        self.assertIsInstance(agent.provider, MockProvider)
+
+    def test_dashboard_reports_core_status(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command("/dashboard", [], [], agent, manager,
+                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+        self.assertIn("Yuki dashboard", result)
+        self.assertIn("Provider: mock", result)
 
 
 class ToolTests(unittest.TestCase):
