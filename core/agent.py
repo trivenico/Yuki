@@ -4,6 +4,7 @@ from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
+from core.output_guard import OutputGuard
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
 
@@ -31,6 +32,7 @@ class YukiCoreAgent:
             available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
             self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
+        self.output_guard = OutputGuard()
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
@@ -65,7 +67,18 @@ class YukiCoreAgent:
                 ok = bool(getattr(result, "ok", False))
                 message = str(getattr(result, "message", "Skill returned an unsupported result."))
                 data = getattr(result, "data", None)
-            return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
+            # Guard both user-visible text and structured skill data. A secret in
+            # data must not bypass the message-only output policy.
+            data_guard = self.output_guard.check(data) if data is not None else None
+            if data_guard is not None and (
+                not data_guard.allowed or "output_too_long" in data_guard.reasons
+            ):
+                data = None
+                message = "[Skill output withheld or omitted by safety policy.]"
+            message_guard = self.output_guard.check(message)
+            message = message_guard.text
+            return AgentResponse(ok and message_guard.allowed, message, name, data,
+                                 stage="report" if ok and message_guard.allowed else "observe")
         except Exception:
             return AgentResponse(False, "Skill failed safely; detailed exception was not exposed.", name,
                                  stage="observe")
