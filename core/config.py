@@ -1,6 +1,8 @@
 """Small YAML configuration loader with safe environment overrides."""
+import ipaddress
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 import yaml
 
 from core.portable_paths import config_path as resolve_config_path, workspace_path
@@ -50,8 +52,25 @@ def load_config(path=None):
     workspace = Path(workspace_value).expanduser()
     if not workspace.is_absolute(): workspace = workspace_path(str(workspace))
     base_url = os.environ.get("YUKI_OLLAMA_BASE_URL", str(raw.get("ollama_base_url", "http://127.0.0.1:11434"))).strip().rstrip("/")
-    if not base_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]", "https://")):
-        raise RuntimeError("Ollama URL must be loopback HTTP or HTTPS.")
+    try:
+        parsed_url = urlsplit(base_url)
+        hostname = parsed_url.hostname
+        # Accessing .port validates malformed/out-of-range port values.
+        parsed_url.port
+        is_loopback_name = hostname == "localhost"
+        if hostname:
+            try:
+                is_loopback_name = is_loopback_name or ipaddress.ip_address(hostname).is_loopback
+            except ValueError:
+                pass
+        safe_transport = parsed_url.scheme == "https" or (
+            parsed_url.scheme == "http" and is_loopback_name
+        )
+        if (not safe_transport or not hostname or parsed_url.username or parsed_url.password
+                or parsed_url.query or parsed_url.fragment):
+            raise ValueError("unsafe URL")
+    except ValueError as exc:
+        raise RuntimeError("Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment.") from exc
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
