@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from core.telemetry import Telemetry
+
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -21,7 +23,7 @@ class TaskResult:
 class ApprovedTaskAgent:
     """Run at most a few approved registered-skill calls for a single user goal."""
 
-    def __init__(self, provider, skill_agent, *, max_steps=3):
+    def __init__(self, provider, skill_agent, *, max_steps=3, telemetry=None):
         if not callable(getattr(provider, "generate", None)):
             raise TypeError("Provider must implement generate().")
         if not callable(getattr(skill_agent, "run_skill", None)) or not callable(
@@ -33,6 +35,7 @@ class ApprovedTaskAgent:
         self.provider = provider
         self.skill_agent = skill_agent
         self.max_steps = max_steps
+        self.telemetry = telemetry if telemetry is not None else Telemetry(enabled=True)
 
     def run(self, goal):
         if not isinstance(goal, str) or not goal.strip():
@@ -57,7 +60,15 @@ class ApprovedTaskAgent:
                 f"Action budget remaining: {self.max_steps - step_number + 1}"
             )
             try:
-                raw = self.provider.generate(prompt)
+                with self.telemetry.span(
+                    "provider.task_plan",
+                    attributes={"provider": type(self.provider).__name__, "step": step_number},
+                ) as span:
+                    raw = self.provider.generate(prompt)
+                    if hasattr(span, "set_attribute"):
+                        span.set_attribute("response_received", isinstance(raw, str))
+                    elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                        span["set_attribute"]("response_received", isinstance(raw, str))
             except Exception as exc:
                 return TaskResult(False, f"AI provider failed safely ({type(exc).__name__}).",
                                   step_number - 1, "provider_error")

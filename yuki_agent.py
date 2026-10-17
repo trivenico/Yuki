@@ -1,13 +1,17 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
 from providers import MockProvider
+from core.telemetry import Telemetry
+from core.output_guard import OutputGuard
 
 
 class YukiAgent:
     """Send prompts to a selected provider without exposing provider exceptions."""
 
-    def __init__(self, provider=None):
+    def __init__(self, provider=None, *, telemetry=None):
         self.provider = provider if provider is not None else MockProvider()
+        self.telemetry = telemetry if telemetry is not None else Telemetry(enabled=True)
+        self.output_guard = OutputGuard()
 
     def set_provider(self, provider):
         """Replace the active adapter after validating its interface."""
@@ -24,6 +28,19 @@ class YukiAgent:
             return "Provider status is unknown."
 
     def ask(self, prompt):
+        """Generate a response with redacted timing/status telemetry."""
+        with self.telemetry.span("provider.ask", attributes={"provider": type(self.provider).__name__}) as span:
+            raw_result = self._ask(prompt)
+            guarded = self.output_guard.check(raw_result)
+            result = guarded.text
+            ok = guarded.allowed and isinstance(result, str) and not result.endswith("provider is unavailable.") and not result.endswith("provider encountered an error.")
+            if hasattr(span, "set_attribute"):
+                span.set_attribute("result_ok", ok)
+            elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                span["set_attribute"]("result_ok", ok)
+            return result
+
+    def _ask(self, prompt):
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
         try:

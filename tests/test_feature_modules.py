@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from core.planner import Planner
+from core.permissions import PermissionGate
 from core.config import load_config
 from main import build_agent
 from core.vector_memory import VectorMemory
@@ -54,6 +55,8 @@ class FeatureModuleTests(unittest.TestCase):
 
     def test_main_runtime_registers_connected_skills(self):
         agent = build_agent(load_config())
+        # Keep production fail-closed behavior; inject approval only for this test.
+        agent.permission_gate = PermissionGate(lambda request: True)
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())

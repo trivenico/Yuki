@@ -8,6 +8,7 @@ from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
+from core.output_guard import OutputGuard
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
@@ -27,6 +28,8 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.runtime_health import build_runtime_health_manager, summarize_health
+from core.setup_wizard import load_local_env, run_setup
 
 
 def _ask_approval(request):
@@ -60,6 +63,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /health                        Run bounded local runtime health checks
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -97,12 +101,18 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 
 def main():
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--setup":
+        run_setup()
+        return
+    load_local_env()
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    ai = YukiAgent(create_provider(config), telemetry=agent.telemetry)
+    output_guard = OutputGuard()
+    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"], telemetry=agent.telemetry)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -125,6 +135,7 @@ def main():
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
+    health_manager = build_runtime_health_manager(config, workspace)
 
     def dashboard_command(command):
         if command == "/status":
@@ -150,6 +161,10 @@ def main():
             return
         if command == "/help":
             print_help()
+        elif command == "/health":
+            for name, status, message in summarize_health(health_manager):
+                print(f"Yuki > [{status.upper()}] {name}: {message}")
+            print("Yuki > These are bounded readiness checks, not a full end-to-end or security audit.")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
@@ -169,13 +184,15 @@ def main():
                 continue
             print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
             result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            guarded = output_guard.check(result.message)
+            print(f"Yuki > {guarded.text} [status={result.status}, steps={result.steps}]")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
                 print("Yuki > Provide a prompt: /ask explain a Python decorator")
                 continue
-            print("Yuki > " + ai.ask(prompt))
+            answer = ai.ask(prompt)
+            print("Yuki > " + output_guard.check(answer).text)
         elif command.startswith("/ask-cloud "):
             payload = command[len("/ask-cloud "):]
             if "|" not in payload:
@@ -197,8 +214,16 @@ def main():
                 print("Yuki > Cloud request cancelled; no data was sent.")
                 continue
             try:
-                answer = provider.generate_for(task, prompt)
-                print("Yuki > " + answer)
+                with agent.telemetry.span(
+                    "provider.cloud_request",
+                    attributes={"provider": type(provider.cloud_provider).__name__, "task": task},
+                ) as span:
+                    answer = provider.generate_for(task, prompt)
+                    if hasattr(span, "set_attribute"):
+                        span.set_attribute("response_received", isinstance(answer, str))
+                    elif isinstance(span, dict) and callable(span.get("set_attribute")):
+                        span["set_attribute"]("response_received", isinstance(answer, str))
+                print("Yuki > " + output_guard.check(answer).text)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
         elif command.startswith("/skill "):
@@ -346,7 +371,12 @@ def main():
                 if not _confirm("voice:speak", "Speak the supplied text using local TTS.", "low"):
                     print("Yuki > Speech cancelled.")
                     continue
-                tts.speak(command[len("/voice speak "):])
+                speech_text = command[len("/voice speak "):]
+                guarded_speech = output_guard.check(speech_text)
+                if not guarded_speech.allowed:
+                    print("Yuki > Speech withheld by safety policy.")
+                    continue
+                tts.speak(guarded_speech.text)
                 print("Yuki > Finished speaking.")
             except (TTSError, ValueError) as exc:
                 print(f"Yuki > Speech unavailable: {exc}")

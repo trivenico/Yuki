@@ -2,8 +2,44 @@
 
 Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
 
-**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
+**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. The new manifest planner is still an incremental foundation, not a fully autonomous project builder or production-grade tool runtime. There is no always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
+
+## Guided provider setup
+
+Run `python main.py --setup` for first-run configuration. Yuki currently offers a mock/demo mode, local Ollama mode, and hybrid mode with explicitly allow-listed cloud task labels. The API key prompt is hidden; credentials are written to a local `.env` file with owner-only permissions on POSIX systems, never to `config.yaml` or terminal output. Shell environment variables take precedence over values in `.env`. Keep `.env` private and never commit it. Hybrid mode sends nothing to the cloud unless a task label is configured in `YUKI_CLOUD_TASKS` and the explicit cloud command is approved. This wizard configures providers; it does not install Ollama or download models for you.
+
+## Manifest-backed task planning (incremental)
+
+`core/manifest_task_agent.py` adds a bounded plan/act/observe loop that presents only explicitly granted manifest skills to the model, accepts strict JSON proposals, and routes actions through `YukiCoreAgent.dispatch_manifest_skill()`. Consequential actions pause with `approval_required`; a trusted UI must display the exact skill and arguments, obtain consent, issue a one-time action-bound token, then call `resume_approved()`. Regression tests cover unknown-tool denial, approval pause, valid approval, and mismatched-argument rejection. This planner is not yet wired into the main CLI/API or the existing `ApprovedTaskAgent`. `core/approval_flow.py` now provides an in-process coordinator that stores a detached pending-action snapshot, passes the exact action to a trusted confirmation callback, and consumes the pending request once before execution. This is not yet a real authenticated CLI/API approval interface: actor/session identity must come from a trusted caller, the pending-action registry is still in-memory, and durable audit records remain unimplemented. `SQLiteActionApprovalStore` is now available for restart-persistent, one-time action tokens (only token hashes are stored); it is not yet configured by the application, and actor/session authentication must come from a trusted identity layer.
+
+## Policy-enforced skill dispatch and operation approvals
+
+`core/skill_dispatch.py` requires a validated manifest, explicit capability grants, schema-valid inputs/outputs, and approval for medium/high-risk or side-effecting capabilities. `YukiCoreAgent.dispatch_manifest_skill()` now exposes a guarded agent entrypoint for this dispatcher and fails closed when no dispatcher is configured. Existing `run_skill()` calls, model-planned tasks, and plugin discovery are not all routed through this entrypoint yet; handlers are not sandboxed. `core/action_approvals.py` provides short-lived, one-time tokens bound to the exact canonical action, actor, and session. The standalone dispatcher now consumes these tokens before invoking side-effecting or medium/high-risk handlers. Token issuance still depends on a trusted caller having displayed the exact operation and obtained human consent; the approval store is in-memory and is not yet connected to the actual approval UI, the existing PermissionGate, authenticated session identity, or durable audit storage. Do not register untrusted plugins with the standalone dispatcher until process isolation is implemented.
+
+## Typed skill contracts
+
+`core/skill_manifest.py` defines a versioned manifest contract for stable skill IDs, input/output schemas, capability declarations, risk, execution budgets, and concurrency metadata. It rejects unsupported capabilities and side-effecting skills marked parallel-safe. The contract is not yet wired into the plugin loader, and it does not isolate code; do not treat schema validation as a sandbox.
+
+## Subprocess execution boundary foundation
+
+`core/subprocess_executor.py` adds fixed-argv execution without a shell, JSON request/response validation, a hard subprocess timeout, a child environment allowlist, and response-size checks. The standalone `SkillDispatcher.register_subprocess()` can now route a manifest-validated call through this executor using a fixed, trusted argv and deployment-configured environment. The agent entrypoint is now available, but the dispatcher is not yet integrated into the existing plugin loader or every task/model-planned execution path, and this is not a complete sandbox. OS-level filesystem/network/resource limits and robust process-tree cleanup are still required before running untrusted code.
+
+## Durable worker foundation
+
+`core/task_worker.py` runs one claimed SQLite job at a time through explicitly registered trusted handlers, stores results, applies bounded retry policy for declared retryable errors, and avoids persisting raw exception messages. Tests cover success, missing handlers, retries, cancellation, and redaction. It is currently a callable single-process worker primitive, not a background service: it is not wired into the CLI/API, has no hard execution timeout or graceful shutdown loop, and must not run untrusted plugin code.
+
+## Durable task storage foundation
+
+`core/durable_jobs.py` provides a local SQLite job-store primitive with persisted job state, bounded JSON payloads/results, idempotency keys, attempt budgets, cancellation requests, and stale-running recovery. It is not yet wired to a background worker, CLI/API controls, or actual task execution; treat it as a foundation, not a complete scheduler. Do not place secrets in job payloads. Only enqueue validated task data and execute handlers through Yuki's existing permission and isolation boundaries.
+
+## DeepSeek Harness architecture review
+
+See [`docs/DEEPSEEK_HARNESS_REVIEW.md`](docs/DEEPSEEK_HARNESS_REVIEW.md) for an evidence-based review of DeepSeek Harness patterns worth adapting: typed tool contracts, separation of planning from execution, durable sessions, explicit concurrency semantics, migration discipline, and plugin isolation requirements.
+
+## Runtime health checks
+
+Run `/health` in the terminal for bounded, read-only checks of workspace access, provider configuration, the local Ollama model inventory (when applicable), plugin trust policy, and configured Piper model presence. These checks never restart services or modify system state and are not a full integration test or security audit.
 
 ## External SSD portability
 
@@ -17,7 +53,7 @@ The registered `course_coach` skill provides bounded workflows for `explain TOPI
 
 Yuki includes a `role` skill with `list`, `current`, and profile names such as `companion`, `tutor`, `interviewer`, `developer`, `security`, and `marketing`. These profiles guide interaction style only; they never grant tool permissions.
 
-A controlled plugin loader is available in `core/plugin_loader.py`. Plugin discovery is **disabled by default** in `config.yaml`. To enable discovery after reviewing the code, set `plugin_discovery_enabled: true`. With `trusted_plugin_modules: []`, no external module is trusted; add exact module names (without `.py`) to that list. For a reviewed plugin at `skills/my_helper.py`, add `my_helper`. If you specifically want future `.py` files auto-discovered without listing each one, set `trusted_plugin_modules: ["*"]` only after reviewing every Python file in `skills/`: this explicitly trusts all modules in that package, including future files, and can execute their code with Yuki's permissions. Keep discovery disabled unless you accept that risk.
+A controlled plugin loader is available in `core/plugin_loader.py`. Plugin discovery is **disabled by default** in `config.yaml`. To enable discovery after reviewing the code, set `plugin_discovery_enabled: true`. With `trusted_plugin_modules: []`, no external module is trusted; add exact module names (without `.py`) to that list. For a reviewed plugin at `skills/my_helper.py`, add `my_helper`. Wildcard trust (`trusted_plugin_modules: ["*"]`) is rejected by the loader and must not be used. List each reviewed module name explicitly. Even explicitly trusted Python modules execute in Yuki's host process; the current loader is not a sandbox. Keep discovery disabled unless you accept that risk.
 
 A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(self, argument="")`, and provide a unique simple `name`, `description`, and safe input validation. The loader imports the module and instantiates the class with no arguments. Plugin imports execute Python with Yuki's permissions: this is **not a sandbox**. Never trust downloaded or user-supplied plugin code without reviewing it. Duplicate skill names are skipped; discovery failures do not crash core startup.
 
