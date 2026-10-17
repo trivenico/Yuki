@@ -58,6 +58,32 @@ Web fetch requires explicit hostnames in `web_allowed_hosts`; an empty list deni
 
 The Textual dashboard is launched from the guarded runtime with `/dashboard`. Browser-only GitHub cannot access local microphones, run Docker/Nmap, or run local voice models.
 
+- `companion/evolution.py`: opt-in local daily review cycle. It analyzes only explicitly recorded, bounded observations, redacts common secret-like strings, produces review proposals, and requires human review. It does not edit code/config, train a model, access arbitrary files, call a network, or execute actions.
+
+## Daily evolution cycle (opt-in)
+
+Yuki does not silently inspect conversations or learn from every task. Record concise observations deliberately, then run a review:
+
+```text
+/evolution record failure | CI failed because a test fixture was outdated
+/evolution record lesson | Run unit tests before pushing
+/evolution record feedback | Prefer short status summaries
+/evolution status
+/evolution run
+/evolution review PROPOSAL_ID accept
+/evolution review PROPOSAL_ID reject
+```
+
+The cycle creates `yuki_workspace/yuki_evolution_report.json`; review decisions only record accept/reject and do not apply changes. Evolution files are ignored by Git. The secret redactor is best-effort, not a guarantee—never enter credentials or sensitive health data.
+
+For an unattended local daily cycle, explicitly start this process and leave the computer running:
+
+```sh
+python -m companion.evolution --daily --hour 3 --workspace ./yuki_workspace
+```
+
+This runs at 03:00 local time while the process remains alive. It is not an OS service and does not wake a sleeping computer; stopping the process stops scheduling. `--once` runs one cycle immediately. No scheduler starts automatically. The daily cycle only proposes review items; it does not perform self-modification.
+
 ## Runtime commands
 
 - `/help`, `/status`, `/skills`, `/skill NAME [ARG]`
