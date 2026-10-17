@@ -18,7 +18,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Inspect structured skill result data as well as message text, so secrets cannot bypass a message-only guard.
 - [x] Extend credential-pattern detection to common quoted dictionary/JSON-like key-value output and cover it with runtime contract tests.
 - [x] Add behavioral tests for credential/private-key filtering, output truncation, fail-closed governance, recovery approval/verification, strict evaluator status, and agent signature verification where the optional crypto dependency is installed.
-- [x] Wire output policy into terminal /ask, /task, allow-listed /ask-cloud, and explicit /voice speak paths.
+- [x] Wire output policy into the provider-independent `YukiAgent.ask` boundary as well as terminal /ask, /task, allow-listed /ask-cloud, and explicit /voice speak paths.
 - [ ] Wire output policy into every other response path, including any future dashboard, API, or automatic spoken-reply paths, before claiming global output protection.
 - [ ] Add structured-data redaction beyond simple pattern matching and document false positives/false negatives. Regex output checks are defense-in-depth, not a DLP guarantee.
 
