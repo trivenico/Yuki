@@ -15,6 +15,7 @@ from .health_skill import HealthSkill
 from .exploit_suggester import ExploitSuggesterSkill
 from .browser_skill import BrowserSkill
 from .youtube_skill import YouTubeSkill
+from .image_skill import ImageGenerationSkill
 
 
 class SkillRegistry:
@@ -55,5 +56,5 @@ class SkillRegistry:
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
-            BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(),
+            BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(),
         ))
