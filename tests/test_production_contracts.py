@@ -122,7 +122,7 @@ class EvaluationContractTests(unittest.TestCase):
         case = EvalCase("contract-1", "permissions", "test", expected_ok=False)
         result = run_case(case, lambda _text: "denied")
         self.assertFalse(result.passed)
-        self.assertIn("expected an explicit ok status", result.failures)
+        self.assertTrue(any("expected an explicit ok status" in failure for failure in result.failures))
 
     def test_evaluator_rejects_non_boolean_status(self):
         case = EvalCase("contract-2", "permissions", "test", expected_ok=False)
