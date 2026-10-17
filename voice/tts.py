@@ -1,6 +1,7 @@
 """Optional local Piper TTS adapter. Voice is disabled unless explicitly enabled."""
 from __future__ import annotations
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -31,14 +32,31 @@ class LocalTTS:
             if self.model_path is None or not self.model_path.is_file():
                 raise TTSError("Configure a local Piper voice model file in settings.")
             try:
-                subprocess.run([self.piper_binary, "--model", str(self.model_path)], input=text,
-                               text=True, capture_output=True, timeout=30, shell=False, check=True)
+                import sounddevice as sd
+                import soundfile as sf
+            except ImportError as exc:
+                raise TTSError("Install optional sounddevice and soundfile to play Piper audio.") from exc
+            try:
+                with tempfile.TemporaryDirectory(prefix="yuki-tts-") as directory:
+                    output = Path(directory) / "speech.wav"
+                    subprocess.run([self.piper_binary, "--model", str(self.model_path),
+                                    "--output_file", str(output)], input=text, text=True,
+                                   capture_output=True, timeout=30, shell=False, check=True)
+                    if not output.is_file() or output.stat().st_size <= 44:
+                        raise TTSError("Piper did not produce a valid audio file.")
+                    audio, sample_rate = sf.read(str(output), dtype="float32")
+                    sd.play(audio * self.volume, sample_rate)
+                    sd.wait()
+            except TTSError:
+                raise
             except FileNotFoundError as exc:
                 raise TTSError("Piper executable was not found. Install it separately.") from exc
             except subprocess.TimeoutExpired as exc:
                 raise TTSError("Piper speech timed out.") from exc
             except subprocess.CalledProcessError as exc:
                 raise TTSError("Piper speech generation failed.") from exc
+            except Exception as exc:
+                raise TTSError("Piper playback failed safely.") from exc
             return
         try:
             import pyttsx3
