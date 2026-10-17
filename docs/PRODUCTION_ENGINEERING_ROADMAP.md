@@ -70,7 +70,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Add CLI `/health` checks for workspace access, provider configuration, local Ollama model inventory, plugin trust policy, and configured Piper model presence; checks are read-only and network access is restricted to loopback Ollama.
 - [ ] Add durable recovery budgets/cooldowns and safe recovery handlers with post-recovery verification.
 - [x] Add operation-level idempotency keys and bounded retry-state transitions to the durable job-store primitive; callers must still provide idempotency at external side-effect boundaries.
-- [ ] Integrate the durable job store with a background worker, task API/CLI, shutdown coordination, and operation-specific recovery policies.
+- [x] Add `core/task_worker.py`, a single-process worker that claims durable jobs, invokes explicitly registered trusted handlers, persists results, bounds retries, and redacts handler exceptions; this is not a sandbox and has no hard timeout/shutdown loop yet.
+- [ ] Integrate worker with task API/CLI, graceful shutdown, durable recovery scheduling, and operation-specific idempotency policies. Do not register untrusted plugins.
 - [ ] Integrate token/cost, latency, error rate, and resource metrics; test telemetry-disabled mode and exporter failure behavior.
 
 ## Phase 5 — durable daily-work automation
