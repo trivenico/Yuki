@@ -49,3 +49,6 @@ google_token.json
 yuki_evolution_observations.json
 yuki_evolution_state.json
 yuki_evolution_report.json
+
+# Portable external-SSD personal data root
+YukiData/
