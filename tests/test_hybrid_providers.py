@@ -73,6 +73,20 @@ class HybridProviderTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
         self.assertEqual(json.loads(request.data)["prompt"], "hi")
 
+
+    def test_ollama_availability_requires_installed_model(self):
+        provider = OllamaProvider(model="local-model")
+        with patch("urllib.request.urlopen", return_value=Response(
+            json.dumps({"models": [{"name": "local-model:latest"}]}).encode()
+        )):
+            self.assertTrue(provider.is_available())
+        with patch("urllib.request.urlopen", return_value=Response(
+            json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
+        )):
+            self.assertFalse(provider.is_available())
+        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+            self.assertFalse(provider.is_available())
+
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
