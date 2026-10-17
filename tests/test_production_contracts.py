@@ -1,0 +1,111 @@
+"""Behavioral contract tests for production safety primitives.
+
+These tests verify the helpers themselves; they do not claim that every helper is
+wired into the live agent runtime.
+"""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.continuous_eval import EvalCase, run_case
+from core.governance import Governance
+from core.output_guard import OutputGuard
+from core.self_healing import RecoveryStatus, SelfHealingManager
+
+
+class OutputGuardContractTests(unittest.TestCase):
+    def test_private_key_material_is_withheld(self):
+        result = OutputGuard().check("-----BEGIN PRIVATE KEY-----\nexample\n-----END PRIVATE KEY-----")
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.text, "[Output withheld by safety policy.]")
+        self.assertIn("private_key_material", result.reasons)
+
+    def test_credential_assignment_is_withheld(self):
+        result = OutputGuard().check("api_key=supersecret")
+        self.assertFalse(result.allowed)
+        self.assertNotIn("supersecret", result.text)
+
+    def test_long_output_is_truncated(self):
+        result = OutputGuard(max_chars=10).check("x" * 30)
+        self.assertTrue(result.allowed)
+        self.assertIn("Output truncated", result.text)
+        self.assertIn("output_too_long", result.reasons)
+
+
+class GovernanceContractTests(unittest.TestCase):
+    def test_missing_approver_fails_closed_and_is_audited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = Path(tmp) / "audit.jsonl"
+            decision = Governance(audit_path=audit).request(
+                action_id="a-1", action="send_email", actor="test", reason="test request"
+            )
+            self.assertFalse(decision.approved)
+            logged = json.loads(audit.read_text(encoding="utf-8").splitlines()[0])
+            self.assertFalse(logged["approved"])
+            self.assertEqual(logged["action_id"], "a-1")
+
+    def test_approver_exception_fails_closed(self):
+        def broken_approver(_action, _reason):
+            raise RuntimeError("approver offline")
+        decision = Governance(approver=broken_approver).request(
+            action_id="a-2", action="delete_file", actor="test", reason="test request"
+        )
+        self.assertFalse(decision.approved)
+
+
+class SelfHealingContractTests(unittest.TestCase):
+    def test_recovery_without_approval_does_not_run_handler(self):
+        ran = []
+        manager = SelfHealingManager(approval=lambda _name, _reason: False)
+        manager.register_recovery(
+            "provider", lambda: ran.append(True), verify=lambda: True,
+            cooldown=0, max_recoveries=1, approval_required=True,
+        )
+        result = manager.recover("provider")
+        self.assertEqual(result.status, RecoveryStatus.DENIED)
+        self.assertEqual(ran, [])
+
+    def test_recovery_is_not_reported_successful_without_verification(self):
+        ran = []
+        manager = SelfHealingManager(approval=lambda _name, _reason: True)
+        manager.register_recovery(
+            "provider", lambda: ran.append(True), verify=lambda: False,
+            cooldown=0, max_recoveries=1, approval_required=True,
+        )
+        result = manager.recover("provider")
+        self.assertEqual(result.status, RecoveryStatus.UNVERIFIED)
+        self.assertEqual(ran, [True])
+
+
+class EvaluationContractTests(unittest.TestCase):
+    def test_evaluator_must_return_explicit_boolean_status_when_required(self):
+        case = EvalCase("contract-1", "permissions", "test", expected_ok=False)
+        result = run_case(case, lambda _text: "denied")
+        self.assertFalse(result.passed)
+        self.assertIn("expected an explicit ok status", result.failures)
+
+    def test_evaluator_rejects_non_boolean_status(self):
+        case = EvalCase("contract-2", "permissions", "test", expected_ok=False)
+        result = run_case(case, lambda _text: {"output": "denied", "ok": "false"})
+        self.assertFalse(result.passed)
+        self.assertIn("expected ok status to be a boolean", result.failures)
+
+
+class AgentIdentityContractTests(unittest.TestCase):
+    def test_signature_verifies_and_tampering_fails(self):
+        from core.agent_identity import IdentityUnavailable, generate_identity, sign_payload, verify_envelope
+        try:
+            identity, private_key = generate_identity("test-agent")
+        except IdentityUnavailable:
+            self.skipTest("optional cryptography dependency is not installed")
+        envelope = sign_payload(identity, private_key, {"action": "test", "nonce": "n-1"})
+        self.assertTrue(verify_envelope(envelope, trusted_fingerprints={identity.fingerprint}))
+        tampered = dict(envelope)
+        tampered["payload"] = {"action": "delete", "nonce": "n-1"}
+        self.assertFalse(verify_envelope(tampered, trusted_fingerprints={identity.fingerprint}))
+        self.assertFalse(verify_envelope(envelope, trusted_fingerprints={"not-trusted"}))
+
+
+if __name__ == "__main__":
+    unittest.main()
