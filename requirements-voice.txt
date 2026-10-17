@@ -1,0 +1,3 @@
+# Optional voice dependencies only; install separately to avoid large downloads on standard installs.
+pyttsx3>=2.90,<3.0
+faster-whisper>=1.1,<2.0
