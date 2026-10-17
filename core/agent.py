@@ -46,13 +46,15 @@ class YukiCoreAgent:
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
-        if skill.requires_approval:
-            approved = self.permission_gate.request(
-                action=f"skill:{skill.name}", reason=f"User requested: {skill.description}", risk=skill.risk
-            )
-            if not approved:
-                return AgentResponse(False, "Not executed: explicit human approval was not granted.",
-                                     name, stage="permission_denied")
+        # Strict policy: request fresh approval for every skill invocation. This is
+        # intentionally stricter than per-skill defaults so model output cannot
+        # invoke a state-changing or external capability without human confirmation.
+        approved = self.permission_gate.request(
+            action=f"skill:{skill.name}", reason=f"User requested: {skill.description}", risk=skill.risk
+        )
+        if not approved:
+            return AgentResponse(False, "Not executed: explicit human approval was not granted.",
+                                 name, stage="permission_denied")
         try:
             result = skill.execute(argument)
             if isinstance(result, dict):
