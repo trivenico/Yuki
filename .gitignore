@@ -44,3 +44,8 @@ google_oauth_client.json
 google_token.json
 *.onnx
 *.onnx.data
+
+# Private local evolution data and reports
+yuki_evolution_observations.json
+yuki_evolution_state.json
+yuki_evolution_report.json
