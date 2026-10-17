@@ -52,6 +52,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Add redacted timing/status spans for direct provider asks, bounded task-planner calls, explicit cloud requests, and core skill invocation.
 - [ ] Configure a production exporter and extend telemetry to memory, voice, all external tools, and full task lifecycle; verify no prompts, credentials, or raw tool arguments are exported.
 - [ ] Configure client-level connection/read timeouts. Circuit breakers and retries do not themselves stop a hung blocking call.
+- [x] Add CLI `/health` checks for workspace access, provider configuration, local Ollama model inventory, plugin trust policy, and configured Piper model presence; checks are read-only and network access is restricted to loopback Ollama.
 - [ ] Add durable recovery budgets/cooldowns and safe recovery handlers with post-recovery verification.
 - [ ] Add idempotency keys for retried writes and distinguish retryable from non-retryable errors.
 - [ ] Integrate token/cost, latency, error rate, and resource metrics; test telemetry-disabled mode and exporter failure behavior.
