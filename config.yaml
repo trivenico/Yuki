@@ -1,0 +1,9 @@
+# Safe defaults. Secrets belong in environment variables, never in this file.
+name: Yuki
+workspace: ./yuki_workspace
+provider: mock
+ollama_base_url: http://127.0.0.1:11434
+ollama_model: ""
+max_agent_steps: 3
+voice_enabled: false
+security_lab_enabled: false
