@@ -11,7 +11,7 @@ Run `python main.py --setup` for first-run configuration. Yuki currently offers 
 
 ## Policy-enforced skill dispatch and operation approvals
 
-`core/skill_dispatch.py` is a standalone dispatcher that requires a validated manifest, explicit capability grants, schema-valid inputs/outputs, and approval for medium/high-risk or side-effecting capabilities. It is not yet wired into the existing `YukiCoreAgent` or plugin loader, and it does not sandbox handlers. `core/action_approvals.py` provides short-lived, one-time tokens bound to the exact canonical action, actor, and session; tokens are currently in-memory and are not yet integrated with runtime approval or durable audit storage. Do not register untrusted plugins with the standalone dispatcher until process isolation is implemented.
+`core/skill_dispatch.py` is a standalone dispatcher that requires a validated manifest, explicit capability grants, schema-valid inputs/outputs, and approval for medium/high-risk or side-effecting capabilities. It is not yet wired into the existing `YukiCoreAgent` or plugin loader, and it does not sandbox handlers. `core/action_approvals.py` provides short-lived, one-time tokens bound to the exact canonical action, actor, and session. The standalone dispatcher now consumes these tokens before invoking side-effecting or medium/high-risk handlers. Token issuance still depends on a trusted caller having displayed the exact operation and obtained human consent; the approval store is in-memory and is not yet connected to YukiCoreAgent, the existing PermissionGate, or durable audit storage. Do not register untrusted plugins with the standalone dispatcher until process isolation is implemented.
 
 ## Typed skill contracts
 
