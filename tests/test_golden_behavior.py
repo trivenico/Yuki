@@ -7,7 +7,7 @@ import unittest
 from core.agent import YukiCoreAgent
 from core.output_guard import OutputGuard
 from core.permissions import PermissionGate
-from tests.golden_dataset import GOLDEN_CASES
+from golden_dataset import GOLDEN_CASES
 from skills.base import Skill, SkillResult
 
 
