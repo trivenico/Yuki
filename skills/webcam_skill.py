@@ -30,9 +30,15 @@ class WebcamSkill(Skill):
             ok, frame = camera.read()
             if not ok or frame is None:
                 return SkillResult(False, "Could not capture a webcam frame.")
-            encoded_ok, encoded = cv2.imencode(".jpg", frame)
+            height, width = frame.shape[:2]
+            if width > 1280:
+                new_height = max(1, int(height * (1280 / width)))
+                frame = cv2.resize(frame, (1280, new_height))
+            encoded_ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
             if not encoded_ok:
                 return SkillResult(False, "Could not encode the captured frame.")
+            if encoded.size > 3000000:
+                return SkillResult(False, "Captured frame exceeds the 3 MB upload limit.")
             data_url = "data:image/jpeg;base64," + base64.b64encode(encoded.tobytes()).decode("ascii")
         except Exception as exc:
             return SkillResult(False, f"Webcam capture failed safely ({type(exc).__name__}).")
