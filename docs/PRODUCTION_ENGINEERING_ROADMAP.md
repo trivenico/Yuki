@@ -47,7 +47,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 ## Phase 3 — plugin isolation and authorization
 **Exit gate:** an untrusted skill cannot access host files, credentials, or network except through explicitly granted capabilities.
 
-- [ ] Define a versioned skill manifest (identifier, version, entry point, permissions, inputs/outputs, dependencies, time/resource budgets).
+- [x] Add a versioned typed skill manifest contract with declared capabilities, bounded input/output schemas, risk, time/output budgets, and parallel-safety checks (not yet integrated into the plugin dispatcher).
+- [ ] Integrate manifests with plugin discovery/dispatch, dependency declarations, signature/trust verification, and isolated execution.
 - [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
 - [ ] Remove wildcard entries from example/user configuration and document exact module allowlisting.
 - [ ] Execute third-party skills in an isolated worker/container with filesystem allowlists, network policy, resource limits, and a bounded protocol. Do not treat Python imports or a thread timeout as a sandbox.
