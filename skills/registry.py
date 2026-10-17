@@ -9,6 +9,10 @@ from .time_skill import TimeSkill
 from .interview import InterviewSkill
 from .web_skill import WebSkill
 from .email_skill import GmailReadSkill
+from .web_deep_read import DeepReadSkill
+from .knowledge_skill import KnowledgeSkill
+from .health_skill import HealthSkill
+from .exploit_suggester import ExploitSuggesterSkill
 
 
 class SkillRegistry:
@@ -47,4 +51,6 @@ class SkillRegistry:
         return cls((
             TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
+            DeepReadSkill(allowed_hosts=web_allowed_hosts),
+            KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
         ))
