@@ -113,8 +113,13 @@ class ApprovalCoordinator:
         # One human confirmation produces a receipt bound to the immutable action.
         # Dispatcher consumes this receipt, avoiding a second prompt while preserving
         # its fail-closed PermissionGate and exact-action checks.
+        # The confirmation UI receives a detached copy. It must never be able to
+        # mutate the immutable action that is fingerprinted and later executed.
+        def confirm_snapshot(_shown_action):
+            return bool(confirm(copy.deepcopy(action_snapshot)))
+
         receipt = permission_gate.issue_receipt(
-            action_snapshot, confirm, risk=manifest.risk
+            action_snapshot, confirm_snapshot, risk=manifest.risk
         )
         if receipt is None:
             if self.audit_log:
