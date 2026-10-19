@@ -46,13 +46,19 @@ class ApprovalCoordinator:
             if item is None: return ApprovalOutcome(False,"pending_not_found",pending_id)
             action=item.action; skill_id=item.skill_id; arguments=item.arguments
         else:
-            meta=self._local_meta.pop(pending_id,None)
+            meta=self._local_meta.get(pending_id)
+            if meta is None or meta[1] != actor or meta[2] != session_id: return ApprovalOutcome(False,"pending_not_found",pending_id)
             item=self._pending.consume(pending_id)
-            if item is None or meta is None or meta[1] != actor or meta[2] != session_id: return ApprovalOutcome(False,"pending_not_found",pending_id)
+            self._local_meta.pop(pending_id, None)
+            if item is None: return ApprovalOutcome(False,"pending_not_found",pending_id)
             action,_,_,skill_id=meta; arguments=item.arguments
         try: visible=json.loads(json.dumps(action,ensure_ascii=False,allow_nan=False))
         except Exception: return ApprovalOutcome(False,"invalid_snapshot",pending_id)
-        if not callable(confirm) or confirm(visible) is not True:
+        try:
+            confirmed = callable(confirm) and confirm(visible) is True
+        except Exception:
+            confirmed = False
+        if not confirmed:
             self._audit("denied",pending_id,skill_id,actor,session_id,"declined")
             return ApprovalOutcome(False,"approval_denied",pending_id)
         self._audit("approved",pending_id,skill_id,actor,session_id)
