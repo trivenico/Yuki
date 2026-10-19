@@ -55,7 +55,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Add `YukiCoreAgent.dispatch_manifest_skill()` as a guarded live-agent entrypoint that invokes the dispatcher, requires pre-issued action-bound approval for consequential actions, and fails closed when no dispatcher is configured.
 - [x] Add `core/manifest_task_agent.py`, a bounded model-guided plan/act/observe loop that lists only granted manifest skills and routes calls through `YukiCoreAgent.dispatch_manifest_skill()`; consequential actions pause with `approval_required` instead of executing.
 - [x] Add explicit `resume_approved()` for a trusted approval UI to resume a pending action with a one-time token bound to the exact skill, arguments, actor, and session.
-- [ ] Wire the manifest planner into the main CLI/API/task entrypoints; the existing `ApprovedTaskAgent`, legacy `run_skill()` registry path, and plugin loader remain separate and must not be considered sandboxed.
+- [x] Wire the manifest planner into the primary CLI `/task` entrypoint without a legacy fallback; the dispatcher starts with zero registered capabilities. API integration, reviewed manifest-skill registration, and plugin-loader migration remain open; the legacy `run_skill()` registry path is still separate and must not be considered sandboxed.
 - [ ] Replace or migrate legacy task-planner call sites to the manifest planner, integrate plugin discovery only after trust/signature checks, and add OS-level sandbox restrictions before third-party execution.
 - [ ] Add dependency declarations, signature/trust verification, and isolated execution.
 - [x] Keep discovery disabled by default and reject wildcard trust grants in the loader.
@@ -74,6 +74,8 @@ Status: active engineering plan. A module is not considered production-ready unt
 - [x] Repair the SQLite pending store schema/API so identity hashes are returned, checked on read/consume, and consumed atomically with creator identity; add store-level and coordinator-level regression tests.
 - [x] Add `core/approval_runtime.py` to construct the local CLI approval coordinator with SQLite pending/audit stores under `.yuki/state`, POSIX owner-only directory/database permissions, OS-account actor context, and a fresh per-process session identifier; this is a local CLI context, not API authentication.
 - [x] Add runtime-factory tests for store placement, POSIX permissions, per-process session rotation, and invalid configuration.
+- [x] Route the primary CLI `/task` command through `ManifestTaskAgent` and `ApprovalCoordinator`, using SQLite pending/audit/action-token stores; do not fall back to the legacy task agent. The dispatcher intentionally starts with zero registered capabilities, so no model-proposed tool action can execute until a manifest skill is explicitly registered and reviewed.
+
 
 
 - [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; the local CLI factory exists but is not yet connected to `/task`. Configure SQLite pending/token/audit stores from protected workspace paths and derive actor/session from authenticated identity. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
