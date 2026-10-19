@@ -93,6 +93,18 @@ class ExecutionBoundaryTests(unittest.TestCase):
             with self.subTest(response=response), self.assertRaises(ValueError):
                 agent.run("test")
 
+    def test_dispatch_denies_when_permission_gate_is_missing(self):
+        dispatcher = make_dispatcher()
+        dispatcher.permission_gate = None
+        action = {"skill_id": "notes.write", "arguments": {"text": "hello"}}
+        dispatcher.approval_store.approve(action_fingerprint(action))
+        with self.assertRaises(PermissionError):
+            dispatcher.dispatch("notes.write", action["arguments"])
+
+    def test_action_fingerprint_rejects_non_finite_json(self):
+        with self.assertRaises(ValueError):
+            action_fingerprint({"skill_id": "notes.write", "arguments": {"value": float("nan")}})
+
     def test_task_agent_rejects_oversized_prompt(self):
         agent = ManifestTaskAgent(FixedProvider("{}"), object(), object())
         with self.assertRaises(ValueError):
