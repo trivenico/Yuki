@@ -352,7 +352,11 @@ def main():
                         print("Yuki > Proposal remains pending.")
                         continue
                     path = store.approve(name, human_approved=True)
-                    print(f"Yuki > Declarative proposal approved at {path}. It is still not executable.")
+                    loaded = agent.registry.load_approved_documents(path.parent)
+                    if name in loaded:
+                        print(f"Yuki > Approved skill {name!r} is now available as an inert instruction resource. It cannot execute code or call tools.")
+                    else:
+                        print(f"Yuki > Declarative proposal approved at {path}. It will be checked during the next registry load.")
                 except Exception as exc:
                     print(f"Yuki > Skill approval failed safely ({type(exc).__name__}): {exc}")
             elif command.startswith("/skill "):
