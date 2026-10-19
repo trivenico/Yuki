@@ -69,7 +69,7 @@ class DaemonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             queue=DurableTaskQueue(str(Path(d)/"jobs.sqlite"))
             cron=CronScheduler(queue)
-            cron.add("*/5 * * * *","sync",{})
+            cron.add("10 * * * *","sync",{})
             # This small cron implementation intentionally supports only '*' and comma-separated integers.
             with self.assertRaises(ValueError): cron.add("*/5 * * * *","sync",{})
             now=datetime(2026,10,19,12,10,tzinfo=timezone.utc)
