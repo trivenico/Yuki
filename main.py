@@ -157,7 +157,7 @@ def main():
         usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
         ai = YukiAgent(create_provider(config, cloud_approver=lambda *args: _confirm(
             "ai:cloud_request",
-            f"Send prompt to configured cloud provider for task {args[0]!r}? Prompt length: {len(args[-1])} characters.",
+            f"Send prompt to configured cloud provider (task={'named' if len(args) > 1 else 'direct'}); prompt length: {len(args[-1])} characters.",
             "high",
         )), usage_tracker=usage_tracker)
     except Exception as exc:
