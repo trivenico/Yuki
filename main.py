@@ -28,6 +28,9 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.approval_runtime import build_local_approval_runtime
+from core.skill_dispatch import SkillDispatcher
+from core.manifest_task_agent import ManifestTaskAgent
 from core.runtime_health import build_runtime_health_manager, summarize_health
 from core.setup_wizard import load_local_env, run_setup
 
@@ -113,6 +116,23 @@ def main():
     ai = YukiAgent(create_provider(config), telemetry=agent.telemetry)
     output_guard = OutputGuard()
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"], telemetry=agent.telemetry)
+    # Manifest planner starts with no registered tools; legacy skills are not
+    # silently exposed to the new dispatcher.
+    approval_runtime = build_local_approval_runtime(workspace)
+    manifest_dispatcher = SkillDispatcher(
+        capability_grants=set(),
+        approval_store=approval_runtime.action_approval_store,
+    )
+    manifest_agent = YukiCoreAgent(
+        registry=agent.registry,
+        permission_gate=PermissionGate(_ask_approval),
+        telemetry=agent.telemetry,
+        dispatcher=manifest_dispatcher,
+    )
+    manifest_task_agent = ManifestTaskAgent(
+        ai.provider, manifest_agent, manifest_dispatcher,
+        max_steps=config["max_agent_steps"], telemetry=agent.telemetry,
+    )
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -182,10 +202,32 @@ def main():
             if not goal:
                 print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                 continue
-            print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
-            result = task_agent.run(goal)
-            guarded = output_guard.check(result.message)
-            print(f"Yuki > {guarded.text} [status={result.status}, steps={result.steps}]")
+            print("Yuki > Preparing a bounded manifest-only plan. No manifest tools are enabled by default.")
+            result = manifest_task_agent.run(goal)
+            if result.status == "approval_required" and result.pending_skill and result.pending_arguments is not None:
+                try:
+                    pending = approval_runtime.coordinator.record(
+                        manifest_task_agent, result,
+                        actor=approval_runtime.actor,
+                        session_id=approval_runtime.session_id,
+                    )
+                    preview = manifest_dispatcher.approval_preview(pending.skill_id, pending.arguments)
+                    print("Yuki > Proposed action (exact approval payload):")
+                    print(preview)
+                    approved = approval_runtime.coordinator.approve(
+                        manifest_task_agent, pending.pending_id,
+                        actor=approval_runtime.actor,
+                        session_id=approval_runtime.session_id,
+                        confirm=lambda displayed: displayed == preview and _confirm(
+                            "manifest:execute", f"Execute exact action: {displayed!r}", "high"
+                        ),
+                    )
+                    print(f"Yuki > {approved.message} [status={approved.status}]")
+                except Exception as exc:
+                    print(f"Yuki > Approval flow failed closed ({type(exc).__name__}); no action was intentionally dispatched.")
+            else:
+                guarded = output_guard.check(result.message)
+                print(f"Yuki > {guarded.text} [status={result.status}, steps={result.steps}]")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
