@@ -152,7 +152,7 @@ def build_readiness_report(
             blockers.append(f"Release gate not verified: {name}")
 
     for capability in capabilities:
-        if capability.state in {CapabilityState.NOT_IMPLEMENTED, CapabilityState.NEEDS_CONFIGURATION}:
+        if capability.state in {CapabilityState.NOT_IMPLEMENTED, CapabilityState.NEEDS_CONFIGURATION, CapabilityState.UNVERIFIED}:
             blockers.append(f"{capability.name}: {capability.state.value}")
     for name, healthy in runtime_health.items():
         if healthy is False:
