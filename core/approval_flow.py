@@ -62,7 +62,21 @@ class ApprovalCoordinator:
             pending_id = uuid.uuid4().hex
             self._in_memory_pending[pending_id] = PendingItem(pending_id, snapshot, actor, session_id)
         if self.audit_log:
-            self.audit_log.record_event("requested", pending_id, actor, session_id)
+            try:
+                self.audit_log.record_event("requested", pending_id, actor, session_id)
+            except Exception as exc:
+                # An action whose audit event cannot be durably recorded must not
+                # remain approvable. Remove it before returning any pending ID.
+                try:
+                    if self.pending_store is not None:
+                        self.pending_store.deny(pending_id)
+                    else:
+                        self._in_memory_pending.pop(pending_id, None)
+                except Exception:
+                    # Preserve fail-closed behavior even if cleanup itself fails:
+                    # never return the pending ID to the caller.
+                    raise RuntimeError("Approval audit failed and pending cleanup failed.") from exc
+                raise RuntimeError("Approval audit unavailable; pending action discarded.") from exc
         return PendingItem(pending_id, copy.deepcopy(snapshot), actor, session_id)
 
     def approve(self, planner, pending_id: str, actor: str, session_id: str, confirm: Callable[[dict], bool] = None) -> ExecutionResult:
