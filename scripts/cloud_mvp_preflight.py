@@ -55,12 +55,12 @@ def main():
     except Exception as exc:
         print(f"FAIL: configuration/provider check failed ({type(exc).__name__}).")
         return 1
-    print(f"Configured provider: {facts[\"provider\"]}")
-    print(f"Local model configured: {\"yes\" if facts[\"local_model_configured\"] else \"no\"}")
+    print("Configured provider: " + str(facts["provider"]))
+    print("Local model configured: " + ("yes" if facts["local_model_configured"] else "no"))
     if facts["local_provider_available"] is not None:
-        print(f"Local model reachable: {\"yes\" if facts[\"local_provider_available\"] else \"no\"}")
-    print(f"Cloud model configured: {\"yes\" if facts[\"cloud_model_configured\"] else \"no\"}")
-    print(f"Cloud API key present: {\"yes\" if facts[\"cloud_key_present\"] else \"no\"}")
+        print("Local model reachable: " + ("yes" if facts["local_provider_available"] else "no"))
+    print("Cloud model configured: " + ("yes" if facts["cloud_model_configured"] else "no"))
+    print("Cloud API key present: " + ("yes" if facts["cloud_key_present"] else "no"))
     for warning in warnings: print("WARN: " + warning)
     for error in errors: print("FAIL: " + error)
     if errors:
