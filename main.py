@@ -80,6 +80,7 @@ def print_help():
   /skill proposals               List pending skill proposals
   /skill preview NAME            Static-only review of a proposal
   /skill approve NAME            Approve a declarative proposal (not executable code)
+  /skill reject NAME             Reject and archive a proposal
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -157,6 +158,9 @@ def main():
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
         agent = build_agent(config)
+        # Approved SKILL.md files are registered as inert instruction resources only.
+        from skills.proposals import SkillProposalStore
+        agent.registry.load_approved_documents(workspace / "skill-proposals" / "approved")
         mcp_registry = MCPRegistry(config.get("mcp_servers", []), approver=lambda name, args: _confirm(
             "mcp:tool_call", f"Call MCP tool {name!r} with argument keys {sorted(args)[:20]!r}.", "high"))
         from yuki_tools import register_mcp_registry
@@ -220,7 +224,11 @@ def main():
                     f"Firewall enabled: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']})")
         if command == "/skills":
             return "\n".join(f"{s['name']} [{s['risk']}] — {s['description']}" for s in agent.available_skills())
-        return "Safe commands: /help, /status, /skills. Sensitive actions remain in the approval-gated terminal."
+        if command == "/skill proposals":
+            from skills.proposals import SkillProposalStore
+            proposals = SkillProposalStore(workspace / "skill-proposals").list_proposals()
+            return json.dumps(proposals, indent=2, ensure_ascii=False) if proposals else "No pending skill proposals."
+        return "Safe commands: /help, /status, /skills, /skill proposals. Approvals remain in the terminal."
     
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
@@ -317,6 +325,21 @@ def main():
                     print("Yuki > Static review only; instructions were not executed.")
                 except Exception as exc:
                     print(f"Yuki > Skill preview unavailable ({type(exc).__name__}): {exc}")
+            elif command.startswith("/skill reject "):
+                name = command[len("/skill reject "):].strip()
+                try:
+                    from skills.proposals import SkillProposalStore
+                    store = SkillProposalStore(workspace / "skill-proposals")
+                    preview = store.sandbox_preview(name)
+                    if not _confirm("skill:reject_proposal",
+                                    f"Reject and archive proposal {preview['name']!r}? It will not be activated.",
+                                    "medium"):
+                        print("Yuki > Proposal remains pending.")
+                        continue
+                    path = store.reject(name, human_rejected=True)
+                    print(f"Yuki > Proposal rejected and archived at {path}.")
+                except Exception as exc:
+                    print(f"Yuki > Skill rejection failed safely ({type(exc).__name__}): {exc}")
             elif command.startswith("/skill approve "):
                 name = command[len("/skill approve "):].strip()
                 try:
@@ -329,7 +352,11 @@ def main():
                         print("Yuki > Proposal remains pending.")
                         continue
                     path = store.approve(name, human_approved=True)
-                    print(f"Yuki > Declarative proposal approved at {path}. It is still not executable.")
+                    loaded = agent.registry.load_approved_documents(path.parent)
+                    if name in loaded:
+                        print(f"Yuki > Approved skill {name!r} is now available as an inert instruction resource. It cannot execute code or call tools.")
+                    else:
+                        print(f"Yuki > Declarative proposal approved at {path}. It will be checked during the next registry load.")
                 except Exception as exc:
                     print(f"Yuki > Skill approval failed safely ({type(exc).__name__}): {exc}")
             elif command.startswith("/skill "):

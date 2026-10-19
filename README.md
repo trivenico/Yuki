@@ -23,6 +23,14 @@ Run `yuki-onboard` (or `python -m ui.onboarding_tui`) to create a private user c
 - `/desktop` opens the optional read-only PyWebView shell (`pip install -r requirements-desktop.txt`). It shares the running process state but intentionally exposes no privileged actions.
 - Token usage is stored locally under the configured workspace; provider counts are exact when supplied by the provider and otherwise marked as estimates.
 
+### Onboarding and reviewed skill proposals
+
+- Run `python -m ui.onboarding_tui` (or `yuki-onboard`) to configure a first-run install. The main CLI launches the wizard automatically when `~/.yuki/config.json` is missing and stdin is interactive; non-interactive runs stop and tell you how to run setup explicitly.
+- Configuration is validated in `core/onboarding.py`, atomically written with restrictive file permissions, and described by `schemas/user-config-v1.schema.json`. Raw API keys are not stored; use the named environment variable. Provider URL syntax is checked, but endpoint reachability/authentication is not claimed unless a provider-specific connectivity check is added.
+- Generate a proposal with `/skill draft summarize user-provided notes`; inspect with `/skill proposals` and `/skill preview summarize-user-provided-notes`; approve or reject using `/skill approve NAME` or `/skill reject NAME`. Both decisions require terminal confirmation. Rejected proposals are archived.
+- Approved documents are loaded by `SkillRegistry.load_approved_documents()` as **inert instruction resources**. They are not imported or compiled as Python, and their content cannot call tools. Executable Python plugin generation is intentionally not enabled by this workflow.
+- The Textual dashboard can display pending proposals using `/skill proposals`; approvals stay in the terminal. Desktop wrappers use the same on-disk configuration and workspace state.
+
 ### Roadmap increment: daemon, messaging, skills and native inference
 
 - **Async scheduler/daemon:** `automation/async_scheduler.py` stores scheduled work in SQLite, supports bounded five-field UTC cron and interval schedules, and only invokes named in-process handlers. Approval is requested when each job becomes due; headless/missing approval denies execution. Start the foreground notification daemon with `yuki-daemon --notify "stretch break" --every 3600` or `yuki-daemon --notify "weekday check-in" --cron "0 9 * * 1-5"`. Notifications are local-only. Register additional trusted handlers in application code; do not register model-generated shell/code handlers.

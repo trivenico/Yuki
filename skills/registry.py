@@ -52,6 +52,23 @@ from skills.role_skill import RoleSkill
 from core.plugin_loader import PluginLoader
 
 
+class DeclarativeSkill(Skill):
+    """Approved SKILL.md exposed as an inert instruction resource, never executable code."""
+    risk = "medium"
+    requires_approval = True
+
+    def __init__(self, name: str, description: str, instructions: str):
+        self.name = name
+        self.description = description
+        self.instructions = instructions
+
+    def run(self, argument: str = ""):
+        from .base import SkillResult
+        # A registry listing cannot execute instructions. Callers receive the text as data.
+        return SkillResult(True, "Approved declarative skill instructions retrieved; no tools executed.",
+                           {"instructions": self.instructions, "user_input": argument[:500]})
+
+
 class SkillRegistry:
     def __init__(self, skills: Iterable[Skill] = ()):
         self._skills = {}
@@ -73,6 +90,25 @@ class SkillRegistry:
         if not callable(getattr(skill, "execute", None)):
             raise TypeError("Registered skills must implement execute().")
         self._skills[name] = skill
+
+    def load_approved_documents(self, directory: str | Path) -> list[str]:
+        """Load reviewed SKILL.md documents as inert resources, requiring no code imports."""
+        from .proposals import parse_skill_markdown
+        root = Path(directory).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        loaded: list[str] = []
+        for path in sorted(root.glob("*.SKILL.md")):
+            if path.is_symlink() or path.resolve().parent != root:
+                continue
+            try:
+                proposal = parse_skill_markdown(path.read_text(encoding="utf-8"), source_path=str(path))
+                if path.name != f"{proposal.name}.SKILL.md" or proposal.name in self._skills:
+                    continue
+                self.register(DeclarativeSkill(proposal.name, proposal.description, proposal.instructions))
+                loaded.append(proposal.name)
+            except (OSError, ValueError, TypeError):
+                continue
+        return loaded
 
     def get(self, name):
         return self._skills.get(name)

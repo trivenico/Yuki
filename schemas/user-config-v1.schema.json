@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yuki.local/schemas/user-config-v1.json",
+  "title": "Yuki user configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "provider": {"enum": ["mock", "hybrid", "ollama", "llama.cpp", "llama.cpp-python", "mlx", "vllm", "lm-studio", "openai", "anthropic", "deepseek", "glm", "openai-compatible"]},
+    "model": {"type": "string", "maxLength": 120},
+    "base_url": {"type": "string", "maxLength": 2048},
+    "api_key_env": {"type": "string", "maxLength": 256},
+    "model_path": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "n_ctx": {"type": "integer", "minimum": 512, "maximum": 131072},
+    "n_threads": {"type": "integer", "minimum": 1, "maximum": 256},
+    "n_gpu_layers": {"type": "integer", "minimum": 0, "maximum": 999},
+    "max_tokens": {"type": "integer", "minimum": 1, "maximum": 8192},
+    "local_provider": {"type": "string", "maxLength": 2048},
+    "local_model": {"type": "string", "maxLength": 2048},
+    "cloud_provider": {"type": "string", "maxLength": 2048},
+    "cloud_model": {"type": "string", "maxLength": 2048},
+    "cloud_api_key_env": {"type": "string", "maxLength": 2048},
+    "cloud_tasks": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "mcp_servers": {
+      "type": "array", "maxItems": 25,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "endpoint", "allowed_tools"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "endpoint": {"type": "string", "format": "uri", "pattern": "^https://"},
+          "allowed_tools": {"type": "array", "maxItems": 200, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 200}}
+        }
+      }
+    },
+    "guardrails": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "require_tool_approval": {"type": "boolean", "const": true},
+        "require_cloud_approval": {"type": "boolean", "const": true},
+        "local_first": {"type": "boolean", "const": true}
+      }
+    }
+  },
+  "required": ["schema_version", "provider", "model", "base_url", "api_key_env", "mcp_servers", "guardrails"]
+}

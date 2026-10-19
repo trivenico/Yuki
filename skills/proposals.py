@@ -65,8 +65,10 @@ class SkillProposalStore:
         self.root = Path(root).expanduser().resolve()
         self.proposals = self.root / "proposals"
         self.approved = self.root / "approved"
+        self.rejected = self.root / "rejected"
         self.proposals.mkdir(parents=True, exist_ok=True)
         self.approved.mkdir(parents=True, exist_ok=True)
+        self.rejected.mkdir(parents=True, exist_ok=True)
 
     def draft(self, provider, goal: str) -> SkillProposal:
         """Ask a configured provider to draft SKILL.md, then validate and store as pending.
@@ -100,7 +102,7 @@ class SkillProposalStore:
     def propose(self, text: str) -> SkillProposal:
         proposal = parse_skill_markdown(text)
         target = self.proposals / f"{proposal.name}.SKILL.md"
-        if target.exists() or (self.approved / f"{proposal.name}.SKILL.md").exists():
+        if any((directory / f"{proposal.name}.SKILL.md").exists() for directory in (self.proposals, self.approved, self.rejected)):
             raise ValueError("A proposal or approved skill with this name already exists.")
         self._atomic_write(target, text)
         return SkillProposal(proposal.name, proposal.description, proposal.version, proposal.instructions, str(target))
@@ -135,6 +137,24 @@ class SkillProposalStore:
             except (OSError, ValueError):
                 output.append({"name": path.stem, "description": "Invalid proposal; review required", "version": "", "path": str(path), "status": "invalid"})
         return output
+
+    def reject(self, name: str, *, human_rejected: bool) -> Path:
+        """Record an explicit human rejection without deleting the submitted proposal."""
+        if human_rejected is not True or not isinstance(name, str) or not _NAME.fullmatch(name):
+            raise PermissionError("Explicit human rejection and a valid skill name are required.")
+        source = (self.proposals / f"{name}.SKILL.md").resolve()
+        if source.parent != self.proposals or not source.is_file():
+            raise FileNotFoundError("Pending skill proposal was not found.")
+        # Re-validate to avoid moving a replaced or malformed document into the review log.
+        proposal = parse_skill_markdown(source.read_text(encoding="utf-8"), source_path=str(source))
+        if proposal.name != name:
+            raise ValueError("Proposal filename and declared name do not match.")
+        target = self.rejected / f"{name}.SKILL.md"
+        if target.exists():
+            raise FileExistsError("A rejected record already exists for this name.")
+        self._atomic_write(target, source.read_text(encoding="utf-8"))
+        source.unlink()
+        return target
 
     def approve(self, name: str, *, human_approved: bool) -> Path:
         if human_approved is not True or not isinstance(name, str) or not _NAME.fullmatch(name):
