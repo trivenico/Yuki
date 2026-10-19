@@ -84,22 +84,27 @@ class ApprovalCoordinator:
             del self._in_memory_pending[pending_id]
             action_snapshot = copy.deepcopy(item.action)
 
-        try:
-            # UI receives a separate copy, so callback mutation cannot change execution.
-            confirmed = confirm(copy.deepcopy(action_snapshot))
-        except Exception:
-            confirmed = False
-        if confirmed is not True:
+        dispatcher = getattr(planner, "dispatcher", None)
+        approval_store = getattr(dispatcher, "approval_store", None)
+        permission_gate = getattr(dispatcher, "permission_gate", None)
+        registered = getattr(dispatcher, "registered", {})
+        entry = registered.get(action_snapshot.get("skill_id")) if isinstance(registered, dict) else None
+        manifest = entry.get("manifest") if isinstance(entry, dict) else None
+        if approval_store is None or permission_gate is None or manifest is None:
+            if self.audit_log:
+                self.audit_log.record_event("execution_blocked", pending_id, actor, session_id)
+            return ExecutionResult(ok=False, status="approval_unavailable")
+
+        # One human confirmation produces a receipt bound to the immutable action.
+        # Dispatcher consumes this receipt, avoiding a second prompt while preserving
+        # its fail-closed PermissionGate and exact-action checks.
+        receipt = permission_gate.issue_receipt(
+            action_snapshot, confirm, risk=manifest.risk
+        )
+        if receipt is None:
             if self.audit_log:
                 self.audit_log.record_event("denied", pending_id, actor, session_id)
             return ExecutionResult(ok=False, status="approval_denied")
-
-        dispatcher = getattr(planner, "dispatcher", None)
-        approval_store = getattr(dispatcher, "approval_store", None)
-        if approval_store is None:
-            if self.audit_log:
-                self.audit_log.record_event("execution_blocked", pending_id, actor, session_id)
-            return ExecutionResult(ok=False, status="approval_store_unavailable")
 
         fingerprint = action_fingerprint(action_snapshot)
         if approval_store.approve(fingerprint, True) is not True:
@@ -107,7 +112,9 @@ class ApprovalCoordinator:
         if self.audit_log:
             self.audit_log.record_event("approved", pending_id, actor, session_id)
         try:
-            result = planner.execute_proposed(copy.deepcopy(action_snapshot))
+            result = planner.execute_proposed(
+                copy.deepcopy(action_snapshot), approval_receipt=receipt
+            )
         except Exception:
             if self.audit_log:
                 self.audit_log.record_event("execution_failed", pending_id, actor, session_id)
