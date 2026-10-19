@@ -224,7 +224,11 @@ def main():
                     f"Firewall enabled: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']})")
         if command == "/skills":
             return "\n".join(f"{s['name']} [{s['risk']}] — {s['description']}" for s in agent.available_skills())
-        return "Safe commands: /help, /status, /skills. Sensitive actions remain in the approval-gated terminal."
+        if command == "/skill proposals":
+            from skills.proposals import SkillProposalStore
+            proposals = SkillProposalStore(workspace / "skill-proposals").list_proposals()
+            return json.dumps(proposals, indent=2, ensure_ascii=False) if proposals else "No pending skill proposals."
+        return "Safe commands: /help, /status, /skills, /skill proposals. Approvals remain in the terminal."
     
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
