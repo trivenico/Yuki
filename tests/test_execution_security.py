@@ -7,6 +7,7 @@ from core.manifest_task_agent import ManifestTaskAgent
 from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
 from core.subprocess_executor import SubprocessExecutor
+from core.permissions import PermissionGate
 
 
 class FixedProvider:
@@ -42,6 +43,7 @@ def make_dispatcher(output_limit=1024):
     dispatcher = SkillDispatcher(
         capability_grants={"workspace.write"},
         approval_store=ActionApprovalStore(),
+        permission_gate=PermissionGate(approver=lambda request: True),
     )
     script = "import json,sys; json.load(sys.stdin); print(json.dumps({'saved':True}))"
     dispatcher.register_subprocess(
