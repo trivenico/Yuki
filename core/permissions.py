@@ -62,7 +62,9 @@ class PermissionGate:
     def issue_receipt(self, action_snapshot: dict, confirm: Callable[[dict], bool],
                       *, risk: str = "low") -> Optional[ApprovalReceipt]:
         """Ask a human to approve an exact action and issue a one-use receipt."""
-        if not callable(confirm) or not isinstance(action_snapshot, dict):
+        if not callable(self._approver) or not callable(confirm) or not isinstance(action_snapshot, dict):
+            return None
+        if risk not in {"low", "medium", "high"}:
             return None
         try:
             fingerprint = _fingerprint(action_snapshot)
