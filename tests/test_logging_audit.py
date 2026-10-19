@@ -19,6 +19,11 @@ class LoggingSetupTests(unittest.TestCase):
             self.assertTrue(log_path.exists())
             self.assertIn("event='startup'", log_path.read_text(encoding="utf-8"))
             self.assertEqual(logger.propagate, False)
+            # Windows does not allow TemporaryDirectory cleanup while the log
+            # handler still owns an open file handle.
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                handler.close()
 
 
 class JsonlApprovalAuditTests(unittest.TestCase):
