@@ -1,5 +1,6 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import shlex
 
@@ -27,6 +28,8 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.react_engine import ReActEngine, ToolSpec
+from providers.openai_tool_calling import OpenAIToolCallingProvider
 
 
 def _ask_approval(request):
@@ -56,13 +59,46 @@ def build_agent(config):
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
 
+def build_react_engine(agent):
+    """Opt-in tool calling over the existing approval-gated skill API."""
+    model = os.environ.get("YUKI_REACT_MODEL", "").strip()
+    if not model:
+        raise RuntimeError("Set YUKI_REACT_MODEL to enable /react.")
+    provider = OpenAIToolCallingProvider(
+        model,
+        api_key_env=os.environ.get("YUKI_REACT_API_KEY_ENV", "OPENAI_API_KEY"),
+        base_url=os.environ.get("YUKI_REACT_BASE_URL", "https://api.openai.com/v1"),
+        timeout=45,
+        allow_local_http=os.environ.get("YUKI_REACT_ALLOW_LOOPBACK_HTTP", "").lower() in {"1", "true", "yes"},
+    )
+    engine = ReActEngine(provider, max_turns=8, max_tool_calls=12)
+    for skill in agent.available_skills():
+        skill_name = skill["name"]
+        engine.register(ToolSpec(
+            name=skill_name,
+            description=str(skill["description"])[:1000],
+            parameters={"type": "object", "properties": {"argument": {"type": "string", "maxLength": 500}},
+                        "required": ["argument"], "additionalProperties": False},
+            handler=lambda args, name=skill_name: _react_skill_handler(agent, name, args),
+            # Each handler still routes through YukiCoreAgent.run_skill's permission gate.
+            risk="low", auto_approve=True,
+        ))
+    return engine
+
+
+def _react_skill_handler(agent, skill_name, args):
+    result = agent.run_skill(skill_name, args["argument"])
+    return {"ok": result.ok, "status": result.stage, "message": result.message[:2000]}
+
+
 def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
-  /task GOAL                      Bounded model-guided task; approve each skill call
+  /task GOAL                      Bounded JSON task planner; approve each skill call
+  /react GOAL                     Opt-in native tool-calling loop; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -162,6 +198,17 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/react "):
+            goal = command[len("/react "):].strip()
+            if not goal:
+                print("Yuki > Provide a goal: /react summarize the notes in my workspace")
+                continue
+            try:
+                react_engine = build_react_engine(agent)
+                result = react_engine.run(goal)
+                print(f"Yuki > {result.message} [status={result.status}, turns={result.turns}, tool_calls={result.tool_calls}]")
+            except Exception as exc:
+                print(f"Yuki > ReAct unavailable: {type(exc).__name__}. Check YUKI_REACT_MODEL and provider configuration.")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
