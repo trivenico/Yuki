@@ -67,6 +67,22 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(shown[0]["skill_id"], "notes.write")
         self.assertEqual(shown[0]["arguments"], {"text": "exact note"})
 
+    def test_coordinator_uses_one_confirmation_without_second_gate_prompt(self):
+        planner = build()
+        gate_calls = []
+        planner.dispatcher.permission_gate._approver = lambda request: gate_calls.append(request) or True
+        coordinator = ApprovalCoordinator()
+        proposed = planner.run("Write note")
+        pending = coordinator.record(planner, proposed, actor="owner", session_id="single-prompt")
+        confirmations = []
+        approved = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="single-prompt",
+            confirm=lambda action: confirmations.append(action) or True,
+        )
+        self.assertTrue(approved.ok)
+        self.assertEqual(len(confirmations), 1)
+        self.assertEqual(gate_calls, [])
+
     def test_denial_does_not_execute(self):
         planner = build()
         result = planner.run("Write note")
