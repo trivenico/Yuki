@@ -8,7 +8,15 @@ def action_fingerprint(action: dict) -> str:
     """Return a stable digest of the exact action and arguments being approved."""
     if not isinstance(action, dict):
         raise ValueError("Action must be an object.")
-    encoded = json.dumps(action, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    try:
+        encoded = json.dumps(
+            action, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        )
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise ValueError("Action must contain only finite JSON-compatible values.") from exc
+    if len(encoded.encode("utf-8")) > 20_000:
+        raise ValueError("Action exceeds the approval size limit.")
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
