@@ -41,6 +41,31 @@ class ReactTests(unittest.TestCase):
         self.assertLess(assistant_index,tool_index)
         self.assertEqual(history[assistant_index]["tool_calls"][0]["function"]["name"],"lookup")
 
+    def test_rejects_duplicate_tool_call_ids_before_execution(self):
+        seen=[]
+        provider=FakeToolProvider([{"type":"tool_calls","calls":[
+            {"id":"same","name":"lookup","arguments":{"query":"a"}},
+            {"id":"same","name":"lookup","arguments":{"query":"b"}},
+        ]}])
+        engine=ReActEngine(provider,max_tool_calls=3)
+        engine.register(ToolSpec("lookup","Lookup",{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":False},
+                                lambda args: seen.append(args),risk="low",auto_approve=True))
+        result=engine.run("Look up two values")
+        self.assertEqual(result.status,"invalid_tool_call")
+        self.assertEqual(seen,[])
+
+    def test_rejects_non_finite_json_arguments_before_execution(self):
+        seen=[]
+        provider=FakeToolProvider([{"type":"tool_calls","calls":[
+            {"id":"c1","name":"lookup","arguments":{"query":float("nan")}},
+        ]}])
+        engine=ReActEngine(provider)
+        engine.register(ToolSpec("lookup","Lookup",{"type":"object","properties":{"query":{"type":"number"}},"required":["query"],"additionalProperties":False},
+                                lambda args: seen.append(args),risk="low",auto_approve=True))
+        result=engine.run("Look up value")
+        self.assertEqual(result.status,"invalid_tool_call")
+        self.assertEqual(seen,[])
+
     def test_state_changing_tool_denied_without_approver(self):
         provider=FakeToolProvider([
             {"type":"tool_calls","calls":[{"id":"c1","name":"write","arguments":{}}]},
