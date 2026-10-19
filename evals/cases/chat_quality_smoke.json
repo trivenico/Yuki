@@ -1,0 +1,9 @@
+{
+  "id": "chat-quality-smoke",
+  "description": "Current single-turn chat boundary smoke checks.",
+  "status": "partial",
+  "known_gap": "The current base ref has no companion.ChatSession implementation, so rolling 12-turn history and memory-context injection cannot yet be evaluated.",
+  "assertions": [
+    "Chat output is returned as text and never parsed as a tool call"
+  ]
+}
