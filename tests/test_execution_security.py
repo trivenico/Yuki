@@ -55,6 +55,25 @@ def make_dispatcher(output_limit=1024):
 
 
 class ExecutionBoundaryTests(unittest.TestCase):
+    def test_approval_receipt_is_action_bound_and_single_use(self):
+        gate = PermissionGate(approver=lambda request: True)
+        action = {"skill_id": "notes.write", "arguments": {"text": "approved"}}
+        receipt = gate.issue_receipt(action, lambda shown: True, risk="low")
+        self.assertIsNotNone(receipt)
+        self.assertFalse(gate.consume_receipt(receipt, {
+            "skill_id": "notes.write", "arguments": {"text": "tampered"}
+        }))
+        # A mismatched attempt must not make the original action executable.
+        self.assertFalse(gate.consume_receipt(receipt, action))
+
+    def test_receipt_fails_closed_without_configured_gate_callback(self):
+        gate = PermissionGate()
+        receipt = gate.issue_receipt(
+            {"skill_id": "notes.write", "arguments": {}},
+            lambda shown: True,
+        )
+        self.assertIsNone(receipt)
+
     def test_dispatch_denies_without_fresh_approval(self):
         dispatcher = make_dispatcher()
         with self.assertRaises(PermissionError):
