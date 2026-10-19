@@ -92,6 +92,15 @@ class SkillDispatcher:
             raise ValueError("Unknown skill.")
         if not isinstance(arguments, dict):
             raise ValueError("Skill arguments must be an object.")
+        # Canonicalize through strict JSON to detach the approved payload from caller-owned
+        # mutable objects and reject NaN, infinities, custom objects, and invalid nesting.
+        try:
+            input_json = json.dumps(arguments, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise ValueError("Skill arguments must be finite JSON-compatible values.") from exc
+        if len(input_json.encode("utf-8")) > MAX_ARGUMENT_BYTES:
+            raise ValueError("Skill arguments exceed the size limit.")
+        arguments = json.loads(input_json)
         action = {"skill_id": skill_id, "arguments": arguments}
         entry = self.registered[skill_id]
         manifest = entry["manifest"]
@@ -99,9 +108,6 @@ class SkillDispatcher:
             if cap not in self.capability_grants:
                 raise PermissionError("Missing capability grant.")
         _validate_schema(arguments, manifest.input_schema)
-        input_json = json.dumps(arguments, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-        if len(input_json.encode("utf-8")) > MAX_ARGUMENT_BYTES:
-            raise ValueError("Skill arguments exceed the size limit.")
 
         # Every execution requires the existing fail-closed human permission gate.
         if self.permission_gate is None or not isinstance(self.permission_gate, PermissionGate):
