@@ -17,6 +17,7 @@ class ChatSession:
         self.persona = persona
         self.memory_search = memory_search
         self._history = deque(maxlen=MAX_HISTORY_MESSAGES)
+        self._system = None
         self._initialized = False
 
     @property
@@ -25,6 +26,7 @@ class ChatSession:
 
     def reset(self):
         self._history.clear()
+        self._system = None
         self._initialized = False
 
     def status(self):
@@ -72,7 +74,7 @@ class ChatSession:
         self._history.append({"role": "user", "content": message})
         try:
             if callable(getattr(self.provider, "generate_chat", None)):
-                response = self.provider.generate_chat(list(self._history))
+                response = self.provider.generate_chat([{"role": "system", "content": self._system}] + list(self._history))
             else:
                 # Explicit compatibility fallback for providers without chat support.
                 # It does not execute tools and does not parse model output.
