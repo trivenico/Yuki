@@ -17,11 +17,11 @@ def create_provider(config=None,*,environ=None):
     if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
     if selected in {"llama.cpp","llama-cpp","lm-studio"}:
         preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"]
-        return _compatible(model,str(cfg.get("base_url",env.get("YUKI_BASE_URL",preset))),str(cfg.get("api_key_env",key)),environ=env)
-    if selected=="anthropic": return AnthropicProvider(model,api_key_env=str(cfg.get("api_key_env","ANTHROPIC_API_KEY")),base_url=str(cfg.get("base_url","https://api.anthropic.com")))
+        return _compatible(model,str(cfg.get("base_url") or env.get("YUKI_BASE_URL",preset)),str(cfg.get("api_key_env",key)),environ=env)
+    if selected=="anthropic": return AnthropicProvider(model,api_key_env=str(cfg.get("api_key_env","ANTHROPIC_API_KEY")),base_url=str(cfg.get("base_url") or "https://api.anthropic.com"))
     if selected in {"openai","deepseek","glm","openai-compatible","custom"}:
         preset,key=_PRESETS.get(selected,("https://api.openai.com/v1","OPENAI_API_KEY"))
-        url=str(cfg.get("base_url",env.get("YUKI_CLOUD_BASE_URL",preset))); key_env=str(cfg.get("api_key_env",env.get("YUKI_CLOUD_API_KEY_ENV",key)))
+        url=str(cfg.get("base_url") or env.get("YUKI_CLOUD_BASE_URL",preset)); key_env=str(cfg.get("api_key_env",env.get("YUKI_CLOUD_API_KEY_ENV",key)))
         if selected in {"openai-compatible","custom"} and not url.startswith("https://"): raise ValueError("Custom cloud endpoints must use HTTPS.")
         return _compatible(model or str(env.get("YUKI_CLOUD_MODEL","")),url,key_env,environ=env)
     if selected=="hybrid":
