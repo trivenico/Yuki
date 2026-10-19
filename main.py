@@ -50,6 +50,19 @@ def parse_skill_command(command):
     return parts[1].strip(), parts[2] if len(parts) > 2 else ""
 
 
+def parse_evolution_review_command(command):
+    """Return (proposal_id, decision) or (None, None) for malformed input."""
+    parts = command.split(maxsplit=3)
+    if len(parts) != 4:
+        return None, None
+    decision_parts = parts[3].split()
+    if not parts[2].strip() or not decision_parts or decision_parts[-1] not in {"accept", "reject"}:
+        return None, None
+    if len(decision_parts) != 1:
+        return None, None
+    return parts[2].strip(), decision_parts[0]
+
+
 def build_agent(config):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -111,9 +124,18 @@ def main():
         print(f"Yuki > Configuration unavailable ({type(exc).__name__}). Check your local config and try again.")
         return
     workspace = Path(config["workspace"])
-    workspace.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        agent = build_agent(config)
+    except (RuntimeError, OSError, ValueError) as exc:
+        print(f"Yuki > Agent startup failed safely ({type(exc).__name__}). Check your local configuration and workspace.")
+        return
+    try:
+        provider = create_provider(config)
+        ai = YukiAgent(provider)
+    except (RuntimeError, OSError, ValueError) as exc:
+        print(f"Yuki > Provider startup failed safely ({type(exc).__name__}). Check your provider configuration.")
+        return
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
@@ -472,8 +494,10 @@ def main():
                     print(f"Yuki > Dashboard unavailable: {exc}")
             else:
                 print("Yuki > No live LLM is connected yet. Use /help for supported commands.")
+        except (ValueError, RuntimeError) as exc:
+            print(f"Yuki > Command failed safely: {exc}")
         except Exception as exc:
-            print(f"Yuki > Command failed safely ({type(exc).__name__}). The session remains active.")
+            print(f"Yuki > Unexpected internal error ({type(exc).__name__}); session kept alive.")
 
 
 if __name__ == "__main__":
