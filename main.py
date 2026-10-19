@@ -4,6 +4,7 @@ from pathlib import Path
 import shlex
 
 from companion import DEFAULT_PERSONA
+from companion.chat import ChatSession
 from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
@@ -75,6 +76,9 @@ def print_help():
   /status                        Show capability status
   /doctor                        Run environment and subsystem diagnostics
   /skills                        List registered skills
+  /chat MESSAGE                  Start or continue a bounded chat session
+  /chat reset                    Clear in-memory chat history
+  /chat status                   Show chat history status
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -122,6 +126,7 @@ def main():
         log_event(logger, 20, "startup_started", component="runtime")
         agent = build_agent(config)
         ai = YukiAgent(create_provider(config))
+        chat_session = ChatSession(ai.provider, persona=DEFAULT_PERSONA, memory_search=searchable_memory.search)
         task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
         memory_path = workspace / "yuki_memory.json"
         memory = MemoryStore(memory_path)
@@ -202,6 +207,20 @@ def main():
                 print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
                 result = task_agent.run(goal)
                 print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            elif command == "/chat status":
+                print(f"Chat history: {chat_session.status()['messages']}/{chat_session.status()['max_messages']} messages; initialized={chat_session.status()['initialized']}")
+            elif command == "/chat reset":
+                chat_session.reset()
+                print("Yuki > Chat history cleared.")
+            elif command.startswith("/chat "):
+                message = command[len("/chat "):].strip()
+                if not message:
+                    print("Yuki > Use /chat MESSAGE, /chat reset, or /chat status.")
+                    continue
+                try:
+                    print("Yuki > " + chat_session.send(message))
+                except (ValueError, RuntimeError) as exc:
+                    print(f"Yuki > Chat unavailable: {type(exc).__name__}.")
             elif command.startswith("/ask "):
                 prompt = command[len("/ask "):].strip()
                 if not prompt:
