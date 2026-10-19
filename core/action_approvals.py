@@ -31,6 +31,11 @@ def _validate_json_value(value, depth=0):
     raise ValueError("Action contains a non-JSON value.")
 
 
+def validate_strict_json(value):
+    """Validate JSON values without coercing Python-specific types."""
+    _validate_json_value(value)
+
+
 def action_fingerprint(action: dict) -> str:
     """Return a stable digest of a finite, strict JSON action."""
     if type(action) is not dict:
