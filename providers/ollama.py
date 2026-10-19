@@ -66,6 +66,51 @@ class OllamaProvider:
                 return True
         return False
 
+    def generate_chat(self, messages) -> str:
+        """Generate a bounded chat response via Ollama's /api/chat endpoint."""
+        if not isinstance(messages, list) or not messages or len(messages) > 13:
+            raise ValueError("Chat messages must contain 1-13 entries.")
+        normalized = []
+        total_chars = 0
+        for item in messages:
+            if not isinstance(item, dict) or set(item) != {"role", "content"}:
+                raise ValueError("Each chat message must contain only role and content.")
+            role, content = item["role"], item["content"]
+            if role not in {"system", "user", "assistant"}:
+                raise ValueError("Unsupported chat message role.")
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError("Chat message content must be non-empty text.")
+            total_chars += len(content)
+            if total_chars > 20_000:
+                raise ValueError("Chat prompt exceeds the 20,000 character limit.")
+            normalized.append({"role": role, "content": content})
+        payload = json.dumps({
+            "model": self.model, "messages": normalized, "stream": False,
+        }, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/chat", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Local Ollama chat request failed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Ollama chat response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Ollama returned invalid chat JSON.") from exc
+        message = body.get("message") if isinstance(body, dict) else None
+        result = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(result, str) or not result.strip():
+            raise RuntimeError("Ollama returned no chat text.")
+        if len(result.encode("utf-8")) > 2_000_000:
+            raise RuntimeError("Ollama chat response exceeded the 2 MB limit.")
+        return result.strip()
+
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
