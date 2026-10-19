@@ -10,6 +10,7 @@ from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
+from core.logging_setup import configure_logging, log_event
 from core.planner import Planner
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
@@ -115,6 +116,8 @@ def main():
         config = load_config()
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
+        logger = configure_logging(workspace / "logs")
+        log_event(logger, 20, "startup_started", component="runtime")
         agent = build_agent(config)
         ai = YukiAgent(create_provider(config))
         task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
