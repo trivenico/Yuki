@@ -13,14 +13,8 @@ class CliDispatchRegressionTests(unittest.TestCase):
         self.assertEqual(main.parse_skill_command("/skill time now"), ("time", "now"))
 
     def test_malformed_evolution_review_is_safe(self):
-        self.assertEqual(main.parse_evolution_review_command("/evolution review"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
-        self.assertEqual(main.parse_evolution_review_command("/evolution review id accept"), (None, None))
+        for command in ("/evolution review", "/evolution review id", "/evolution review id accept extra"):
+            self.assertEqual(main.parse_evolution_review_command(command), (None, None))
         self.assertEqual(main.parse_evolution_review_command("/evolution review proposal-1 accept"), ("proposal-1", "accept"))
         self.assertEqual(main.parse_evolution_review_command("/evolution review proposal-1 reject"), ("proposal-1", "reject"))
 
