@@ -172,7 +172,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertTrue(approved.ok)
             events = audit.list_events()
             self.assertEqual([event["event_type"] for event in reversed(events)],
-                             ["requested", "approved", "executed"])
+                             ["requested", "approved", "execution_started", "executed"])
             self.assertNotIn("exact note", str(events))
 
     def test_pending_approval_is_bound_to_creator_actor_and_session(self):
