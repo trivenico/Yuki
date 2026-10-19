@@ -138,7 +138,58 @@ class ReActEngine:
         return ReActResult(False, "turn_budget_exhausted", "ReAct turn budget reached before a final answer.", self.max_turns, calls_used)
 
 def _validate_schema(schema: dict[str, Any], value: Any) -> bool:
-    """Validate the bounded JSON Schema subset supported by Yuki's tool boundary."""
+    """Validate a deliberately small, fail-closed JSON Schema subset recursively."""
+    def valid(rule: Any, item: Any, depth: int = 0) -> bool:
+        if depth > 12 or not isinstance(rule, dict):
+            return False
+        kind = rule.get("type")
+        allowed_keys = {
+            "object": {"type", "properties", "required", "additionalProperties", "description"},
+            "array": {"type", "items", "maxItems", "minItems", "description"},
+            "string": {"type", "maxLength", "minLength", "enum", "description"},
+            "integer": {"type", "minimum", "maximum", "enum", "description"},
+            "number": {"type", "minimum", "maximum", "enum", "description"},
+            "boolean": {"type", "enum", "description"},
+        }
+        if kind not in allowed_keys or set(rule) - allowed_keys[kind]:
+            return False
+        if "enum" in rule and (not isinstance(rule["enum"], list) or item not in rule["enum"]):
+            return False
+        if kind == "object":
+            if not isinstance(item, dict) or len(item) > 128:
+                return False
+            props, required = rule.get("properties", {}), rule.get("required", [])
+            if not isinstance(props, dict) or not isinstance(required, list):
+                return False
+            if any(not isinstance(k, str) for k in required) or any(k not in item for k in required):
+                return False
+            if any(not isinstance(k, str) or not isinstance(v, dict) for k, v in props.items()):
+                return False
+            if rule.get("additionalProperties", True) is False and any(k not in props for k in item):
+                return False
+            return all(k in props and valid(props[k], v, depth + 1) for k, v in item.items())
+        if kind == "array":
+            if not isinstance(item, list) or len(item) > rule.get("maxItems", 1000):
+                return False
+            if len(item) < rule.get("minItems", 0):
+                return False
+            item_rule = rule.get("items")
+            return item_rule is None or (isinstance(item_rule, dict) and all(valid(item_rule, v, depth + 1) for v in item))
+        if kind == "string":
+            return (isinstance(item, str) and len(item) <= rule.get("maxLength", 10000)
+                    and len(item) >= rule.get("minLength", 0))
+        if kind == "integer":
+            return (type(item) is int and
+                    ("minimum" not in rule or item >= rule["minimum"]) and
+                    ("maximum" not in rule or item <= rule["maximum"]))
+        if kind == "number":
+            import math
+            return (not isinstance(item, bool) and isinstance(item, (int, float))
+                    and (not isinstance(item, float) or math.isfinite(item))
+                    and ("minimum" not in rule or item >= rule["minimum"])
+                    and ("maximum" not in rule or item <= rule["maximum"]))
+        return type(item) is bool
+
     if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(value, dict):
         return False
     try:
@@ -146,38 +197,4 @@ def _validate_schema(schema: dict[str, Any], value: Any) -> bool:
             return False
     except (TypeError, ValueError):
         return False
-    props, required = schema.get("properties", {}), schema.get("required", [])
-    if not isinstance(props, dict) or not isinstance(required, list):
-        return False
-    if any(not isinstance(key, str) for key in required) or any(key not in value for key in required):
-        return False
-    if schema.get("additionalProperties", True) is False and any(k not in props for k in value):
-        return False
-    for key, item in value.items():
-        rule = props.get(key, {})
-        if not isinstance(rule, dict):
-            return False
-        kind = rule.get("type")
-        if kind == "string":
-            if not isinstance(item, str) or len(item) > rule.get("maxLength", 10000):
-                return False
-        elif kind == "integer":
-            if type(item) is not int:
-                return False
-        elif kind == "boolean":
-            if type(item) is not bool:
-                return False
-        elif kind == "number":
-            if isinstance(item, bool) or not isinstance(item, (int, float)):
-                return False
-        elif kind == "object":
-            if not isinstance(item, dict):
-                return False
-        elif kind == "array":
-            if not isinstance(item, list) or len(item) > rule.get("maxItems", 1000):
-                return False
-        elif kind is not None:
-            return False
-        if kind == "number" and isinstance(item, float) and not __import__("math").isfinite(item):
-            return False
-    return True
+    return valid(schema, value)
