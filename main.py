@@ -111,34 +111,42 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 
 def main():
-    config = load_config()
-    workspace = Path(config["workspace"])
-    workspace.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    memory_path = workspace / "yuki_memory.json"
-    memory = MemoryStore(memory_path)
-    searchable_memory = VectorMemory(memory_path)
-    indexer = KnowledgeIndexer(searchable_memory)
-    planner = Planner(max_steps=config["max_agent_steps"])
-    reminders = ReminderQueue(workspace / "yuki_reminders.json")
-    evolution = DailyEvolutionCycle(workspace)
-    tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
-                    backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
-    stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
-    wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
-    recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
-                      approver=lambda reason: _confirm("security:recon", reason, "high"))
-    sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
-                            enabled=config["sandbox_enabled"],
-                            approver=lambda reason: _confirm("sandbox:run", reason, "high"))
-    firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
-                               approver=lambda reason: _confirm("defense:firewall", reason, "high"))
-    detector = PortScanDetector()
-    sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
-    exploit_runner = ExploitRunner()
-    speaker_verifier = SpeakerVerifier(enabled=False)
+    try:
+        config = load_config()
+        workspace = Path(config["workspace"])
+        workspace.mkdir(parents=True, exist_ok=True)
+        agent = build_agent(config)
+        ai = YukiAgent(create_provider(config))
+        task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+        memory_path = workspace / "yuki_memory.json"
+        memory = MemoryStore(memory_path)
+        searchable_memory = VectorMemory(memory_path)
+        indexer = KnowledgeIndexer(searchable_memory)
+        planner = Planner(max_steps=config["max_agent_steps"])
+        reminders = ReminderQueue(workspace / "yuki_reminders.json")
+        evolution = DailyEvolutionCycle(workspace)
+        tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
+                        backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
+        stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
+        wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
+        recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
+                          approver=lambda reason: _confirm("security:recon", reason, "high"))
+        sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
+                                enabled=config["sandbox_enabled"],
+                                approver=lambda reason: _confirm("sandbox:run", reason, "high"))
+        firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
+                                   approver=lambda reason: _confirm("defense:firewall", reason, "high"))
+        detector = PortScanDetector()
+        sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
+        exploit_runner = ExploitRunner()
+        speaker_verifier = SpeakerVerifier(enabled=False)
+    
+    except (ValueError, OSError, RuntimeError, ImportError):
+        print("Yuki > Startup failed safely. Check configuration and run the doctor command.")
+        return
+    except Exception:
+        print("Yuki > Initialization failed safely. Check configuration and run the doctor command.")
+        return
 
     def dashboard_command(command):
         if command == "/status":
