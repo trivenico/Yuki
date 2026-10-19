@@ -116,7 +116,6 @@ def main():
     except Exception as exc:
         print(f"Yuki > Runtime initialization error ({type(exc).__name__}): {exc}")
         return 1
-    ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)

@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -87,10 +89,6 @@ class ReminderQueue:
             if removed_count > 0:
                 self._save(pending)
             return removed_count
-
-
-import threading
-import time
 
 
 class ReminderSchedulerThread(threading.Thread):
