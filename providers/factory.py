@@ -28,7 +28,14 @@ def create_provider(config=None,*,environ=None):
         local_cfg=dict(cfg,provider=str(cfg.get("local_provider","ollama")),model=str(cfg.get("local_model",cfg.get("ollama_model",cfg.get("model","")))))
         local=create_provider(local_cfg,environ=env)
         cloud_name=str(cfg.get("cloud_provider","openai")).lower(); cloud_model=str(cfg.get("cloud_model",env.get("YUKI_CLOUD_MODEL",""))).strip(); cloud=None
-        if cloud_model: cloud=create_provider(dict(cfg,provider=cloud_name,model=cloud_model,ollama_model=cloud_model),environ=env)
+        if cloud_model:
+            cloud_key = str(cfg.get("cloud_api_key_env") or cfg.get("api_key_env") or "")
+            cloud_cfg = dict(cfg, provider=cloud_name, model=cloud_model, ollama_model=cloud_model)
+            if cloud_key:
+                cloud_cfg["api_key_env"] = cloud_key
+            else:
+                cloud_cfg.pop("api_key_env", None)
+            cloud=create_provider(cloud_cfg,environ=env)
         tasks=cfg.get("cloud_tasks",env.get("YUKI_CLOUD_TASKS",""))
         if isinstance(tasks,str): tasks=[v.strip() for v in tasks.split(",") if v.strip()]
         if not isinstance(tasks,(list,tuple,set)): raise ValueError("cloud_tasks must be a list of task names.")
