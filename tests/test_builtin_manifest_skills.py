@@ -96,6 +96,22 @@ class BuiltinWorkspaceListTests(unittest.TestCase):
             self.assertNotIn("not read by the listing tool", provider.prompts[1])
 
 
+    def test_read_text_planner_requires_approval_before_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "notes.txt").write_text("private context", encoding="utf-8")
+            dispatcher = self._dispatcher(root)
+            agent = YukiCoreAgent(dispatcher=dispatcher)
+            provider = FakeProvider([
+                json.dumps({"type": "tool_call", "skill_id": "workspace.read_text",
+                            "arguments": {"path": "notes.txt", "max_bytes": 1024}}),
+            ])
+            result = ManifestTaskAgent(provider, agent, dispatcher, max_steps=2).run("Read notes")
+            self.assertEqual(result.status, "approval_required")
+            self.assertEqual(result.pending_skill, "workspace.read_text")
+            self.assertEqual(result.pending_arguments, {"path": "notes.txt", "max_bytes": 1024})
+            self.assertEqual(len(provider.prompts), 1)
+
     def test_read_text_returns_content_only_for_small_utf8_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
