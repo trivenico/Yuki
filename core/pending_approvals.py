@@ -5,6 +5,7 @@ hashed at rest and checked again at approval time; callers must provide trusted 
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -40,7 +41,7 @@ class SQLitePendingApprovalStore:
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
                 pending_id TEXT PRIMARY KEY,
                 skill_id TEXT NOT NULL,
@@ -61,6 +62,15 @@ class SQLitePendingApprovalStore:
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         db.execute("PRAGMA busy_timeout = 5000")
         return db
+
+    @contextmanager
+    def _connection(self):
+        """Close every SQLite handle, including on exceptions (required on Windows)."""
+        db = self._connect()
+        try:
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identity_hash(value: str) -> str:
@@ -87,7 +97,7 @@ class SQLitePendingApprovalStore:
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
         item = StoredPendingAction(secrets.token_urlsafe(24), skill_id, json.loads(args_json),
                                    json.loads(action_json), expires, actor_hash, session_hash)
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now.isoformat(),))
@@ -108,7 +118,7 @@ class SQLitePendingApprovalStore:
         if not isinstance(pending_id, str) or not pending_id:
             return None
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
@@ -130,7 +140,7 @@ class SQLitePendingApprovalStore:
             return None
         now = datetime.now(timezone.utc).isoformat()
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
@@ -151,6 +161,6 @@ class SQLitePendingApprovalStore:
     def deny(self, pending_id: str) -> bool:
         if not isinstance(pending_id, str) or not pending_id:
             return False
-        with self._connect() as db:
+        with self._connection() as db:
             cursor = db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
             return cursor.rowcount == 1
