@@ -80,6 +80,7 @@ def print_help():
   /skill proposals               List pending skill proposals
   /skill preview NAME            Static-only review of a proposal
   /skill approve NAME            Approve a declarative proposal (not executable code)
+  /skill reject NAME             Reject and archive a proposal
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -157,6 +158,9 @@ def main():
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
         agent = build_agent(config)
+        # Approved SKILL.md files are registered as inert instruction resources only.
+        from skills.proposals import SkillProposalStore
+        agent.registry.load_approved_documents(workspace / "skill-proposals" / "approved")
         mcp_registry = MCPRegistry(config.get("mcp_servers", []), approver=lambda name, args: _confirm(
             "mcp:tool_call", f"Call MCP tool {name!r} with argument keys {sorted(args)[:20]!r}.", "high"))
         from yuki_tools import register_mcp_registry
@@ -317,6 +321,21 @@ def main():
                     print("Yuki > Static review only; instructions were not executed.")
                 except Exception as exc:
                     print(f"Yuki > Skill preview unavailable ({type(exc).__name__}): {exc}")
+            elif command.startswith("/skill reject "):
+                name = command[len("/skill reject "):].strip()
+                try:
+                    from skills.proposals import SkillProposalStore
+                    store = SkillProposalStore(workspace / "skill-proposals")
+                    preview = store.sandbox_preview(name)
+                    if not _confirm("skill:reject_proposal",
+                                    f"Reject and archive proposal {preview['name']!r}? It will not be activated.",
+                                    "medium"):
+                        print("Yuki > Proposal remains pending.")
+                        continue
+                    path = store.reject(name, human_rejected=True)
+                    print(f"Yuki > Proposal rejected and archived at {path}.")
+                except Exception as exc:
+                    print(f"Yuki > Skill rejection failed safely ({type(exc).__name__}): {exc}")
             elif command.startswith("/skill approve "):
                 name = command[len("/skill approve "):].strip()
                 try:
