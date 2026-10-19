@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import secrets
 
+from core.action_approvals import SQLiteActionApprovalStore
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
@@ -19,6 +20,7 @@ from core.pending_approvals import SQLitePendingApprovalStore
 @dataclass(frozen=True)
 class LocalApprovalRuntime:
     coordinator: ApprovalCoordinator
+    action_approval_store: SQLiteActionApprovalStore
     actor: str
     session_id: str
 
@@ -48,7 +50,8 @@ def build_local_approval_runtime(workspace: str | Path, *, ttl_seconds: int = 30
         max_pending=max_pending,
     )
     audit = SQLiteApprovalAuditLog(str(state_dir / "approval-audit.sqlite3"))
-    for path in (pending.database_path, audit.database_path):
+    action_tokens = SQLiteActionApprovalStore(str(state_dir / "action-approvals.sqlite3"))
+    for path in (pending.database_path, audit.database_path, action_tokens.database_path):
         db_path = Path(path)
         if os.name == "posix" and db_path.exists():
             try:
@@ -67,6 +70,7 @@ def build_local_approval_runtime(workspace: str | Path, *, ttl_seconds: int = 30
             pending_store=pending,
             audit_log=audit,
         ),
+        action_approval_store=action_tokens,
         actor=actor,
         session_id=session_id,
     )
