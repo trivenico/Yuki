@@ -95,7 +95,7 @@ def workspace_read_text_manifest() -> SkillManifest:
         "capabilities": ["workspace.read"],
         "risk": "medium",
         "timeout_seconds": 5,
-        "max_output_bytes": 20000,
+        "max_output_bytes": 100000,
         "parallel_safe": False,
         "resource_group": "workspace.read",
     })
