@@ -76,11 +76,16 @@ class SQLitePendingApprovalStore:
         return encoded
 
     def put(self, skill_id: str, arguments: dict[str, Any], action: dict[str, Any], *,
-            actor: str, session_id: str) -> StoredPendingAction:
+            actor: str, session_id: str, max_pending: int | None = None) -> StoredPendingAction:
         if not isinstance(skill_id, str) or not skill_id.strip() or len(skill_id) > 120:
             raise ValueError("skill_id is required and must be bounded.")
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("Trusted actor and session identity are required.")
+        effective_limit = self.max_pending
+        if max_pending is not None:
+            if type(max_pending) is not int or not 1 <= max_pending <= self.max_pending:
+                raise ValueError("max_pending override must be between 1 and the store limit.")
+            effective_limit = max_pending
         args_json, action_json = self._encode(arguments), self._encode(action)
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
@@ -92,7 +97,7 @@ class SQLitePendingApprovalStore:
             try:
                 db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now.isoformat(),))
                 count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
-                if count >= self.max_pending:
+                if count >= effective_limit:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
                     (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash)
