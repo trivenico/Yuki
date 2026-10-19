@@ -46,6 +46,8 @@ class SubprocessExecutor:
                 proc.kill()
                 proc.wait()
                 raise TimeoutError("Skill process exceeded its time limit.") from None
+            stdout_file.seek(0, os.SEEK_END)
+            stderr_file.seek(0, os.SEEK_END)
             stdout_size = stdout_file.tell()
             stderr_size = stderr_file.tell()
             if stdout_size > output_limit or stderr_size > output_limit:
