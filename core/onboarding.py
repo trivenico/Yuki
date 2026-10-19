@@ -65,7 +65,10 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     guardrails = config.get("guardrails", {})
     if not isinstance(guardrails, dict):
         raise ValueError("guardrails must be an object.")
-    for key in ("require_tool_approval", "require_cloud_approval", "local_first"):
+    allowed_guardrails = {"require_tool_approval", "require_cloud_approval", "local_first"}
+    if set(guardrails) - allowed_guardrails:
+        raise ValueError("Unknown guardrail setting.")
+    for key in allowed_guardrails:
         if key in guardrails and guardrails[key] is not True:
             raise ValueError(f"{key} is mandatory and must remain true.")
     api_key_env = config.get("api_key_env", PROVIDERS[provider].get("key_env", ""))
