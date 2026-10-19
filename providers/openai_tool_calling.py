@@ -8,12 +8,17 @@ from urllib.parse import urlsplit
 
 class OpenAIToolCallingProvider:
     def __init__(self, model: str, *, api_key_env: str="OPENAI_API_KEY",
-                 base_url: str="https://api.openai.com/v1", timeout: int=45):
+                 base_url: str="https://api.openai.com/v1", timeout: int=45, allow_local_http: bool=False):
         if not isinstance(model,str) or not model.strip(): raise ValueError("model is required")
         if not api_key_env.isidentifier(): raise ValueError("Invalid API-key environment name")
         parts=urlsplit(base_url.rstrip("/"))
-        if parts.scheme!="https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
-            raise ValueError("Provider URL must be HTTPS without credentials")
+        import ipaddress
+        host=parts.hostname or ""
+        try: loopback=host=="localhost" or ipaddress.ip_address(host).is_loopback
+        except ValueError: loopback=False
+        secure = parts.scheme=="https" or (allow_local_http and parts.scheme=="http" and loopback)
+        if not secure or not host or parts.username or parts.password or parts.query or parts.fragment:
+            raise ValueError("Provider URL must be HTTPS, except explicitly allowed loopback HTTP, without credentials")
         if type(timeout) is not int or not 1<=timeout<=120: raise ValueError("timeout must be 1..120")
         self.model,self.api_key_env,self.base_url,self.timeout=model.strip(),api_key_env,base_url.rstrip("/"),timeout
 
