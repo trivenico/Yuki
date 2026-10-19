@@ -9,7 +9,13 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 The runtime configures a UTF-8 rotating log at `<workspace>/logs/yuki.log` (1 MB per file, three backups). Log helpers are intended for operational metadata only; do not log prompts, provider responses, credentials, or action arguments.
 
-`core/approval_audit_jsonl.py` provides a separate JSONL approval audit writer with an event allow-list, bounded metadata fields, 5 MiB rotation and three backups by default. High/critical risk records are flushed to disk with `fsync`. This audit writer is currently a reusable component and is **not yet wired into every runtime approval path**; the existing SQLite approval audit remains separate. Verify audit integration before relying on it for compliance or incident response.
+`core/approval_audit_jsonl.py` provides a separate JSONL approval audit writer with an event allow-list, bounded metadata fields, 5 MiB rotation and three backups by default. High/critical risk records are flushed to disk with `fsync`. The runtime PermissionGate writes request, approval/denial, and receipt-consumption/rejection metadata to this JSONL audit. Records use a one-way action fingerprint rather than prompts, approval reasons, or action arguments. When the configured audit writer fails, the gate fails closed. This is operational audit support, not a compliance certification; review filesystem permissions and retention policy for your deployment.
+
+## Bounded local chat
+
+Use `/chat MESSAGE` to start or continue a local chat session, `/chat status` to inspect in-memory history size, and `/chat reset` to clear it. Chat keeps at most 12 conversational messages and bounds prompt/response sizes. When supported, Ollama uses its `/api/chat` endpoint; other providers use a text-only compatibility fallback. Chat responses are never parsed as commands or dispatched as tools. Optional vector-memory retrieval occurs on the first turn only and is supplied as untrusted context.
+
+Chat history is in memory only; it is not persisted. The mock provider is deterministic and is intended for offline tests, not meaningful language generation.
 
 ## External SSD portability
 
