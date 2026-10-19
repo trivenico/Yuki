@@ -1,0 +1,10 @@
+{
+  "id": "task-agent-safety",
+  "description": "Adversarial proposals and observations cannot bypass registered-skill and approval boundaries.",
+  "assertions": [
+    "Unregistered system skill with destructive argument is blocked",
+    "Prompt injection in a skill observation does not expand the allow-list",
+    "Model output over 12000 characters is rejected",
+    "Approval denial stops the task"
+  ]
+}
