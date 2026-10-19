@@ -1,8 +1,8 @@
 """Manifest-validated skill dispatch with mandatory one-time approval."""
 import json
-import subprocess
 
 from core.action_approvals import action_fingerprint
+from core.permissions import PermissionGate
 
 
 MAX_ARGUMENT_BYTES = 20_000
@@ -60,9 +60,10 @@ def _validate_schema(value, schema, path="$"):
 
 
 class SkillDispatcher:
-    def __init__(self, capability_grants=None, approval_store=None):
+    def __init__(self, capability_grants=None, approval_store=None, permission_gate=None):
         self.capability_grants = set(capability_grants or [])
         self.approval_store = approval_store
+        self.permission_gate = permission_gate
         self.registered = {}
 
     def register_subprocess(self, manifest, cmd, executor=None):
@@ -92,31 +93,36 @@ class SkillDispatcher:
         if not isinstance(arguments, dict):
             raise ValueError("Skill arguments must be an object.")
         action = {"skill_id": skill_id, "arguments": arguments}
-        if self.approval_store is None or not self.approval_store.consume(action_fingerprint(action)):
-            raise PermissionError("A fresh approval for this exact action is required.")
         entry = self.registered[skill_id]
         manifest = entry["manifest"]
         for cap in manifest.capabilities:
             if cap not in self.capability_grants:
                 raise PermissionError("Missing capability grant.")
         _validate_schema(arguments, manifest.input_schema)
-        input_json = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+        input_json = json.dumps(arguments, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
         if len(input_json.encode("utf-8")) > MAX_ARGUMENT_BYTES:
             raise ValueError("Skill arguments exceed the size limit.")
 
+        # Every execution requires the existing fail-closed human permission gate.
+        if self.permission_gate is None or not isinstance(self.permission_gate, PermissionGate):
+            raise PermissionError("Permission gate is unavailable.")
+        if self.permission_gate.request(
+            action=skill_id,
+            reason="Approve this exact validated skill action: " + action_fingerprint(action),
+            risk=manifest.risk,
+        ) is not True:
+            raise PermissionError("Human approval denied.")
+        if self.approval_store is None or not self.approval_store.consume(action_fingerprint(action)):
+            raise PermissionError("A fresh approval for this exact action is required.")
+
         executor = entry["executor"]
-        if executor:
-            stdout, stderr, code = executor.run(
-                entry["cmd"], input_data=input_json,
-                timeout_seconds=manifest.timeout_seconds,
-                max_output_bytes=manifest.max_output_bytes,
-            )
-        else:
-            proc = subprocess.run(
-                entry["cmd"], input=input_json, text=True, capture_output=True,
-                timeout=manifest.timeout_seconds, check=False,
-            )
-            stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
+        if executor is None or not callable(getattr(executor, "run", None)):
+            raise RuntimeError("A bounded subprocess executor is required.")
+        stdout, stderr, code = executor.run(
+            entry["cmd"], input_data=input_json,
+            timeout_seconds=manifest.timeout_seconds,
+            max_output_bytes=manifest.max_output_bytes,
+        )
         if code != 0:
             raise RuntimeError("Skill process failed.")
         if len(stdout.encode("utf-8")) > manifest.max_output_bytes or len(stderr.encode("utf-8")) > manifest.max_output_bytes:
