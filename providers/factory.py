@@ -41,9 +41,9 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
                 cloud_cfg["api_key_env"] = cloud_key
             else:
                 cloud_cfg.pop("api_key_env", None)
-            cloud=create_provider(cloud_cfg,environ=env,cloud_approver=None)
+            cloud=create_provider(cloud_cfg,environ=env,cloud_approver=lambda *_: True)
         tasks=cfg.get("cloud_tasks",env.get("YUKI_CLOUD_TASKS",""))
         if isinstance(tasks,str): tasks=[v.strip() for v in tasks.split(",") if v.strip()]
         if not isinstance(tasks,(list,tuple,set)): raise ValueError("cloud_tasks must be a list of task names.")
         return HybridProvider(local,cloud,cloud_tasks=tasks,cloud_approver=cloud_approver)
-    raise ValueError("provider must be one of: mock, ollama, llama.cpp, lm-studio, openai, anthropic, deepseek, glm, openai-compatible, hybrid.")
+    raise ValueError("provider must be one of: mock, ollama, llama.cpp, llama.cpp-python, mlx, lm-studio, vllm, openai, anthropic, deepseek, glm, openai-compatible, hybrid.")
