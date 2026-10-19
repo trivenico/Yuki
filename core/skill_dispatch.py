@@ -111,7 +111,7 @@ class SkillDispatcher:
             "executor": executor,
         }
 
-    def dispatch(self, skill_id, arguments):
+    def dispatch(self, skill_id, arguments, approval_receipt=None):
         if not isinstance(skill_id, str) or skill_id not in self.registered:
             raise ValueError("Unknown skill.")
         if not isinstance(arguments, dict):
@@ -137,15 +137,19 @@ class SkillDispatcher:
                 raise PermissionError("Missing capability grant.")
         _validate_schema(arguments, manifest.input_schema)
 
-        # Every execution requires the existing fail-closed human permission gate.
+        # Direct dispatch asks the gate itself. Coordinator-driven dispatch must
+        # present a short-lived, single-use receipt minted by this same gate.
         if self.permission_gate is None or not isinstance(self.permission_gate, PermissionGate):
             raise PermissionError("Permission gate is unavailable.")
-        if self.permission_gate.request(
-            action=skill_id,
-            reason="Approve this exact validated skill action: " + action_fingerprint(action),
-            risk=manifest.risk,
-        ) is not True:
-            raise PermissionError("Human approval denied.")
+        if approval_receipt is None:
+            if self.permission_gate.request(
+                action=skill_id,
+                reason="Approve this exact validated skill action: " + action_fingerprint(action),
+                risk=manifest.risk,
+            ) is not True:
+                raise PermissionError("Human approval denied.")
+        elif not self.permission_gate.consume_receipt(approval_receipt, action):
+            raise PermissionError("Approval receipt is invalid, expired, or already used.")
         if self.approval_store is None or not self.approval_store.consume(action_fingerprint(action)):
             raise PermissionError("A fresh approval for this exact action is required.")
 
