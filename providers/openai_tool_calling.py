@@ -6,6 +6,12 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Never forward a bearer token or tool payload to a redirected origin."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class OpenAIToolCallingProvider:
     def __init__(self, model: str, *, api_key_env: str="OPENAI_API_KEY",
                  base_url: str="https://api.openai.com/v1", timeout: int=45, allow_local_http: bool=False):
@@ -28,9 +34,13 @@ class OpenAIToolCallingProvider:
         payload={"model":self.model,"messages":messages,"tools":tools,"tool_choice":"auto","stream":False}
         request=urllib.request.Request(self.base_url+"/chat/completions",data=json.dumps(payload,allow_nan=False).encode(),
             headers={"Content-Type":"application/json","Accept":"application/json","Authorization":"Bearer "+key},method="POST")
+        opener = urllib.request.build_opener(_NoRedirectHandler())
         try:
-            with urllib.request.urlopen(request,timeout=self.timeout) as response: raw=response.read(2_000_001)
-        except (urllib.error.URLError,TimeoutError,OSError) as exc: raise RuntimeError("Provider request failed") from exc
+            with opener.open(request,timeout=self.timeout) as response:
+                raw=response.read(2_000_001)
+        except (urllib.error.URLError,TimeoutError,OSError) as exc:
+            # Redirects are deliberately rejected to prevent credential forwarding.
+            raise RuntimeError("Provider request failed or attempted a redirect") from exc
         if len(raw)>2_000_000: raise RuntimeError("Provider response too large")
         try:
             choice=json.loads(raw.decode())["choices"][0]["message"]
