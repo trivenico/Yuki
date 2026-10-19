@@ -1,53 +1,80 @@
-"""Check whether the current Python environment can run the Yuki prototype."""
+"""Comprehensive environment and capability diagnostics for Yuki."""
 import importlib
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_MODULES = (
-    "yuki",
-    "yuki_agent",
-    "yuki_approvals",
-    "yuki_events",
-    "yuki_learning",
-    "yuki_orchestrator",
-    "yuki_planner",
-    "yuki_providers",
-    "yuki_security",
-    "yuki_tasks",
-    "yuki_tools",
-    "yuki_workflow",
+
+CORE_SUBSYSTEMS = (
+    "core",
+    "companion",
+    "skills",
+    "providers",
+    "defense",
+    "hackback",
+    "voice",
+    "ui",
+    "knowledge",
+    "automation",
 )
+
+OPTIONAL_LIBRARIES = {
+    "PyYAML (config parsing)": "yaml",
+    "faster-whisper (STT)": "faster_whisper",
+    "pyttsx3 (TTS engine)": "pyttsx3",
+    "openwakeword (Wake word)": "openwakeword",
+    "textual (UI dashboard)": "textual",
+    "playwright (Browser automation)": "playwright",
+    "google-auth-oauthlib (Gmail)": "google_auth_oauthlib",
+    "docker (Sandbox runner)": "docker",
+}
+
+
+def run_diagnostics():
+    lines = []
+    lines.append("=== Yuki Environment & Capability Diagnostics ===")
+    lines.append(f"Project root: {ROOT}")
+    lines.append(f"Python: {sys.version.split()[0]}")
+
+    if sys.version_info < (3, 10):
+        lines.append("FAIL: Python 3.10 or newer is required.")
+        return False, "\n".join(lines)
+
+    missing_files = [name for name in ("yuki.py", "main.py", "config.yaml", "requirements.txt") if not (ROOT / name).exists()]
+    if missing_files:
+        lines.append("FAIL: Missing core project files: " + ", ".join(missing_files))
+        return False, "\n".join(lines)
+
+    lines.append("\n--- Subsystem Readiness ---")
+    failed_subsystems = []
+    for subsystem in CORE_SUBSYSTEMS:
+        try:
+            importlib.import_module(subsystem)
+            lines.append(f"OK: {subsystem}")
+        except Exception as exc:
+            failed_subsystems.append((subsystem, str(exc)))
+            lines.append(f"FAIL: {subsystem} ({exc})")
+
+    lines.append("\n--- Optional Integrations Status ---")
+    for label, pkg in OPTIONAL_LIBRARIES.items():
+        try:
+            importlib.import_module(pkg)
+            lines.append(f"AVAILABLE: {label}")
+        except Exception:
+            lines.append(f"UNAVAILABLE (optional): {label}")
+
+    if failed_subsystems:
+        lines.append(f"\nFAIL: {len(failed_subsystems)} core subsystem(s) failed to load.")
+        return False, "\n".join(lines)
+
+    lines.append("\nPASS: All core Yuki subsystems and project structures are ready.")
+    return True, "\n".join(lines)
 
 
 def main():
-    print("Yuki environment diagnostics")
-    print(f"Project root: {ROOT}")
-    print(f"Python: {sys.version.split()[0]}")
-    if sys.version_info < (3, 10):
-        print("FAIL: Python 3.10 or newer is required.")
-        return 1
-
-    missing = [name for name in ("yuki.py", "requirements.txt", "tests") if not (ROOT / name).exists()]
-    if missing:
-        print("FAIL: Missing project paths: " + ", ".join(missing))
-        return 1
-
-    failures = []
-    for module_name in REQUIRED_MODULES:
-        try:
-            importlib.import_module(module_name)
-            print(f"OK: {module_name}")
-        except Exception as exc:
-            failures.append((module_name, type(exc).__name__))
-            print(f"FAIL: {module_name} ({type(exc).__name__})")
-
-    if failures:
-        print(f"Diagnostics failed: {len(failures)} module(s) could not load.")
-        return 1
-    print("PASS: Python version, project files, and core imports look ready.")
-    print("Note: diagnostics do not verify voice, real AI providers, or browser automation.")
-    return 0
+    ok, report = run_diagnostics()
+    print(report)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ from .health_agent import HealthAgentSkill
 from .home_security import HomeSecuritySkill
 from .messaging_expanded import MessagingExpandedSkill
 from .tiered_autonomy_skill import TieredAutonomySkill
+from .mcp_skill import MCPToolSkill
 from companion.identity_manager import IdentityManager
 from skills.role_skill import RoleSkill
 from core.plugin_loader import PluginLoader
@@ -97,6 +98,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(root), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
+            MCPToolSkill(allowed_hosts=web_allowed_hosts),
             RoleSkill(),
         ))
         if plugin_discovery_enabled:

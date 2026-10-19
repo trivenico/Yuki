@@ -60,6 +60,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /doctor                        Run environment and subsystem diagnostics
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -80,6 +81,9 @@ def print_help():
   /voice transcribe AUDIO_PATH
   /voice wakeword status         Show custom detector readiness, no background listener
   /voice speaker-check PATH      Currently fails closed without a verified model
+  /mcp status                    Show MCP status and allowed hosts
+  /mcp connect ENDPOINT          Discover MCP tools over HTTPS
+  /mcp call NAME ARGS_JSON       Invoke an approved MCP tool call
   /security status
   /security recon PRIVATE_IP     Authorized limited Nmap scan
   /sandbox status
@@ -150,6 +154,10 @@ def main():
             return
         if command == "/help":
             print_help()
+        elif command == "/doctor":
+            from scripts.doctor import run_diagnostics
+            _, report = run_diagnostics()
+            print(report)
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
@@ -394,6 +402,44 @@ def main():
                 print(speaker_verifier.verify(command[len("/voice speaker-check "):].strip()))
             except SpeakerVerificationError as exc:
                 print(f"Yuki > {exc}")
+        elif command == "/mcp status":
+            print(f"MCP allowed hosts: {config['web_allowed_hosts'] or 'None (configure web_allowed_hosts)'}")
+        elif command.startswith("/mcp connect "):
+            endpoint = command[len("/mcp connect "):].strip()
+            if not _confirm("mcp:connect", f"Discover MCP tools from {endpoint!r}.", "medium"):
+                print("Yuki > Connection cancelled.")
+                continue
+            try:
+                from core.mcp_client import MCPHTTPClient, MCPError
+                client = MCPHTTPClient(endpoint, allowed_hosts=config["web_allowed_hosts"])
+                info = client.initialize()
+                tools = client.list_tools()
+                print(f"Yuki > Connected to {info['server_info'].get('name', 'MCP Server')}")
+                for tool in tools:
+                    print(f"- {tool['name']}: {tool['description']}")
+            except Exception as exc:
+                print(f"Yuki > MCP connection failed: {exc}")
+        elif command.startswith("/mcp call "):
+            payload = command[len("/mcp call "):]
+            if "|" not in payload:
+                print("Yuki > Use /mcp call ENDPOINT | TOOL_NAME | ARGS_JSON")
+                continue
+            parts = [p.strip() for p in payload.split("|", 2)]
+            if len(parts) < 3:
+                print("Yuki > Provide ENDPOINT | TOOL_NAME | ARGS_JSON")
+                continue
+            endpoint, tool_name, raw_args = parts[0], parts[1], parts[2]
+            try:
+                import json
+                args_dict = json.loads(raw_args)
+            except Exception:
+                print("Yuki > ARGS_JSON must be valid JSON object string.")
+                continue
+            mcp_skill_arg = json.dumps({"endpoint": endpoint, "tool": tool_name, "arguments": args_dict})
+            response = agent.run_skill("mcp_tool", mcp_skill_arg)
+            print(f"Yuki > {response.message}")
+            if response.ok and response.data is not None:
+                print(response.data)
         elif command == "/security status":
             print(f"Security lab: {config['security_lab_enabled']}; allowed private lab IPs: {len(config['recon_allowlisted_targets'])}")
         elif command.startswith("/security recon "):
