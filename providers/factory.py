@@ -18,6 +18,10 @@ def create_provider(config=None, *, environ=None):
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
     selected = str(cfg.get("provider", "mock")).strip().lower()
+    # Reject unsupported values before constructing any provider. In particular,
+    # an invalid provider must not trigger unrelated Ollama configuration errors.
+    if selected not in {"mock", "ollama", "hybrid"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid.")
     if selected == "mock":
         return MockProvider()
     local = OllamaProvider(
@@ -26,16 +30,14 @@ def create_provider(config=None, *, environ=None):
     )
     if selected == "ollama":
         return local
-    if selected == "hybrid":
-        cloud_model = str(env.get("YUKI_CLOUD_MODEL", "")).strip()
-        cloud = None
-        if cloud_model:
-            cloud = OpenAICompatibleProvider(
-                cloud_model,
-                api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")),
-                base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://api.openai.com/v1")),
-            )
-        raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
-        cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
-        return HybridProvider(local, cloud, cloud_tasks=cloud_tasks)
-    raise ValueError("provider must be one of: mock, ollama, hybrid.")
+    cloud_model = str(env.get("YUKI_CLOUD_MODEL", "")).strip()
+    cloud = None
+    if cloud_model:
+        cloud = OpenAICompatibleProvider(
+            cloud_model,
+            api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")),
+            base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://api.openai.com/v1")),
+        )
+    raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
+    cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
+    return HybridProvider(local, cloud, cloud_tasks=cloud_tasks)
