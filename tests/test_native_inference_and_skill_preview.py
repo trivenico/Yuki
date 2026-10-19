@@ -33,6 +33,21 @@ class NativeInferenceTests(unittest.TestCase):
 
 
 class SkillSandboxPreviewTests(unittest.TestCase):
+    def test_provider_draft_is_saved_only_as_pending_proposal(self):
+        draft = "---\\nname: drafted-skill\\ndescription: Drafted safely\\nversion: 1.0.0\\n---\\n\\nSummarize only user-provided text. Do not call tools.\\n"
+        class FakeProvider:
+            def generate(self, prompt):
+                self.prompt = prompt
+                return draft
+        with tempfile.TemporaryDirectory() as directory:
+            store = SkillProposalStore(directory)
+            provider = FakeProvider()
+            proposal = store.draft(provider, "summarize user-provided notes")
+            self.assertEqual(proposal.name, "drafted-skill")
+            self.assertIn("declarative SKILL.md", provider.prompt)
+            self.assertEqual(store.list_proposals()[0]["status"], "pending")
+            self.assertFalse((Path(directory) / "approved" / "drafted-skill.SKILL.md").exists())
+
     def test_preview_is_static_and_never_executes(self):
         content = "---\nname: demo-skill\ndescription: Demonstration\n---\n\nSummarize text the user provides.\n"
         with tempfile.TemporaryDirectory() as directory:
