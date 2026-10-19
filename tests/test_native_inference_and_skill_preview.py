@@ -34,7 +34,7 @@ class NativeInferenceTests(unittest.TestCase):
 
 class SkillSandboxPreviewTests(unittest.TestCase):
     def test_provider_draft_is_saved_only_as_pending_proposal(self):
-        draft = "---\\nname: drafted-skill\\ndescription: Drafted safely\\nversion: 1.0.0\\n---\\n\\nSummarize only user-provided text. Do not call tools.\\n"
+        draft = "---\nname: drafted-skill\ndescription: Drafted safely\nversion: 1.0.0\n---\n\nSummarize only user-provided text. Do not call tools.\n"
         class FakeProvider:
             def generate(self, prompt):
                 self.prompt = prompt
