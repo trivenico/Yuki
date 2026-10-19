@@ -22,7 +22,8 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None, dispatcher=None):
+        self.dispatcher = dispatcher
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
