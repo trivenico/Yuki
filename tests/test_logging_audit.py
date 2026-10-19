@@ -6,6 +6,7 @@ import unittest
 
 from core.approval_audit_jsonl import JsonlApprovalAuditLog
 from core.logging_setup import configure_logging, log_event
+from core.permissions import PermissionGate
 
 
 class LoggingSetupTests(unittest.TestCase):
@@ -49,6 +50,32 @@ class JsonlApprovalAuditTests(unittest.TestCase):
                 audit.record_event("unknown", risk="low")
             with self.assertRaises(ValueError):
                 audit.record_event("approved", risk="untrusted")
+
+
+    def test_permission_gate_writes_metadata_only_audit_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approval.jsonl"
+            audit = JsonlApprovalAuditLog(path)
+            gate = PermissionGate(approver=lambda request: True, audit_log=audit)
+            self.assertTrue(gate.request("notes.write", "approve safe note", "low"))
+            action = {"skill_id": "notes.write", "arguments": {"text": "private content"}}
+            receipt = gate.issue_receipt(action, lambda shown: True, risk="high")
+            self.assertIsNotNone(receipt)
+            self.assertTrue(gate.consume_receipt(receipt, action))
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            event_types = [row["event_type"] for row in rows]
+            self.assertIn("requested", event_types)
+            self.assertIn("approved", event_types)
+            serialized = path.read_text(encoding="utf-8")
+            self.assertNotIn("private content", serialized)
+            self.assertNotIn("approve safe note", serialized)
+
+    def test_audit_failure_fails_closed_for_permission_request(self):
+        class BrokenAudit:
+            def record_event(self, *args, **kwargs):
+                raise OSError("disk unavailable")
+        gate = PermissionGate(approver=lambda request: True, audit_log=BrokenAudit())
+        self.assertFalse(gate.request("notes.write", "reason", "low"))
 
     def test_rotation_keeps_bounded_number_of_backups(self):
         with tempfile.TemporaryDirectory() as tmp:
