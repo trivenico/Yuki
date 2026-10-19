@@ -9,7 +9,7 @@ class HybridProvider:
     local provider never triggers an implicit cloud fallback.
     """
 
-    def __init__(self, local_provider, cloud_provider=None, *, cloud_tasks=()):
+    def __init__(self, local_provider, cloud_provider=None, *, cloud_tasks=(), cloud_approver=None):
         if not callable(getattr(local_provider, "generate", None)) or not callable(
             getattr(local_provider, "is_available", None)
         ):
@@ -29,6 +29,7 @@ class HybridProvider:
         self.local_provider = local_provider
         self.cloud_provider = cloud_provider
         self.cloud_tasks = frozenset(normalized)
+        self.cloud_approver = cloud_approver
 
     def is_available(self):
         try:
@@ -52,6 +53,8 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
+            if self.cloud_approver is None or self.cloud_approver(task_key, prompt) is not True:
+                raise RuntimeError("External cloud transmission was not explicitly approved.")
             result = self.cloud_provider.generate(prompt)
             self.last_usage = getattr(self.cloud_provider, "last_usage", {})
             self.model = getattr(self.cloud_provider, "model", "")
