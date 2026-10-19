@@ -194,6 +194,36 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                     planner, planner.run("Second note"), actor="owner", session_id="session"
                 )
 
+    def test_audit_failure_discards_persistent_pending_action(self):
+        class BrokenAudit:
+            def record_event(self, *args, **kwargs):
+                raise OSError("audit storage unavailable")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            planner = build()
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit())
+            with self.assertRaisesRegex(RuntimeError, "pending action discarded"):
+                coordinator.record(
+                    planner, planner.run("Write note"), actor="owner", session_id="session"
+                )
+            with store._connection() as db:
+                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
+            self.assertEqual(count, 0)
+
+    def test_audit_failure_discards_in_memory_pending_action(self):
+        class BrokenAudit:
+            def record_event(self, *args, **kwargs):
+                raise OSError("audit storage unavailable")
+
+        planner = build()
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        with self.assertRaisesRegex(RuntimeError, "pending action discarded"):
+            coordinator.record(
+                planner, planner.run("Write note"), actor="owner", session_id="session"
+            )
+        self.assertEqual(coordinator._in_memory_pending, {})
+
     def test_pending_capacity_is_bounded(self):
         planner = build()
         result = planner.run("Write note")
