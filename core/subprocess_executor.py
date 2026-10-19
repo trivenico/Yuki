@@ -1,8 +1,13 @@
-"""Bounded subprocess runner for trusted, explicitly registered skill commands."""
+"""Bounded subprocess runner for trusted, explicitly registered skill commands.
+
+This is process isolation, not a security sandbox: commands still run with the
+current user's OS privileges. Use a container or OS sandbox for untrusted code.
+"""
 from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 from typing import Any, Sequence
 
 class SubprocessExecutor:
@@ -25,19 +30,67 @@ class SubprocessExecutor:
         if len(body) > 65536:
             raise ValueError("Skill input exceeds 64 KiB.")
         env = {"PATH": os.environ.get("PATH", ""), "PYTHONIOENCODING": "utf-8"}
+        proc = None
+        overflow = threading.Event()
+        output: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
+        limits = {"stdout": limit, "stderr": min(limit, 16384)}
+
+        def drain(name: str, pipe) -> None:
+            try:
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        return
+                    remaining = limits[name] - len(output[name])
+                    if len(chunk) > remaining:
+                        if remaining > 0:
+                            output[name].extend(chunk[:remaining])
+                        overflow.set()
+                        if proc is not None:
+                            try:
+                                proc.kill()
+                            except OSError:
+                                pass
+                        return
+                    output[name].extend(chunk)
+            finally:
+                pipe.close()
+
         try:
-            proc = subprocess.run(list(command), input=body, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  timeout=timeout, check=False, env=env, close_fds=True)
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("Skill execution timed out.") from exc
+            proc = subprocess.Popen(list(command), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, env=env, close_fds=True)
         except OSError as exc:
             raise RuntimeError("Skill process could not be started.") from exc
-        if len(proc.stdout) > limit or len(proc.stderr) > min(limit, 16384):
+        readers = [
+            threading.Thread(target=drain, args=("stdout", proc.stdout), daemon=True),
+            threading.Thread(target=drain, args=("stderr", proc.stderr), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
+        try:
+            assert proc.stdin is not None
+            try:
+                proc.stdin.write(body)
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError("Skill execution timed out.") from exc
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            for reader in readers:
+                reader.join(timeout=2)
+        if overflow.is_set():
             raise RuntimeError("Skill output exceeded configured limits.")
         if proc.returncode != 0:
             raise RuntimeError("Skill process returned a non-zero exit code.")
         try:
-            result = json.loads(proc.stdout.decode("utf-8"))
+            result = json.loads(bytes(output["stdout"]).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Skill process returned invalid JSON.") from exc
         if not isinstance(result, dict):
