@@ -99,7 +99,7 @@ def print_help():
   /dashboard                     Open optional Textual supervision dashboard
   /quit
 
-No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
+Model-directed task execution is restricted to reviewed manifest skills and explicit capabilities. The current built-in tool is read-only workspace listing; autonomous project editing is disabled.
 """)
 
 
