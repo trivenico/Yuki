@@ -19,7 +19,7 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield Label("Runtime status: loading…", id="runtime-status")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="Enter /help, /status, /skills, or /quit", id="command")
+                yield Input(placeholder="Enter /help, /status, /skills, /skill proposals, or /quit", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
@@ -41,7 +41,7 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
             if command == "/quit":
                 self.exit()
                 return
-            if command in {"/help", "/status", "/skills"} and command_handler:
+            if command in {"/help", "/status", "/skills", "/skill proposals"} and command_handler:
                 try:
                     log.write(str(command_handler(command))[:12000])
                 except Exception:
