@@ -6,6 +6,8 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
+import re
+from urllib.parse import urlsplit
 
 CONFIG_VERSION = 1
 DEFAULT_CONFIG_PATH = Path("~/.yuki/config.json").expanduser()
@@ -51,8 +53,11 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         name, endpoint = server.get("name"), server.get("endpoint")
         if not isinstance(name, str) or not name.strip() or len(name) > 80 or name in seen:
             raise ValueError("MCP server names must be unique, non-empty, and bounded.")
-        if not isinstance(endpoint, str) or not endpoint.startswith("https://") or len(endpoint) > 2048:
-            raise ValueError("MCP endpoints must be HTTPS URLs.")
+        if not isinstance(endpoint, str) or len(endpoint) > 2048:
+            raise ValueError("MCP endpoints must be bounded HTTPS URLs.")
+        parsed_endpoint = urlsplit(endpoint)
+        if parsed_endpoint.scheme != "https" or not parsed_endpoint.hostname or parsed_endpoint.username or parsed_endpoint.password:
+            raise ValueError("MCP endpoints must use HTTPS, include a hostname, and contain no embedded credentials.")
         tools = server.get("allowed_tools", [])
         if not isinstance(tools, list) or len(tools) > 200 or any(not isinstance(t, str) or not t.strip() for t in tools):
             raise ValueError("MCP allowed_tools must be a bounded list of names.")
@@ -61,14 +66,17 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(guardrails, dict):
         raise ValueError("guardrails must be an object.")
     for key in ("require_tool_approval", "require_cloud_approval", "local_first"):
-        if key in guardrails and not isinstance(guardrails[key], bool):
-            raise ValueError(f"{key} must be boolean.")
+        if key in guardrails and guardrails[key] is not True:
+            raise ValueError(f"{key} is mandatory and must remain true.")
+    api_key_env = config.get("api_key_env", PROVIDERS[provider].get("key_env", ""))
+    if not isinstance(api_key_env, str) or (api_key_env and not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", api_key_env)):
+        raise ValueError("api_key_env must be a valid environment variable name.")
     clean = {
         "schema_version": CONFIG_VERSION,
         "provider": provider,
         "model": model,
         "base_url": base_url,
-        "api_key_env": config.get("api_key_env", PROVIDERS[provider].get("key_env", "")),
+        "api_key_env": api_key_env,
         "mcp_servers": [
             {"name": item["name"].strip(), "endpoint": item["endpoint"].strip(),
              "allowed_tools": list(dict.fromkeys(tool.strip() for tool in item.get("allowed_tools", [])))}
