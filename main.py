@@ -143,7 +143,9 @@ def main():
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
         agent = build_agent(config)
-        ai = YukiAgent(create_provider(config))
+        from core.token_usage import TokenUsageTracker
+        usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
+        ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
     except Exception as exc:
         print(f"Yuki > Runtime initialization error ({type(exc).__name__}): {exc}")
         return 1
@@ -188,9 +190,6 @@ def main():
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
-
-    from core.token_usage import TokenUsageTracker
-    usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
 
     def dashboard_command(command):
         if command == "/status":
