@@ -101,6 +101,15 @@ class ExecutionBoundaryTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             dispatcher.dispatch("notes.write", action["arguments"])
 
+    def test_dispatch_freezes_arguments_and_rejects_non_finite_values(self):
+        dispatcher = make_dispatcher()
+        action = {"skill_id": "notes.write", "arguments": {"text": "hello"}}
+        dispatcher.approval_store.approve(action_fingerprint(action))
+        result = dispatcher.dispatch("notes.write", action["arguments"])
+        self.assertEqual(result, {"saved": True})
+        with self.assertRaises(ValueError):
+            dispatcher.dispatch("notes.write", {"text": float("inf")})
+
     def test_action_fingerprint_rejects_non_finite_json(self):
         with self.assertRaises(ValueError):
             action_fingerprint({"skill_id": "notes.write", "arguments": {"value": float("nan")}})
