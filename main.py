@@ -86,6 +86,8 @@ def print_help():
   /mcp status                    Show MCP status and allowed hosts
   /mcp connect ENDPOINT          Discover MCP tools over HTTPS
   /mcp call NAME ARGS_JSON       Invoke an approved MCP tool call
+  /stitch create TITLE           Prepare Stitch UI project creation
+  /stitch generate PID | PROMPT  Prepare Stitch UI screen generation
   /security status
   /security recon PRIVATE_IP     Authorized limited Nmap scan
   /sandbox status
@@ -250,6 +252,27 @@ def main():
                     continue
                 name, argument = parts[1], parts[2] if len(parts) > 2 else ""
                 response = agent.run_skill(name, argument)
+                print(f"Yuki > {response.message}")
+                if response.ok and response.data is not None:
+                    print(response.data)
+            elif command.startswith("/stitch create "):
+                title = command[len("/stitch create "):].strip()
+                import json
+                response = agent.run_skill("stitch_ui", json.dumps({"action": "create", "title": title}))
+                print(f"Yuki > {response.message}")
+                if response.ok and response.data is not None:
+                    print(response.data)
+            elif command.startswith("/stitch generate "):
+                payload = command[len("/stitch generate "):]
+                if "|" not in payload:
+                    print("Yuki > Use /stitch generate PROJECT_ID | PROMPT")
+                    continue
+                parts = [p.strip() for p in payload.split("|", 1)]
+                if len(parts) < 2 or not parts[0] or not parts[1]:
+                    print("Yuki > Provide PROJECT_ID | PROMPT")
+                    continue
+                import json
+                response = agent.run_skill("stitch_ui", json.dumps({"action": "generate", "project_id": parts[0], "prompt": parts[1]}))
                 print(f"Yuki > {response.message}")
                 if response.ok and response.data is not None:
                     print(response.data)
