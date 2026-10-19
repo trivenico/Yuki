@@ -89,7 +89,8 @@ class SkillRegistry:
 
     @classmethod
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None):
+                 gmail_token="token.json", web_allowed_hosts=(), mcp_allowed_tools=(), mcp_approver=None,
+                 plugin_discovery_enabled=False, trusted_plugin_modules=None):
         root = Path(workspace).expanduser().resolve()
         registry = cls((
             TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
@@ -105,7 +106,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(root), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            MCPToolSkill(allowed_hosts=web_allowed_hosts),
+            MCPToolSkill(allowed_hosts=web_allowed_hosts, allowed_tools=mcp_allowed_tools, approver=mcp_approver),
             StitchSkill(),
             RoleSkill(),
         ))

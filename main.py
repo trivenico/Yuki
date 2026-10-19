@@ -52,6 +52,12 @@ def build_agent(config):
         gmail_credentials=workspace / "google_oauth_client.json",
         gmail_token=workspace / "google_token.json",
         web_allowed_hosts=config["web_allowed_hosts"],
+        mcp_allowed_tools=config.get("mcp_allowed_tools", ()),
+        mcp_approver=lambda name, arguments: _confirm(
+            "mcp:tool_call",
+            f"Call allow-listed MCP tool {name!r} with argument keys {sorted(arguments)[:20]!r}.",
+            "high",
+        ),
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
     )
@@ -519,6 +525,7 @@ def main():
                 print(f"Yuki > Diagnostic bundle written to {diag_file.name}")
             elif command == "/mcp status":
                 print(f"MCP allowed hosts: {config['web_allowed_hosts'] or 'None (configure web_allowed_hosts)'}")
+                print(f"MCP allowed tools: {config.get('mcp_allowed_tools') or 'None (configure mcp_allowed_tools)'}")
             elif command.startswith("/mcp connect "):
                 endpoint = command[len("/mcp connect "):].strip()
                 if not _confirm("mcp:connect", f"Discover MCP tools from {endpoint!r}.", "medium"):
