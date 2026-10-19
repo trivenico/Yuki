@@ -127,6 +127,17 @@ class ExecutionBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             action_fingerprint({"skill_id": "notes.write", "arguments": {"value": float("nan")}})
 
+    def test_action_fingerprint_rejects_non_string_object_keys(self):
+        with self.assertRaises(ValueError):
+            action_fingerprint({"skill_id": "notes.write", "arguments": {1: "coerced-key"}})
+
+    def test_action_fingerprint_rejects_excessive_nesting(self):
+        value = "leaf"
+        for _ in range(66):
+            value = [value]
+        with self.assertRaises(ValueError):
+            action_fingerprint({"skill_id": "notes.write", "arguments": value})
+
     def test_task_agent_rejects_oversized_prompt(self):
         agent = ManifestTaskAgent(FixedProvider("{}"), object(), object())
         with self.assertRaises(ValueError):
