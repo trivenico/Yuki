@@ -76,6 +76,10 @@ def print_help():
   /status                        Show capability status
   /doctor                        Run environment and subsystem diagnostics
   /skills                        List registered skills
+  /skill draft GOAL              Draft an inert SKILL.md proposal
+  /skill proposals               List pending skill proposals
+  /skill preview NAME            Static-only review of a proposal
+  /skill approve NAME            Approve a declarative proposal (not executable code)
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -134,6 +138,10 @@ def main():
             config["ollama_model"] = user_config.get("model", config.get("ollama_model", ""))
             config["base_url"] = user_config.get("base_url", "")
             config["api_key_env"] = user_config.get("api_key_env", "")
+            for setting in ("model_path", "n_ctx", "n_threads", "n_gpu_layers", "max_tokens",
+                            "cloud_model", "cloud_api_key_env"):
+                if setting in user_config:
+                    config[setting] = user_config[setting]
             config["cloud_tasks"] = user_config.get("cloud_tasks", [])
             config["local_provider"] = user_config.get("local_provider", "ollama")
             config["cloud_provider"] = user_config.get("cloud_provider", "openai")
@@ -287,6 +295,43 @@ def main():
                     print("Yuki > " + answer)
                 except Exception as exc:
                     print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
+            elif command.startswith("/skill draft "):
+                goal = command[len("/skill draft "):].strip()
+                try:
+                    from skills.proposals import SkillProposalStore
+                    store = SkillProposalStore(workspace / "skill-proposals")
+                    proposal = store.draft(ai.provider, goal)
+                    print(f"Yuki > Draft saved as pending proposal {proposal.name!r}. It was not executed or activated.")
+                except Exception as exc:
+                    print(f"Yuki > Skill draft rejected safely ({type(exc).__name__}): {exc}")
+            elif command == "/skill proposals":
+                from skills.proposals import SkillProposalStore
+                proposals = SkillProposalStore(workspace / "skill-proposals").list_proposals()
+                print(json.dumps(proposals, indent=2, ensure_ascii=False))
+            elif command.startswith("/skill preview "):
+                name = command[len("/skill preview "):].strip()
+                try:
+                    from skills.proposals import SkillProposalStore
+                    preview = SkillProposalStore(workspace / "skill-proposals").sandbox_preview(name)
+                    print(json.dumps(preview, indent=2, ensure_ascii=False))
+                    print("Yuki > Static review only; instructions were not executed.")
+                except Exception as exc:
+                    print(f"Yuki > Skill preview unavailable ({type(exc).__name__}): {exc}")
+            elif command.startswith("/skill approve "):
+                name = command[len("/skill approve "):].strip()
+                try:
+                    from skills.proposals import SkillProposalStore
+                    store = SkillProposalStore(workspace / "skill-proposals")
+                    preview = store.sandbox_preview(name)
+                    if not _confirm("skill:approve_proposal",
+                                    f"Move declarative proposal {preview['name']!r} to the approved documents directory? This does not execute or register code.",
+                                    "high"):
+                        print("Yuki > Proposal remains pending.")
+                        continue
+                    path = store.approve(name, human_approved=True)
+                    print(f"Yuki > Declarative proposal approved at {path}. It is still not executable.")
+                except Exception as exc:
+                    print(f"Yuki > Skill approval failed safely ({type(exc).__name__}): {exc}")
             elif command.startswith("/skill "):
                 parts = command.split(maxsplit=2)
                 if len(parts) < 2 or not parts[1].strip():

@@ -6,6 +6,8 @@ from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.anthropic import AnthropicProvider
+from providers.llama_cpp_python import LlamaCppPythonProvider
+from providers.mlx import MLXProvider
 _PRESETS={"openai":("https://api.openai.com/v1","OPENAI_API_KEY"),"deepseek":("https://api.deepseek.com/v1","DEEPSEEK_API_KEY"),"glm":("https://open.bigmodel.cn/api/paas/v4","ZHIPUAI_API_KEY"),"llama.cpp":("http://127.0.0.1:8080/v1",""),"lm-studio":("http://127.0.0.1:1234/v1","")}
 def _compatible(model,url,key_env,*,environ,approval_callback=None):
     return OpenAICompatibleProvider(model,api_key_env=key_env or "YUKI_LOCAL_DUMMY_KEY",base_url=url,allow_http_loopback=True,environ=environ,approval_callback=approval_callback)
@@ -15,8 +17,12 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
     if selected=="mock": return MockProvider()
     model=str(cfg.get("model",cfg.get("ollama_model",env.get("YUKI_OLLAMA_MODEL","")))).strip()
     if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
-    if selected in {"llama.cpp","llama-cpp","lm-studio"}:
-        preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"]
+    if selected in {"llama.cpp-python", "llama-cpp-python"}:
+        return LlamaCppPythonProvider(str(cfg.get("model_path", model)), n_ctx=int(cfg.get("n_ctx", 4096)), n_threads=cfg.get("n_threads"), n_gpu_layers=int(cfg.get("n_gpu_layers", 0)))
+    if selected == "mlx":
+        return MLXProvider(str(cfg.get("model_path", model)), max_tokens=int(cfg.get("max_tokens", 2048)))
+    if selected in {"llama.cpp","llama-cpp","lm-studio","vllm"}:
+        preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"] if selected != "vllm" else ("http://127.0.0.1:8000/v1", "")
         return _compatible(model,str(cfg.get("base_url") or env.get("YUKI_BASE_URL",preset)),str(cfg.get("api_key_env",key)),environ=env)
     if selected=="anthropic": return AnthropicProvider(model,api_key_env=str(cfg.get("api_key_env") or "ANTHROPIC_API_KEY"),base_url=str(cfg.get("base_url") or "https://api.anthropic.com"),approval_callback=cloud_approver)
     if selected in {"openai","deepseek","glm","openai-compatible","custom"}:
@@ -35,9 +41,9 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
                 cloud_cfg["api_key_env"] = cloud_key
             else:
                 cloud_cfg.pop("api_key_env", None)
-            cloud=create_provider(cloud_cfg,environ=env,cloud_approver=None)
+            cloud=create_provider(cloud_cfg,environ=env,cloud_approver=lambda *_: True)
         tasks=cfg.get("cloud_tasks",env.get("YUKI_CLOUD_TASKS",""))
         if isinstance(tasks,str): tasks=[v.strip() for v in tasks.split(",") if v.strip()]
         if not isinstance(tasks,(list,tuple,set)): raise ValueError("cloud_tasks must be a list of task names.")
         return HybridProvider(local,cloud,cloud_tasks=tasks,cloud_approver=cloud_approver)
-    raise ValueError("provider must be one of: mock, ollama, llama.cpp, lm-studio, openai, anthropic, deepseek, glm, openai-compatible, hybrid.")
+    raise ValueError("provider must be one of: mock, ollama, llama.cpp, llama.cpp-python, mlx, lm-studio, vllm, openai, anthropic, deepseek, glm, openai-compatible, hybrid.")

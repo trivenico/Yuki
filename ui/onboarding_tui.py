@@ -36,6 +36,14 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
     base_url = _ask("Provider base URL", meta.get("default_url", ""))
     model = _ask("Model name", meta.get("default_model", ""))
     key_env = meta.get("key_env", "")
+    model_path = None
+    if provider in {"llama.cpp-python", "mlx"}:
+        model_path = _ask("Local GGUF/model path or MLX model ID", model)
+        if not model_path:
+            raise ValueError("Native local inference requires a model path or model ID.")
+        config_native = True
+    else:
+        config_native = False
     if meta["kind"] in {"cloud", "custom"}:
         key_env = _ask("Environment variable name for API key", key_env)
         # Ask only to validate that the user has a credential; never echo or persist it.
@@ -76,6 +84,8 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
             "local_first": True,
         },
     }
+    if config_native:
+        config["model_path"] = model_path
     if provider == "hybrid":
         config["local_provider"] = _ask("Local provider (ollama, llama.cpp, lm-studio)", "ollama").lower()
         config["local_model"] = _ask("Local model name", model)

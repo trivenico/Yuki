@@ -14,6 +14,9 @@ PROVIDERS = {
     "hybrid": {"kind": "hybrid", "default_model": ""},
     "ollama": {"kind": "local", "default_url": "http://127.0.0.1:11434"},
     "llama.cpp": {"kind": "local", "default_url": "http://127.0.0.1:8080/v1"},
+    "llama.cpp-python": {"kind": "local", "default_model": ""},
+    "mlx": {"kind": "local", "default_model": ""},
+    "vllm": {"kind": "local", "default_url": "http://127.0.0.1:8000/v1"},
     "lm-studio": {"kind": "local", "default_url": "http://127.0.0.1:1234/v1"},
     "openai": {"kind": "cloud", "default_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY"},
     "anthropic": {"kind": "cloud", "default_url": "https://api.anthropic.com", "key_env": "ANTHROPIC_API_KEY"},
@@ -90,6 +93,18 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cloud_tasks, list) or len(cloud_tasks) > 100 or any(not isinstance(item, str) or not item.strip() for item in cloud_tasks):
         raise ValueError("cloud_tasks must be a bounded list of non-empty task names.")
     clean["cloud_tasks"] = list(dict.fromkeys(item.strip() for item in cloud_tasks))
+    for key in ("model_path",):
+        value = config.get(key)
+        if value is not None:
+            if not isinstance(value, str) or not value.strip() or len(value) > 2048:
+                raise ValueError(f"{key} must be a non-empty bounded string.")
+            clean[key] = value.strip()
+    for key, low, high in (("n_ctx", 512, 131072), ("n_threads", 1, 256), ("n_gpu_layers", 0, 999), ("max_tokens", 1, 8192)):
+        value = config.get(key)
+        if value is not None:
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(f"{key} is outside the supported range.")
+            clean[key] = value
     return clean
 
 def save_config(config: dict[str, Any], path: str | os.PathLike[str] | None = None) -> Path:

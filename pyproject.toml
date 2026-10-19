@@ -13,9 +13,18 @@ dependencies = [
     "PyYAML>=6.0.2",
 ]
 
+[project.optional-dependencies]
+desktop = ["pywebview>=5.0,<7.0"]
+ui = ["textual>=0.80,<2.0"]
+discord = ["PyNaCl>=1.5,<2.0"]
+llama-cpp = ["llama-cpp-python>=0.3,<1.0"]
+mlx = ["mlx-lm>=0.21,<1.0; platform_system == 'Darwin' and platform_machine == 'arm64'"]
+
+
 [project.scripts]
 yuki = "main:main"
 yuki-onboard = "ui.onboarding_tui:main"
+yuki-daemon = "automation.daemon_cli:main"
 
 [tool.setuptools]
 py-modules = [
