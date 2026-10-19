@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import unittest
 
 from core.action_approvals import ActionApprovalStore, action_fingerprint
@@ -109,6 +110,18 @@ class ExecutionBoundaryTests(unittest.TestCase):
         self.assertEqual(result, {"saved": True})
         with self.assertRaises(ValueError):
             dispatcher.dispatch("notes.write", {"text": float("inf")})
+
+    def test_approval_grants_expire(self):
+        store = ActionApprovalStore(ttl_seconds=1)
+        store.approve("grant")
+        self.assertTrue(store.is_approved("grant"))
+        time.sleep(1.05)
+        self.assertFalse(store.consume("grant"))
+
+    def test_approval_store_capacity_is_bounded(self):
+        store = ActionApprovalStore(max_approvals=1)
+        self.assertTrue(store.approve("first"))
+        self.assertFalse(store.approve("second"))
 
     def test_action_fingerprint_rejects_non_finite_json(self):
         with self.assertRaises(ValueError):
