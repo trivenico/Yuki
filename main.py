@@ -10,6 +10,8 @@ from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
+from core.logging_setup import configure_logging, log_event
+from core.approval_audit_jsonl import JsonlApprovalAuditLog
 from core.planner import Planner
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
@@ -53,7 +55,8 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    audit_log = JsonlApprovalAuditLog(workspace / "logs" / "approval-audit.jsonl")
+    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval, audit_log=audit_log))
 
 
 def parse_skill_command(command):
@@ -115,6 +118,8 @@ def main():
         config = load_config()
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
+        logger = configure_logging(workspace / "logs")
+        log_event(logger, 20, "startup_started", component="runtime")
         agent = build_agent(config)
         ai = YukiAgent(create_provider(config))
         task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])

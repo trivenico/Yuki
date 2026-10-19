@@ -5,6 +5,12 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+## Local logging and approval audit
+
+The runtime configures a UTF-8 rotating log at `<workspace>/logs/yuki.log` (1 MB per file, three backups). Log helpers are intended for operational metadata only; do not log prompts, provider responses, credentials, or action arguments.
+
+`core/approval_audit_jsonl.py` provides a separate JSONL approval audit writer with an event allow-list, bounded metadata fields, 5 MiB rotation and three backups by default. High/critical risk records are flushed to disk with `fsync`. This audit writer is currently a reusable component and is **not yet wired into every runtime approval path**; the existing SQLite approval audit remains separate. Verify audit integration before relying on it for compliance or incident response.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
