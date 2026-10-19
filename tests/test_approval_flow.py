@@ -94,6 +94,69 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(approved.ok)
 
+    def test_request_audit_failure_discards_in_memory_pending(self):
+        class BrokenAudit:
+            def record_event(self, *args, **kwargs):
+                raise OSError("audit disk unavailable")
+
+        planner = build()
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        with self.assertRaisesRegex(RuntimeError, "Approval audit unavailable"):
+            coordinator.record(
+                planner, planner.run("Write note"), actor="owner", session_id="cli-session"
+            )
+        self.assertEqual(coordinator._in_memory_pending, {})
+
+    def test_approval_audit_failure_prevents_execution(self):
+        class BrokenAudit:
+            def record_event(self, event_type, *args, **kwargs):
+                if event_type == "approved":
+                    raise OSError("audit disk unavailable")
+
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        pending = coordinator.record(
+            planner, result, actor="owner", session_id="cli-session"
+        )
+        executed = []
+        original = planner.execute_proposed
+        def capture(action, **kwargs):
+            executed.append(action)
+            return original(action, **kwargs)
+        planner.execute_proposed = capture
+        outcome = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            confirm=lambda action: True,
+        )
+        self.assertEqual(outcome.status, "audit_unavailable")
+        self.assertEqual(executed, [])
+
+    def test_execution_started_audit_failure_prevents_execution(self):
+        class BrokenAudit:
+            def record_event(self, event_type, *args, **kwargs):
+                if event_type == "execution_started":
+                    raise OSError("audit disk unavailable")
+
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        pending = coordinator.record(
+            planner, result, actor="owner", session_id="cli-session"
+        )
+        executed = []
+        original = planner.execute_proposed
+        def capture(action, **kwargs):
+            executed.append(action)
+            return original(action, **kwargs)
+        planner.execute_proposed = capture
+        outcome = coordinator.approve(
+            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            confirm=lambda action: True,
+        )
+        self.assertEqual(outcome.status, "audit_unavailable")
+        self.assertEqual(executed, [])
+
     def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             planner = build()
