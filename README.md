@@ -23,6 +23,13 @@ Run `yuki-onboard` (or `python -m ui.onboarding_tui`) to create a private user c
 - `/desktop` opens the optional read-only PyWebView shell (`pip install -r requirements-desktop.txt`). It shares the running process state but intentionally exposes no privileged actions.
 - Token usage is stored locally under the configured workspace; provider counts are exact when supplied by the provider and otherwise marked as estimates.
 
+### Roadmap increment: daemon, messaging, skills and native inference
+
+- **Async scheduler/daemon:** `automation/async_scheduler.py` stores scheduled work in SQLite, supports bounded five-field UTC cron and interval schedules, and only invokes named in-process handlers. Approval is requested when each job becomes due; headless/missing approval denies execution. Start the foreground notification daemon with `yuki-daemon --notify "stretch break" --every 3600` or `yuki-daemon --notify "weekday check-in" --cron "0 9 * * 1-5"`. Notifications are local-only. Register additional trusted handlers in application code; do not register model-generated shell/code handlers.
+- **Discord/Telegram:** `integrations/messaging_bridge.py` validates Telegram webhook secrets and Discord Ed25519 interaction signatures (install `.[discord]`), restricts senders and commands, applies a sliding-window rate limit, and requires approval for non-read-only commands. The host application must expose HTTPS endpoints, configure platform secrets/public keys, and enforce infrastructure-level request limits.
+- **Dynamic skills:** `skills/proposals.py` parses bounded declarative `SKILL.md` frontmatter, stores proposals separately from approved documents, offers a static-only sandbox preview, and requires explicit human approval before moving a proposal to the approved directory. It never imports or executes proposed instructions. Connecting approved documents to executable Python skills remains a separate reviewed step.
+- **Native inference:** `providers/llama_cpp_python.py` supports user-provided GGUF files through optional llama.cpp Python bindings; `providers/mlx.py` supports MLX on Apple Silicon; the factory also recognizes local vLLM OpenAI-compatible endpoints. Install only the platform-appropriate optional extra, e.g. `pip install -e '.[llama-cpp]'` or `pip install -e '.[mlx]'`. Model weights are not downloaded automatically.
+
 These additions are an integration increment, not a claim of production readiness. Run the test suite and review provider/network policies before using real credentials or sensitive data.
 
 To run unit tests and evaluation suite:
