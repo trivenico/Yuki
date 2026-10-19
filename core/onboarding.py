@@ -60,24 +60,36 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     for key in ("require_tool_approval", "require_cloud_approval", "local_first"):
         if key in guardrails and not isinstance(guardrails[key], bool):
             raise ValueError(f"{key} must be boolean.")
-    clean = dict(config)
-    clean.update({
+    clean = {
         "schema_version": CONFIG_VERSION,
         "provider": provider,
         "model": model,
         "base_url": base_url,
         "api_key_env": config.get("api_key_env", PROVIDERS[provider].get("key_env", "")),
-        "mcp_servers": mcp_servers,
+        "mcp_servers": [
+            {"name": item["name"].strip(), "endpoint": item["endpoint"].strip(),
+             "allowed_tools": list(dict.fromkeys(tool.strip() for tool in item.get("allowed_tools", [])))}
+            for item in mcp_servers
+        ],
         "guardrails": {
             "require_tool_approval": True,
             "require_cloud_approval": True,
             "local_first": True,
             **guardrails,
         },
-    })
-    # Credentials must never be serialized into the config document.
-    for secret_key in ("api_key", "apiKey", "token", "access_token", "secret"):
-        clean.pop(secret_key, None)
+    }
+    for key in ("local_provider", "local_model", "cloud_provider", "cloud_model", "cloud_api_key_env"):
+        value = config.get(key)
+        if value is not None:
+            if not isinstance(value, str) or len(value) > 2048:
+                raise ValueError(f"{key} must be a bounded string.")
+            clean[key] = value
+    cloud_tasks = config.get("cloud_tasks", [])
+    if isinstance(cloud_tasks, str):
+        cloud_tasks = [item.strip() for item in cloud_tasks.split(",") if item.strip()]
+    if not isinstance(cloud_tasks, list) or len(cloud_tasks) > 100 or any(not isinstance(item, str) or not item.strip() for item in cloud_tasks):
+        raise ValueError("cloud_tasks must be a bounded list of non-empty task names.")
+    clean["cloud_tasks"] = list(dict.fromkeys(item.strip() for item in cloud_tasks))
     return clean
 
 def save_config(config: dict[str, Any], path: str | os.PathLike[str] | None = None) -> Path:
