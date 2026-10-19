@@ -27,7 +27,6 @@ from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
-from core.task_agent import ApprovedTaskAgent
 from core.approval_runtime import build_local_approval_runtime
 from core.skill_dispatch import SkillDispatcher
 from core.manifest_task_agent import ManifestTaskAgent
@@ -115,7 +114,6 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config), telemetry=agent.telemetry)
     output_guard = OutputGuard()
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"], telemetry=agent.telemetry)
     # Manifest planner starts with no registered tools; legacy skills are not
     # silently exposed to the new dispatcher.
     approval_runtime = build_local_approval_runtime(workspace)
