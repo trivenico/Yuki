@@ -39,7 +39,7 @@ class Response:
 class HybridProviderTests(unittest.TestCase):
     def test_defaults_to_local_and_only_named_tasks_route_to_cloud(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
-        router = HybridProvider(local, cloud, cloud_tasks={"summarize_public_page"})
+        router = HybridProvider(local, cloud, cloud_tasks={"summarize_public_page"}, cloud_approver=lambda task, prompt: True)
         self.assertEqual(router.generate("private notes"), "local")
         self.assertEqual(router.generate_for("summarize_public_page", "public text"), "cloud")
         self.assertEqual(local.calls, ["private notes"])
@@ -88,7 +88,7 @@ class HybridProviderTests(unittest.TestCase):
             self.assertFalse(provider.is_available())
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
-        provider = OpenAICompatibleProvider("cloud-model")
+        provider = OpenAICompatibleProvider("cloud-model", approval_callback=lambda prompt: True)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
             with patch("urllib.request.urlopen", return_value=Response(
                 json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()

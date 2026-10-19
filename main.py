@@ -2,6 +2,9 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
+import sys
+import json
+from urllib.parse import urlsplit
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
@@ -9,6 +12,9 @@ from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
+from core.onboarding import load_user_config, onboarding_needed
+from ui.onboarding_tui import run_onboarding
+from core.mcp_registry import MCPRegistry, MCPError
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
 from core.vector_memory import VectorMemory
@@ -104,6 +110,9 @@ def print_help():
   /defense remove RULE_ID        Remove a Yuki-created rule (approval required)
   /metasploit status             Execution is not implemented
   /dashboard                     Open optional Textual supervision dashboard
+  /desktop                       Open optional read-only desktop application
+  /mcp discover | /mcp tools      Discover and list configured MCP tools
+  /mcp invoke NAME | JSON         Invoke an allow-listed MCP tool (approval required)
   /quit
 
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
@@ -112,7 +121,27 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 def main():
     try:
+        user_config_path = None
+        if onboarding_needed(user_config_path):
+            if not sys.stdin.isatty():
+                print("Yuki > First-run setup required. Run: python -m ui.onboarding_tui")
+                return 2
+            run_onboarding(path=user_config_path)
         config = load_config()
+        user_config = load_user_config(user_config_path)
+        if user_config:
+            config["provider"] = user_config["provider"]
+            config["ollama_model"] = user_config.get("model", config.get("ollama_model", ""))
+            config["base_url"] = user_config.get("base_url", "")
+            config["api_key_env"] = user_config.get("api_key_env", "")
+            config["cloud_tasks"] = user_config.get("cloud_tasks", [])
+            config["local_provider"] = user_config.get("local_provider", "ollama")
+            config["cloud_provider"] = user_config.get("cloud_provider", "openai")
+            configured_servers = user_config.get("mcp_servers", [])
+            config["mcp_servers"] = configured_servers
+            configured_hosts = [urlsplit(item["endpoint"]).hostname for item in configured_servers if isinstance(item, dict) and isinstance(item.get("endpoint"), str)]
+            config["web_allowed_hosts"] = list(dict.fromkeys(list(config.get("web_allowed_hosts", [])) + [host for host in configured_hosts if host]))
+            config["mcp_allowed_tools"] = list(dict.fromkeys(list(config.get("mcp_allowed_tools", [])) + [tool for item in configured_servers if isinstance(item, dict) for tool in item.get("allowed_tools", []) if isinstance(tool, str)]))
     except (RuntimeError, ValueError) as exc:
         print(f"Yuki > Configuration error: {exc}")
         return 1
@@ -120,7 +149,17 @@ def main():
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
         agent = build_agent(config)
-        ai = YukiAgent(create_provider(config))
+        mcp_registry = MCPRegistry(config.get("mcp_servers", []), approver=lambda name, args: _confirm(
+            "mcp:tool_call", f"Call MCP tool {name!r} with argument keys {sorted(args)[:20]!r}.", "high"))
+        from yuki_tools import register_mcp_registry
+        register_mcp_registry(mcp_registry)
+        from core.token_usage import TokenUsageTracker
+        usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
+        ai = YukiAgent(create_provider(config, cloud_approver=lambda *args: _confirm(
+            "ai:cloud_request",
+            f"Send prompt to configured cloud provider (task={'named' if len(args) > 1 else 'direct'}); prompt length: {len(args[-1])} characters.",
+            "high",
+        )), usage_tracker=usage_tracker)
     except Exception as exc:
         print(f"Yuki > Runtime initialization error ({type(exc).__name__}): {exc}")
         return 1
@@ -165,9 +204,6 @@ def main():
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
-
-    from core.token_usage import TokenUsageTracker
-    usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
 
     def dashboard_command(command):
         if command == "/status":
@@ -217,6 +253,9 @@ def main():
                 if not goal:
                     print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                     continue
+                if config.get("provider") in {"openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom"}:
+                    print("Yuki > Bounded task mode is disabled for direct cloud providers because each model transmission cannot be individually approved here. Use hybrid routing and /ask-cloud for explicitly approved cloud tasks.")
+                    continue
                 print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
                 result = task_agent.run(goal)
                 print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
@@ -242,9 +281,6 @@ def main():
                     continue
                 if task.lower() not in provider.cloud_tasks:
                     print("Yuki > This task is not in YUKI_CLOUD_TASKS; no data was sent.")
-                    continue
-                if not _confirm("ai:cloud_request", f"Send this prompt to the configured cloud provider for task {task!r}? Prompt length: {len(prompt)} characters.", "medium"):
-                    print("Yuki > Cloud request cancelled; no data was sent.")
                     continue
                 try:
                     answer = provider.generate_for(task, prompt)
@@ -526,6 +562,33 @@ def main():
             elif command == "/mcp status":
                 print(f"MCP allowed hosts: {config['web_allowed_hosts'] or 'None (configure web_allowed_hosts)'}")
                 print(f"MCP allowed tools: {config.get('mcp_allowed_tools') or 'None (configure mcp_allowed_tools)'}")
+            elif command == "/mcp discover":
+                try:
+                    tools = mcp_registry.discover()
+                    print(f"Yuki > Discovered {len(tools)} tools. Discovery does not authorize execution.")
+                    for item in tools:
+                        print(f"- {item['name']} [allow-listed={item['allowed']}]")
+                except (MCPError, ValueError) as exc:
+                    print(f"Yuki > MCP discovery failed safely: {exc}")
+            elif command == "/mcp tools":
+                tools = [{"name": item.qualified_name, "server": item.server_name,
+                          "description": item.description,
+                          "allowed": item.remote_name in mcp_registry._servers[item.server_name]["allowed_tools"]}
+                          for item in mcp_registry._tools.values()]
+                print(json.dumps(tools, indent=2))
+            elif command.startswith("/mcp invoke "):
+                payload = command[len("/mcp invoke "):]
+                if "|" not in payload:
+                    print("Yuki > Use /mcp invoke mcp.SERVER.TOOL | {\"key\": \"value\"}")
+                    continue
+                name, raw_args = payload.split("|", 1)
+                try:
+                    args = json.loads(raw_args)
+                    if not isinstance(args, dict): raise ValueError("arguments must be a JSON object")
+                    result = mcp_registry.invoke(name.strip(), args)
+                    print("Yuki > MCP result (untrusted data): " + json.dumps(result, ensure_ascii=False)[:12000])
+                except (MCPError, ValueError, TypeError) as exc:
+                    print(f"Yuki > MCP invocation blocked/failed safely: {exc}")
             elif command.startswith("/mcp connect "):
                 endpoint = command[len("/mcp connect "):].strip()
                 if not _confirm("mcp:connect", f"Discover MCP tools from {endpoint!r}.", "medium"):
@@ -617,6 +680,12 @@ def main():
                     print(f"Yuki > Firewall removal blocked/unavailable: {exc}")
             elif command == "/metasploit status":
                 print(exploit_runner.status()["message"])
+            elif command == "/desktop":
+                try:
+                    from ui.desktop import run_desktop
+                    run_desktop(agent)
+                except RuntimeError as exc:
+                    print(f"Yuki > Desktop app unavailable: {exc}")
             elif command == "/dashboard":
                 try:
                     from ui.dashboard import run_dashboard

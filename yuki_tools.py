@@ -68,12 +68,39 @@ def calculate(expression=""):
 
 
 TOOLS = {"time": get_time, "list_files": list_files, "save_note": save_note, "calculate": calculate}
+_MCP_REGISTRY = None
+
+
+def register_mcp_registry(registry):
+    """Attach the namespaced MCP registry; invocations still require fresh approval."""
+    global _MCP_REGISTRY
+    _MCP_REGISTRY = registry
+
+
+def list_tools():
+    names = list(TOOLS)
+    if _MCP_REGISTRY is not None:
+        names.extend(sorted(_MCP_REGISTRY._tools))
+    return sorted(names)
 
 
 def run_tool(name, argument=""):
     """Run only a tool explicitly registered above."""
-    if not isinstance(name, str) or name not in TOOLS:
-        return "Unknown tool. Available tools: " + ", ".join(sorted(TOOLS))
+    if not isinstance(name, str):
+        return "Unknown tool. Available tools: " + ", ".join(list_tools())
+    if name.startswith("mcp."):
+        if _MCP_REGISTRY is None:
+            return "MCP tool registry is not configured."
+        try:
+            import json
+            args = json.loads(argument) if isinstance(argument, str) and argument.strip() else {}
+            if not isinstance(args, dict):
+                return "MCP arguments must be a JSON object."
+            return json.dumps(_MCP_REGISTRY.invoke(name, args), ensure_ascii=False)[:12000]
+        except Exception as error:
+            return f"MCP tool failed safely: {type(error).__name__}"
+    if name not in TOOLS:
+        return "Unknown tool. Available tools: " + ", ".join(list_tools())
     try:
         return str(TOOLS[name](argument))
     except Exception:

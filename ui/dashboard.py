@@ -17,11 +17,23 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
             yield Header()
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
+                yield Label("Runtime status: loading…", id="runtime-status")
                 yield RichLog(id="log", wrap=True, markup=False)
                 yield Input(placeholder="Enter /help, /status, /skills, or /quit", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
+            self.set_interval(2.0, self.refresh_runtime_status)
+            self.refresh_runtime_status()
+        def refresh_runtime_status(self):
+            status = "Runtime status unavailable."
+            try:
+                if agent is not None:
+                    names = agent.registry.names()
+                    status = f"Runtime ready · {len(names)} registered skills · approval-gated"
+            except Exception:
+                pass
+            self.query_one("#runtime-status", Label).update(status)
         def on_input_submitted(self, event: Input.Submitted):
             command = event.value.strip()
             event.input.value = ""
