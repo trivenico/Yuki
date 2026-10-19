@@ -1,7 +1,6 @@
-"""Subprocess runner with deadline enforcement and bounded pipe capture."""
-import os
-import selectors
+"""Cross-platform subprocess runner with deadlines and bounded pipe capture."""
 import subprocess
+import threading
 import time
 
 
@@ -30,7 +29,6 @@ class SubprocessExecutor:
         if len(payload) > 20_000:
             raise ValueError("Subprocess input exceeds the size limit.")
 
-        deadline = time.monotonic() + timeout
         proc = subprocess.Popen(
             list(cmd),
             stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
@@ -39,66 +37,83 @@ class SubprocessExecutor:
             shell=False,
             bufsize=0,
         )
-        selector = selectors.DefaultSelector()
-        stdout = bytearray()
-        stderr = bytearray()
-        input_offset = 0
-        try:
-            if proc.stdout is None or proc.stderr is None:
-                raise RuntimeError("Unable to capture subprocess output safely.")
-            os.set_blocking(proc.stdout.fileno(), False)
-            os.set_blocking(proc.stderr.fileno(), False)
-            selector.register(proc.stdout, selectors.EVENT_READ, ("out", stdout))
-            selector.register(proc.stderr, selectors.EVENT_READ, ("err", stderr))
-            if proc.stdin is not None:
-                os.set_blocking(proc.stdin.fileno(), False)
-                selector.register(proc.stdin, selectors.EVENT_WRITE, ("in", None))
+        outputs = {"stdout": bytearray(), "stderr": bytearray()}
+        overflow = threading.Event()
+        read_errors = []
 
-            while selector.get_map() or proc.poll() is None:
+        def drain(stream, name):
+            target = outputs[name]
+            try:
+                while True:
+                    chunk = stream.read(4096)
+                    if not chunk:
+                        return
+                    remaining = output_limit + 1 - len(target)
+                    if remaining > 0:
+                        target.extend(chunk[:remaining])
+                    if len(target) > output_limit or len(chunk) > remaining:
+                        overflow.set()
+                        return
+            except (OSError, ValueError) as exc:
+                read_errors.append(exc)
+
+        readers = [
+            threading.Thread(target=drain, args=(proc.stdout, "stdout"), daemon=True),
+            threading.Thread(target=drain, args=(proc.stderr, "stderr"), daemon=True),
+        ]
+        for thread in readers:
+            thread.start()
+
+        def write_input():
+            try:
+                if proc.stdin is not None:
+                    with proc.stdin:
+                        view = memoryview(payload)
+                        offset = 0
+                        while offset < len(view):
+                            offset += proc.stdin.write(view[offset:offset + 4096]) or 0
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+
+        writer = None
+        if proc.stdin is not None:
+            writer = threading.Thread(target=write_input, daemon=True)
+            writer.start()
+
+        deadline = time.monotonic() + timeout
+        try:
+            while proc.poll() is None:
+                if overflow.is_set():
+                    proc.kill()
+                    proc.wait()
+                    raise RuntimeError("Skill process output exceeded the configured limit.")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    proc.kill()
+                    proc.wait()
                     raise TimeoutError("Skill process exceeded its time limit.")
-                events = selector.select(min(remaining, 0.05))
-                for key, _ in events:
-                    kind, target = key.data
-                    stream = key.fileobj
-                    if kind == "in":
-                        if input_offset >= len(payload):
-                            selector.unregister(stream)
-                            stream.close()
-                            continue
-                        try:
-                            written = os.write(stream.fileno(), payload[input_offset:input_offset + 4096])
-                            input_offset += written
-                        except BrokenPipeError:
-                            selector.unregister(stream)
-                            stream.close()
-                    else:
-                        try:
-                            chunk = os.read(stream.fileno(), min(65536, output_limit + 1 - len(target)))
-                        except BlockingIOError:
-                            continue
-                        if not chunk:
-                            selector.unregister(stream)
-                            stream.close()
-                            continue
-                        target.extend(chunk)
-                        if len(target) > output_limit:
-                            raise RuntimeError("Skill process output exceeded the configured limit.")
-                if proc.poll() is not None and not selector.get_map():
-                    break
-            returncode = proc.wait(timeout=max(0.01, deadline - time.monotonic()))
-            return stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace"), returncode
-        except (TimeoutError, RuntimeError):
-            proc.kill()
-            proc.wait()
-            raise
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            raise TimeoutError("Skill process exceeded its time limit.") from None
+                time.sleep(min(0.01, remaining))
+            for thread in readers:
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            if any(thread.is_alive() for thread in readers):
+                proc.kill()
+                raise TimeoutError("Skill output did not close before the deadline.")
+            if overflow.is_set():
+                raise RuntimeError("Skill process output exceeded the configured limit.")
+            if read_errors:
+                raise RuntimeError("Unable to read subprocess output safely.")
+            return (
+                outputs["stdout"].decode("utf-8", errors="replace"),
+                outputs["stderr"].decode("utf-8", errors="replace"),
+                proc.returncode,
+            )
         finally:
-            selector.close()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
             for stream in (proc.stdin, proc.stdout, proc.stderr):
-                if stream is not None and not stream.closed:
-                    stream.close()
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
