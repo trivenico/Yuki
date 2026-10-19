@@ -6,6 +6,10 @@ class DeviceScannerSkill(Skill):
     name = "device_scanner"
     description = "Review a user-provided device inventory for basic defensive hardening gaps; performs no scanning."
     risk = "medium"
+
+    def __init__(self, workspace=None):
+        self.workspace = workspace
+
     def run(self, argument=""):
         obj = parse_object(argument)
         if not obj or not isinstance(obj.get("device"), str) or not isinstance(obj.get("updates_current"), bool):

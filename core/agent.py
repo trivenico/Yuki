@@ -1,6 +1,6 @@
 """Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
@@ -22,7 +22,8 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None,
+                 dispatcher: Optional[Any] = None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -34,6 +35,7 @@ class YukiCoreAgent:
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
+        self.dispatcher = dispatcher
 
     @property
     def skills(self):

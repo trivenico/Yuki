@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from core.planner import Planner
 from core.config import load_config
+from core.permissions import PermissionGate
 from main import build_agent
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
@@ -54,6 +55,7 @@ class FeatureModuleTests(unittest.TestCase):
 
     def test_main_runtime_registers_connected_skills(self):
         agent = build_agent(load_config())
+        agent.permission_gate = PermissionGate(lambda _: True)
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())
