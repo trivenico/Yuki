@@ -76,6 +76,27 @@ class SkillProposalStore:
         self._atomic_write(target, text)
         return SkillProposal(proposal.name, proposal.description, proposal.version, proposal.instructions, str(target))
 
+    def sandbox_preview(self, name: str) -> dict[str, Any]:
+        """Static review only: parse and lint a proposal without executing its instructions."""
+        if not isinstance(name, str) or not _NAME.fullmatch(name):
+            raise ValueError("Invalid skill name.")
+        path = (self.proposals / f"{name}.SKILL.md").resolve()
+        if path.parent != self.proposals or not path.is_file():
+            raise FileNotFoundError("Pending skill proposal was not found.")
+        text = path.read_text(encoding="utf-8")
+        proposal = parse_skill_markdown(text, source_path=str(path))
+        # No Python interpreter, subprocess, filesystem access, network, or model call is
+        # launched here. This is intentionally a static preview, not an execution sandbox.
+        return {
+            "name": proposal.name,
+            "description": proposal.description,
+            "version": proposal.version,
+            "instruction_characters": len(proposal.instructions),
+            "checks": {"frontmatter_valid": True, "bounded_size": True,
+                       "executable_patterns_rejected": True, "executed": False},
+            "status": "static-review-only",
+        }
+
     def list_proposals(self) -> list[dict[str, str]]:
         output = []
         for path in sorted(self.proposals.glob("*.SKILL.md")):
