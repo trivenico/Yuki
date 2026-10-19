@@ -3,7 +3,7 @@ from __future__ import annotations
 import json,os,urllib.error,urllib.request
 from urllib.parse import urlsplit
 class OpenAICompatibleProvider:
-    def __init__(self,model,*,api_key_env="OPENAI_API_KEY",base_url="https://api.openai.com/v1",timeout=45,allow_http_loopback=False,environ=None):
+    def __init__(self,model,*,api_key_env="OPENAI_API_KEY",base_url="https://api.openai.com/v1",timeout=45,allow_http_loopback=False,environ=None,approval_callback=None):
         if not isinstance(model,str) or not model.strip() or len(model)>120: raise ValueError("Configure a valid model name.")
         if not isinstance(api_key_env,str) or not api_key_env.isidentifier(): raise ValueError("API key environment variable name is invalid.")
         parsed=urlsplit(base_url.rstrip("/")) if isinstance(base_url,str) else None
@@ -16,6 +16,7 @@ class OpenAICompatibleProvider:
         if parsed.scheme!="https" and not (allow_http_loopback and parsed.scheme=="http" and loopback): raise ValueError("Cloud endpoints must use HTTPS; HTTP is allowed only for configured loopback endpoints.")
         if isinstance(timeout,bool) or not isinstance(timeout,(int,float)) or not 1<=timeout<=120: raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.model,self.api_key_env,self.base_url,self.timeout=model.strip(),api_key_env,base_url.rstrip("/"),timeout; self._environ=environ
+        self.approval_callback = approval_callback
     def _env(self): return os.environ if self._environ is None else self._environ
     def is_available(self):
         if self.api_key_env=="YUKI_LOCAL_DUMMY_KEY" and urlsplit(self.base_url).hostname in {"localhost","127.0.0.1","::1"}: return True
@@ -23,6 +24,9 @@ class OpenAICompatibleProvider:
     def generate(self,prompt:str)->str:
         if not isinstance(prompt,str) or not prompt.strip(): raise ValueError("Prompt must be non-empty text.")
         key=self._env().get(self.api_key_env,"").strip()
+        if self.api_key_env != "YUKI_LOCAL_DUMMY_KEY":
+            if self.approval_callback is None or self.approval_callback(prompt.strip()) is not True:
+                raise RuntimeError("External provider transmission was not explicitly approved.")
         if self.api_key_env!="YUKI_LOCAL_DUMMY_KEY" and not key: raise RuntimeError(f"Provider is not configured; set {self.api_key_env}.")
         payload=json.dumps({"model":self.model,"messages":[{"role":"user","content":prompt.strip()[:20000]}],"stream":False}).encode()
         headers={"Content-Type":"application/json","Accept":"application/json"}
