@@ -96,6 +96,7 @@ class OllamaProvider:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Ollama returned invalid JSON.") from exc
         text = body.get("response") if isinstance(body, dict) else None
+        self.last_usage = {"prompt_tokens": body.get("prompt_eval_count"), "completion_tokens": body.get("eval_count")} if isinstance(body, dict) else {}
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
         return text.strip()
@@ -136,6 +137,7 @@ class OllamaProvider:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Ollama returned invalid JSON.") from exc
+        self.last_usage = {"prompt_tokens": body.get("prompt_eval_count"), "completion_tokens": body.get("eval_count")} if isinstance(body, dict) else {}
         msg = body.get("message") if isinstance(body, dict) else None
         text = msg.get("content") if isinstance(msg, dict) else None
         if not isinstance(text, str) or not text.strip():
