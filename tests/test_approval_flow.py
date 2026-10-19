@@ -100,20 +100,30 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(replay.status, "pending_not_found")
 
-    def test_callback_cannot_mutate_stored_action(self):
+    def test_callback_cannot_mutate_executable_action_snapshot(self):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator()
         pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
+        observed = []
 
         def mutate(action):
             action["arguments"]["text"] = "changed by UI"
+            observed.append(action["arguments"]["text"])
             return True
+
+        # Wrap the executor so the exact action that reaches execution is observable.
+        original_execute = planner.execute_proposed
+        def capture_execute(action, **kwargs):
+            observed.append(action["arguments"]["text"])
+            return original_execute(action, **kwargs)
+        planner.execute_proposed = capture_execute
 
         approved = coordinator.approve(
             planner, pending.pending_id, actor="owner", session_id="cli-session", confirm=mutate
         )
         self.assertTrue(approved.ok)
+        self.assertEqual(observed, ["changed by UI", "exact note"])
 
     def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
