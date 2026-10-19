@@ -14,8 +14,12 @@ from core.skill_synthesis import SkillProposalStore
 from providers.local_backends import create_local_tool_provider
 
 class FakeToolProvider:
-    def __init__(self, replies): self.replies=list(replies)
-    def complete_tool_turn(self, messages, tools): return self.replies.pop(0)
+    def __init__(self, replies):
+        self.replies=list(replies)
+        self.seen_messages=[]
+    def complete_tool_turn(self, messages, tools):
+        self.seen_messages.append([dict(message) for message in messages])
+        return self.replies.pop(0)
 
 class ReactTests(unittest.TestCase):
     def test_low_risk_explicit_autonomy_and_observation(self):
@@ -31,6 +35,11 @@ class ReactTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.tool_calls,1)
         self.assertEqual(seen,[{"query":"status"}])
+        history=provider.seen_messages[1]
+        assistant_index=next(i for i,m in enumerate(history) if m.get("role")=="assistant" and m.get("tool_calls"))
+        tool_index=next(i for i,m in enumerate(history) if m.get("role")=="tool")
+        self.assertLess(assistant_index,tool_index)
+        self.assertEqual(history[assistant_index]["tool_calls"][0]["function"]["name"],"lookup")
 
     def test_state_changing_tool_denied_without_approver(self):
         provider=FakeToolProvider([
