@@ -40,10 +40,25 @@ def _fingerprint(action_snapshot: dict) -> str:
 
 
 class PermissionGate:
-    def __init__(self, approver: Optional[Callable[[ApprovalRequest], bool]] = None):
+    def __init__(self, approver: Optional[Callable[[ApprovalRequest], bool]] = None, audit_log=None):
         self._approver = approver
+        self._audit_log = audit_log
         self._receipts = {}
         self._lock = threading.Lock()
+
+    def _audit(self, event_type: str, fingerprint: str, risk: str, status: str) -> bool:
+        """Audit only a one-way action fingerprint and fixed runtime metadata."""
+        if self._audit_log is None:
+            return True
+        try:
+            self._audit_log.record_event(
+                event_type, fingerprint, "runtime", "permission-gate",
+                risk=risk, status=status,
+            )
+            return True
+        except Exception:
+            # If audit is configured but unavailable, do not silently authorize.
+            return False
 
     def request(self, action: str, reason: str, risk: str = "low") -> bool:
         if not isinstance(action, str) or not action.strip():
@@ -54,10 +69,17 @@ class PermissionGate:
             return False
         if self._approver is None:
             return False
-        try:
-            return self._approver(ApprovalRequest(action=action, reason=reason, risk=risk)) is True
-        except Exception:
+        fingerprint = hashlib.sha256(action.encode("utf-8")).hexdigest()
+        if not self._audit("requested", fingerprint, risk, "pending"):
             return False
+        try:
+            approved = self._approver(ApprovalRequest(action=action, reason=reason, risk=risk)) is True
+        except Exception:
+            approved = False
+        event = "approved" if approved else "denied"
+        if not self._audit(event, fingerprint, risk, event):
+            return False
+        return approved
 
     def issue_receipt(self, action_snapshot: dict, confirm: Callable[[dict], bool],
                       *, risk: str = "low") -> Optional[ApprovalReceipt]:
@@ -68,11 +90,19 @@ class PermissionGate:
             return None
         try:
             fingerprint = _fingerprint(action_snapshot)
-            import copy
-            approved = confirm(copy.deepcopy(action_snapshot))
-        except Exception:
+        except ValueError:
             return None
-        if approved is not True:
+        if not self._audit("requested", fingerprint, risk, "pending"):
+            return None
+        try:
+            import copy
+            approved = confirm(copy.deepcopy(action_snapshot)) is True
+        except Exception:
+            approved = False
+        if not self._audit("approved" if approved else "denied", fingerprint, risk,
+                           "approved" if approved else "denied"):
+            return None
+        if not approved:
             return None
         now = time.monotonic()
         with self._lock:
@@ -99,4 +129,8 @@ class PermissionGate:
             for token in expired:
                 del self._receipts[token]
             stored = self._receipts.pop(receipt.token, None)
-        return stored is not None and stored[1] > now and stored[0] == fingerprint == receipt.action_fingerprint
+        valid = stored is not None and stored[1] > now and stored[0] == fingerprint == receipt.action_fingerprint
+        if not self._audit("executed" if valid else "execution_blocked", fingerprint, "low",
+                           "receipt_consumed" if valid else "receipt_rejected"):
+            return False
+        return valid
