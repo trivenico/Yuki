@@ -50,6 +50,19 @@ class ApprovalSecurityHardeningTests(unittest.TestCase):
         # A timed-out callback's eventual True result is never returned as approval.
         self.assertFalse(gate.request("action", "reason", "medium") is True)
 
+    def test_rate_limit_counts_denials_not_only_approvals(self):
+        calls = []
+        gate = PermissionGate(
+            approver=lambda request: calls.append(request) or False,
+            max_rate_limit=2,
+            rate_window_seconds=60,
+            timeout_seconds=0.2,
+        )
+        self.assertFalse(gate.request("action", "reason"))
+        self.assertFalse(gate.request("action", "reason"))
+        self.assertFalse(gate.request("action", "reason"))
+        self.assertEqual(len(calls), 2)
+
     def test_missing_approver_fails_closed(self):
         self.assertFalse(PermissionGate().request("action", "reason"))
 
