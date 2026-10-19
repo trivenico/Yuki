@@ -22,7 +22,7 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None, dispatcher=None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -30,6 +30,9 @@ class YukiCoreAgent:
         else:
             available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
             self.registry = SkillRegistry(available)
+        # Manifest-dispatched skills are explicitly registered and execute through the
+        # subprocess dispatcher; the legacy in-process registry remains separate.
+        self.dispatcher = dispatcher
         self.permission_gate = permission_gate or PermissionGate()
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
