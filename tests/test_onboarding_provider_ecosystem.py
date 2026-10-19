@@ -40,7 +40,7 @@ class ProviderEcosystemTests(unittest.TestCase):
     def test_openai_compatible_custom_endpoint_requires_https_or_loopback(self):
         with self.assertRaises(ValueError):
             OpenAICompatibleProvider("m", base_url="http://example.com/v1", allow_http_loopback=True)
-        local = OpenAICompatibleProvider("m", base_url="http://127.0.0.1:1234/v1", allow_http_loopback=True)
+        local = OpenAICompatibleProvider("m", api_key_env="YUKI_LOCAL_DUMMY_KEY", base_url="http://127.0.0.1:1234/v1", allow_http_loopback=True)
         self.assertTrue(local.is_available())
 
     def test_provider_factory_supports_anthropic_adapter(self):
