@@ -1,10 +1,22 @@
-import os
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
+from core.agent import YukiCoreAgent
 from core.builtin_manifest_skills import register_builtin_workspace_list
+from core.manifest_task_agent import ManifestTaskAgent
 from core.skill_dispatch import SkillDispatcher
+
+
+class FakeProvider:
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+        self.prompts = []
+
+    def generate(self, prompt):
+        self.prompts.append(prompt)
+        return self.outputs.pop(0)
 
 
 class BuiltinWorkspaceListTests(unittest.TestCase):
@@ -64,6 +76,23 @@ class BuiltinWorkspaceListTests(unittest.TestCase):
             self.assertEqual(result.output["entries"], [{"name": "external-link", "type": "symlink"}])
             followed = self._dispatcher(root).dispatch("workspace.list", {"path": "external-link", "limit": 10})
             self.assertFalse(followed.ok)
+
+    def test_manifest_planner_executes_only_registered_read_only_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "readme.txt").write_text("not read by the listing tool", encoding="utf-8")
+            dispatcher = self._dispatcher(root)
+            agent = YukiCoreAgent(dispatcher=dispatcher)
+            provider = FakeProvider([
+                json.dumps({"type": "tool_call", "skill_id": "workspace.list",
+                            "arguments": {"path": ".", "limit": 10}}),
+                json.dumps({"type": "final", "message": "I listed the workspace."}),
+            ])
+            result = ManifestTaskAgent(provider, agent, dispatcher, max_steps=2).run("List workspace files")
+            self.assertTrue(result.ok, result.status)
+            self.assertEqual(result.status, "completed")
+            self.assertIn("readme.txt", provider.prompts[1])
+            self.assertNotIn("not read by the listing tool", provider.prompts[1])
 
     def test_reports_truncation_and_enforces_read_only_capability(self):
         with tempfile.TemporaryDirectory() as tmp:
