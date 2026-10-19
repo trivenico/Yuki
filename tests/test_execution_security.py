@@ -80,6 +80,35 @@ class ExecutionBoundaryTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             dispatcher.dispatch("notes.write", action["arguments"])
 
+    def test_dispatch_rejects_non_string_keys_before_approval(self):
+        dispatcher = make_dispatcher()
+        with self.assertRaises(ValueError):
+            dispatcher.dispatch("notes.write", {1: "coercion", "text": "hello"})
+
+    def test_schema_rejects_non_finite_numeric_values(self):
+        dispatcher = make_dispatcher()
+        dispatcher.registered["notes.write"]["manifest"].input_schema = {
+            "type": "object",
+            "properties": {"value": {"type": "number"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+        with self.assertRaises(ValueError):
+            dispatcher.dispatch("notes.write", {"value": float("inf")})
+
+    def test_schema_rejects_untyped_or_overdeep_schema(self):
+        from core.skill_dispatch import _validate_schema
+        with self.assertRaises(ValueError):
+            _validate_schema("x", {})
+        schema = {"type": "string"}
+        for _ in range(34):
+            schema = {"type": "object", "properties": {"x": schema}, "required": ["x"]}
+        value = "x"
+        for _ in range(34):
+            value = {"x": value}
+        with self.assertRaises(ValueError):
+            _validate_schema(value, schema)
+
     def test_input_schema_rejects_extra_fields(self):
         dispatcher = make_dispatcher()
         action = {"skill_id": "notes.write", "arguments": {"text": "hello", "path": "/tmp/x"}}
