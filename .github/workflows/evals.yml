@@ -1,0 +1,28 @@
+name: Yuki safety evaluations
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the complete evaluation suite
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    - cron: "23 3 * * *"
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run fast PR evaluation subset
+        if: github.event_name == 'pull_request'
+        run: python evals/run_evals.py --fast
+      - name: Run full scheduled/manual evaluations
+        if: github.event_name != 'pull_request'
+        run: python evals/run_evals.py
