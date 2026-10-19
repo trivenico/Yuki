@@ -34,7 +34,7 @@ class ApprovalCoordinator:
     def record(self, planner, result, actor: str, session_id: str) -> PendingItem:
         if not isinstance(actor, str) or not actor or not isinstance(session_id, str) or not session_id:
             raise ValueError("Actor and session are required.")
-        if len(self._in_memory_pending) >= self.max_pending:
+        if self.pending_store is None and len(self._in_memory_pending) >= self.max_pending:
             raise RuntimeError("Pending capacity reached.")
         action = getattr(result, "action", {
             "skill_id": getattr(result, "skill_id", ""),
@@ -55,6 +55,7 @@ class ApprovalCoordinator:
                 action=snapshot,
                 actor=actor,
                 session_id=session_id,
+                max_pending=self.max_pending,
             )
             pending_id = stored.pending_id
         else:
