@@ -178,6 +178,22 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             )
             self.assertTrue(valid.ok)
 
+    def test_persistent_pending_capacity_uses_coordinator_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            planner = build()
+            store = SQLitePendingApprovalStore(
+                str(Path(tmp) / "pending.sqlite3"), max_pending=10
+            )
+            coordinator = ApprovalCoordinator(pending_store=store, max_pending=1)
+            first = coordinator.record(
+                planner, planner.run("First note"), actor="owner", session_id="session"
+            )
+            self.assertTrue(first.pending_id)
+            with self.assertRaises(RuntimeError):
+                coordinator.record(
+                    planner, planner.run("Second note"), actor="owner", session_id="session"
+                )
+
     def test_pending_capacity_is_bounded(self):
         planner = build()
         result = planner.run("Write note")
