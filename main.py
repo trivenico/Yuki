@@ -155,7 +155,11 @@ def main():
         register_mcp_registry(mcp_registry)
         from core.token_usage import TokenUsageTracker
         usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
-        ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
+        ai = YukiAgent(create_provider(config, cloud_approver=lambda *args: _confirm(
+            "ai:cloud_request",
+            f"Send prompt to configured cloud provider for task {args[0]!r}? Prompt length: {len(args[-1])} characters.",
+            "high",
+        )), usage_tracker=usage_tracker)
     except Exception as exc:
         print(f"Yuki > Runtime initialization error ({type(exc).__name__}): {exc}")
         return 1
@@ -260,10 +264,6 @@ def main():
                 if not prompt:
                     print("Yuki > Provide a prompt: /ask explain a Python decorator")
                     continue
-                if config.get("provider") not in {"mock", "ollama", "llama.cpp", "llama-cpp", "lm-studio"}:
-                    if not _confirm("ai:cloud_request", f"Send prompt to configured external provider? Prompt length: {len(prompt)} characters.", "high"):
-                        print("Yuki > Cloud request cancelled; no data was sent.")
-                        continue
                 print("Yuki > " + ai.ask(prompt))
             elif command.startswith("/ask-cloud "):
                 payload = command[len("/ask-cloud "):]
@@ -281,9 +281,6 @@ def main():
                     continue
                 if task.lower() not in provider.cloud_tasks:
                     print("Yuki > This task is not in YUKI_CLOUD_TASKS; no data was sent.")
-                    continue
-                if not _confirm("ai:cloud_request", f"Send this prompt to the configured cloud provider for task {task!r}? Prompt length: {len(prompt)} characters.", "medium"):
-                    print("Yuki > Cloud request cancelled; no data was sent.")
                     continue
                 try:
                     answer = provider.generate_for(task, prompt)
@@ -696,10 +693,6 @@ def main():
                 except RuntimeError as exc:
                     print(f"Yuki > Dashboard unavailable: {exc}")
             else:
-                if config.get("provider") in {"openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom"}:
-                    if not _confirm("ai:cloud_request", f"Send this conversation prompt to the configured external provider? Prompt length: {len(command)} characters.", "high"):
-                        print("Yuki > Cloud request cancelled; no data was sent.")
-                        continue
                 history = getattr(main, "_chat_history", [])
                 try:
                     matches = searchable_memory.search(command, limit=3)
