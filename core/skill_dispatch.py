@@ -1,7 +1,7 @@
 """Manifest-validated skill dispatch with mandatory one-time approval."""
 import json
 
-from core.action_approvals import action_fingerprint
+from core.action_approvals import action_fingerprint, validate_strict_json
 from core.permissions import PermissionGate
 
 
@@ -95,9 +95,13 @@ class SkillDispatcher:
         # Canonicalize through strict JSON to detach the approved payload from caller-owned
         # mutable objects and reject NaN, infinities, custom objects, and invalid nesting.
         try:
-            input_json = json.dumps(arguments, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+            validate_strict_json(arguments)
+            input_json = json.dumps(
+                arguments, ensure_ascii=False, allow_nan=False,
+                separators=(",", ":"), sort_keys=True,
+            )
         except (TypeError, ValueError, RecursionError) as exc:
-            raise ValueError("Skill arguments must be finite JSON-compatible values.") from exc
+            raise ValueError("Skill arguments must be finite strict-JSON values.") from exc
         if len(input_json.encode("utf-8")) > MAX_ARGUMENT_BYTES:
             raise ValueError("Skill arguments exceed the size limit.")
         arguments = json.loads(input_json)
