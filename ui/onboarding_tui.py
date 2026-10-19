@@ -80,6 +80,8 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
         config["local_provider"] = _ask("Local provider (ollama, llama.cpp, lm-studio)", "ollama").lower()
         config["local_model"] = _ask("Local model name", model)
         config["cloud_provider"] = _ask("Cloud provider (openai, anthropic, deepseek, glm, openai-compatible)", "openai").lower()
+        default_key_env = {"openai":"OPENAI_API_KEY","anthropic":"ANTHROPIC_API_KEY","deepseek":"DEEPSEEK_API_KEY","glm":"ZHIPUAI_API_KEY"}.get(config["cloud_provider"], "YUKI_CUSTOM_API_KEY")
+        config["cloud_api_key_env"] = _ask("Environment variable name for cloud API key", default_key_env)
         config["cloud_model"] = _ask("Cloud model name", "")
         config["cloud_tasks"] = [x.strip() for x in _ask("Tasks allowed to route to cloud (comma-separated; empty disables cloud routing)", "").split(",") if x.strip()]
     target = save_config(config, path)
