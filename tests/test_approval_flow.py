@@ -13,6 +13,7 @@ from core.manifest_task_agent import ManifestTaskAgent
 from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
 from core.subprocess_executor import SubprocessExecutor
+from core.permissions import PermissionGate
 
 
 class Provider:
@@ -35,7 +36,11 @@ def build():
         "capabilities": ["workspace.write"], "risk": "low",
         "timeout_seconds": 3, "max_output_bytes": 1024,
     })
-    dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=ActionApprovalStore())
+    dispatcher = SkillDispatcher(
+        capability_grants={"workspace.write"},
+        approval_store=ActionApprovalStore(),
+        permission_gate=PermissionGate(approver=lambda request: True),
+    )
     script = "import json,sys; json.load(sys.stdin); print(json.dumps({'saved':True}))"
     dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
                                    executor=SubprocessExecutor(timeout_seconds=3))
