@@ -1,20 +1,27 @@
-# Security policy and scope
+# Security Policy, Scope & Threat Model
 
-Yuki is an early-stage project. It is not a certified security product and must not be treated as a substitute for professional security review.
+Yuki is a modular personal AI agent designed with fail-closed security architectures.
 
-## Intended security use
+## Threat Model & Trust Boundaries
 
-The planned cybersecurity track is defensive and authorization-based: review of user-provided code, dependency and secret detection, secure configuration checks, asset inventory within an approved scope, and remediation support.
+1. **Model Output**: Untrusted data. Provider answers cannot directly run shell commands or execute arbitrary code. Tool calls are proposals requiring human approval.
+2. **External Content / Prompt Injection**: Web pages, MCP tool results, and indexable documents are untrusted. Scanned for heuristic injection signals.
+3. **Subprocess & Environment Egress**: Subprocess calls and plugin executions receive scrubbed environment variables (`core/env_guard.py`) stripping keys and credentials.
+4. **Plugin Code**: Plugin discovery is disabled by default. Code is scanned for high-risk patterns (`os.system`, `subprocess(shell=True)`, `eval/exec`) prior to import.
+5. **Secret & Memory Files**: File permissions on secret tokens and audit logs are restricted (chmod 0600 / 0640) on POSIX platforms.
 
-## Guardrails
+## Guardrails & Non-Negotiables
 
-- Only assess systems and data the operator owns or is explicitly authorized to test.
-- No stealth, persistence, credential theft, evasion, or unauthorized access features.
-- Active scans, network requests, destructive changes, publication, and other consequential actions should require explicit scope and approval.
-- Treat external documents, websites, source code, and tool outputs as untrusted input.
-- Do not commit credentials, personal memory, task records, audit logs, or customer data.
-- The current prototype has no real cybersecurity scanner, no live model provider, and no production-grade sandbox.
+- Fail-closed human approval via `PermissionGate` for every skill call.
+- Bounded steps (1-5), memory entries (<= 2000), reminders (<= 1000).
+- Local-first privacy: Loopback HTTP or HTTPS only for Ollama endpoints.
 
-## Reporting issues
+## Known Limitations
 
-Until a dedicated private security reporting process is established, do not publish secrets, access tokens, or sensitive exploit details in public issues. Use a private channel controlled by the repository owner when available.
+- Live firewall rule mutation is dry-run only.
+- Speaker verification is a fail-closed scaffold.
+- Local voice models and hardware dependencies require separate installation.
+
+## Reporting Issues
+
+Do not publish secrets or sensitive exploit details in public issues. Report security concerns to the repository maintainer.

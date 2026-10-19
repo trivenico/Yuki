@@ -5,8 +5,10 @@ local modules and validates their class shape; it is not a security sandbox.
 """
 from __future__ import annotations
 import importlib
+import inspect
 import pkgutil
 import re
+from core.skills_guard import scan_source
 
 EXCLUDED = {"base", "registry", "discovery", "role_skill", "__init__"}
 
@@ -42,6 +44,13 @@ class PluginLoader:
                 report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
                 continue
             try:
+                spec = pkgutil.get_loader(self.package_name + "." + name)
+                source_code = spec.get_source(self.package_name + "." + name) if spec and hasattr(spec, "get_source") else ""
+                findings = scan_source(source_code or "")
+                if findings:
+                    report["skipped"].append({"module": name, "reason": f"security findings: {findings}"})
+                    continue
+
                 module = importlib.import_module(self.package_name + "." + name)
                 classes = []
                 for candidate in vars(module).values():

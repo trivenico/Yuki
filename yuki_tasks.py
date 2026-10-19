@@ -1,7 +1,6 @@
-"""Local task list stored as JSON beside the application."""
-
-import json
+"""Local file-backed task manager module."""
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 TASKS_FILE = Path(__file__).with_name("yuki_tasks.json")

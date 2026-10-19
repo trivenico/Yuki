@@ -1,6 +1,9 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
+import logging
 from providers import MockProvider
+
+logger = logging.getLogger("yuki")
 
 
 class YukiAgent:
@@ -33,5 +36,33 @@ class YukiAgent:
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
             return result
-        except Exception:
+        except Exception as exc:
+            logger.exception("Provider generation failed: %s", exc)
+            return "Yuki: The provider encountered an error."
+
+    def chat(self, user_text: str, history: list[dict] = None, system_prompt: str = "") -> str:
+        if not isinstance(user_text, str) or not user_text.strip():
+            return "Yuki: Please enter a message."
+        try:
+            if not self.provider.is_available():
+                return "Yuki: The AI provider is unavailable."
+
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            if history:
+                messages.extend(history[-12:])
+            messages.append({"role": "user", "content": user_text.strip()})
+
+            if callable(getattr(self.provider, "chat", None)):
+                result = self.provider.chat(messages)
+            else:
+                prompt = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+                result = self.provider.generate(prompt)
+
+            if not isinstance(result, str):
+                return "Yuki: The provider returned an unsupported response."
+            return result
+        except Exception as exc:
+            logger.exception("Provider chat failed: %s", exc)
             return "Yuki: The provider encountered an error."

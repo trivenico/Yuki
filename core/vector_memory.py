@@ -10,7 +10,9 @@ class VectorMemory:
 
     @staticmethod
     def _tokens(text):
-        return set(re.findall(r"[a-z0-9_]{2,}", text.lower()))
+        if not isinstance(text, str):
+            return set()
+        return set(re.findall(r"[\w]{1,}", text.lower(), flags=re.UNICODE))
 
     def remember(self, text, *, category="lesson"):
         return self.store.add(text, category=category)
@@ -24,7 +26,7 @@ class VectorMemory:
         if not tokens:
             return []
         ranked = []
-        for item in self.store.list(limit=200):
+        for item in self.store.list(limit=2000):
             content_tokens = self._tokens(item["text"])
             overlap = len(tokens & content_tokens)
             if overlap:

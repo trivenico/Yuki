@@ -37,7 +37,26 @@ def _string_list(raw, key):
     return list(dict.fromkeys(x.strip() for x in value))
 
 
+def load_dotenv(dotenv_path=None):
+    path = Path(dotenv_path) if dotenv_path else ROOT / ".env"
+    if not path.is_file():
+        return
+    try:
+        content = path.read_text(encoding="utf-8")
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
 def load_config(path=None):
+    load_dotenv()
     selected_config_path = Path(path) if path else resolve_config_path()
     try:
         raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}

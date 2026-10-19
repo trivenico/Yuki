@@ -1,8 +1,11 @@
 """Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
+import logging
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
+
+logger = logging.getLogger("yuki")
 from core.permissions import PermissionGate
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
@@ -68,6 +71,7 @@ class YukiCoreAgent:
                 message = str(getattr(result, "message", "Skill returned an unsupported result."))
                 data = getattr(result, "data", None)
             return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
-        except Exception:
+        except Exception as exc:
+            logger.exception("Skill %s execution failed: %s", name, exc)
             return AgentResponse(False, "Skill failed safely; detailed exception was not exposed.", name,
                                  stage="observe")

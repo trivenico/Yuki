@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
+
+logger = logging.getLogger("yuki")
 
 
 class OllamaProvider:
@@ -84,6 +87,7 @@ class OllamaProvider:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.error("Ollama HTTP request failed for model %s: %s", self.model, exc)
             raise RuntimeError("Local Ollama request failed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")
@@ -92,6 +96,48 @@ class OllamaProvider:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Ollama returned invalid JSON.") from exc
         text = body.get("response") if isinstance(body, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Ollama returned no text response.")
+        return text.strip()
+
+    def chat(self, messages: list[dict]) -> str:
+        if not isinstance(messages, list) or not messages:
+            raise ValueError("Messages must be a non-empty list.")
+        safe_messages = []
+        for msg in messages:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                safe_messages.append({
+                    "role": str(msg["role"]),
+                    "content": str(msg["content"])[:20000],
+                })
+        if not safe_messages:
+            raise ValueError("No valid message dictionaries provided.")
+
+        payload = json.dumps({
+            "model": self.model,
+            "messages": safe_messages,
+            "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.error("Ollama /api/chat HTTP request failed: %s", exc)
+            raise RuntimeError("Local Ollama chat request failed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Ollama chat response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Ollama returned invalid JSON.") from exc
+        msg = body.get("message") if isinstance(body, dict) else None
+        text = msg.get("content") if isinstance(msg, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
         return text.strip()

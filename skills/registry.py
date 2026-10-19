@@ -63,6 +63,12 @@ class SkillRegistry:
             raise ValueError("Skill name must be a simple identifier.")
         if name in self._skills:
             raise ValueError(f"Duplicate skill name: {name}")
+        description = getattr(skill, "description", None)
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("Skill description must be a non-empty string.")
+        risk = getattr(skill, "risk", "low")
+        if risk not in {"low", "medium", "high"}:
+            raise ValueError("Skill risk must be low, medium, or high.")
         if not callable(getattr(skill, "execute", None)):
             raise TypeError("Registered skills must implement execute().")
         self._skills[name] = skill

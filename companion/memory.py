@@ -64,8 +64,8 @@ class MemoryStore:
             return dict(item)
 
     def list(self, limit: int = 50) -> list[dict]:
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
-            raise ValueError("limit must be between 1 and 200.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2000:
+            raise ValueError("limit must be between 1 and 2000.")
         with self._lock:
             return [dict(item) for item in self._load()[-limit:]]
 
@@ -86,3 +86,42 @@ class MemoryStore:
             entries = self._load()
             self._save([])
             return len(entries)
+
+    def doctor(self) -> dict:
+        """Verify memory JSON file structure, create a backup copy, and repair corrupt entries."""
+        with self._lock:
+            if not self.path.exists():
+                return {"status": "ok", "message": "Memory store file does not exist yet.", "valid_entries": 0, "repaired": False}
+
+            backup_path = self.path.with_suffix(".json.bak")
+            try:
+                backup_path.write_bytes(self.path.read_bytes())
+            except OSError:
+                pass
+
+            repaired = False
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raw = []
+                repaired = True
+
+            valid_entries = []
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, dict) and all(k in item for k in ("id", "created_at", "text")):
+                        valid_entries.append(item)
+                    else:
+                        repaired = True
+            else:
+                repaired = True
+
+            if repaired:
+                self._save(valid_entries)
+
+            return {
+                "status": "repaired" if repaired else "ok",
+                "message": f"Verified {len(valid_entries)} memory entry/entries." + (" Created backup and repaired corrupt entries." if repaired else ""),
+                "valid_entries": len(valid_entries),
+                "repaired": repaired,
+            }

@@ -78,6 +78,45 @@ class ReminderQueue:
         with self._lock:
             return [dict(item) for item in self._load()]
 
+    def purge(self) -> int:
+        """Remove delivered/completed reminders from the queue."""
+        with self._lock:
+            items = self._load()
+            pending = [item for item in items if not item.get("delivered")]
+            removed_count = len(items) - len(pending)
+            if removed_count > 0:
+                self._save(pending)
+            return removed_count
+
+
+import threading
+import time
+
+
+class ReminderSchedulerThread(threading.Thread):
+    """Background scheduler thread checking due reminders once per interval_seconds."""
+
+    def __init__(self, queue: ReminderQueue, on_due=None, interval_seconds=15):
+        super().__init__(daemon=True)
+        self.queue = queue
+        self.on_due = on_due
+        self.interval_seconds = interval_seconds
+        self._stop_event = threading.Event()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                due_items = self.queue.due()
+                if due_items and self.on_due:
+                    for item in due_items:
+                        self.on_due(item)
+            except Exception:
+                pass
+            self._stop_event.wait(self.interval_seconds)
+
+    def stop(self):
+        self._stop_event.set()
+
 
 
 def summarize_habit_streaks(entries, *, today=None):

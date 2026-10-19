@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yuki"
+version = "0.2.0"
+description = "A modular personal AI agent for desktop/terminal."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "PyYAML>=6.0.2",
+]
+
+[project.scripts]
+yuki = "main:main"
+
+[tool.setuptools]
+py-modules = [
+    "main",
+    "yuki",
+    "yuki_version",
+    "yuki_agent",
+    "yuki_approvals",
+    "yuki_events",
+    "yuki_identity",
+    "yuki_learning",
+    "yuki_orchestrator",
+    "yuki_planner",
+    "yuki_providers",
+    "yuki_security",
+    "yuki_tasks",
+    "yuki_tools",
+    "yuki_workflow",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "companion*", "skills*", "providers*", "defense*", "hackback*", "voice*", "ui*", "knowledge*", "automation*", "scripts*"]
