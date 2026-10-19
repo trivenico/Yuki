@@ -43,6 +43,13 @@ class ProviderEcosystemTests(unittest.TestCase):
         local = OpenAICompatibleProvider("m", api_key_env="YUKI_LOCAL_DUMMY_KEY", base_url="http://127.0.0.1:1234/v1", allow_http_loopback=True)
         self.assertTrue(local.is_available())
 
+    def test_external_cloud_adapter_fails_closed_without_approval_callback(self):
+        provider = OpenAICompatibleProvider("model", api_key_env="OPENAI_API_KEY",
+                                            base_url="https://api.openai.com/v1",
+                                            environ={"OPENAI_API_KEY":"test"})
+        with self.assertRaisesRegex(RuntimeError, "not explicitly approved"):
+            provider.generate("sensitive prompt")
+
     def test_provider_factory_supports_anthropic_adapter(self):
         provider = create_provider({"provider":"anthropic","model":"claude-model"}, environ={"ANTHROPIC_API_KEY":"test"})
         self.assertIsInstance(provider, AnthropicProvider)
