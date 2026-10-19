@@ -6,6 +6,7 @@ human approvals. Callers must authorize jobs before enqueue and before effects.
 from __future__ import annotations
 import json
 import sqlite3
+from contextlib import closing
 import time
 import uuid
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ class SQLiteJobQueue:
         return conn
 
     def _initialize(self):
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("""CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY, task_type TEXT NOT NULL, payload_json TEXT NOT NULL,
@@ -100,7 +101,7 @@ class SQLiteJobQueue:
         if not isinstance(job_id, str) or not job_id.strip() or len(job_id) > 120:
             raise ValueError("job_id must be non-empty text of at most 120 characters.")
         now = time.time()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("INSERT INTO jobs(id,task_type,payload_json,status,attempts,max_attempts,created_at,updated_at) VALUES(?,?,?,'queued',0,?,?,?)",
                          (job_id, task_type, payload_json, max_attempts, now, now))
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -112,7 +113,7 @@ class SQLiteJobQueue:
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
         now = time.time() if now is None else float(now)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "UPDATE jobs SET status=CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END, "
@@ -138,7 +139,7 @@ class SQLiteJobQueue:
             raise ValueError("error must be non-empty text.")
         error = error[:2000]
         now = time.time()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._require_owner(row, worker_id)
@@ -151,7 +152,7 @@ class SQLiteJobQueue:
 
     def _finish(self, job_id, worker_id, status, *, result_json=None):
         now = time.time()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             self._require_owner(row, worker_id)
@@ -170,7 +171,7 @@ class SQLiteJobQueue:
 
     def cancel(self, job_id: str) -> Job:
         now = time.time()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             if row is None:
@@ -183,7 +184,7 @@ class SQLiteJobQueue:
         return self._row(updated)
 
     def get(self, job_id: str) -> Job | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             return self._row(conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
     def list_jobs(self, *, status: str | None = None, limit: int = 100) -> list[Job]:
@@ -191,7 +192,7 @@ class SQLiteJobQueue:
             raise ValueError("limit must be an integer from 1 to 1000.")
         if status is not None and status not in STATUSES:
             raise ValueError("Unknown job status.")
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             if status:
                 rows = conn.execute("SELECT * FROM jobs WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit)).fetchall()
             else:
