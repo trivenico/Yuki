@@ -29,6 +29,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.approval_runtime import build_local_approval_runtime
 from core.skill_dispatch import SkillDispatcher
+from core.builtin_manifest_skills import register_builtin_workspace_list
 from core.manifest_task_agent import ManifestTaskAgent
 from core.runtime_health import build_runtime_health_manager, summarize_health
 from core.setup_wizard import load_local_env, run_setup
@@ -114,13 +115,14 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config), telemetry=agent.telemetry)
     output_guard = OutputGuard()
-    # Manifest planner starts with no registered tools; legacy skills are not
-    # silently exposed to the new dispatcher.
+    # Manifest planner exposes only a reviewed read-only workspace-list skill;
+    # legacy skills are not silently exposed to the new dispatcher.
     approval_runtime = build_local_approval_runtime(workspace)
     manifest_dispatcher = SkillDispatcher(
-        capability_grants=set(),
+        capability_grants={"workspace.read"},
         approval_store=approval_runtime.action_approval_store,
     )
+    register_builtin_workspace_list(manifest_dispatcher, workspace)
     manifest_agent = YukiCoreAgent(
         registry=agent.registry,
         permission_gate=PermissionGate(_ask_approval),
