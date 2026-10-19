@@ -10,17 +10,39 @@ MAX_APPROVALS = 1_000
 DEFAULT_TTL_SECONDS = 120
 
 
+def _validate_json_value(value, depth=0):
+    """Reject values JSON would silently coerce or encode non-portably."""
+    if depth > 64:
+        raise ValueError("Action nesting exceeds the supported depth.")
+    if value is None or type(value) in (str, bool, int):
+        return
+    if type(value) is float:
+        return
+    if type(value) is list:
+        for item in value:
+            _validate_json_value(item, depth + 1)
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("Action object keys must be strings.")
+            _validate_json_value(item, depth + 1)
+        return
+    raise ValueError("Action contains a non-JSON value.")
+
+
 def action_fingerprint(action: dict) -> str:
-    """Return a stable digest of a finite JSON action."""
-    if not isinstance(action, dict):
+    """Return a stable digest of a finite, strict JSON action."""
+    if type(action) is not dict:
         raise ValueError("Action must be an object.")
     try:
+        _validate_json_value(action)
         encoded = json.dumps(
             action, sort_keys=True, separators=(",", ":"),
             ensure_ascii=False, allow_nan=False,
         )
     except (TypeError, ValueError, RecursionError) as exc:
-        raise ValueError("Action must contain only finite JSON-compatible values.") from exc
+        raise ValueError("Action must contain only finite strict-JSON values.") from exc
     if len(encoded.encode("utf-8")) > MAX_ACTION_BYTES:
         raise ValueError("Action exceeds the approval size limit.")
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
