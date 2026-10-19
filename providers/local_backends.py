@@ -20,4 +20,4 @@ def create_local_tool_provider(backend: str, model: str, *, base_url: str | None
     except ValueError: loopback=False
     if not ((parts.scheme=="http" and loopback) or parts.scheme=="https") or parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("Local backend must use loopback HTTP or HTTPS")
-    return OpenAIToolCallingProvider(model,api_key_env="YUKI_LOCAL_BACKEND_API_KEY",base_url=url,timeout=timeout)
+    return OpenAIToolCallingProvider(model,api_key_env="YUKI_LOCAL_BACKEND_API_KEY",base_url=url,timeout=timeout,allow_local_http=True)
