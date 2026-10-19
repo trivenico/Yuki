@@ -1,0 +1,10 @@
+{
+  "id": "provider-contract",
+  "description": "Provider availability, malformed JSON, response-size limits, and timeout failure.",
+  "assertions": [
+    "MockProvider.is_available returns true",
+    "Malformed Ollama JSON raises RuntimeError",
+    "Responses above 2 MB raise RuntimeError",
+    "Timeout is bounded and raises RuntimeError"
+  ]
+}
