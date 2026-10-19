@@ -89,11 +89,20 @@ class ReActEngine:
             # tool observations. Preserve only normalized, JSON-safe call data.
             try:
                 assistant_calls = []
+                seen_ids: set[str] = set()
                 for item in reply["calls"]:
-                    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not isinstance(item.get("name"), str) or not isinstance(item.get("arguments"), dict):
+                    if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
+                            or not item["id"] or len(item["id"]) > 200
+                            or item["id"] in seen_ids
+                            or not isinstance(item.get("name"), str) or len(item["name"]) > 120
+                            or not isinstance(item.get("arguments"), dict)):
                         return ReActResult(False, "invalid_tool_call", "Malformed tool call; no action executed.", turn, calls_used)
+                    seen_ids.add(item["id"])
+                    encoded_args = json.dumps(item["arguments"], ensure_ascii=False, allow_nan=False)
+                    if len(encoded_args.encode("utf-8")) > 65536:
+                        return ReActResult(False, "invalid_tool_call", "Tool arguments exceeded the size limit; no action executed.", turn, calls_used)
                     assistant_calls.append({"id": item["id"], "type": "function", "function": {
-                        "name": item["name"], "arguments": json.dumps(item["arguments"], ensure_ascii=False, allow_nan=False)
+                        "name": item["name"], "arguments": encoded_args
                     }})
                 messages.append({"role": "assistant", "content": None, "tool_calls": assistant_calls})
             except (TypeError, ValueError):
@@ -129,17 +138,46 @@ class ReActEngine:
         return ReActResult(False, "turn_budget_exhausted", "ReAct turn budget reached before a final answer.", self.max_turns, calls_used)
 
 def _validate_schema(schema: dict[str, Any], value: Any) -> bool:
-    if not isinstance(value, dict): return False
+    """Validate the bounded JSON Schema subset supported by Yuki's tool boundary."""
+    if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(value, dict):
+        return False
+    try:
+        if len(json.dumps(value, allow_nan=False).encode("utf-8")) > 65536:
+            return False
+    except (TypeError, ValueError):
+        return False
     props, required = schema.get("properties", {}), schema.get("required", [])
-    if not isinstance(props, dict) or not isinstance(required, list) or any(k not in value for k in required): return False
-    if schema.get("additionalProperties", True) is False and any(k not in props for k in value): return False
+    if not isinstance(props, dict) or not isinstance(required, list):
+        return False
+    if any(not isinstance(key, str) for key in required) or any(key not in value for key in required):
+        return False
+    if schema.get("additionalProperties", True) is False and any(k not in props for k in value):
+        return False
     for key, item in value.items():
         rule = props.get(key, {})
+        if not isinstance(rule, dict):
+            return False
         kind = rule.get("type")
-        if kind == "string" and (not isinstance(item, str) or len(item) > rule.get("maxLength", 10000)): return False
-        if kind == "integer" and type(item) is not int: return False
-        if kind == "boolean" and type(item) is not bool: return False
-        if kind == "number" and (isinstance(item, bool) or not isinstance(item, (int, float))): return False
-        if kind == "object" and not isinstance(item, dict): return False
-        if kind == "array" and not isinstance(item, list): return False
+        if kind == "string":
+            if not isinstance(item, str) or len(item) > rule.get("maxLength", 10000):
+                return False
+        elif kind == "integer":
+            if type(item) is not int:
+                return False
+        elif kind == "boolean":
+            if type(item) is not bool:
+                return False
+        elif kind == "number":
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                return False
+        elif kind == "object":
+            if not isinstance(item, dict):
+                return False
+        elif kind == "array":
+            if not isinstance(item, list) or len(item) > rule.get("maxItems", 1000):
+                return False
+        elif kind is not None:
+            return False
+        if kind == "number" and isinstance(item, float) and not __import__("math").isfinite(item):
+            return False
     return True
