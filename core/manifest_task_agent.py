@@ -48,11 +48,11 @@ class ManifestTaskAgent:
             raise ValueError("Task proposal contains unsupported fields.")
         return PlanResult("tool_call", skill_id, arguments)
 
-    def execute_proposed(self, action: dict):
+    def execute_proposed(self, action: dict, approval_receipt=None):
         if not isinstance(action, dict) or set(action) != {"skill_id", "arguments"}:
             raise ValueError("Invalid approved action snapshot.")
         skill_id = action["skill_id"]
         arguments = action["arguments"]
         if not isinstance(skill_id, str) or not skill_id or not isinstance(arguments, dict):
             raise ValueError("Invalid approved action fields.")
-        return self.dispatcher.dispatch(skill_id, arguments)
+        return self.dispatcher.dispatch(skill_id, arguments, approval_receipt=approval_receipt)
