@@ -85,6 +85,19 @@ class ReActEngine:
                 return ReActResult(False, "invalid_provider_response", "Expected a message or tool calls.", turn, calls_used)
             if calls_used + len(reply["calls"]) > self.max_tool_calls:
                 return ReActResult(False, "tool_budget_exhausted", "Tool-call budget reached.", turn, calls_used)
+            # Provider protocol requires the assistant tool-call message to precede
+            # tool observations. Preserve only normalized, JSON-safe call data.
+            try:
+                assistant_calls = []
+                for item in reply["calls"]:
+                    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not isinstance(item.get("name"), str) or not isinstance(item.get("arguments"), dict):
+                        return ReActResult(False, "invalid_tool_call", "Malformed tool call; no action executed.", turn, calls_used)
+                    assistant_calls.append({"id": item["id"], "type": "function", "function": {
+                        "name": item["name"], "arguments": json.dumps(item["arguments"], ensure_ascii=False, allow_nan=False)
+                    }})
+                messages.append({"role": "assistant", "content": None, "tool_calls": assistant_calls})
+            except (TypeError, ValueError):
+                return ReActResult(False, "invalid_tool_call", "Malformed tool call; no action executed.", turn, calls_used)
             for call in reply["calls"]:
                 if not isinstance(call, dict) or not isinstance(call.get("id"), str) or not isinstance(call.get("name"), str) or not isinstance(call.get("arguments"), dict):
                     return ReActResult(False, "invalid_tool_call", "Malformed tool call; no action executed.", turn, calls_used)
