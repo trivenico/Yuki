@@ -126,11 +126,11 @@ def main():
         log_event(logger, 20, "startup_started", component="runtime")
         agent = build_agent(config)
         ai = YukiAgent(create_provider(config))
-        chat_session = ChatSession(ai.provider, persona=DEFAULT_PERSONA, memory_search=searchable_memory.search)
         task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
         memory_path = workspace / "yuki_memory.json"
         memory = MemoryStore(memory_path)
         searchable_memory = VectorMemory(memory_path)
+        chat_session = ChatSession(ai.provider, persona=DEFAULT_PERSONA, memory_search=searchable_memory.search)
         indexer = KnowledgeIndexer(searchable_memory)
         planner = Planner(max_steps=config["max_agent_steps"])
         reminders = ReminderQueue(workspace / "yuki_reminders.json")
