@@ -53,7 +53,7 @@ class FeatureModuleTests(unittest.TestCase):
 
 
     def test_main_runtime_registers_connected_skills(self):
-        agent = build_agent(load_config())
+        agent = build_agent(load_config(), approver=lambda request: True)
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())
