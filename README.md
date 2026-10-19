@@ -12,6 +12,19 @@ yuki doctor
 yuki
 ```
 
+### First-run onboarding and interfaces
+
+Run `yuki-onboard` (or `python -m ui.onboarding_tui`) to create a private user configuration at `~/.yuki/config.json`. On an interactive first launch, Yuki starts onboarding automatically when that file is missing. API keys are not written to the JSON file; enter credentials through environment variables named during setup. Existing `config.yaml` settings remain the base configuration, with supported user settings overlaid at startup.
+
+- Supported provider adapters: Mock, Ollama, OpenAI-compatible endpoints (OpenAI, DeepSeek, GLM, llama.cpp, LM Studio), and Anthropic.
+- Hybrid routing stays local by default. Only explicitly configured cloud task names can route externally, and CLI cloud prompts require confirmation.
+- Configure MCP servers in onboarding. Use `/mcp discover`, `/mcp tools`, and `/mcp invoke mcp.SERVER.TOOL | {"key":"value"}`. Discovery does not authorize execution; each call requires a fresh approval and an explicit tool allow-list.
+- `/dashboard` opens the optional Textual status UI (`pip install -r requirements-ui.txt`).
+- `/desktop` opens the optional read-only PyWebView shell (`pip install -r requirements-desktop.txt`). It shares the running process state but intentionally exposes no privileged actions.
+- Token usage is stored locally under the configured workspace; provider counts are exact when supplied by the provider and otherwise marked as estimates.
+
+These additions are an integration increment, not a claim of production readiness. Run the test suite and review provider/network policies before using real credentials or sensitive data.
+
 To run unit tests and evaluation suite:
 
 ```sh
