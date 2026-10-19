@@ -29,7 +29,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.approval_runtime import build_local_approval_runtime
 from core.skill_dispatch import SkillDispatcher
-from core.builtin_manifest_skills import register_builtin_workspace_list
+from core.builtin_manifest_skills import register_builtin_workspace_list, register_builtin_workspace_read_text
 from core.manifest_task_agent import ManifestTaskAgent
 from core.runtime_health import build_runtime_health_manager, summarize_health
 from core.setup_wizard import load_local_env, run_setup
@@ -123,6 +123,7 @@ def main():
         approval_store=approval_runtime.action_approval_store,
     )
     register_builtin_workspace_list(manifest_dispatcher, workspace)
+    register_builtin_workspace_read_text(manifest_dispatcher, workspace)
     manifest_agent = YukiCoreAgent(
         registry=agent.registry,
         permission_gate=PermissionGate(_ask_approval),
