@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import shlex
 import sys
+import json
 from urllib.parse import urlsplit
 
 from companion import DEFAULT_PERSONA
@@ -13,6 +14,7 @@ from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.onboarding import load_user_config, onboarding_needed
 from ui.onboarding_tui import run_onboarding
+from core.mcp_registry import MCPRegistry, MCPError
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
 from core.vector_memory import VectorMemory
@@ -108,6 +110,9 @@ def print_help():
   /defense remove RULE_ID        Remove a Yuki-created rule (approval required)
   /metasploit status             Execution is not implemented
   /dashboard                     Open optional Textual supervision dashboard
+  /desktop                       Open optional read-only desktop application
+  /mcp discover | /mcp tools      Discover and list configured MCP tools
+  /mcp invoke NAME | JSON         Invoke an allow-listed MCP tool (approval required)
   /quit
 
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
@@ -143,6 +148,8 @@ def main():
         workspace = Path(config["workspace"])
         workspace.mkdir(parents=True, exist_ok=True)
         agent = build_agent(config)
+        mcp_registry = MCPRegistry(config.get("mcp_servers", []), approver=lambda name, args: _confirm(
+            "mcp:tool_call", f"Call MCP tool {name!r} with argument keys {sorted(args)[:20]!r}.", "high"))
         from core.token_usage import TokenUsageTracker
         usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
         ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
@@ -555,6 +562,33 @@ def main():
             elif command == "/mcp status":
                 print(f"MCP allowed hosts: {config['web_allowed_hosts'] or 'None (configure web_allowed_hosts)'}")
                 print(f"MCP allowed tools: {config.get('mcp_allowed_tools') or 'None (configure mcp_allowed_tools)'}")
+            elif command == "/mcp discover":
+                try:
+                    tools = mcp_registry.discover()
+                    print(f"Yuki > Discovered {len(tools)} tools. Discovery does not authorize execution.")
+                    for item in tools:
+                        print(f"- {item['name']} [allow-listed={item['allowed']}]")
+                except (MCPError, ValueError) as exc:
+                    print(f"Yuki > MCP discovery failed safely: {exc}")
+            elif command == "/mcp tools":
+                tools = [{"name": item.qualified_name, "server": item.server_name,
+                          "description": item.description,
+                          "allowed": item.remote_name in mcp_registry._servers[item.server_name]["allowed_tools"]}
+                          for item in mcp_registry._tools.values()]
+                print(json.dumps(tools, indent=2))
+            elif command.startswith("/mcp invoke "):
+                payload = command[len("/mcp invoke "):]
+                if "|" not in payload:
+                    print("Yuki > Use /mcp invoke mcp.SERVER.TOOL | {\"key\": \"value\"}")
+                    continue
+                name, raw_args = payload.split("|", 1)
+                try:
+                    args = json.loads(raw_args)
+                    if not isinstance(args, dict): raise ValueError("arguments must be a JSON object")
+                    result = mcp_registry.invoke(name.strip(), args)
+                    print("Yuki > MCP result (untrusted data): " + json.dumps(result, ensure_ascii=False)[:12000])
+                except (MCPError, ValueError, TypeError) as exc:
+                    print(f"Yuki > MCP invocation blocked/failed safely: {exc}")
             elif command.startswith("/mcp connect "):
                 endpoint = command[len("/mcp connect "):].strip()
                 if not _confirm("mcp:connect", f"Discover MCP tools from {endpoint!r}.", "medium"):
@@ -646,6 +680,12 @@ def main():
                     print(f"Yuki > Firewall removal blocked/unavailable: {exc}")
             elif command == "/metasploit status":
                 print(exploit_runner.status()["message"])
+            elif command == "/desktop":
+                try:
+                    from ui.desktop import run_desktop
+                    run_desktop(agent)
+                except RuntimeError as exc:
+                    print(f"Yuki > Desktop app unavailable: {exc}")
             elif command == "/dashboard":
                 try:
                     from ui.dashboard import run_dashboard
