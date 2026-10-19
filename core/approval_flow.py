@@ -70,8 +70,9 @@ class ApprovalCoordinator:
             return ExecutionResult(ok=False, status="approval_unavailable")
         if self.pending_store:
             item = self.pending_store.get(pending_id)
-            if item is None or item.actor != actor or item.session_id != session_id:
+            if item is None:
                 return ExecutionResult(ok=False, status="pending_not_found")
+            # The persistent store verifies hashed actor/session bindings atomically.
             consumed = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
             if consumed is None:
                 return ExecutionResult(ok=False, status="pending_not_found")
