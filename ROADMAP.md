@@ -12,7 +12,8 @@ A checked item means code and tests exist; it does not imply production certific
 - [x] Isolate unexpected dispatch exceptions to the current command.
 - [x] Report configuration startup errors without raw tracebacks.
 - [x] Add CLI regression tests.
-- [ ] Full suite passes on exact PR head.
+- [x] Fix two CI-confirmed integration failures: default device-scanner construction and provider validation order.
+- [ ] Resolve the remaining missing approval-flow dependency and rerun the full suite on the exact PR head.
 
 ## Phase 2 — Observability
 - [ ] Standard-library logging and rotating workspace log.
