@@ -1,5 +1,6 @@
 """Manifest-validated skill dispatch with mandatory one-time approval."""
 import json
+import math
 
 from core.action_approvals import action_fingerprint, validate_strict_json
 from core.permissions import PermissionGate
@@ -10,11 +11,17 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _ALLOWED_RISKS = {"low", "medium", "high"}
 
 
-def _validate_schema(value, schema, path="$"):
-    """Validate the intentionally small JSON Schema subset used by skill manifests."""
+def _validate_schema(value, schema, path="$", depth=0):
+    """Validate the bounded JSON Schema subset used by skill manifests."""
+    if depth > 32:
+        raise ValueError(f"Schema nesting exceeds the limit at {path}.")
     if not isinstance(schema, dict):
         raise ValueError(f"Invalid schema at {path}.")
     expected = schema.get("type")
+    supported = {"object", "array", "string", "integer", "number", "boolean", "null"}
+    if expected not in supported:
+        raise ValueError(f"Unsupported or missing schema type at {path}.")
+
     type_checks = {
         "object": lambda v: isinstance(v, dict),
         "array": lambda v: isinstance(v, list),
@@ -24,35 +31,52 @@ def _validate_schema(value, schema, path="$"):
         "boolean": lambda v: isinstance(v, bool),
         "null": lambda v: v is None,
     }
-    if expected in type_checks and not type_checks[expected](value):
+    if not type_checks[expected](value):
         raise ValueError(f"Invalid value type at {path}.")
+
     if expected == "object":
         properties = schema.get("properties", {})
         required = schema.get("required", [])
+        if not isinstance(properties, dict) or any(not isinstance(k, str) for k in properties):
+            raise ValueError(f"Invalid properties at {path}.")
         if not isinstance(required, list) or any(not isinstance(k, str) for k in required):
             raise ValueError(f"Invalid required list at {path}.")
-        for key in required:
-            if key not in value:
-                raise ValueError(f"Missing required field at {path}.{key}.")
+        if len(set(required)) != len(required):
+            raise ValueError(f"Duplicate required fields at {path}.")
+        if any(key not in properties for key in required):
+            raise ValueError(f"Required field has no schema at {path}.")
+        if type(schema.get("additionalProperties", True)) is not bool:
+            raise ValueError(f"Invalid additionalProperties at {path}.")
         if schema.get("additionalProperties", True) is False:
             extras = set(value) - set(properties)
             if extras:
                 raise ValueError(f"Unexpected field at {path}.")
         for key, item in value.items():
             if key in properties:
-                _validate_schema(item, properties[key], f"{path}.{key}")
+                _validate_schema(item, properties[key], f"{path}.{key}", depth + 1)
     elif expected == "array":
+        if "maxItems" in schema and (type(schema["maxItems"]) is not int or schema["maxItems"] < 0):
+            raise ValueError(f"Invalid maxItems at {path}.")
         if "maxItems" in schema and len(value) > schema["maxItems"]:
             raise ValueError(f"Array too large at {path}.")
         if "items" in schema:
             for index, item in enumerate(value):
-                _validate_schema(item, schema["items"], f"{path}[{index}]")
+                _validate_schema(item, schema["items"], f"{path}[{index}]", depth + 1)
     elif expected == "string":
+        if "maxLength" in schema and (type(schema["maxLength"]) is not int or schema["maxLength"] < 0):
+            raise ValueError(f"Invalid maxLength at {path}.")
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             raise ValueError(f"String too long at {path}.")
-        if "enum" in schema and value not in schema["enum"]:
-            raise ValueError(f"Invalid value at {path}.")
+        if "enum" in schema and (not isinstance(schema["enum"], list) or value not in schema["enum"]):
+            raise ValueError(f"Invalid enum value at {path}.")
     elif expected in {"integer", "number"}:
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"Non-finite number at {path}.")
+        for bound in ("minimum", "maximum"):
+            if bound in schema and (isinstance(schema[bound], bool) or not isinstance(schema[bound], (int, float))):
+                raise ValueError(f"Invalid numeric bound at {path}.")
+            if bound in schema and isinstance(schema[bound], float) and not math.isfinite(schema[bound]):
+                raise ValueError(f"Invalid numeric bound at {path}.")
         if "minimum" in schema and value < schema["minimum"]:
             raise ValueError(f"Number too small at {path}.")
         if "maximum" in schema and value > schema["maximum"]:
