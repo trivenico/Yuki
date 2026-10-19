@@ -130,7 +130,7 @@ class PermissionGate:
                 del self._receipts[token]
             stored = self._receipts.pop(receipt.token, None)
         valid = stored is not None and stored[1] > now and stored[0] == fingerprint == receipt.action_fingerprint
-        if not self._audit("executed" if valid else "execution_blocked", fingerprint, "low",
+        if not self._audit("approved" if valid else "execution_blocked", fingerprint, "low",
                            "receipt_consumed" if valid else "receipt_rejected"):
             return False
         return valid
