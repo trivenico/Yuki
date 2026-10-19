@@ -36,7 +36,7 @@ def build():
         "timeout_seconds": 3, "max_output_bytes": 1024,
     })
     dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=ActionApprovalStore())
-    script = "import json,sys; json.load(sys.stdin); print(json.dumps({'ok':True,'result':{'output':{'saved':True}}}))"
+    script = "import json,sys; json.load(sys.stdin); print(json.dumps({'saved':True}))"
     dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
                                    executor=SubprocessExecutor(timeout_seconds=3))
     agent = YukiCoreAgent(dispatcher=dispatcher)
