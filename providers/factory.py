@@ -25,9 +25,10 @@ def create_provider(config=None,*,environ=None):
         if selected in {"openai-compatible","custom"} and not url.startswith("https://"): raise ValueError("Custom cloud endpoints must use HTTPS.")
         return _compatible(model or str(env.get("YUKI_CLOUD_MODEL","")),url,key_env,environ=env)
     if selected=="hybrid":
-        local=create_provider(dict(cfg,provider=str(cfg.get("local_provider","ollama"))),environ=env)
+        local_cfg=dict(cfg,provider=str(cfg.get("local_provider","ollama")),model=str(cfg.get("local_model",cfg.get("ollama_model",cfg.get("model","")))))
+        local=create_provider(local_cfg,environ=env)
         cloud_name=str(cfg.get("cloud_provider","openai")).lower(); cloud_model=str(cfg.get("cloud_model",env.get("YUKI_CLOUD_MODEL",""))).strip(); cloud=None
-        if cloud_model: cloud=create_provider(dict(cfg,provider=cloud_name,model=cloud_model),environ=env)
+        if cloud_model: cloud=create_provider(dict(cfg,provider=cloud_name,model=cloud_model,ollama_model=cloud_model),environ=env)
         tasks=cfg.get("cloud_tasks",env.get("YUKI_CLOUD_TASKS",""))
         if isinstance(tasks,str): tasks=[v.strip() for v in tasks.split(",") if v.strip()]
         if not isinstance(tasks,(list,tuple,set)): raise ValueError("cloud_tasks must be a list of task names.")
