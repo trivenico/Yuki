@@ -151,6 +151,8 @@ def main():
         agent = build_agent(config)
         mcp_registry = MCPRegistry(config.get("mcp_servers", []), approver=lambda name, args: _confirm(
             "mcp:tool_call", f"Call MCP tool {name!r} with argument keys {sorted(args)[:20]!r}.", "high"))
+        from yuki_tools import register_mcp_registry
+        register_mcp_registry(mcp_registry)
         from core.token_usage import TokenUsageTracker
         usage_tracker = TokenUsageTracker(workspace / "yuki_token_usage.json")
         ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
