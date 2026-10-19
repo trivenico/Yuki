@@ -9,8 +9,26 @@ logger = logging.getLogger("yuki")
 class YukiAgent:
     """Send prompts to a selected provider without exposing provider exceptions."""
 
-    def __init__(self, provider=None):
+    def __init__(self, provider=None, usage_tracker=None):
         self.provider = provider if provider is not None else MockProvider()
+        self.usage_tracker = usage_tracker
+
+    def _record_usage(self, prompt, response):
+        if self.usage_tracker is None:
+            return
+        usage = getattr(self.provider, "last_usage", {})
+        input_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        output_tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
+        exact = (isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens >= 0
+                 and isinstance(output_tokens, int) and not isinstance(output_tokens, bool) and output_tokens >= 0)
+        if not exact:
+            input_tokens, output_tokens = max(1, len(prompt) // 4), max(1, len(response) // 4)
+        try:
+            self.usage_tracker.record(provider=type(self.provider).__name__,
+                model=str(getattr(self.provider, "model", "")), input_tokens=input_tokens,
+                output_tokens=output_tokens, estimated=not exact)
+        except Exception:
+            logger.exception("Token usage accounting failed safely.")
 
     def set_provider(self, provider):
         """Replace the active adapter after validating its interface."""
@@ -35,6 +53,7 @@ class YukiAgent:
             result = self.provider.generate(prompt.strip())
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
+            self._record_usage(prompt.strip(), result)
             return result
         except Exception as exc:
             logger.exception("Provider generation failed: %s", exc)
@@ -62,6 +81,7 @@ class YukiAgent:
 
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
+            self._record_usage(user_text, result)
             return result
         except Exception as exc:
             logger.exception("Provider chat failed: %s", exc)
