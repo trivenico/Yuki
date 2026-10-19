@@ -80,7 +80,7 @@ Status: active engineering plan. A module is not considered production-ready unt
 
 
 
-- [ ] Wire the coordinator into main CLI/API and the live `PermissionGate`; the local CLI factory exists but is not yet connected to `/task`. Configure SQLite pending/token/audit stores from protected workspace paths and derive actor/session from authenticated identity. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
+- [ ] The primary CLI `/task` path now uses the local coordinator and persistent stores for pending approvals. Remaining: integrate the API and live `PermissionGate`, use authenticated actor/session identity for remote clients, and add lifecycle/restart behavior tests for the complete UI flow. Pending-action and token stores are restart-persistent primitives, but the application does not yet configure them; actor/session values must come from trusted identity. The approval coordinator now enforces creator actor/session binding when called.
 
 ## Phase 4 — operational reliability and observability
 **Exit gate:** external calls have real timeouts, bounded retries, circuit breakers, redacted telemetry, and measurable recovery behavior.
