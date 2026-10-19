@@ -66,6 +66,19 @@ class ReactTests(unittest.TestCase):
         self.assertEqual(result.status,"invalid_tool_call")
         self.assertEqual(seen,[])
 
+    def test_nested_tool_arguments_are_validated_recursively(self):
+        from core.react_engine import _validate_schema
+        schema={"type":"object","properties":{"options":{"type":"object","properties":{"count":{"type":"integer","minimum":1,"maximum":3}},"required":["count"],"additionalProperties":False}},"required":["options"],"additionalProperties":False}
+        self.assertTrue(_validate_schema(schema,{"options":{"count":2}}))
+        self.assertFalse(_validate_schema(schema,{"options":{"count":"2"}}))
+        self.assertFalse(_validate_schema(schema,{"options":{"count":4}}))
+        self.assertFalse(_validate_schema(schema,{"options":{"count":2,"unsafe":True}}))
+
+    def test_unknown_schema_keywords_fail_closed(self):
+        from core.react_engine import _validate_schema
+        schema={"type":"object","properties":{"value":{"type":"string","pattern":"^safe$"}}}
+        self.assertFalse(_validate_schema(schema,{"value":"safe"}))
+
     def test_state_changing_tool_denied_without_approver(self):
         provider=FakeToolProvider([
             {"type":"tool_calls","calls":[{"id":"c1","name":"write","arguments":{}}]},
