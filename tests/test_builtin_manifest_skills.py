@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from core.agent import YukiCoreAgent
-from core.builtin_manifest_skills import register_builtin_workspace_list
+from core.builtin_manifest_skills import register_builtin_workspace_list, register_builtin_workspace_read_text
 from core.manifest_task_agent import ManifestTaskAgent
 from core.skill_dispatch import SkillDispatcher
 
@@ -23,6 +23,7 @@ class BuiltinWorkspaceListTests(unittest.TestCase):
     def _dispatcher(self, workspace):
         dispatcher = SkillDispatcher(capability_grants={"workspace.read"})
         register_builtin_workspace_list(dispatcher, workspace)
+        register_builtin_workspace_read_text(dispatcher, workspace)
         return dispatcher
 
     def test_lists_names_only_and_hides_hidden_entries(self):
@@ -93,6 +94,65 @@ class BuiltinWorkspaceListTests(unittest.TestCase):
             self.assertEqual(result.status, "completed")
             self.assertIn("readme.txt", provider.prompts[1])
             self.assertNotIn("not read by the listing tool", provider.prompts[1])
+
+
+    def test_read_text_returns_content_only_for_small_utf8_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "notes.txt").write_text("hello Yuki\\nsecond line", encoding="utf-8")
+            dispatcher = self._dispatcher(root)
+            result = dispatcher.dispatch("workspace.read_text", {"path": "notes.txt", "max_bytes": 1024})
+            self.assertTrue(result.ok, result.code)
+            self.assertEqual(result.output, {
+                "path": "notes.txt", "text": "hello Yuki\\nsecond line", "truncated": False
+            })
+
+    def test_read_text_rejects_traversal_hidden_sensitive_and_binary_files(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            (root / "notes.txt").write_text("safe", encoding="utf-8")
+            (root / ".private.txt").write_text("private", encoding="utf-8")
+            (root / "credentials.json").write_text('{"token":"secret"}', encoding="utf-8")
+            (root / "sample.bin").write_bytes(b"\\x00\\x01")
+            (Path(outside) / "outside.txt").write_text("outside", encoding="utf-8")
+            dispatcher = self._dispatcher(root)
+            for path in ("../outside.txt", str(Path(outside) / "outside.txt"),
+                         ".private.txt", "credentials.json", "sample.bin"):
+                with self.subTest(path=path):
+                    result = dispatcher.dispatch("workspace.read_text", {"path": path, "max_bytes": 1024})
+                    self.assertFalse(result.ok)
+                    self.assertIsNone(result.output)
+
+    def test_read_text_rejects_oversized_and_invalid_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "large.txt").write_text("x" * 1200, encoding="utf-8")
+            dispatcher = self._dispatcher(root)
+            self.assertEqual(dispatcher.dispatch(
+                "workspace.read_text", {"path": "large.txt", "max_bytes": 1024}
+            ).code, "handler_failed")
+            self.assertEqual(dispatcher.dispatch(
+                "workspace.read_text", {"path": "notes.txt", "max_bytes": 100000}
+            ).code, "invalid_input")
+
+    def test_read_text_rejects_symlink_and_untrusted_capability(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            (Path(outside) / "target.txt").write_text("outside", encoding="utf-8")
+            link = root / "link.txt"
+            try:
+                link.symlink_to(Path(outside) / "target.txt")
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are not available in this environment")
+            result = self._dispatcher(root).dispatch(
+                "workspace.read_text", {"path": "link.txt", "max_bytes": 1024}
+            )
+            self.assertFalse(result.ok)
+            denied = SkillDispatcher(capability_grants=set())
+            register_builtin_workspace_read_text(denied, root)
+            self.assertEqual(denied.dispatch(
+                "workspace.read_text", {"path": "notes.txt", "max_bytes": 1024}
+            ).code, "capability_denied")
 
     def test_reports_truncation_and_enforces_read_only_capability(self):
         with tempfile.TemporaryDirectory() as tmp:
