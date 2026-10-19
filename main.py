@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
+import sys
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
@@ -9,6 +10,8 @@ from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
+from core.onboarding import load_user_config, onboarding_needed
+from ui.onboarding_tui import run_onboarding
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
 from core.vector_memory import VectorMemory
@@ -112,7 +115,22 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 def main():
     try:
+        user_config_path = None
+        if onboarding_needed(user_config_path):
+            if not sys.stdin.isatty():
+                print("Yuki > First-run setup required. Run: python -m ui.onboarding_tui")
+                return 2
+            run_onboarding(path=user_config_path)
         config = load_config()
+        user_config = load_user_config(user_config_path)
+        if user_config:
+            config["provider"] = user_config["provider"]
+            config["ollama_model"] = user_config.get("model", config.get("ollama_model", ""))
+            config["base_url"] = user_config.get("base_url", "")
+            config["api_key_env"] = user_config.get("api_key_env", "")
+            config["cloud_tasks"] = user_config.get("cloud_tasks", [])
+            config["local_provider"] = user_config.get("local_provider", "ollama")
+            config["cloud_provider"] = user_config.get("cloud_provider", "openai")
     except (RuntimeError, ValueError) as exc:
         print(f"Yuki > Configuration error: {exc}")
         return 1
@@ -225,6 +243,10 @@ def main():
                 if not prompt:
                     print("Yuki > Provide a prompt: /ask explain a Python decorator")
                     continue
+                if config.get("provider") not in {"mock", "ollama", "llama.cpp", "llama-cpp", "lm-studio"}:
+                    if not _confirm("ai:cloud_request", f"Send prompt to configured external provider? Prompt length: {len(prompt)} characters.", "high"):
+                        print("Yuki > Cloud request cancelled; no data was sent.")
+                        continue
                 print("Yuki > " + ai.ask(prompt))
             elif command.startswith("/ask-cloud "):
                 payload = command[len("/ask-cloud "):]
