@@ -44,6 +44,8 @@ class SkillDispatcher:
         try:
             raw = executor.execute(argv, dict(arguments), timeout_seconds=manifest.timeout_seconds, max_output_bytes=manifest.max_output_bytes)
             result = raw.get("result", raw)
+            if isinstance(result, dict) and set(result) == {"output"} and isinstance(result["output"], dict):
+                result = result["output"]
             validate_object(result, manifest.output_schema)
             return DispatchResult(bool(raw.get("ok", True)), "completed" if raw.get("ok", True) else "failed", skill_id, result)
         except Exception:
