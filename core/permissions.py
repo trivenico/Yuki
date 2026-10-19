@@ -35,7 +35,7 @@ class PermissionGate:
         self.max_rate_limit = max_rate_limit
         self.rate_window_seconds = rate_window_seconds
         self.timeout_seconds = timeout_seconds
-        self._approval_timestamps: List[float] = []
+        self._request_timestamps: List[float] = []
         self._state_lock = threading.Lock()
         self._approver_running = False
 
@@ -60,15 +60,18 @@ class PermissionGate:
 
         now = time.monotonic()
         with self._state_lock:
-            self._approval_timestamps = [
-                ts for ts in self._approval_timestamps
+            self._request_timestamps = [
+                ts for ts in self._request_timestamps
                 if now - ts < self.rate_window_seconds
             ]
-            if len(self._approval_timestamps) >= self.max_rate_limit:
+            if len(self._request_timestamps) >= self.max_rate_limit:
                 # Audit outside the state lock below.
                 rate_limited = True
             else:
                 rate_limited = False
+            if not rate_limited:
+                # Rate-limit every request, including denials and timeouts.
+                self._request_timestamps.append(now)
             if self._approver is None or rate_limited:
                 decision = False
             elif self._approver_running:
@@ -104,10 +107,6 @@ class PermissionGate:
                 decision = outcome["approved"]
             else:
                 decision = False
-
-        if decision:
-            with self._state_lock:
-                self._approval_timestamps.append(time.monotonic())
 
         # Fail closed on audit write errors for approvals and denials alike.
         audit_ok = self._audit(action, reason, risk, decision)
