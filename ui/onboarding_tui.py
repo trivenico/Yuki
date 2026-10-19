@@ -76,6 +76,12 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
             "local_first": True,
         },
     }
+    if provider == "hybrid":
+        config["local_provider"] = _ask("Local provider (ollama, llama.cpp, lm-studio)", "ollama").lower()
+        config["local_model"] = _ask("Local model name", model)
+        config["cloud_provider"] = _ask("Cloud provider (openai, anthropic, deepseek, glm, openai-compatible)", "openai").lower()
+        config["cloud_model"] = _ask("Cloud model name", "")
+        config["cloud_tasks"] = [x.strip() for x in _ask("Tasks allowed to route to cloud (comma-separated; empty disables cloud routing)", "").split(",") if x.strip()]
     target = save_config(config, path)
     print(f"Configuration saved to {target}")
     print("Tool approval and cloud-transmission approval remain enabled. MCP tools default to deny unless explicitly allow-listed.")
