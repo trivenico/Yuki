@@ -65,15 +65,33 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(seen,[{"cursor":2}])
         with tempfile.TemporaryDirectory() as d: asyncio.run(scenario(str(Path(d)/"jobs.sqlite")))
 
+
+    def test_idempotency_and_lease_recovery(self):
+        with tempfile.TemporaryDirectory() as d:
+            queue=DurableTaskQueue(str(Path(d)/"jobs.sqlite"), lease_seconds=5)
+            first=queue.enqueue("sync",{"x":1},idempotency_key="sync:one")
+            duplicate=queue.enqueue("sync",{"x":2},idempotency_key="sync:one")
+            self.assertEqual(first,duplicate)
+            job=queue.claim("worker-a")
+            self.assertEqual(job["id"],first)
+            self.assertFalse(queue.finish(first,worker_id="worker-b"))
+            import sqlite3
+            with sqlite3.connect(queue.path) as db:
+                db.execute("UPDATE jobs SET lease_until='2000-01-01T00:00:00+00:00' WHERE id=?",(first,))
+            recovered=queue.claim("worker-b")
+            self.assertEqual(recovered["id"],first)
+            self.assertEqual(recovered["attempts"],2)
+            self.assertTrue(queue.finish(first,worker_id="worker-b"))
+
     def test_cron_expression_validation_and_enqueue(self):
         with tempfile.TemporaryDirectory() as d:
             queue=DurableTaskQueue(str(Path(d)/"jobs.sqlite"))
             cron=CronScheduler(queue)
             cron.add("10 * * * *","sync",{})
-            # This small cron implementation intentionally supports only '*' and comma-separated integers.
-            with self.assertRaises(ValueError): cron.add("*/5 * * * *","sync",{})
+            # Full cron ranges and steps are supported in this phase.
+            cron.add("*/5 * * * *","sync",{})
             now=datetime(2026,10,19,12,10,tzinfo=timezone.utc)
-            self.assertEqual(cron.tick(now),1)
+            self.assertEqual(cron.tick(now),2)
             self.assertEqual(cron.tick(now),0)
 
 class OnboardingTests(unittest.TestCase):
