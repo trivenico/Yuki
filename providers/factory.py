@@ -18,7 +18,8 @@ def create_provider(config=None, *, environ=None):
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
     selected = str(cfg.get("provider", "mock")).strip().lower()
-    if selected == "mock":
+    if selected not in {"mock", "ollama", "hybrid"}:
+        if selected == "mock":
         return MockProvider()
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
