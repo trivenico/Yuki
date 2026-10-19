@@ -237,7 +237,7 @@ class YukiDaemon:
 class CronScheduler:
     """Five-field UTC cron with lists, ranges, and step values; durable minute dedupe."""
     def __init__(self, queue: DurableTaskQueue):
-        self.queue, self.entries = queue, []
+        self.queue, self.entries, self._seen = queue, [], set()
 
     @staticmethod
     def _parse_field(token: str, low: int, high: int) -> set[int] | None:
@@ -300,6 +300,13 @@ class CronScheduler:
         if instant.tzinfo is None or instant.utcoffset() is None:
             raise ValueError("Cron tick time must be timezone-aware")
         instant = instant.astimezone(timezone.utc).replace(second=0, microsecond=0)
+        minute_key = instant.isoformat()
+        if minute_key in self._seen:
+            return 0
+        self._seen.add(minute_key)
+        if len(self._seen) > 3000:
+            self._seen.clear()
+            self._seen.add(minute_key)
         fields = (instant.minute, instant.hour, instant.day, instant.month, (instant.weekday() + 1) % 7)
         added = 0
         for index, (expression, parsed, task, payload) in enumerate(self.entries):
