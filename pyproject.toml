@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 yuki = "main:main"
+yuki-onboard = "ui.onboarding_tui:main"
 
 [tool.setuptools]
 py-modules = [
