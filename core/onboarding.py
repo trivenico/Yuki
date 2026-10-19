@@ -11,6 +11,7 @@ CONFIG_VERSION = 1
 DEFAULT_CONFIG_PATH = Path("~/.yuki/config.json").expanduser()
 PROVIDERS = {
     "mock": {"kind": "local", "default_model": "mock"},
+    "hybrid": {"kind": "hybrid", "default_model": ""},
     "ollama": {"kind": "local", "default_url": "http://127.0.0.1:11434"},
     "llama.cpp": {"kind": "local", "default_url": "http://127.0.0.1:8080/v1"},
     "lm-studio": {"kind": "local", "default_url": "http://127.0.0.1:1234/v1"},
