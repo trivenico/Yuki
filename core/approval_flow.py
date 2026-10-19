@@ -92,9 +92,12 @@ class ApprovalCoordinator:
                     self._audit("failed", pending_id, actor, stored.skill_id)
                     return ApprovalResult(False, "tampered", "Stored action integrity validation failed.")
             else:
-                item = self._memory.pop(pending_id, None)
+                # Do not consume an approval on an identity mismatch; otherwise a caller
+                # who guesses an ID could invalidate the legitimate owner's request.
+                item = self._memory.get(pending_id)
                 if not item or item["actor"] != actor or item["session"] != session_id:
                     return ApprovalResult(False, "pending_not_found", "Approval is missing or bound to another identity.")
+                self._memory.pop(pending_id, None)
                 from datetime import datetime, timezone
                 if item["expires_at"] <= datetime.now(timezone.utc).isoformat():
                     self._audit("expired", pending_id, actor, item["action"]["skill_id"])
