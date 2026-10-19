@@ -20,6 +20,8 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "mock")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected not in {"ollama", "hybrid"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid.")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
