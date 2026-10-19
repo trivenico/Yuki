@@ -138,6 +138,7 @@ def main():
             config["local_provider"] = user_config.get("local_provider", "ollama")
             config["cloud_provider"] = user_config.get("cloud_provider", "openai")
             configured_servers = user_config.get("mcp_servers", [])
+            config["mcp_servers"] = configured_servers
             configured_hosts = [urlsplit(item["endpoint"]).hostname for item in configured_servers if isinstance(item, dict) and isinstance(item.get("endpoint"), str)]
             config["web_allowed_hosts"] = list(dict.fromkeys(list(config.get("web_allowed_hosts", [])) + [host for host in configured_hosts if host]))
             config["mcp_allowed_tools"] = list(dict.fromkeys(list(config.get("mcp_allowed_tools", [])) + [tool for item in configured_servers if isinstance(item, dict) for tool in item.get("allowed_tools", []) if isinstance(tool, str)]))
