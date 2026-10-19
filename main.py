@@ -239,6 +239,9 @@ def main():
                 if not goal:
                     print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                     continue
+                if config.get("provider") in {"openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom"}:
+                    print("Yuki > Bounded task mode is disabled for direct cloud providers because each model transmission cannot be individually approved here. Use hybrid routing and /ask-cloud for explicitly approved cloud tasks.")
+                    continue
                 print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
                 result = task_agent.run(goal)
                 print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
@@ -650,6 +653,10 @@ def main():
                 except RuntimeError as exc:
                     print(f"Yuki > Dashboard unavailable: {exc}")
             else:
+                if config.get("provider") in {"openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom"}:
+                    if not _confirm("ai:cloud_request", f"Send this conversation prompt to the configured external provider? Prompt length: {len(command)} characters.", "high"):
+                        print("Yuki > Cloud request cancelled; no data was sent.")
+                        continue
                 history = getattr(main, "_chat_history", [])
                 try:
                     matches = searchable_memory.search(command, limit=3)
