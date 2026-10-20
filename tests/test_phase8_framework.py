@@ -362,6 +362,15 @@ class OnboardingTests(unittest.TestCase):
             with self.subTest(config=config), self.assertRaises(ValueError):
                 validate_config(config)
 
+    def test_api_key_environment_name_uses_portable_ascii_syntax(self):
+        from core.onboarding import validate_config
+        for name in ("1BAD_KEY", "OPENAI-KEY", "OPENAI.KEY", "ＡＰＩ_KEY", "API KEY"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_config({"provider": "openai", "api_key_env": name})
+        self.assertEqual(
+            validate_config({"provider": "openai", "api_key_env": "OPENAI_API_KEY"})["api_key_env"],
+            "OPENAI_API_KEY",
+        )
     def test_cloud_config_requires_secret_environment_reference(self):
         from core.onboarding import validate_config
         with self.assertRaises(ValueError):
