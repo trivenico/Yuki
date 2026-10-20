@@ -1,6 +1,7 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 
 from datetime import datetime, timezone
+import argparse
 from pathlib import Path
 import shlex
 import signal
@@ -110,10 +111,70 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
-def main():
+def _run_doctor(config):
+    """Run bounded local readiness checks without starting the interactive runtime."""
+    checks = []
+    workspace = Path(config["workspace"])
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        checks.append(("workspace", True, str(workspace)))
+    except OSError as exc:
+        checks.append(("workspace", False, type(exc).__name__))
+
+    try:
+        agent = build_agent(config)
+        names = agent.registry.names()
+        checks.append(("skill_registry", bool(names), f"{len(names)} registered skill(s)"))
+        denied = PermissionGate().request("doctor:probe", "verify default approval policy")
+        checks.append(("approval_default", denied is False, "no approver must deny execution"))
+    except Exception as exc:
+        checks.append(("agent_initialization", False, type(exc).__name__))
+
+    try:
+        provider = create_provider(config)
+        available = provider.is_available()
+        checks.append(("provider", bool(available), f"{config['provider']}: {'available' if available else 'unavailable (check provider/model configuration)'}"))
+    except Exception as exc:
+        checks.append(("provider", False, type(exc).__name__))
+
+    try:
+        store = TaskStore(workspace / "yuki_tasks.sqlite3")
+        store.status_counts()
+        checks.append(("task_store", True, "SQLite task store opened successfully"))
+    except Exception as exc:
+        checks.append(("task_store", False, type(exc).__name__))
+
+    print("Yuki readiness doctor")
+    for name, ok, detail in checks:
+        print(f"[{'PASS' if ok else 'WARN'}] {name}: {detail}")
+    failed = [name for name, ok, _ in checks if not ok]
+    print(f"Result: {len(checks) - len(failed)}/{len(checks)} checks passed.")
+    print("This checks startup prerequisites, not every optional integration or production security property.")
+    return 0 if not failed else 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Yuki local-first guarded personal agent")
+    parser.add_argument("--check-config", action="store_true", help="validate configuration and exit")
+    parser.add_argument("--doctor", action="store_true", help="run bounded local readiness checks and exit")
+    parser.add_argument("--version", action="version", version="Yuki 0.1.0")
+    args = parser.parse_args(argv)
+
     configure_logging()
     logger = logging.getLogger("yuki.runtime")
-    config = load_config()
+    try:
+        config = load_config()
+    except (RuntimeError, OSError) as exc:
+        print(f"Yuki startup blocked: {exc}")
+        return 2
+    if args.check_config:
+        print("Yuki configuration is valid.")
+        print(f"Workspace: {config['workspace']}")
+        print(f"Provider: {config['provider']}")
+        return 0
+    if args.doctor:
+        return _run_doctor(config)
+
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
@@ -658,4 +719,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
