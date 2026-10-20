@@ -11,6 +11,9 @@ from core.skill_dispatch import SkillDispatcher
 from core.skill_manifest import SkillManifest
 from core.sqlite_action_approvals import SQLiteActionApprovalStore
 from core.subprocess_executor import SubprocessExecutor
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from skills import TimeSkill
 
 
 def manifest() -> SkillManifest:
@@ -43,7 +46,7 @@ class Phase43ProductionSandboxGateTests(unittest.TestCase):
             store = SQLiteActionApprovalStore(str(Path(directory) / "approvals.sqlite3"))
             with patch.dict(os.environ, {"YUKI_ENV": "production"}):
                 dispatcher = SkillDispatcher(approval_store=store)
-                with self.assertRaisesRegex(RuntimeError, "OS-sandboxed executor"):
+                with self.assertRaisesRegex(RuntimeError, "verified OS sandbox"):
                     dispatcher.register_subprocess(
                         manifest(), ["python", "-m", "test_skill"],
                         executor=SubprocessExecutor(),
@@ -62,6 +65,17 @@ class Phase43ProductionSandboxGateTests(unittest.TestCase):
                         manifest(), ["python", "-m", "test_skill"],
                         executor=FakeDeclaredSandbox(),
                     )
+
+    def test_production_blocks_legacy_in_process_skill_invocation(self):
+        agent = YukiCoreAgent(
+            skills=[TimeSkill()],
+            permission_gate=PermissionGate(lambda _request: True),
+        )
+        with patch.dict(os.environ, {"YUKI_ENV": "production"}):
+            result = agent.run_skill("time", "")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "blocked")
+        self.assertIn("production skill execution is disabled", result.message.lower())
 
     def test_development_remains_compatible_with_trusted_subprocesses(self):
         with patch.dict(os.environ, {"YUKI_ENV": "development"}):
