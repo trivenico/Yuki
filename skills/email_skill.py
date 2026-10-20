@@ -72,10 +72,7 @@ class GmailReadSkill:
             raise EmailSkillError("Gmail service could not be initialized.")
         try:
             result = (
-                service.users()
-                .messages()
-                .list(userId="me", q=query, maxResults=limit)
-                .execute()
+                service.users().messages().list(userId="me", q=query, maxResults=limit).execute()
             )
             messages = []
             for item in result.get("messages", []):
