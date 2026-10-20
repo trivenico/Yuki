@@ -176,6 +176,20 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(approved.status, "completed_audit_warning")
         self.assertIn("approval.execution_audit_persistence_failed", "\\n".join(captured.output))
 
+    def test_request_audit_failure_does_not_leave_approvable_action(self):
+        class FailingRequestedAudit:
+            def record(self, event, **kwargs):
+                if event == "requested":
+                    raise OSError("audit disk unavailable")
+
+        planner = build()
+        coordinator = ApprovalCoordinator(audit_log=FailingRequestedAudit())
+        with self.assertRaisesRegex(RuntimeError, "no approval was issued"):
+            coordinator.record(
+                planner, planner.run("Write note"), actor="owner", session_id="cli-session"
+            )
+        self.assertEqual(coordinator._pending, {})
+
     def test_approval_audit_failure_before_execution_fails_closed(self):
         class FailingApprovedAudit:
             def record(self, event, **kwargs):
