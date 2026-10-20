@@ -58,7 +58,9 @@ def call_with_retry(
     if (
         not isinstance(retry_on, tuple)
         or not retry_on
-        or any(not isinstance(error, type) or not issubclass(error, Exception) for error in retry_on)
+        or any(
+            not isinstance(error, type) or not issubclass(error, Exception) for error in retry_on
+        )
     ):
         raise ValueError("retry_on must be a non-empty tuple of exception types")
     if not callable(sleep):

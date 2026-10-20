@@ -73,7 +73,9 @@ class ResilienceTests(unittest.TestCase):
 
     def test_failed_recovery_probe_reopens_circuit(self):
         now = [10.0]
-        breaker = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=2, clock=lambda: now[0])
+        breaker = CircuitBreaker(
+            failure_threshold=1, recovery_timeout_seconds=2, clock=lambda: now[0]
+        )
         with self.assertRaises(ConnectionError):
             breaker.call(lambda: (_ for _ in ()).throw(ConnectionError()))
         now[0] += 2
@@ -83,7 +85,9 @@ class ResilienceTests(unittest.TestCase):
 
     def test_only_one_half_open_probe_runs_at_a_time(self):
         now = [0.0]
-        breaker = CircuitBreaker(failure_threshold=1, recovery_timeout_seconds=1, clock=lambda: now[0])
+        breaker = CircuitBreaker(
+            failure_threshold=1, recovery_timeout_seconds=1, clock=lambda: now[0]
+        )
         with self.assertRaises(ConnectionError):
             breaker.call(lambda: (_ for _ in ()).throw(ConnectionError()))
         now[0] = 1.0
