@@ -162,9 +162,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator(audit_log=FailingExecutedAudit())
         with self.assertLogs("yuki.approval", level="ERROR") as captured:
-            pending = coordinator.record(
-                planner, result, actor="owner", session_id="cli-session"
-            )
+            pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
             approved = coordinator.approve(
                 planner,
                 pending.pending_id,
@@ -199,9 +197,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         planner = build()
         result = planner.run("Write note")
         coordinator = ApprovalCoordinator(audit_log=FailingApprovedAudit())
-        pending = coordinator.record(
-            planner, result, actor="owner", session_id="cli-session"
-        )
+        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         executed = []
         original = planner.dispatcher.execute_approved
 
