@@ -1,6 +1,7 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
 from providers import MockProvider
+from core.prompt_guard import scan_untrusted_text
 
 
 class YukiAgent:
@@ -26,10 +27,14 @@ class YukiAgent:
     def ask(self, prompt):
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
+        # Every direct user prompt is screened before provider inference.
+        guard = scan_untrusted_text(prompt)
+        if guard["flagged"]:
+            return "Yuki: The request was stopped by the prompt safety guard."
         try:
             if not self.provider.is_available():
                 return "Yuki: The AI provider is unavailable."
-            result = self.provider.generate(prompt.strip())
+            result = self.provider.generate(prompt.strip()[:20000])
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
             return result
