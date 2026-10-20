@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from typing import Any, Callable, Protocol
+from core.tool_authorization import authorize_tool_call
 
 @dataclass(frozen=True)
 class ToolSpec:
@@ -118,15 +119,28 @@ class ReActEngine:
                 if not _validate_schema(spec.parameters, args):
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": "Blocked: arguments failed schema validation."})
                     continue
-                if spec.risk != "low" or not spec.auto_approve:
-                    try:
-                        allowed = self.approver(spec, json.loads(json.dumps(args, allow_nan=False))) is True if self.approver else False
-                    except Exception:
-                        allowed = False
-                    if not allowed:
-                        messages.append({"role": "tool", "tool_call_id": call["id"], "content": "Blocked: explicit approval was not granted."})
-                        calls_used += 1
-                        continue
+                # Central policy owns the low-risk auto-approval rule and fails closed
+                # for every other action. The callback receives a detached argument object.
+                try:
+                    detached_args = json.loads(json.dumps(args, allow_nan=False))
+                except (TypeError, ValueError):
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": "Blocked: invalid tool arguments."})
+                    calls_used += 1
+                    continue
+                allowed = authorize_tool_call(
+                    spec.name,
+                    spec.risk,
+                    detached_args,
+                    approval_callback=(
+                        (lambda name, risk, approved_args: self.approver(spec, approved_args))
+                        if self.approver is not None else None
+                    ),
+                    auto_approve=spec.auto_approve,
+                )
+                if not allowed:
+                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": "Blocked: explicit approval was not granted."})
+                    calls_used += 1
+                    continue
                 try:
                     result = spec.handler(args)
                     encoded = json.dumps(result, ensure_ascii=False, allow_nan=False, default=lambda _: "[unsupported result]")
