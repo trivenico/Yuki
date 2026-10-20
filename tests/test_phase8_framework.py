@@ -158,6 +158,28 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
+    def test_yaml_config_rejects_wrong_scalar_types(self):
+        from core.config import load_config
+        cases = [
+            "provider: mock\\nvoice_enabled: 'false'\\n",
+            "provider: mock\\nollama_model: 12\\n",
+            "provider: mock\\nname: [unexpected]\\n",
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
+                path=Path(d)/"config.yaml"
+                path.write_text(payload,encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
+    def test_yaml_config_rejects_non_string_keys(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\\ntrue: unexpected\\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
     def test_oversized_runtime_config_fails_closed(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
