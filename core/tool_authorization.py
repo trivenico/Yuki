@@ -41,6 +41,13 @@ def authorize_tool_call(
     if not callable(approval_callback):
         return False
     try:
-        return approval_callback(name, risk, arguments) is True
+        decision = approval_callback(name, risk, arguments)
+        if decision is True:
+            return True
+        # Never leak an un-awaited coroutine/future from a synchronous gate.
+        close = getattr(decision, "close", None)
+        if callable(close):
+            close()
+        return False
     except Exception:
         return False
