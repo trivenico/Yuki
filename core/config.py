@@ -56,15 +56,28 @@ def load_config(path=None):
     try:
         if selected_config_path.stat().st_size > _MAX_CONFIG_BYTES:
             raise RuntimeError("Configuration file exceeds 128 KiB.")
-        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {};
+        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except yaml.YAMLError as exc:
         raise RuntimeError("Configuration YAML is invalid.") from exc
-    if not isinstance(raw, dict): raise RuntimeError("Configuration must be a YAML mapping.")
+    if not isinstance(raw, dict):
+        raise RuntimeError("Configuration must be a YAML mapping.")
+    if any(not isinstance(key, str) for key in raw):
+        raise RuntimeError("Configuration keys must be strings.")
     unknown_keys = set(raw) - _ALLOWED_CONFIG_KEYS
     if unknown_keys:
-        raise RuntimeError("Unknown configuration keys: " + ", ".join(sorted(str(key) for key in unknown_keys)))
+        raise RuntimeError("Unknown configuration keys: " + ", ".join(sorted(unknown_keys)))
+    # Reject invalid YAML scalar types instead of silently coercing them to strings.
+    for key in ("name", "workspace", "provider", "ollama_base_url", "ollama_model",
+                "language_behavior", "voice_style", "spoken_reply_policy", "stt_model",
+                "tts_backend", "piper_model_path", "wakeword_model_path"):
+        if key in raw and not isinstance(raw[key], str):
+            raise RuntimeError(f"{key} must be a string.")
+    for key in ("voice_enabled", "security_lab_enabled", "sandbox_enabled", "gmail_enabled",
+                "firewall_enabled", "firewall_dry_run", "wakeword_enabled", "plugin_discovery_enabled"):
+        if key in raw and not isinstance(raw[key], bool):
+            raise RuntimeError(f"{key} must be true or false.")
     selected_provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower()
     if selected_provider not in _SUPPORTED_PROVIDERS:
         raise RuntimeError("provider must be one of: mock, ollama, hybrid.")
