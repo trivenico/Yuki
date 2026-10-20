@@ -4,6 +4,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 
 from mobile.server import MobileAPIError, build_server, create_handler
@@ -77,6 +78,21 @@ class MobileAPITests(unittest.TestCase):
     def test_token_minimum_length(self):
         with self.assertRaises(MobileAPIError):
             create_handler(token="short", provider=FakeProvider())
+
+    def test_server_refuses_mock_or_cloud_provider(self):
+        with patch("mobile.server.create_provider", return_value=FakeProvider()):
+            with self.assertRaisesRegex(MobileAPIError, "local Ollama"):
+                build_server(
+                    host="127.0.0.1",
+                    port=0,
+                    environ={"YUKI_MOBILE_TOKEN": self.TOKEN},
+                )
+
+    def test_model_inventory_requires_authentication(self):
+        self.assertEqual(self.request("/api/v1/models")[0], 401)
+        status, body = self.request("/api/v1/models", token=self.TOKEN)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["installed_models"], ["test-local-model"])
 
     def test_remote_bind_requires_tls_certificate_configuration(self):
         with self.assertRaises(MobileAPIError):
