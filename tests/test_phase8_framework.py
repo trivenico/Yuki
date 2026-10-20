@@ -424,6 +424,25 @@ class OnboardingTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_onboarding(path=path)
 
+    def test_shared_strict_json_parser_rejects_nested_duplicate_keys(self):
+        from core.config_json import loads_strict
+        with self.assertRaises(ValueError):
+            loads_strict('{"security":{"allow_shell":false,"allow_shell":true}}')
+
+    def test_runtime_json_config_rejects_nested_duplicate_security_keys(self):
+        from core.config import load_config
+        payload = (
+            '{"version":1,"provider":"ollama","model":"test",'
+            '"base_url":"http://127.0.0.1:11434","api_key_env":null,'
+            '"mcp_servers":[],"security":{"allow_shell":false,"allow_shell":true},'
+            '"daemon":{"enabled":false,"poll_seconds":1.0},"messaging":{"enabled":false}}'
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text(payload, encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
 class SkillSynthesisTests(unittest.TestCase):
     def test_hash_bound_low_risk_review_activates_declarative_file(self):
         with tempfile.TemporaryDirectory() as d:
