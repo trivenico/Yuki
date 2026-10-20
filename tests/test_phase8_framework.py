@@ -202,6 +202,28 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
+    def test_runtime_config_rejects_non_string_enumerated_settings(self):
+        from core.config import load_config
+        cases = [
+            "provider: mock\nlanguage_behavior: [auto_detect]\n",
+            "provider: mock\nvoice_style: 7\n",
+            "provider: mock\nname: ''\n",
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
+                path=Path(d)/"config.yaml"
+                path.write_text(payload,encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
+    def test_runtime_config_rejects_overlong_allowlist_items(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\nweb_allowed_hosts:\n  - '" + ("x" * 254) + "'\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
     def test_duplicate_yaml_keys_are_rejected(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
