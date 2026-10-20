@@ -111,6 +111,45 @@ class ResilienceTests(unittest.TestCase):
         self.assertEqual(results, ["ok"])
         self.assertEqual(breaker.state, "closed")
 
+    def test_stale_success_cannot_close_circuit_opened_by_another_call(self):
+        now = [0.0]
+        breaker = CircuitBreaker(
+            failure_threshold=1, recovery_timeout_seconds=10, clock=lambda: now[0]
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        stale_result = []
+
+        def slow_success():
+            entered.set()
+            release.wait(timeout=2)
+            return "stale success"
+
+        worker = threading.Thread(target=lambda: stale_result.append(breaker.call(slow_success)))
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        with self.assertRaises(ConnectionError):
+            breaker.call(lambda: (_ for _ in ()).throw(ConnectionError("failure")))
+        self.assertEqual(breaker.state, "open")
+        release.set()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(stale_result, ["stale success"])
+        self.assertEqual(breaker.state, "open")
+
+    def test_keyboard_interrupt_releases_half_open_probe(self):
+        now = [0.0]
+        breaker = CircuitBreaker(
+            failure_threshold=1, recovery_timeout_seconds=1, clock=lambda: now[0]
+        )
+        with self.assertRaises(ConnectionError):
+            breaker.call(lambda: (_ for _ in ()).throw(ConnectionError()))
+        now[0] = 1.0
+        with self.assertRaises(KeyboardInterrupt):
+            breaker.call(lambda: (_ for _ in ()).throw(KeyboardInterrupt()))
+        self.assertEqual(breaker.call(lambda: "recovered"), "recovered")
+        self.assertEqual(breaker.state, "closed")
+
     def test_circuit_configuration_is_validated(self):
         for kwargs in (
             {"failure_threshold": 0},
