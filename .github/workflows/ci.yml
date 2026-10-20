@@ -54,7 +54,7 @@ jobs:
       - name: Console entry point smoke test
         continue-on-error: true
         id: entrypoint
-        run: printf '' | yuki
+        run: python -c "from importlib.metadata import entry_points; eps = [ep for ep in entry_points(group='console_scripts') if ep.name == 'yuki']; assert any(ep.value == 'main:main' for ep in eps), eps"
       - name: Run unit tests
         continue-on-error: true
         id: unit_tests
