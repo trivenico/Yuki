@@ -94,3 +94,29 @@ jobs:
             fi
           done
           exit "$failed"
+
+  windows-compatibility:
+    name: Windows / Python 3.12 compatibility
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and quality tools
+        run: python -m pip install --upgrade pip; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; python -m pip install -e ".[dev,backup]"
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format
+        run: ruff format --check .
+      - name: Mypy
+        run: mypy core skills knowledge
+      - name: Run tests on Windows
+        run: python -m pytest tests -q
