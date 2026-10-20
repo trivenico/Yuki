@@ -67,8 +67,9 @@ def validate_config(config: Any) -> dict[str, Any]:
     if set(config) - allowed:
         raise ValueError("Unknown configuration keys: " + ", ".join(sorted(set(config) - allowed)))
     _check_no_secret_values(config)
-    if config.get("version", 1) != 1:
-        raise ValueError("Unsupported configuration version")
+    version = config.get("version", 1)
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        raise ValueError("version must be the integer 1")
     provider = config.get("provider", "mock")
     if not isinstance(provider, str) or provider not in PROVIDERS:
         raise ValueError("Unsupported provider")
