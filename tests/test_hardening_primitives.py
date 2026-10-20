@@ -1,9 +1,8 @@
 """Regression tests for small, security-sensitive hardening primitives."""
 
 import json
-import subprocess
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from core.action_approvals import ActionApprovalStore
 from core.capabilities import capability_inventory, capability_inventory_json
