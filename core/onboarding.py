@@ -84,27 +84,49 @@ def validate_config(config: Any) -> dict[str, Any]:
     mcp_servers = config.get("mcp_servers", [])
     if not isinstance(mcp_servers, list) or len(mcp_servers) > 32:
         raise ValueError("mcp_servers must be a list of at most 32 servers")
+    seen_mcp_endpoints: set[str] = set()
     for server in mcp_servers:
         if not isinstance(server, dict) or set(server) - {"endpoint", "enabled", "allowed_tools"}:
             raise ValueError("Each MCP server must contain only endpoint, enabled, and allowed_tools")
-        _validate_endpoint(server.get("endpoint"), allow_loopback_http=False, label="MCP endpoint")
+        endpoint = server.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint.strip():
+            raise ValueError("MCP endpoint is required")
+        _validate_endpoint(endpoint, allow_loopback_http=False, label="MCP endpoint")
+        normalized_endpoint = endpoint.rstrip("/")
+        if normalized_endpoint in seen_mcp_endpoints:
+            raise ValueError("MCP server endpoints must be unique")
+        seen_mcp_endpoints.add(normalized_endpoint)
         if not isinstance(server.get("enabled", False), bool):
             raise ValueError("MCP enabled must be boolean")
         tools = server.get("allowed_tools", [])
-        if not isinstance(tools, list) or len(tools) > 100 or any(not isinstance(x, str) or not x or len(x) > 120 for x in tools):
-            raise ValueError("MCP allowed_tools must be a list of at most 100 tool names")
-    for section in ("security", "daemon", "messaging"):
+        if (not isinstance(tools, list) or len(tools) > 100
+                or any(not isinstance(x, str) or not x.strip() or len(x) > 120 for x in tools)
+                or len(set(tools)) != len(tools)):
+            raise ValueError("MCP allowed_tools must be unique non-empty names (maximum 100)")
+    section_keys = {
+        "security": {"allow_network", "allow_file_write", "allow_shell", "require_approval_for_unknown_tools"},
+        "daemon": {"enabled", "poll_seconds"},
+        "messaging": {"enabled"},
+    }
+    for section, allowed_keys in section_keys.items():
         value = config.get(section, {})
         if not isinstance(value, dict):
             raise ValueError(f"{section} must be an object")
+        unknown = set(value) - allowed_keys
+        if unknown:
+            raise ValueError(f"Unknown {section} keys: " + ", ".join(sorted(unknown)))
     security = config.get("security", {})
-    for key in ("allow_network", "allow_file_write", "allow_shell", "require_approval_for_unknown_tools"):
+    for key in section_keys["security"]:
         if key in security and not isinstance(security[key], bool):
             raise ValueError(f"security.{key} must be boolean")
     daemon = config.get("daemon", {})
     if "enabled" in daemon and not isinstance(daemon["enabled"], bool):
         raise ValueError("daemon.enabled must be boolean")
-    if "poll_seconds" in daemon and (isinstance(daemon["poll_seconds"], bool) or not isinstance(daemon["poll_seconds"], (int, float)) or not 0.1 <= daemon["poll_seconds"] <= 300):
+    if "poll_seconds" in daemon and (
+        isinstance(daemon["poll_seconds"], bool)
+        or not isinstance(daemon["poll_seconds"], (int, float))
+        or not 0.1 <= daemon["poll_seconds"] <= 300
+    ):
         raise ValueError("daemon.poll_seconds must be between 0.1 and 300")
     messaging = config.get("messaging", {})
     if "enabled" in messaging and not isinstance(messaging["enabled"], bool):
