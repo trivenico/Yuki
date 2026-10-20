@@ -185,7 +185,7 @@ def main():
             return (
                 f"Task counts: queued={counts['queued']}, running={counts['running']}, "
                 f"completed={counts['completed']}, failed={counts['failed']}, "
-                f"interrupted={counts['interrupted']}\\n"
+                f"interrupted={counts['interrupted']}\n"
                 f"Workspace: {workspace}\nSkills: {', '.join(agent.registry.names())}\n"
                 f"Voice enabled: {config['voice_enabled']}\nSecurity lab enabled: {config['security_lab_enabled']}\n"
                 f"Firewall enabled: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']})"
