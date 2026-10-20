@@ -98,6 +98,38 @@ class ReactTests(unittest.TestCase):
         result=engine.run("Do it")
         self.assertEqual(result.status,"tool_budget_exhausted")
 
+class AuthorizationBoundaryTests(unittest.TestCase):
+    def test_shared_policy_requires_literal_true_for_risky_tools(self):
+        from core.tool_authorization import authorize_tool_call
+        args = {"path": "report.txt"}
+        self.assertFalse(authorize_tool_call("write", "high", args, approval_callback=None))
+        self.assertFalse(authorize_tool_call("write", "high", args, approval_callback=lambda *_: 1))
+        self.assertTrue(authorize_tool_call("write", "high", args, approval_callback=lambda *_: True))
+        self.assertFalse(authorize_tool_call("write", "critical", args, approval_callback=lambda *_: True, auto_approve=True))
+
+    def test_shared_policy_only_auto_approves_explicit_low_risk(self):
+        from core.tool_authorization import authorize_tool_call
+        self.assertTrue(authorize_tool_call("lookup", "low", {}, approval_callback=None, auto_approve=True))
+        self.assertFalse(authorize_tool_call("lookup", "low", {}, approval_callback=None, auto_approve=False))
+        self.assertFalse(authorize_tool_call("unknown", "mystery", {}, approval_callback=lambda *_: True))
+
+    def test_mcp_requires_approval_and_executes_authorized_argument_snapshot(self):
+        from core.mcp_client import MCPHTTPClient, MCPError
+        client = MCPHTTPClient.__new__(MCPHTTPClient)
+        client.allowed_tools = frozenset({"update_record"})
+        client.MAX_ARGUMENT_BYTES = 64000
+        client.approver = lambda name, args: args.update({"record": "tampered"}) or True
+        sent = []
+        client._rpc = lambda method, params=None, notification=False: sent.append((method, params)) or {"content": []}
+        result = client.call_tool("update_record", {"record": "approved"})
+        self.assertEqual(sent[0][1]["arguments"], {"record": "approved"})
+        self.assertTrue(result["untrusted"])
+        client.approver = None
+        sent.clear()
+        with self.assertRaises(MCPError):
+            client.call_tool("update_record", {"record": "no-approval"})
+        self.assertEqual(sent, [])
+
 class DaemonTests(unittest.TestCase):
     def test_durable_queue_and_registered_handler(self):
         async def scenario(path):
