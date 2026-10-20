@@ -1,4 +1,4 @@
-name: Ruff autofix (maintenance branch only)
+name: Ruff autofix (maintenance branch only; generated changes require clean verification)
 
 on:
   push:
