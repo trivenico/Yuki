@@ -162,6 +162,19 @@ class TaskStore:
             ).fetchall()
         return [record for row in rows if (record := self._record(row)) is not None]
 
+    def status_counts(self) -> dict[str, int]:
+        """Return bounded task counts by lifecycle state for health reporting."""
+        counts = {status: 0 for status in ("queued", "running", "completed", "failed", "interrupted")}
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
+            ).fetchall()
+        for row in rows:
+            status = row["status"]
+            if status in counts:
+                counts[status] = int(row["count"])
+        return counts
+
     def recover_interrupted(self) -> int:
         """Mark unfinished tasks interrupted; never re-run possibly side-effecting work."""
         with self._connect() as connection:
