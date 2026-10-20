@@ -5,6 +5,7 @@
 - Runtime YAML loader rejects incorrect scalar types for string and boolean settings rather than silently coercing them.
 - Removed an unnecessary trailing statement terminator from the loader.
 - Added regression tests for quoted boolean strings, numeric model names, non-string names, and non-string YAML keys.
+- Corrected YAML test fixtures to contain actual line breaks so tests exercise the intended invalid configurations.
 
 ## Scope and caveats
 - This hardens the existing YAML runtime contract; it does not merge it with the separate onboarding JSON contract.
