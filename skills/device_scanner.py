@@ -1,11 +1,20 @@
 """Defensive device posture report from user-provided inventory; no network probing."""
 from skills.base import Skill, SkillResult
+from pathlib import Path
+
 from skills.safe_local import parse_object
 
+
 class DeviceScannerSkill(Skill):
+    def __init__(self, workspace=None):
+        # Registry compatibility only: this skill reviews supplied inventory and
+        # never scans the workspace or probes a connected device.
+        self.workspace = Path(workspace).expanduser().resolve() if workspace is not None else None
+
     name = "device_scanner"
     description = "Review a user-provided device inventory for basic defensive hardening gaps; performs no scanning."
     risk = "medium"
+
     def run(self, argument=""):
         obj = parse_object(argument)
         if not obj or not isinstance(obj.get("device"), str) or not isinstance(obj.get("updates_current"), bool):

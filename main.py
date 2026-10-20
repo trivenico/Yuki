@@ -9,6 +9,7 @@ from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
+from core.hardware import detect_hardware
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
 from core.vector_memory import VectorMemory
@@ -60,6 +61,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /hardware                      Detect host hardware and local runtimes
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -100,6 +102,13 @@ def main():
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
+    try:
+        hardware_info = detect_hardware(workspace=workspace)
+    except Exception as exc:
+        hardware_info = None
+        hardware_error = type(exc).__name__
+    else:
+        hardware_error = None
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
@@ -153,12 +162,55 @@ def main():
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
+            if hardware_info is not None:
+                print(
+                    f"Hardware: {hardware_info.os_name} {hardware_info.architecture}; "
+                    f"CPU cores={hardware_info.cpu_count}; RAM="
+                    f"{hardware_info.ram_available_gb:.2f}/{hardware_info.ram_total_gb:.2f} GiB "
+                    "available/total"
+                )
+                print(
+                    f"GPU: {hardware_info.gpu_name or 'not confirmed'}; local runtimes: "
+                    f"{', '.join(hardware_info.inference_runtimes) or 'none found on PATH'}"
+                )
+            else:
+                print(f"Hardware detection unavailable ({hardware_error}).")
             print(f"Provider: {config['provider']} (configured adapter; availability depends on runtime/model credentials)")
             print(f"Voice: {config['voice_enabled']}; language behavior: {config['language_behavior']}; voice style preference: {config['voice_style']}")
             print(f"Spoken reply policy: {config['spoken_reply_policy']} (end-to-end reply loop not connected)")
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
             print(f"Firewall: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']}); Gmail: {config['gmail_enabled']}")
             print(f"Skills: {', '.join(agent.registry.names())}")
+        elif command == "/hardware":
+            if hardware_info is None:
+                print(f"Yuki > Hardware detection unavailable ({hardware_error}).")
+            else:
+                print(f"OS: {hardware_info.os_name} {hardware_info.os_version}")
+                print(f"Architecture: {hardware_info.architecture}")
+                print(f"CPU: {hardware_info.cpu_brand} ({hardware_info.cpu_count} logical cores)")
+                print(
+                    f"RAM: {hardware_info.ram_available_gb:.2f} GiB available / "
+                    f"{hardware_info.ram_total_gb:.2f} GiB total"
+                )
+                print(f"GPU: {hardware_info.gpu_name or 'not confirmed'}")
+                if hardware_info.gpu_vram_gb is not None:
+                    print(f"GPU memory: {hardware_info.gpu_vram_gb:.2f} GiB")
+                print(
+                    "GPU detection: "
+                    f"{hardware_info.gpu_detection_method or 'no supported detector confirmed a GPU'}"
+                )
+                disk_free = (
+                    f"{hardware_info.disk_free_gb:.2f} GiB"
+                    if hardware_info.disk_free_gb is not None
+                    else "unknown"
+                )
+                print(f"Free disk: {disk_free}")
+                print(
+                    "Local inference runtimes: "
+                    f"{', '.join(hardware_info.inference_runtimes) or 'none found on PATH'}"
+                )
+                for warning in hardware_info.warnings:
+                    print(f"Warning: {warning}")
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
