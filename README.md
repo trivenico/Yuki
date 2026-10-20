@@ -203,3 +203,8 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 ## Android / mobile companion (initial phase)
 
 Yuki includes an initial installable Android-friendly PWA backed by an authenticated API on your computer. The computer continues to run local Ollama; the mobile API is text-only and does not execute skills or approve actions. It refuses to start without an available local Ollama model and requires TLS for non-loopback binding. See [Android/mobile setup and security boundaries](docs/ANDROID_MOBILE.md) before enabling LAN access. This is an initial mobile client, not yet a native Android app or a production-reviewed internet-facing service.
+
+
+## Hardware-aware local model selection
+
+Yuki can inspect the Linux host's CPU, RAM, free disk, and supported NVIDIA GPU metadata, then estimate which installed Ollama model best fits available memory. Run `yuki --hardware` to inspect the profile and recommendation. Selection never downloads models and an explicitly configured model takes precedence. This is a conservative estimate, not a performance guarantee. See [Oracle Cloud Linux deployment guidance](docs/ORACLE_CLOUD_LINUX.md).
