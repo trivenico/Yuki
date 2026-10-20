@@ -100,13 +100,23 @@ _UniqueKeyLoader.add_constructor(
 )
 
 
+def _unique_json_object(pairs):
+    """Reject duplicate JSON keys, including nested objects."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON configuration key: {key}")
+        result[key] = value
+    return result
+
+
 def _load_onboarding_json_config(selected_config_path, body):
     """Bridge the onboarding schema to the runtime schema without silently dropping features."""
     import json
     from core.onboarding import validate_config
 
     try:
-        onboarding = validate_config(json.loads(body.decode("utf-8")))
+        onboarding = validate_config(json.loads(body.decode("utf-8"), object_pairs_hook=_unique_json_object))
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError("Onboarding JSON configuration is invalid.") from exc
 
