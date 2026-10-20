@@ -231,6 +231,32 @@ class DurableTaskStoreTests(unittest.TestCase):
         TaskStore(self.store.path)
         self.assertEqual(stat.S_IMODE(self.store.path.stat().st_mode), 0o600)
 
+    def test_status_counts_report_empty_and_populated_lifecycle(self):
+        self.assertEqual(
+            self.store.status_counts(),
+            {
+                "queued": 0,
+                "running": 0,
+                "completed": 0,
+                "failed": 0,
+                "interrupted": 0,
+            },
+        )
+        queued = self.store.create("queued")
+        running = self.store.create("running")
+        self.store.transition(running["task_id"], "running")
+        done = self.store.create("completed")
+        self.store.transition(done["task_id"], "running")
+        self.store.transition(done["task_id"], "completed")
+        failed = self.store.create("failed")
+        self.store.transition(failed["task_id"], "failed")
+        counts = self.store.status_counts()
+        self.assertEqual(counts["queued"], 1)
+        self.assertEqual(counts["running"], 1)
+        self.assertEqual(counts["completed"], 1)
+        self.assertEqual(counts["failed"], 1)
+        self.assertEqual(counts["interrupted"], 0)
+
     def test_list_bounds_are_enforced(self):
         for limit in (0, 501, True, 1.5):
             with self.subTest(limit=limit), self.assertRaises(ValueError):
