@@ -215,6 +215,23 @@ class DurableTaskStoreTests(unittest.TestCase):
             runner.run("crash", crash)
         self.assertEqual(self.store.list_tasks()[0]["status"], "interrupted")
 
+
+    def test_task_database_permissions_are_owner_only_on_posix(self):
+        import os
+        import stat
+
+        if os.name != "posix":
+            self.skipTest("POSIX file permissions are not supported on this platform")
+        mode = stat.S_IMODE(self.store.path.stat().st_mode)
+        self.assertEqual(mode, 0o600)
+
+        # Reopening an existing ledger must also repair permissive modes.
+        os.chmod(self.store.path, 0o644)
+        from core.task_store import TaskStore
+
+        TaskStore(self.store.path)
+        self.assertEqual(stat.S_IMODE(self.store.path.stat().st_mode), 0o600)
+
     def test_list_bounds_are_enforced(self):
         for limit in (0, 501, True, 1.5):
             with self.subTest(limit=limit), self.assertRaises(ValueError):
