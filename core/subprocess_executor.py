@@ -128,7 +128,19 @@ class SubprocessExecutor:
                     break
                 time.sleep(min(0.01, remaining))
         finally:
-            if process.poll() is None:
+            abnormal = timed_out or overflow.is_set()
+            if abnormal:
+                self._terminate(process)
+                # The direct worker may exit on SIGTERM while a descendant ignores
+                # it and keeps inherited pipes open. Kill the POSIX process group
+                # after a short grace period, even if the group leader has exited.
+                try:
+                    process.wait(timeout=0.25)
+                except subprocess.TimeoutExpired:
+                    pass
+                if os.name == "posix":
+                    self._kill_process_group(process)
+            elif process.poll() is None:
                 self._terminate(process)
             try:
                 process.wait(timeout=1)
@@ -164,6 +176,16 @@ class SubprocessExecutor:
                 os.killpg(process.pid, signal.SIGTERM)
             else:
                 process.terminate()
+        except ProcessLookupError:
+            pass
+
+    @staticmethod
+    def _kill_process_group(process: subprocess.Popen) -> None:
+        if os.name != "posix":
+            SubprocessExecutor._kill(process)
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
 
