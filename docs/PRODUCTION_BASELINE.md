@@ -115,3 +115,19 @@ Added `tests/test_provider_security.py` to cover:
 The tests do not call external services. They are committed but not yet confirmed passing in CI. They complement the unit tests for same-host and cross-host redirect handler behavior; they do not establish complete SSRF protection, DNS-rebinding resistance, or a network-level egress firewall.
 
 Latest commit observed: `d533fd0d16ef43e1a39b9888f9132f76a9ecb463`. CI, Security, and Yuki tests workflows were queued when checked; no passing result is claimed.
+
+### CI failure triage and corrective commits — 2026-10-20
+
+Inspected the workflow results for commit `d533fd0d16ef43e1a39b9888f9132f76a9ecb463`:
+
+- Unit tests: **failed** (179 tests run, 1 failure, 2 errors, 5 skipped). The three provider tests were patching `urllib.request.urlopen`, but production code now calls `open_provider_request`; therefore their mocks no longer intercepted the requests. The tests were updated to patch the actual transport seam.
+- Security: Bandit and Gitleaks passed. `pip-audit` failed because the installed optional backup dependency resolved to `cryptography 46.0.7`, which had four advisories in that run, and because the local editable project was not a PyPI project. The backup extra's cryptography floor was raised to `50.0.0` (the highest minimum fix version reported), and the audit command now uses `--skip-editable` so it audits third-party distributions rather than the local project.
+- Quality CI: Ruff still fails with 231 findings; formatting, mypy, entrypoint smoke test, and CI's unit-test step were skipped. The current workflow logs include extensive E701/E702 style violations and unused imports. These are not waived.
+
+Corrective commits:
+- `a334bb2eef9b2787f2942d07cc64a4aff32a8e34`: adjust provider unit-test mocks to use the new HTTP helper.
+- `135627911cbccd5d8cb1b158e20934a212e23d52`: finish switching provider tests to patch the transport seam.
+- `4d5f5744624ebed5ef2bca3541f9ac3621dd62bf`: raise cryptography version floor for the optional backup extra.
+- `02badf911fb87da3a890aa8db6cfa7965cc51fb3`: skip the editable local project in pip-audit.
+
+**Verification status:** these corrective commits have not yet been confirmed by a fresh passing CI/security run. Do not treat the version-floor change or mock correction as verified until the workflows run successfully.
