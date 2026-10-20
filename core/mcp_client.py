@@ -12,6 +12,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from core.prompt_guard import scan_untrusted_text
+from core.tool_authorization import authorize_tool_call
 
 
 class MCPError(RuntimeError):
@@ -196,23 +197,28 @@ class MCPHTTPClient:
         if not isinstance(arguments, dict):
             raise MCPError("MCP tool arguments must be an object.")
         try:
-            encoded_arguments = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError) as exc:
-            raise MCPError("MCP tool arguments must be JSON-serializable.") from exc
+            encoded_arguments = json.dumps(arguments, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            # Detach from caller-owned nested objects before asking for approval. The exact
+            # canonical payload authorized below is the payload sent to the MCP server.
+            canonical_arguments = json.loads(encoded_arguments.decode("utf-8"))
+        except (TypeError, ValueError, UnicodeDecodeError) as exc:
+            raise MCPError("MCP tool arguments must be finite, JSON-serializable data.") from exc
         if len(encoded_arguments) > self.MAX_ARGUMENT_BYTES:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
-        if self.approver is None:
+        approved = authorize_tool_call(
+            name,
+            "high",  # MCP tools can have external side effects; require explicit approval.
+            canonical_arguments,
+            approval_callback=(
+                (lambda tool_name, _risk, approved_args:
+                    self.approver(tool_name, json.loads(json.dumps(approved_args, ensure_ascii=False, allow_nan=False))))
+                if self.approver is not None else None
+            ),
+            auto_approve=False,
+        )
+        if not approved:
             raise MCPError("MCP tool call was not explicitly approved.")
-        try:
-            approved = self.approver(name, arguments)
-        except Exception as exc:
-            raise MCPError("MCP approval check failed closed.") from exc
-        # This client is intentionally synchronous; coroutine/future callbacks are never truthy approvals.
-        if approved is not True:
-            if hasattr(approved, "close") and callable(approved.close):
-                approved.close()
-            raise MCPError("MCP tool call was not explicitly approved.")
-        result = self._rpc("tools/call", {"name": name, "arguments": arguments})
+        result = self._rpc("tools/call", {"name": name, "arguments": canonical_arguments})
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
