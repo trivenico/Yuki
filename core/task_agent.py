@@ -70,6 +70,12 @@ class ApprovedTaskAgent:
             if not isinstance(raw, str) or len(raw) > 12000:
                 return TaskResult(False, "AI provider returned an invalid or oversized plan.",
                                   step_number, "invalid_model_output")
+            # Model output is another untrusted input boundary. This is a
+            # conservative heuristic block; schema validation remains mandatory.
+            output_guard = scan_untrusted_text(raw, max_chars=12000)
+            if output_guard["flagged"]:
+                return TaskResult(False, "AI output stopped by Yuki's prompt safety guard.",
+                                  step_number, "prompt_guard")
             try:
                 proposal = json.loads(raw)
             except json.JSONDecodeError:
