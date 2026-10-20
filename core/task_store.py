@@ -8,6 +8,7 @@ before the process stopped.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -58,6 +59,14 @@ class TaskStore:
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=self.busy_timeout_ms / 1000)
+        # Task goals/results can contain private user data. Restrict the database
+        # file to the current user on POSIX, including databases created earlier.
+        if os.name == "posix":
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError:
+                connection.close()
+                raise
         connection.row_factory = sqlite3.Row
         connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
         connection.execute("PRAGMA journal_mode = WAL")
