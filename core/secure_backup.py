@@ -54,9 +54,12 @@ def create_encrypted_backup(sources, output_path, key: bytes, *, max_bytes=DEFAU
     aes = _aesgcm(key)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
         raise BackupError("max_bytes must be a positive integer.")
-    source_paths = [Path(item).expanduser().resolve(strict=True) for item in sources]
-    if not source_paths:
+    raw_sources = [Path(item).expanduser() for item in sources]
+    if not raw_sources:
         raise BackupError("At least one backup source is required.")
+    if any(path.is_symlink() for path in raw_sources):
+        raise BackupError("Symlinks are not allowed as backup sources.")
+    source_paths = [path.resolve(strict=True) for path in raw_sources]
 
     payload = io.BytesIO()
     seen = set()
@@ -119,9 +122,17 @@ def create_encrypted_backup(sources, output_path, key: bytes, *, max_bytes=DEFAU
 def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=DEFAULT_MAX_BYTES):
     """Decrypt and safely restore into an empty destination directory."""
     aes = _aesgcm(key)
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise BackupError("max_bytes must be a positive integer.")
     source = Path(backup_path).expanduser()
-    encrypted = source.read_bytes()
     header_len = len(MAGIC) + NONCE_BYTES
+    try:
+        encrypted_size = source.stat().st_size
+    except OSError as exc:
+        raise BackupError("Backup file cannot be read.") from exc
+    if encrypted_size > max_bytes + 2 * 1024 * 1024:
+        raise BackupError("Encrypted backup exceeds the configured size limit.")
+    encrypted = source.read_bytes()
     if len(encrypted) < header_len + 16 or not encrypted.startswith(MAGIC):
         raise BackupError("Backup format is invalid.")
     if len(encrypted) > max_bytes + 2 * 1024 * 1024:
@@ -135,6 +146,8 @@ def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=
         raise BackupError("Decrypted archive exceeds the configured size limit.")
 
     target = Path(destination).expanduser().absolute()
+    if target.is_symlink():
+        raise BackupError("Restore destination cannot be a symlink.")
     target.mkdir(parents=True, exist_ok=True)
     if any(target.iterdir()):
         raise BackupError("Restore destination must be empty.")
@@ -144,6 +157,8 @@ def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=
             members = archive.getmembers()
             total = 0
             validated = []
+            names = set()
+            file_names = set()
             for member in members:
                 rel = _safe_relative(member.name)
                 if not (member.isdir() or member.isfile()) or member.issym() or member.islnk():
@@ -151,6 +166,16 @@ def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=
                 total += member.size if member.isfile() else 0
                 if total > max_bytes:
                     raise BackupError("Restored data exceeds the configured size limit.")
+                name = rel.as_posix()
+                if name in names:
+                    raise BackupError("Archive contains duplicate paths.")
+                if any(parent in file_names for parent in rel.parents if str(parent) != "."):
+                    raise BackupError("Archive file is used as a parent directory.")
+                names.add(name)
+                if member.isfile():
+                    if any(name.startswith(existing + "/") for existing in file_names):
+                        raise BackupError("Archive contains colliding paths.")
+                    file_names.add(name)
                 out = target.joinpath(*rel.parts)
                 if out != target and target not in out.parents:
                     raise BackupError("Archive path escapes restore destination.")
