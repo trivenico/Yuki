@@ -102,17 +102,20 @@ class HardwareDetectionTests(unittest.TestCase):
         ]
         self.assertEqual(recommend_installed_model(models, self.hardware), "medium:latest")
 
-    def test_unknown_sizes_use_stable_alphabetical_choice(self):
-        self.assertEqual(
-            recommend_installed_model([{"name": "zeta"}, {"name": "alpha"}], self.hardware),
-            "alpha",
+    def test_unknown_model_sizes_are_not_claimed_as_safe_fits(self):
+        self.assertIsNone(
+            recommend_installed_model([{"name": "zeta"}, {"name": "alpha"}], self.hardware)
         )
+
+    def test_returns_no_recommendation_when_every_model_exceeds_memory_budget(self):
+        models = [{"name": "large:latest", "size": 40 * 1024**3}]
+        self.assertIsNone(recommend_installed_model(models, self.hardware))
 
     def test_returns_none_for_empty_or_invalid_inventory(self):
         self.assertIsNone(recommend_installed_model([], self.hardware))
         self.assertIsNone(recommend_installed_model([{"name": ""}], self.hardware))
 
-    def test_unknown_memory_uses_deterministic_fallback(self):
+    def test_unknown_memory_fails_closed_without_a_recommendation(self):
         unknown = HardwareInfo(
             os_name="linux",
             os_version="unknown",
@@ -129,9 +132,8 @@ class HardwareDetectionTests(unittest.TestCase):
             inference_runtimes=(),
             warnings=(),
         )
-        self.assertEqual(
-            recommend_installed_model([{"name": "zeta"}, {"name": "alpha"}], unknown),
-            "alpha",
+        self.assertIsNone(
+            recommend_installed_model([{"name": "zeta"}, {"name": "alpha"}], unknown)
         )
 
 

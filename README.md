@@ -111,7 +111,7 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 
 ## Runtime commands
 
-- `/help`, `/status`, `/skills`, `/skill NAME [ARG]`
+- `/help`, `/status`, `/hardware`, `/skills`, `/skill NAME [ARG]`
 - `/plan GOAL` — proposal only, no automatic execution
 - `/memory add TEXT`, `/memory list`, `/memory search QUERY`, `/memory delete ID`, `/memory clear`
 - `/knowledge index RELATIVE_PATH`

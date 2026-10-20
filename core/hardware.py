@@ -292,8 +292,8 @@ def recommend_installed_model(models: list[dict], hardware: HardwareInfo) -> str
         return None
 
     available = hardware.ram_available_gb
-    if available <= 0:
-        return sorted((item["name"].strip() for item in valid), key=str.casefold)[0]
+    if available <= 0 or hardware.ram_total_gb <= 0:
+        return None
 
     reserve_gb = max(2.0, hardware.ram_total_gb * 0.15)
     budget_gb = max(0.0, available - reserve_gb)
@@ -311,19 +311,6 @@ def recommend_installed_model(models: list[dict], hardware: HardwareInfo) -> str
 
     if sized:
         return max(sized, key=lambda pair: (pair[0], pair[1].casefold()))[1]
-    if unsized:
-        return sorted(unsized, key=str.casefold)[0]
-
-    smallest = min(
-        (
-            item for item in valid
-            if isinstance(item.get("size"), (int, float))
-            and not isinstance(item.get("size"), bool)
-            and item["size"] > 0
-        ),
-        key=lambda item: item["size"],
-        default=None,
-    )
-    if smallest:
-        return str(smallest["name"]).strip()
-    return sorted((item["name"].strip() for item in valid), key=str.casefold)[0]
+    # Missing size metadata or no model within the estimated budget is not enough
+    # evidence to claim that any installed model is a safe fit.
+    return None
