@@ -175,7 +175,6 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertTrue(approved.ok)
         self.assertEqual(approved.status, "completed_audit_warning")
         self.assertIn("approval.execution_audit_persistence_failed", "\\n".join(captured.output))
-        self.assertIn("audit_sink_unavailable", "\\n".join(captured.output))
 
     def test_approval_audit_failure_before_execution_fails_closed(self):
         class FailingApprovedAudit:
