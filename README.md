@@ -21,6 +21,14 @@ A controlled plugin loader is available in `core/plugin_loader.py`. Plugin disco
 
 A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(self, argument="")`, and provide a unique simple `name`, `description`, and safe input validation. The loader imports the module and instantiates the class with no arguments. Plugin imports execute Python with Yuki's permissions: this is **not a sandbox**. Never trust downloaded or user-supplied plugin code without reviewing it. Duplicate skill names are skipped; discovery failures do not crash core startup.
 
+## Safe skill discovery and self-evolution boundary
+
+`core/skill_discovery.py` provides a non-executing candidate scanner. It reads skill files as bounded bytes, checks filenames and path/symlink constraints, computes SHA-256 fingerprints, and reports changed files under `pending_review`. It does **not** import a candidate, execute its code, install it, or hot-reload it. This is intentional: Python module import can run arbitrary code with the current user's permissions.
+
+A safe self-evolution pipeline should be implemented as separate stages: draft proposal → static checks → isolated tests with no secrets/network by default → human review of the diff and requested capabilities → explicit approval → trusted activation → rollback/audit. The scanner is only the discovery stage; it does not yet implement the entire pipeline, a 10-second watcher, automatic skill curation, A/B prompt testing, or nightly evolution.
+
+The product brief's `BaseSkill.execute(args, agent_context)` example does not match the repository's current `skills.base.Skill.run(argument)` interface. New skills must target the actual interface and registry until a deliberate, tested migration is made. Do not drop untrusted Python files into the live skill package and enable wildcard trust as a substitute for isolation.
+
 ## Ruflo-inspired capability infrastructure
 
 - `skills/discovery.py` is a discovery prototype that scans skill modules and reports import failures. It is **not wired into the default registry** because importing arbitrary Python executes it with Yuki's permissions; a reviewed plugin trust policy is required first.
