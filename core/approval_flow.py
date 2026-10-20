@@ -2,8 +2,13 @@
 
 import hashlib
 import json
+import logging
 import secrets
 from dataclasses import dataclass
+
+from core.observability import log_event
+
+_LOGGER = logging.getLogger("yuki.approval")
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,17 @@ class ApprovalCoordinator:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
     def _audit(self, event, pending_id, action, actor, session_id):
+        # Structured logs contain only a one-way pending-ID digest and stable
+        # metadata. Never serialize actor/session identifiers or tool arguments.
+        log_event(
+            _LOGGER,
+            logging.INFO,
+            f"approval.{event}",
+            component="approval_flow",
+            task_id=hashlib.sha256(str(pending_id).encode("utf-8")).hexdigest()[:16],
+            status=event,
+            reason_code=str(action.get("skill_id", "unknown"))[:80],
+        )
         if self.audit_log is not None:
             self.audit_log.record(
                 event,
