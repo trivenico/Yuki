@@ -91,6 +91,19 @@ def _react_skill_handler(agent, skill_name, args):
     return {"ok": result.ok, "status": result.stage, "message": result.message[:2000]}
 
 
+def _confirm_manifest_invocation(review):
+    """Review a manifest skill's exact arguments and digest; never display approval id."""
+    print("\\nManifest skill permission request")
+    print(f"  Skill: {review['skill_id']}\\n  Risk: {review['risk']}")
+    print(f"  Arguments: {review['arguments']!r}")
+    print(f"  Payload SHA-256: {review['payload_sha256']}")
+    print(f"  Expires at: {review['expires_at']}")
+    try:
+        return input("Approve this exact manifest action? [y/N] ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
 def print_help():
     print("""Yuki guarded core
   /help                          Show commands
@@ -248,6 +261,23 @@ def main():
                 print("Yuki > " + answer)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
+        elif command.startswith("/invoke "):
+            payload = command[len("/invoke "):].strip()
+            try:
+                skill_id, raw_arguments = payload.split(maxsplit=1)
+                import json
+                arguments = json.loads(raw_arguments)
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments must be a JSON object")
+            except (ValueError, json.JSONDecodeError):
+                print('Yuki > Use /invoke SKILL_ID {"key":"value"}')
+                continue
+            result = agent.invoke_manifest_skill(
+                skill_id, arguments, confirm=_confirm_manifest_invocation
+            )
+            print(f"Yuki > {result.message} [status={result.stage}]")
+            if result.ok and result.data is not None:
+                print(result.data)
         elif command.startswith("/skill "):
             parts = command.split(maxsplit=2)
             name, argument = parts[1], parts[2] if len(parts) > 2 else ""
