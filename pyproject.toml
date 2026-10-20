@@ -45,7 +45,7 @@ dev = [
 ]
 
 [project.scripts]
-yuki = "main:main"
+yuki = "main:main"\nyuki-mobile = "mobile.server:main"
 
 [tool.setuptools]
 py-modules = ["main", "yuki_agent"]
@@ -61,7 +61,7 @@ include = [
   "defense*",
   "hackback*",
   "providers*",
-  "ui*",
+  "ui*",\n  "mobile*",
 ]
 exclude = ["tests*"]
 
