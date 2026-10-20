@@ -160,8 +160,8 @@ def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=
             members = archive.getmembers()
             total = 0
             validated = []
-            names = set()
-            file_names = set()
+            names: set[str] = set()
+            file_names: set[str] = set()
             for member in members:
                 rel = _safe_relative(member.name)
                 if not (member.isdir() or member.isfile()) or member.issym() or member.islnk():
