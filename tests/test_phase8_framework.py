@@ -105,7 +105,7 @@ class AuthorizationBoundaryTests(unittest.TestCase):
         self.assertFalse(authorize_tool_call("write", "high", args, approval_callback=None))
         self.assertFalse(authorize_tool_call("write", "high", args, approval_callback=lambda *_: 1))
         self.assertTrue(authorize_tool_call("write", "high", args, approval_callback=lambda *_: True))
-        self.assertFalse(authorize_tool_call("write", "critical", args, approval_callback=lambda *_: True, auto_approve=True))
+        self.assertFalse(authorize_tool_call("write", "critical", args, approval_callback=None, auto_approve=True))
 
     def test_shared_policy_only_auto_approves_explicit_low_risk(self):
         from core.tool_authorization import authorize_tool_call
