@@ -91,3 +91,15 @@ The README is comparatively candid and says the project is not production-ready.
 3. Review Gitleaks findings across full history and rotate exposed credentials before considering history rewriting.
 4. Review security workflow results and remediate findings rather than disabling checks to obtain a green build.
 5. Keep the repository's public capability claims aligned with the default mock provider and the verified runtime path.
+
+### Security workflow triage — 2026-10-20
+
+The first security workflow run completed with these outcomes: Gitleaks secret-history scan passed; `pip-audit` passed for installed runtime dependencies; Bandit failed on four medium-severity findings (three uses of `urllib.request.urlopen` in provider adapters and the sandbox's container-only `/tmp` tmpfs).
+
+Remediation committed on the hardening branch:
+- Added `providers/http_client.py` with a redirect-rejecting HTTP opener so model-provider requests cannot follow redirects that could move prompts or bearer authorization headers to a different endpoint.
+- Routed Ollama and OpenAI-compatible adapter requests through the helper.
+- Documented the Bandit B108 exception on the Docker container's ephemeral `/tmp` tmpfs mount; it is inside the container and uses `noexec,nosuid`.
+- Added unit tests for rejecting both cross-host and same-host redirects.
+
+**Not yet verified:** the post-fix CI/security workflow results. The prior CI run still fails at Ruff before format, mypy, entry-point smoke test, or unit tests execute. Gitleaks passing means that scan found no findings in that run; it does not prove all secrets are absent or that private data never entered history.
