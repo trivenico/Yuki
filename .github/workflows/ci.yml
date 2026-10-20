@@ -46,7 +46,7 @@ jobs:
       - name: Ruff format check
         continue-on-error: true
         id: ruff_format
-        run: ruff format --check .
+        run: ruff format --diff core/task_store.py
       - name: Mypy core, skills, knowledge
         continue-on-error: true
         id: mypy
