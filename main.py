@@ -231,7 +231,7 @@ def main():
             try:
                 task_id, result = task_runner.run(goal, task_agent.run)
             except KeyboardInterrupt:
-                print("\nYuki > Shutdown requested. Task marked interrupted; it will not be replayed.")
+                print("\nYuki > Shutdown requested. Task will not be replayed; check /tasks for its final status.")
                 return
             except Exception as exc:
                 print(f"Yuki > Task failed safely ({type(exc).__name__}).")
