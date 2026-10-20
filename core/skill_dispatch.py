@@ -38,6 +38,14 @@ class SkillDispatcher:
             raise TypeError("A validated manifest and SubprocessExecutor are required.")
         if manifest.skill_id in self._registered:
             raise ValueError("Skill is already registered.")
+        # SubprocessExecutor only limits process lifetime and I/O; it does not
+        # restrict OS privileges. Production must refuse registration unless the
+        # selected backend explicitly attests to enforced OS-level isolation.
+        if os.environ.get("YUKI_ENV", "development").strip().lower() == "production" and getattr(executor, "sandbox_enforced", False) is not True:
+            raise RuntimeError(
+                "Production skill registration requires an OS-sandboxed executor; "
+                "plain subprocess execution is not a security boundary."
+            )
         if not isinstance(command, (list, tuple)) or not command or any(not isinstance(p, str) or not p for p in command):
             raise ValueError("Command must be a non-empty argument list.")
         self._registered[manifest.skill_id] = (manifest, tuple(command), executor)
