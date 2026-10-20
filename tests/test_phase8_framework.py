@@ -146,7 +146,7 @@ class RuntimeConfigTests(unittest.TestCase):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"config.yaml"
-            path.write_text("provider: mock\\nunknown_security_override: true\\n",encoding="utf-8")
+            path.write_text("provider: mock\nunknown_security_override: true\n",encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
@@ -154,16 +154,16 @@ class RuntimeConfigTests(unittest.TestCase):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"config.yaml"
-            path.write_text("provider: arbitrary_cloud\\n",encoding="utf-8")
+            path.write_text("provider: arbitrary_cloud\n",encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
     def test_yaml_config_rejects_wrong_scalar_types(self):
         from core.config import load_config
         cases = [
-            "provider: mock\\nvoice_enabled: 'false'\\n",
-            "provider: mock\\nollama_model: 12\\n",
-            "provider: mock\\nname: [unexpected]\\n",
+            "provider: mock\nvoice_enabled: 'false'\n",
+            "provider: mock\nollama_model: 12\n",
+            "provider: mock\nname: [unexpected]\n",
         ]
         for payload in cases:
             with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
@@ -176,7 +176,7 @@ class RuntimeConfigTests(unittest.TestCase):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/"config.yaml"
-            path.write_text("provider: mock\\ntrue: unexpected\\n",encoding="utf-8")
+            path.write_text("provider: mock\ntrue: unexpected\n",encoding="utf-8")
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
