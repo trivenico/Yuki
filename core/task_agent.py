@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 
 from core.prompt_guard import scan_untrusted_text
+from core.resilience import CircuitBreaker
 
 
 @dataclass(frozen=True)
@@ -24,7 +25,7 @@ class TaskResult:
 class ApprovedTaskAgent:
     """Run at most a few approved registered-skill calls for a single user goal."""
 
-    def __init__(self, provider, skill_agent, *, max_steps=3):
+    def __init__(self, provider, skill_agent, *, max_steps=3, provider_breaker=None):
         if not callable(getattr(provider, "generate", None)):
             raise TypeError("Provider must implement generate().")
         if not callable(getattr(skill_agent, "run_skill", None)) or not callable(
@@ -36,6 +37,7 @@ class ApprovedTaskAgent:
         self.provider = provider
         self.skill_agent = skill_agent
         self.max_steps = max_steps
+        self.provider_breaker = provider_breaker or CircuitBreaker()
 
     def run(self, goal):
         if not isinstance(goal, str) or not goal.strip():
@@ -65,7 +67,7 @@ class ApprovedTaskAgent:
                 f"Action budget remaining: {self.max_steps - step_number + 1}"
             )
             try:
-                raw = self.provider.generate(prompt)
+                raw = self.provider_breaker.call(self.provider.generate, prompt)
             except Exception as exc:
                 return TaskResult(
                     False,
