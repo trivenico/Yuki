@@ -164,7 +164,9 @@ class TaskStore:
 
     def status_counts(self) -> dict[str, int]:
         """Return bounded task counts by lifecycle state for health reporting."""
-        counts = {status: 0 for status in ("queued", "running", "completed", "failed", "interrupted")}
+        counts = {
+            status: 0 for status in ("queued", "running", "completed", "failed", "interrupted")
+        }
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"
