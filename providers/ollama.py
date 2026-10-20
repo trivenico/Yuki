@@ -40,8 +40,8 @@ class OllamaProvider:
             or parsed.fragment
         ):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
-        if not isinstance(model, str) or not model.strip() or len(model) > 120:
-            raise ValueError("Configure a valid Ollama model name.")
+        if not isinstance(model, str) or len(model.strip()) > 120:
+            raise ValueError("Ollama model name must be text no longer than 120 characters.")
         if (
             isinstance(timeout, bool)
             or not isinstance(timeout, (int, float))
@@ -52,8 +52,8 @@ class OllamaProvider:
         self.model = model.strip()
         self.timeout = timeout
 
-    def is_available(self):
-        """Return true only when the local server responds and the model is installed."""
+    def list_models(self):
+        """Return installed Ollama model names; never install or download models."""
         request = urllib.request.Request(
             self.base_url + "/api/tags",
             headers={"Accept": "application/json"},
@@ -73,17 +73,41 @@ class OllamaProvider:
         models = body.get("models") if isinstance(body, dict) else None
         if not isinstance(models, list):
             return False
+        names = []
         for item in models:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str):
                 continue
-            installed = item["name"]
-            if installed == self.model or installed.startswith(self.model + ":"):
-                return True
-        return False
+            name = item["name"].strip()
+            if name and len(name) <= 120 and name not in names:
+                names.append(name)
+        return sorted(names, key=str.casefold)
+
+    def _select_installed_model(self):
+        """Use configured model when installed; otherwise choose a deterministic local model."""
+        models = self.list_models()
+        if self.model:
+            for installed in models:
+                if installed == self.model or installed.startswith(self.model + ":"):
+                    self.model = installed
+                    return installed
+            return None
+        if not models:
+            return None
+        self.model = models[0]
+        return self.model
+
+    def is_available(self):
+        """Return true when Ollama responds and an installed model can be selected."""
+        return self._select_installed_model() is not None
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
+        if not self._select_installed_model():
+            raise RuntimeError(
+                "No installed Ollama model was found. Start Ollama and pull a model, "
+                "or configure ollama_model explicitly."
+            )
         payload = json.dumps(
             {
                 "model": self.model,
