@@ -122,7 +122,10 @@ class ReActEngine:
                 # Central policy owns the low-risk auto-approval rule and fails closed
                 # for every other action. The callback receives a detached argument object.
                 try:
-                    detached_args = json.loads(json.dumps(args, allow_nan=False))
+                    # Canonicalize once. Approval receives a separate copy, while execution
+                    # later receives a fresh parse of the exact approved JSON snapshot.
+                    approved_snapshot = json.dumps(args, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+                    approval_args = json.loads(approved_snapshot)
                 except (TypeError, ValueError):
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": "Blocked: invalid tool arguments."})
                     calls_used += 1
@@ -130,7 +133,7 @@ class ReActEngine:
                 allowed = authorize_tool_call(
                     spec.name,
                     spec.risk,
-                    detached_args,
+                    approval_args,
                     approval_callback=(
                         (lambda name, risk, approved_args: self.approver(spec, approved_args))
                         if self.approver is not None else None
@@ -142,7 +145,7 @@ class ReActEngine:
                     calls_used += 1
                     continue
                 try:
-                    result = spec.handler(args)
+                    result = spec.handler(json.loads(approved_snapshot))
                     encoded = json.dumps(result, ensure_ascii=False, allow_nan=False, default=lambda _: "[unsupported result]")
                     observation = encoded[:self.max_observation_chars]
                 except Exception:
