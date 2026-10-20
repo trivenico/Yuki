@@ -19,7 +19,7 @@ def create_provider(config=None, *, environ=None):
     env = os.environ if environ is None else environ
     selected = str(cfg.get("provider", "mock")).strip().lower()
     if selected not in {"mock", "ollama", "hybrid"}:
-        raise AssertionError("validated provider selection became unreachable.")
+        raise ValueError("provider must be one of: mock, ollama, hybrid.")
     if selected == "mock":
         return MockProvider()
     local = OllamaProvider(
