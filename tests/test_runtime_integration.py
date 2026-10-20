@@ -15,6 +15,28 @@ from skills.registry import SkillRegistry
 
 
 class RuntimeIntegrationTests(unittest.TestCase):
+
+    def test_cli_config_check_and_doctor(self):
+        from main import main
+
+        with patch("builtins.print") as output:
+            self.assertEqual(main(["--check-config"]), 0)
+            self.assertEqual(main(["--doctor"]), 0)
+        rendered = "\\n".join(
+            " ".join(str(value) for value in call.args) for call in output.call_args_list
+        )
+        self.assertIn("configuration is valid", rendered)
+        self.assertIn("approval_default", rendered)
+        self.assertIn("task_store", rendered)
+
+    def test_cli_rejects_unknown_arguments(self):
+        from main import main
+
+        with patch("sys.stderr"):
+            with self.assertRaises(SystemExit) as raised:
+                main(["--not-a-real-option"])
+        self.assertEqual(raised.exception.code, 2)
+
     def test_config_loads_safe_defaults(self):
         config = load_config()
         self.assertEqual(config["name"], "Yuki")
