@@ -198,3 +198,8 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+## Android / mobile companion (initial phase)
+
+Yuki includes an initial installable Android-friendly PWA backed by an authenticated API on your computer. The computer continues to run local Ollama; the mobile API is text-only and does not execute skills or approve actions. It refuses to start without an available local Ollama model and requires TLS for non-loopback binding. See [Android/mobile setup and security boundaries](docs/ANDROID_MOBILE.md) before enabling LAN access. This is an initial mobile client, not yet a native Android app or a production-reviewed internet-facing service.
