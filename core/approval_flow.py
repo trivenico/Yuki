@@ -132,7 +132,10 @@ class ApprovalCoordinator:
             dispatcher = getattr(planner, "dispatcher", None)
             if dispatcher is None:
                 raise ValueError("planner has no execution dispatcher")
-            result = dispatcher.execute_approved(json.loads(json.dumps(action, allow_nan=False)))
+            receipt = dispatcher._issue_approval_receipt()
+            result = dispatcher.execute_approved(
+                json.loads(json.dumps(action, allow_nan=False)), approval_receipt=receipt
+            )
             if result.ok:
                 try:
                     self._audit("executed", pending_id, action, actor, session_id)
