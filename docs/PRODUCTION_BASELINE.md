@@ -139,3 +139,13 @@ Added `core/backup_encryption.py` with AES-256-GCM authenticated encryption for 
 Added `tests/test_backup_encryption.py` covering round-trip, ciphertext not containing the test plaintext, wrong-key rejection, tamper rejection, invalid key, size limit, same-file rejection, and symlink input rejection.
 
 **Important limitations:** this is a focused encryption primitive, not a complete backup/restore workflow. It reads the archive into memory up to the configured limit (default 512 MiB), does not inventory/select sensitive data, does not source keys from a secret manager, and does not prevent callers from creating an unencrypted archive before invoking it. Integration into backup/export paths and restore testing remain required. Tests are committed but no passing CI result is confirmed yet.
+
+### DarkChocolate prototype increment — 2026-10-20
+
+Added an explicitly scoped prototype under `dark_chocolate/`, separate from Yuki's production-hardening baseline. It includes local Ollama chat, a bounded ReAct loop, heuristic prompt inspection, a plan approval lifecycle, a central risk/access-aware tool registry, JSONL audit logging with limited redaction, bounded working memory, a JSON knowledge graph with Obsidian export, mood prompt injection, a workspace-scoped report writer, setup scripts, and initial tests.
+
+Security correction: the default ReAct access level is `unknown`, not `owner`, so tool calls requiring owner access fail closed until real authentication is integrated. Ollama endpoints are restricted to exact loopback hostnames over HTTP to avoid a hostname-prefix SSRF bypass.
+
+**This is not the full requested DarkChocolate system.** Face recognition, egress firewall, real sandboxing, MCP, browser/email, pentest tools, IDS/firewall integrations, ChromaDB, durable queue/daemon, voice, kill switch, and evolution remain unimplemented. The workflow is a one-step proposal, not an LLM-generated multi-step plan. The current app does not load all settings from YAML. The audit redaction is best-effort and not a guarantee against all secret leakage.
+
+No passing CI run has been confirmed for these new files. Run the targeted unit tests and the full repository gates before treating this increment as verified.
