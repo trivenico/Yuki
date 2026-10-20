@@ -404,6 +404,29 @@ class OnboardingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError): save_config({"provider":"mock","api_key":"never-save"},Path(d)/"config.json")
 
+    def test_shared_runtime_bridge_maps_only_supported_safe_settings(self):
+        from core.config_schema import onboarding_to_runtime_config
+        from core.onboarding import validate_config
+        config = validate_config({"provider": "ollama", "model": "qwen2.5"})
+        self.assertEqual(onboarding_to_runtime_config(config), {
+            "provider": "ollama",
+            "ollama_base_url": "http://127.0.0.1:11434",
+            "ollama_model": "qwen2.5",
+        })
+
+    def test_shared_runtime_bridge_fails_closed_for_unwired_features(self):
+        from core.config_schema import onboarding_to_runtime_config
+        from core.onboarding import validate_config
+        invalid = [
+            {"provider": "openai", "api_key_env": "OPENAI_API_KEY"},
+            {"provider": "ollama", "security": {"allow_shell": True}},
+            {"provider": "ollama", "daemon": {"enabled": True}},
+            {"provider": "ollama", "messaging": {"enabled": True}},
+            {"provider": "ollama", "mcp_servers": [{"endpoint": "https://mcp.example/sse", "enabled": True, "allowed_tools": ["read"]}]},
+        ]
+        for item in invalid:
+            with self.subTest(item=item), self.assertRaises(ValueError):
+                onboarding_to_runtime_config(validate_config(item))
     def test_runtime_loads_supported_onboarding_json_config(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
