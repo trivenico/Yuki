@@ -63,16 +63,16 @@ class OllamaProvider:
             with open_provider_request(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
         except (urllib.error.URLError, TimeoutError, OSError):
-            return False
+            return []
         if len(raw) > 500_000:
-            return False
+            return []
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            return False
+            return []
         models = body.get("models") if isinstance(body, dict) else None
         if not isinstance(models, list):
-            return False
+            return []
         names = []
         for item in models:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str):
@@ -103,7 +103,7 @@ class OllamaProvider:
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        if not self._select_installed_model():
+        if not self.model and not self._select_installed_model():
             raise RuntimeError(
                 "No installed Ollama model was found. Start Ollama and pull a model, "
                 "or configure ollama_model explicitly."
