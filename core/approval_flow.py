@@ -112,7 +112,26 @@ class ApprovalCoordinator:
                 raise ValueError("planner has no execution dispatcher")
             result = dispatcher.execute_approved(json.loads(json.dumps(action, allow_nan=False)))
             if result.ok:
-                self._audit("executed", pending_id, action, actor, session_id)
+                try:
+                    self._audit("executed", pending_id, action, actor, session_id)
+                except Exception:
+                    # Execution is already committed. Never report it as failed
+                    # merely because the post-execution audit sink is unavailable.
+                    _LOGGER.error(
+                        "approval.execution_audit_persistence_failed",
+                        extra={
+                            "event": "approval.execution_audit_persistence_failed",
+                            "component": "approval_flow",
+                            "status": "completed_audit_warning",
+                            "reason_code": "audit_sink_unavailable",
+                        },
+                    )
+                    return ApprovalResult(
+                        True,
+                        "completed_audit_warning",
+                        "Action completed, but its persistent audit event could not be saved.",
+                        result.data,
+                    )
                 return ApprovalResult(True, "completed", result.message, result.data)
             self._audit("failed", pending_id, action, actor, session_id)
             return ApprovalResult(False, "execution_failed", result.message)
