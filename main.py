@@ -244,7 +244,7 @@ def main(argv=None):
     agent = build_agent(config)
     selected_provider = create_provider(config)
     if config["provider"] == "auto":
-        if hasattr(selected_provider, "model") and selected_provider.is_available():
+        if hasattr(selected_provider, "model"):
             config["provider"] = "ollama"
             config["ollama_model"] = selected_provider.model
         else:
