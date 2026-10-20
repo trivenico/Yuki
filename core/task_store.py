@@ -92,16 +92,12 @@ class TaskStore:
                 "VALUES (?, ?, 'queued', ?, ?)",
                 (task_id, goal.strip(), now, now),
             )
-            row = connection.execute(
-                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
         record = self._record(row)
         assert record is not None
         return record
 
-    def transition(
-        self, task_id: str, status: str, *, result: Any = None
-    ) -> dict[str, Any]:
+    def transition(self, task_id: str, status: str, *, result: Any = None) -> dict[str, Any]:
         if status not in _TERMINAL | {"running"}:
             raise ValueError("unsupported task status")
         result_json = None
