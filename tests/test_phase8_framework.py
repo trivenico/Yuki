@@ -142,6 +142,27 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(cron.tick(now),0)
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_runtime_config_path_prefers_onboarding_json_when_present(self):
+        import os
+        from unittest.mock import patch
+        from core.portable_paths import config_path
+        with tempfile.TemporaryDirectory() as home:
+            onboarding = Path(home) / ".yuki" / "config.json"
+            onboarding.parent.mkdir()
+            onboarding.write_text("{}", encoding="utf-8")
+            with patch.dict(os.environ, {"HOME": home}, clear=False):
+                os.environ.pop("YUKI_CONFIG", None)
+                self.assertEqual(config_path(), onboarding.resolve())
+
+    def test_runtime_config_path_keeps_yaml_fallback_without_onboarding_file(self):
+        import os
+        from unittest.mock import patch
+        from core.portable_paths import config_path, REPOSITORY_ROOT
+        with tempfile.TemporaryDirectory() as home:
+            with patch.dict(os.environ, {"HOME": home}, clear=False):
+                os.environ.pop("YUKI_CONFIG", None)
+                self.assertEqual(config_path(), (REPOSITORY_ROOT / "config.yaml").resolve())
+
     def test_unknown_yaml_key_fails_closed(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
