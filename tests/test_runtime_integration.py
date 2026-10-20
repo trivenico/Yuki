@@ -42,6 +42,45 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.stage, "permission_denied")
 
+
+    def test_legacy_skill_invocation_uses_shared_authorization_and_snapshot(self):
+        seen = []
+        requests = []
+        class CaptureSkill:
+            name = "capture"
+            description = "Capture a bounded argument"
+            risk = "medium"
+            def execute(self, argument):
+                seen.append(argument)
+                return {"ok": True, "message": "captured"}
+        gate = PermissionGate(lambda request: requests.append(request) or True)
+        agent = YukiCoreAgent([CaptureSkill()], permission_gate=gate)
+        result = agent.run_skill("capture", "approved payload")
+        self.assertTrue(result.ok)
+        self.assertEqual(seen, ["approved payload"])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].action, "skill:capture")
+        self.assertIn("approved payload", requests[0].reason)
+
+    def test_legacy_skill_rejects_oversized_argument_before_approval(self):
+        seen = []
+        class CaptureSkill:
+            name = "capture"
+            description = "Capture a bounded argument"
+            risk = "low"
+            def execute(self, argument):
+                seen.append(argument)
+                return {"ok": True}
+        requests = []
+        agent = YukiCoreAgent([CaptureSkill()], permission_gate=PermissionGate(
+            lambda request: requests.append(request) or True
+        ))
+        result = agent.run_skill("capture", "x" * 501)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "blocked")
+        self.assertEqual(requests, [])
+        self.assertEqual(seen, [])
+
     def test_unknown_skill_is_not_executed(self):
         agent = YukiCoreAgent([TimeSkill()], PermissionGate(lambda _: True))
         result = agent.run_skill("shell", "whoami")
