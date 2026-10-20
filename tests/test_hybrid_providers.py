@@ -65,7 +65,7 @@ class HybridProviderTests(unittest.TestCase):
 
     def test_ollama_parses_response_and_bounds_request(self):
         provider = OllamaProvider(model="local-model")
-        with patch("urllib.request.urlopen", return_value=Response(
+        with patch("providers.ollama.open_provider_request", return_value=Response(
             json.dumps({"response": "hello"}).encode()
         )) as mocked:
             self.assertEqual(provider.generate("hi"), "hello")
@@ -84,7 +84,7 @@ class HybridProviderTests(unittest.TestCase):
             json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
         )):
             self.assertFalse(provider.is_available())
-        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+        with patch("providers.ollama.open_provider_request", side_effect=OSError("offline")):
             self.assertFalse(provider.is_available())
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
