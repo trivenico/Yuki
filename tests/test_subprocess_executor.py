@@ -36,6 +36,46 @@ class SubprocessExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(TimeoutError, "timed out"):
             executor.execute([sys.executable, "-c", "import time; time.sleep(5)"], {})
 
+
+    def test_timeout_kills_descendant_that_ignores_sigterm(self):
+        import os
+        import tempfile
+        import time
+
+        if os.name != "posix" or not os.path.isdir("/proc"):
+            self.skipTest("requires POSIX process groups and Linux /proc")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pid_file = os.path.join(temp_dir, "child.pid")
+            child_code = (
+                "import signal,time; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "time.sleep(30)"
+            )
+            parent_code = (
+                "import subprocess,sys,time; "
+                f"child=subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+                f"open({pid_file!r}, 'w').write(str(child.pid)); "
+                "time.sleep(30)"
+            )
+            executor = SubprocessExecutor(timeout_seconds=0.4, max_output_bytes=1024)
+            with self.assertRaisesRegex(TimeoutError, "timed out"):
+                executor.execute([sys.executable, "-c", parent_code], {})
+            self.assertTrue(os.path.exists(pid_file))
+            child_pid = int(open(pid_file, encoding="utf-8").read())
+            # Killed orphaned children can briefly remain zombies until init reaps
+            # them; they must no longer be executing.
+            for _ in range(50):
+                proc_stat = f"/proc/{child_pid}/stat"
+                if not os.path.exists(proc_stat):
+                    break
+                with open(proc_stat, encoding="utf-8") as handle:
+                    state = handle.read().split()[2]
+                if state == "Z":
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("worker descendant survived timeout cleanup")
+
     def test_rejects_non_object_json(self):
         executor = SubprocessExecutor(timeout_seconds=2, max_output_bytes=1024)
         with self.assertRaisesRegex(ValueError, "must be an object"):
