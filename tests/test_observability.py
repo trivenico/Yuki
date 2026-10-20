@@ -9,8 +9,7 @@ from core.observability import JsonLogFormatter, configure_logging, log_event
 class ObservabilityTests(unittest.TestCase):
     def test_formatter_serializes_allowlisted_metadata_only(self):
         record = logging.LogRecord(
-            "yuki.task", logging.INFO, __file__, 10,
-            "private prompt must not appear", (), None
+            "yuki.task", logging.INFO, __file__, 10, "private prompt must not appear", (), None
         )
         record.event = "task.finished"
         record.component = "task_runner"
@@ -40,9 +39,14 @@ class ObservabilityTests(unittest.TestCase):
         configure_logging(level="INFO", stream=stream)
         logger = logging.getLogger("yuki.observability.test")
         log_event(
-            logger, logging.INFO, "task.finished",
-            component="task_runner", task_id="abc", status="completed",
-            duration_ms=20, step_count=2,
+            logger,
+            logging.INFO,
+            "task.finished",
+            component="task_runner",
+            task_id="abc",
+            status="completed",
+            duration_ms=20,
+            step_count=2,
         )
         payload = json.loads(stream.getvalue())
         self.assertEqual(payload["event"], "task.finished")
