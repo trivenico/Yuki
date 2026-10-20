@@ -21,6 +21,17 @@ A controlled plugin loader is available in `core/plugin_loader.py`. Plugin disco
 
 A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(self, argument="")`, and provide a unique simple `name`, `description`, and safe input validation. The loader imports the module and instantiates the class with no arguments. Plugin imports execute Python with Yuki's permissions: this is **not a sandbox**. Never trust downloaded or user-supplied plugin code without reviewing it. Duplicate skill names are skipped; discovery failures do not crash core startup.
 
+## Automatic local model detection
+
+The default configuration uses `provider: auto`. At startup, Yuki checks the configured Ollama endpoint (loopback by default) and asks Ollama for its already-installed model list. If a model is available, Yuki selects one deterministically; if a model name is explicitly configured and installed, that model is preferred. If Ollama is unavailable or has no installed models, Yuki falls back to the mock provider rather than downloading a model or routing to a cloud service.
+
+Commands:
+- `/model status` — check Ollama and show the selected model
+- `/model list` — list models already installed locally
+- `/model use MODEL_NAME` — switch to an installed local model for the current session
+
+No model is downloaded automatically. To use real local inference, install and start Ollama, pull a model yourself, then launch Yuki. The mock provider is a safe fallback for testing and is not a real LLM.
+
 ## Safe skill discovery and self-evolution boundary
 
 `core/skill_discovery.py` provides a non-executing candidate scanner. It reads skill files as bounded bytes, checks filenames and path/symlink constraints, computes SHA-256 fingerprints, and reports changed files under `pending_review`. It does **not** import a candidate, execute its code, install it, or hot-reload it. This is intentional: Python module import can run arbitrary code with the current user's permissions.
