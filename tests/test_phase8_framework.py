@@ -224,6 +224,27 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
+    def test_runtime_config_rejects_explicit_null_string_fields(self):
+        from core.config import load_config
+        for payload in (
+            "provider: mock\nname: null\n",
+            "provider: mock\nollama_model: null\n",
+            "provider: mock\nworkspace: null\n",
+        ):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
+                path=Path(d)/"config.yaml"
+                path.write_text(payload,encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
+    def test_runtime_config_rejects_duplicate_allowlist_entries(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\nweb_allowed_hosts:\n  - example.com\n  - ' example.com '\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
     def test_duplicate_yaml_keys_are_rejected(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
