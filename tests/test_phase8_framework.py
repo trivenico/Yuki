@@ -404,6 +404,17 @@ class OnboardingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError): save_config({"provider":"mock","api_key":"never-save"},Path(d)/"config.json")
 
+    def test_runtime_bridge_requires_unknown_tool_approval_and_version(self):
+        from core.config_schema import onboarding_to_runtime_config
+        from core.onboarding import validate_config
+        config = validate_config({"provider": "ollama"})
+        config["security"]["require_approval_for_unknown_tools"] = False
+        with self.assertRaisesRegex(ValueError, "requires approval for unknown tools"):
+            onboarding_to_runtime_config(config)
+        config = validate_config({"provider": "ollama"})
+        config["version"] = 2
+        with self.assertRaisesRegex(ValueError, "Unsupported onboarding configuration version"):
+            onboarding_to_runtime_config(config)
     def test_shared_runtime_bridge_maps_only_supported_safe_settings(self):
         from core.config_schema import onboarding_to_runtime_config
         from core.onboarding import validate_config
