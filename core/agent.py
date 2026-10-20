@@ -75,6 +75,7 @@ class YukiCoreAgent:
             )
         try:
             result = skill.execute(argument)
+            data: object
             if isinstance(result, dict):
                 ok = bool(result.get("ok", True))
                 message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
