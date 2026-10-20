@@ -18,8 +18,7 @@ def _bounded_int(value, minimum, maximum):
 
 
 def _bounded_string(value, key, *, default="", maximum=512, allow_empty=True):
-    if value is None:
-        value = default
+    # Callers supply defaults only for missing keys. Explicit YAML null is invalid.
     if not isinstance(value, str):
         raise RuntimeError(f"{key} must be a string.")
     value = value.strip()
@@ -52,7 +51,10 @@ def _string_list(raw, key, *, max_item_length=512):
         )
     if len(value) > 100:
         raise RuntimeError(f"{key} may contain at most 100 entries.")
-    return list(dict.fromkeys(item.strip() for item in value))
+    normalized = [item.strip() for item in value]
+    if len(set(normalized)) != len(normalized):
+        raise RuntimeError(f"{key} must not contain duplicate entries.")
+    return normalized
 
 
 _ALLOWED_CONFIG_KEYS = {
