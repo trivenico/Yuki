@@ -53,7 +53,7 @@ from core.plugin_loader import PluginLoader
 
 class SkillRegistry:
     def __init__(self, skills: Iterable[Skill] = ()):
-        self._skills = {}
+        self._skills: dict[str, Skill] = {}
         for skill in skills:
             self.register(skill)
 
