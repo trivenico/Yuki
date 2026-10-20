@@ -17,7 +17,7 @@ class ReActLoop:
             raise ValueError("max_iterations must be between 1 and 10")
         self.llm, self.tools, self.audit = llm, tools, audit
         self.memory, self.max_iterations = memory or WorkingMemory(), max_iterations
-    async def run(self, user_text: str, access_level: str = "owner") -> str:
+    async def run(self, user_text: str, access_level: str = "unknown") -> str:
         verdict, reasons = inspect_prompt(user_text)
         self.audit.log("input_inspected", verdict=verdict.value, reasons=list(reasons))
         if verdict is not GuardVerdict.SAFE:
