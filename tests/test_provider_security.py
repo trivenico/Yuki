@@ -49,6 +49,70 @@ class ProviderEndpointSecurityTests(unittest.TestCase):
                 model="test",
             )
 
+
+    def test_ollama_lists_installed_models_without_configured_model(self):
+        import json
+        from unittest.mock import patch
+
+        provider = OllamaProvider(model="")
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                return json.dumps({"models": [
+                    {"name": "zeta:latest"}, {"name": "alpha:latest"},
+                    {"name": "alpha:latest"}, {"name": 12},
+                ]}).encode()
+
+        with patch("providers.ollama.open_provider_request", return_value=Response()):
+            self.assertEqual(provider.list_models(), ["alpha:latest", "zeta:latest"])
+            self.assertTrue(provider.is_available())
+            self.assertEqual(provider.model, "alpha:latest")
+
+    def test_ollama_configured_missing_model_fails_closed(self):
+        import json
+        from unittest.mock import patch
+
+        provider = OllamaProvider(model="missing:latest")
+        class Response:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                return json.dumps({"models": [{"name": "installed:latest"}]}).encode()
+
+        with patch("providers.ollama.open_provider_request", return_value=Response()):
+            self.assertFalse(provider.is_available())
+
+    def test_ollama_generation_selects_detected_model(self):
+        import json
+        from unittest.mock import patch
+
+        provider = OllamaProvider(model="")
+        class Response:
+            def __init__(self, body):
+                self.body = body
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                return self.body
+
+        def request(req, timeout):
+            if req.full_url.endswith("/api/tags"):
+                return Response(json.dumps({"models": [{"name": "local-model:latest"}]}).encode())
+            payload = json.loads(req.data.decode())
+            self.assertEqual(payload["model"], "local-model:latest")
+            return Response(json.dumps({"response": "hello"}).encode())
+
+        with patch("providers.ollama.open_provider_request", side_effect=request):
+            self.assertEqual(provider.generate("hi"), "hello")
+            self.assertEqual(provider.model, "local-model:latest")
+
     def test_openai_compatible_requires_https(self):
         with self.assertRaises(ValueError):
             OpenAICompatibleProvider(
