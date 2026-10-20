@@ -117,7 +117,7 @@ class SubprocessExecutor:
         deadline = time.monotonic() + timeout
         timed_out = False
         try:
-            while process.poll() is None:
+            while True:
                 if overflow.is_set():
                     self._terminate(process)
                     break
@@ -125,6 +125,14 @@ class SubprocessExecutor:
                 if remaining <= 0:
                     timed_out = True
                     self._terminate(process)
+                    break
+                # A worker can exit while a descendant keeps inherited pipes open.
+                # Include pipe-reader completion in the deadline, not just leader exit.
+                if (
+                    process.poll() is not None
+                    and not stdout_reader.is_alive()
+                    and not stderr_reader.is_alive()
+                ):
                     break
                 time.sleep(min(0.01, remaining))
         finally:
