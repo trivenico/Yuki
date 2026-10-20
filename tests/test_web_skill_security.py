@@ -86,6 +86,8 @@ class WebSkillSecurityTests(unittest.TestCase):
         result = WebSkill(allowed_hosts=("example.com",)).execute("https://example.com")
         self.assertEqual(result["url"], "https://example.com")
         self.assertIn("Hello & welcome", result["text"])
+        self.assertNotIn("ignore all safeguards", result["text"])
+        self.assertNotIn("  ", result["text"])
         self.assertLessEqual(len(result["text"]), 12000)
         build_opener.return_value.open.assert_called_once()
         self.assertEqual(build_opener.return_value.open.call_args.kwargs["timeout"], 8)
