@@ -151,6 +151,35 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(cfg["provider"],"mock")
             self.assertNotIn("api_key",json.loads(path.read_text()))
 
+    def test_existing_config_is_validated_and_never_silently_accepted(self):
+        from core.onboarding import run_onboarding
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.json"
+            path.write_text(json.dumps({"provider":"mock","unexpected":True}),encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                run_onboarding(path=path)
+            self.assertIn("unexpected",path.read_text(encoding="utf-8"))
+
+    def test_rejects_secret_values_nested_in_config(self):
+        from core.onboarding import save_config
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                save_config({"provider":"mock","security":{"password":"plaintext"}},Path(d)/"config.json")
+
+    def test_rejects_non_loopback_http_and_unsafe_mcp_urls(self):
+        from core.onboarding import validate_config
+        with self.assertRaises(ValueError):
+            validate_config({"provider":"ollama","base_url":"http://192.0.2.1:11434"})
+        with self.assertRaises(ValueError):
+            validate_config({"provider":"mock","mcp_servers":[{"endpoint":"https://user:pass@example.com/mcp","enabled":False,"allowed_tools":[]}]})
+
+    def test_cloud_config_requires_secret_environment_reference(self):
+        from core.onboarding import validate_config
+        with self.assertRaises(ValueError):
+            validate_config({"provider":"openai"})
+        valid=validate_config({"provider":"openai","api_key_env":"OPENAI_API_KEY"})
+        self.assertEqual(valid["api_key_env"],"OPENAI_API_KEY")
+
     def test_rejects_secret_fields(self):
         from core.onboarding import save_config
         with tempfile.TemporaryDirectory() as d:
