@@ -141,6 +141,32 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(cron.tick(now),2)
             self.assertEqual(cron.tick(now),0)
 
+class RuntimeConfigTests(unittest.TestCase):
+    def test_unknown_yaml_key_fails_closed(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\\nunknown_security_override: true\\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+    def test_unsupported_runtime_provider_fails_closed(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: arbitrary_cloud\\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+    def test_oversized_runtime_config_fails_closed(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("#" + ("x" * (128 * 1024)),encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+
 class OnboardingTests(unittest.TestCase):
     def test_first_run_config_never_persists_secret_value(self):
         with tempfile.TemporaryDirectory() as d:
