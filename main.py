@@ -181,7 +181,11 @@ def main():
 
     def dashboard_command(command):
         if command == "/status":
+            counts = task_store.status_counts()
             return (
+                f"Task counts: queued={counts['queued']}, running={counts['running']}, "
+                f"completed={counts['completed']}, failed={counts['failed']}, "
+                f"interrupted={counts['interrupted']}\\n"
                 f"Workspace: {workspace}\nSkills: {', '.join(agent.registry.names())}\n"
                 f"Voice enabled: {config['voice_enabled']}\nSecurity lab enabled: {config['security_lab_enabled']}\n"
                 f"Firewall enabled: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']})"
@@ -208,6 +212,11 @@ def main():
         if command == "/help":
             print_help()
         elif command == "/status":
+            counts = task_store.status_counts()
+            print(
+                "Tasks: "
+                + ", ".join(f"{name}={count}" for name, count in counts.items())
+            )
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
             print(
