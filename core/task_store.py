@@ -46,7 +46,11 @@ class TaskStore:
             try:
                 if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                     raise OSError("task database path must be a regular file")
-                os.fchmod(descriptor, 0o600)
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(descriptor, 0o600)
+                else:
+                    os.chmod(self.path, 0o600)
             finally:
                 os.close(descriptor)
         self.busy_timeout_ms = busy_timeout_ms
