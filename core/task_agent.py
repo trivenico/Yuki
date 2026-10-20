@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from core.prompt_guard import scan_untrusted_text
+
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -38,6 +40,10 @@ class ApprovedTaskAgent:
         if not isinstance(goal, str) or not goal.strip():
             return TaskResult(False, "Provide a task goal.", status="invalid_input")
         goal = goal.strip()[:4000]
+        guard = scan_untrusted_text(goal, max_chars=4000)
+        if guard["flagged"]:
+            return TaskResult(False, "Task stopped by Yuki's prompt safety guard.",
+                              status="prompt_guard")
         observations = []
         for step_number in range(1, self.max_steps + 1):
             skills = self.skill_agent.available_skills()
