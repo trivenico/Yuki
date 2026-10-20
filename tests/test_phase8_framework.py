@@ -163,6 +163,22 @@ class RuntimeConfigTests(unittest.TestCase):
                 os.environ.pop("YUKI_CONFIG", None)
                 self.assertEqual(config_path(), (REPOSITORY_ROOT / "config.yaml").resolve())
 
+    def test_non_mapping_yaml_documents_are_rejected(self):
+        from core.config import load_config
+        for payload in ("null\n", "false\n", "[]\n", "- provider\n- mock\n"):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "config.yaml"
+                path.write_text(payload, encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
+    def test_empty_yaml_file_still_uses_defaults(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.yaml"
+            path.write_text("", encoding="utf-8")
+            self.assertEqual(load_config(path)["provider"], "mock")
+
     def test_unknown_yaml_key_fails_closed(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
