@@ -213,10 +213,7 @@ def main():
             print_help()
         elif command == "/status":
             counts = task_store.status_counts()
-            print(
-                "Tasks: "
-                + ", ".join(f"{name}={count}" for name, count in counts.items())
-            )
+            print("Tasks: " + ", ".join(f"{name}={count}" for name, count in counts.items()))
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
             print(
