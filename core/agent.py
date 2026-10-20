@@ -50,6 +50,13 @@ class YukiCoreAgent:
 
     def invoke_manifest_skill(self, skill_id: str, arguments: dict, *, confirm) -> AgentResponse:
         """Invoke only a registered manifest skill through the shared review facade."""
+        import os
+        if os.environ.get("YUKI_ENV", "development").strip().lower() == "production":
+            return AgentResponse(
+                False,
+                "Blocked: production manifest execution remains disabled until a verified OS sandbox is enabled.",
+                skill_id, stage="blocked",
+            )
         if self.dispatcher is None:
             return AgentResponse(
                 False, "Blocked: no manifest skill dispatcher is configured.",
