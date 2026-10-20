@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
+import signal
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
@@ -28,6 +29,8 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.task_store import TaskStore
+from core.task_runtime import DurableTaskRunner
 
 
 def _ask_approval(request):
@@ -70,6 +73,7 @@ def print_help():
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
+  /tasks                          Show recent durable task history
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -110,6 +114,13 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    task_store = TaskStore(workspace / "yuki_tasks.sqlite3")
+    recovered_tasks = task_store.recover_interrupted()
+    task_runner = DurableTaskRunner(task_store)
+    if recovered_tasks:
+        print(f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed.")
+    # Convert SIGTERM to KeyboardInterrupt so active task lifecycle state is persisted.
+    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -200,6 +211,12 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command == "/tasks":
+            for task in task_store.list_tasks(limit=20):
+                print(
+                    f"- {task['task_id']} [{task['status']}] "
+                    f"{task['goal'][:100]}"
+                )
         elif command.startswith("/task "):
             goal = command[len("/task ") :].strip()
             if not goal:
@@ -208,8 +225,18 @@ def main():
                 )
                 continue
             print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
-            result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            try:
+                task_id, result = task_runner.run(goal, task_agent.run)
+            except KeyboardInterrupt:
+                print("\nYuki > Shutdown requested. Task marked interrupted; it will not be replayed.")
+                return
+            except Exception as exc:
+                print(f"Yuki > Task failed safely ({type(exc).__name__}).")
+                continue
+            print(
+                f"Yuki > {result.message} "
+                f"[task={task_id}, status={result.status}, steps={result.steps}]"
+            )
         elif command.startswith("/ask "):
             prompt = command[len("/ask ") :].strip()
             if not prompt:
