@@ -51,16 +51,49 @@ _SUPPORTED_PROVIDERS = {"mock", "ollama", "hybrid"}
 _MAX_CONFIG_BYTES = 128 * 1024
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate keys instead of silently overriding them."""
+
+
+def _construct_unique_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                "unhashable configuration key", key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping", node.start_mark,
+                f"duplicate configuration key {key!r}", key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
+
+
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
     try:
-        if selected_config_path.stat().st_size > _MAX_CONFIG_BYTES:
+        # Read once and enforce the size limit on the bytes that will actually be parsed.
+        body = selected_config_path.read_bytes()
+        if len(body) > _MAX_CONFIG_BYTES:
             raise RuntimeError("Configuration file exceeds 128 KiB.")
-        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.load(body.decode("utf-8"), Loader=_UniqueKeyLoader) or {}
     except OSError as exc:
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
+    except UnicodeError as exc:
+        raise RuntimeError("Configuration file must be valid UTF-8.") from exc
     except yaml.YAMLError as exc:
-        raise RuntimeError("Configuration YAML is invalid.") from exc
+        raise RuntimeError("Configuration YAML is invalid or contains duplicate keys.") from exc
     if not isinstance(raw, dict):
         raise RuntimeError("Configuration must be a YAML mapping.")
     if any(not isinstance(key, str) for key in raw):
