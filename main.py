@@ -124,8 +124,12 @@ def main():
     task_runner = DurableTaskRunner(task_store)
     if recovered_tasks:
         log_event(
-            logger, logging.WARNING, "task.recovery_completed",
-            component="task_store", status="interrupted", recovered_count=recovered_tasks,
+            logger,
+            logging.WARNING,
+            "task.recovery_completed",
+            component="task_store",
+            status="interrupted",
+            recovered_count=recovered_tasks,
         )
         print(
             f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed."
@@ -241,8 +245,11 @@ def main():
                 task_id, result = task_runner.run(goal, task_agent.run)
             except KeyboardInterrupt:
                 log_event(
-                    logger, logging.WARNING, "task.interrupted",
-                    component="task_runner", status="interrupted",
+                    logger,
+                    logging.WARNING,
+                    "task.interrupted",
+                    component="task_runner",
+                    status="interrupted",
                     duration_ms=int((time.monotonic() - started_at) * 1000),
                 )
                 print(
@@ -251,16 +258,23 @@ def main():
                 return
             except Exception as exc:
                 log_event(
-                    logger, logging.ERROR, "task.failed",
-                    component="task_runner", status="failed",
+                    logger,
+                    logging.ERROR,
+                    "task.failed",
+                    component="task_runner",
+                    status="failed",
                     reason_code=type(exc).__name__,
                     duration_ms=int((time.monotonic() - started_at) * 1000),
                 )
                 print(f"Yuki > Task failed safely ({type(exc).__name__}).")
                 continue
             log_event(
-                logger, logging.INFO, "task.finished",
-                component="task_runner", task_id=task_id, status=result.status,
+                logger,
+                logging.INFO,
+                "task.finished",
+                component="task_runner",
+                task_id=task_id,
+                status=result.status,
                 duration_ms=int((time.monotonic() - started_at) * 1000),
                 step_count=result.steps,
             )
