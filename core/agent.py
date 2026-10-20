@@ -22,7 +22,8 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None,
+                 dispatcher=None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -31,6 +32,9 @@ class YukiCoreAgent:
             available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
             self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
+        # Manifest-dispatched actions are only reachable through the explicit
+        # approval coordinator; run_skill never calls this dispatcher directly.
+        self.dispatcher = dispatcher
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3

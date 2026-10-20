@@ -57,6 +57,9 @@ class FeatureModuleTests(unittest.TestCase):
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())
+        # This test validates registry/runtime wiring, not the human approval UI.
+        # Explicitly grant approval here rather than weakening the production gate.
+        agent.permission_gate.request = lambda **_kwargs: True
         result = agent.run_skill("interview", "technical")
         self.assertTrue(result.ok)
         self.assertIn("technical decision", result.data["prompt"])
