@@ -423,6 +423,17 @@ class OnboardingTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     load_config(path)
 
+    def test_normalized_config_is_deeply_isolated_from_input(self):
+        from core.onboarding import validate_config
+        original = {
+            "provider": "mock",
+            "mcp_servers": [{"endpoint": "https://mcp.example/sse", "enabled": False, "allowed_tools": ["read"]}],
+        }
+        normalized = validate_config(original)
+        normalized["mcp_servers"][0]["allowed_tools"].append("write")
+        self.assertEqual(original["mcp_servers"][0]["allowed_tools"], ["read"])
+        original["mcp_servers"][0]["allowed_tools"].append("delete")
+        self.assertEqual(normalized["mcp_servers"][0]["allowed_tools"], ["read", "write"])
     def test_partial_sections_receive_safe_defaults(self):
         from core.onboarding import validate_config
         config = validate_config({
