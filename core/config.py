@@ -144,7 +144,8 @@ def load_config(path=None):
         if selected_config_path.suffix.lower() == ".json":
             raw = _load_onboarding_json_config(selected_config_path, body)
         else:
-            raw = yaml.load(body.decode("utf-8"), Loader=_UniqueKeyLoader) or {}
+            parsed_yaml = yaml.load(body.decode("utf-8"), Loader=_UniqueKeyLoader)
+            raw = {} if parsed_yaml is None and not body.strip() else parsed_yaml
     except OSError as exc:
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except UnicodeError as exc:
