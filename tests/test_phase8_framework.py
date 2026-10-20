@@ -180,6 +180,28 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
+    def test_runtime_config_rejects_non_string_model_settings(self):
+        from core.config import load_config
+        cases = [
+            "provider: mock\nstt_model: [bad]\n",
+            "provider: mock\ntts_backend: 12\n",
+            "provider: mock\npiper_model_path: false\n",
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as d:
+                path=Path(d)/"config.yaml"
+                path.write_text(payload,encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
+    def test_runtime_config_rejects_overlong_string_settings(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\nworkspace: '" + ("x" * 2049) + "'\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
     def test_duplicate_yaml_keys_are_rejected(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
