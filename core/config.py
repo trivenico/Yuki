@@ -37,15 +37,37 @@ def _string_list(raw, key):
     return list(dict.fromkeys(x.strip() for x in value))
 
 
+_ALLOWED_CONFIG_KEYS = {
+    "name", "workspace", "provider", "ollama_base_url", "ollama_model",
+    "max_agent_steps", "voice_enabled", "language_behavior", "voice_style",
+    "spoken_reply_policy", "stt_model", "tts_rate", "tts_backend",
+    "piper_model_path", "wakeword_enabled", "wakeword_model_path",
+    "gmail_enabled", "security_lab_enabled", "recon_allowlisted_targets",
+    "sandbox_enabled", "sandbox_allowed_images", "firewall_enabled",
+    "firewall_dry_run", "web_allowed_hosts", "plugin_discovery_enabled",
+    "trusted_plugin_modules",
+}
+_SUPPORTED_PROVIDERS = {"mock", "ollama", "hybrid"}
+_MAX_CONFIG_BYTES = 128 * 1024
+
+
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
     try:
-        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {}
+        if selected_config_path.stat().st_size > _MAX_CONFIG_BYTES:
+            raise RuntimeError("Configuration file exceeds 128 KiB.")
+        raw = yaml.safe_load(selected_config_path.read_text(encoding="utf-8")) or {};
     except OSError as exc:
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except yaml.YAMLError as exc:
         raise RuntimeError("Configuration YAML is invalid.") from exc
     if not isinstance(raw, dict): raise RuntimeError("Configuration must be a YAML mapping.")
+    unknown_keys = set(raw) - _ALLOWED_CONFIG_KEYS
+    if unknown_keys:
+        raise RuntimeError("Unknown configuration keys: " + ", ".join(sorted(str(key) for key in unknown_keys)))
+    selected_provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower()
+    if selected_provider not in _SUPPORTED_PROVIDERS:
+        raise RuntimeError("provider must be one of: mock, ollama, hybrid.")
     workspace_value = os.environ.get("YUKI_WORKSPACE", raw.get("workspace", "./yuki_workspace"))
     if not isinstance(workspace_value, str) or not workspace_value.strip():
         raise RuntimeError("workspace must be a non-empty path.")
@@ -95,7 +117,7 @@ def load_config(path=None):
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "provider": selected_provider,
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
