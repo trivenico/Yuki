@@ -105,6 +105,22 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertEqual(result.status, "prompt_guard")
         self.assertEqual(skills.calls, [])
 
+    def test_provider_circuit_breaker_stops_repeated_failures(self):
+        class BrokenProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def generate(self, prompt):
+                self.calls += 1
+                raise TimeoutError("provider unavailable")
+
+        provider = BrokenProvider()
+        runner = ApprovedTaskAgent(provider, FakeSkillAgent())
+        for _ in range(4):
+            result = runner.run("Summarize my tasks")
+            self.assertEqual(result.status, "provider_error")
+        self.assertEqual(provider.calls, 3)
+
     def test_bounds_step_count(self):
         with self.assertRaises(ValueError):
             ApprovedTaskAgent(FakeProvider([]), FakeSkillAgent(), max_steps=6)
