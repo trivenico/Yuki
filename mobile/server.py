@@ -187,30 +187,47 @@ def build_server(*, host: str | None = None, port: int | None = None, config_pat
     """Create a configured server. Remote bind requires TLS and a bearer token."""
     env = os.environ if environ is None else environ
     bind_host = (host or env.get("YUKI_MOBILE_HOST", "127.0.0.1")).strip()
-    bind_port = port if port is not None else int(env.get("YUKI_MOBILE_PORT", "8765"))
-    if not bind_host or not 1 <= bind_port <= 65535:
+    try:
+        bind_port = port if port is not None else int(env.get("YUKI_MOBILE_PORT", "8765"))
+    except (TypeError, ValueError) as exc:
+        raise MobileAPIError("Mobile API port must be an integer.") from exc
+    if not bind_host or isinstance(bind_port, bool) or not isinstance(bind_port, int) or not 1 <= bind_port <= 65535:
         raise MobileAPIError("Mobile API host/port configuration is invalid.")
     token = env.get("YUKI_MOBILE_TOKEN", "")
     if len(token) < 32:
         raise MobileAPIError("Set YUKI_MOBILE_TOKEN to a random secret of at least 32 characters.")
-    config = load_config(config_path)
-    provider = create_provider(config, environ=env)
-    handler = create_handler(token=token, provider=provider, model_name=config.get("ollama_model") or "local model")
-    server = ThreadingHTTPServer((bind_host, bind_port), handler)
-    server.daemon_threads = True
+
+    # Validate remote transport before opening any listening socket.
+    tls_context = None
     if not _is_loopback(bind_host):
         cert = env.get("YUKI_MOBILE_TLS_CERT", "")
         key = env.get("YUKI_MOBILE_TLS_KEY", "")
         if not cert or not key:
-            server.server_close()
             raise MobileAPIError("Non-loopback binding requires YUKI_MOBILE_TLS_CERT and YUKI_MOBILE_TLS_KEY.")
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         try:
-            context.load_cert_chain(certfile=cert, keyfile=key)
+            tls_context.load_cert_chain(certfile=cert, keyfile=key)
         except (OSError, ssl.SSLError) as exc:
-            server.server_close()
             raise MobileAPIError("Could not load the configured TLS certificate/key.") from exc
-        server.socket = context.wrap_socket(server.socket, server_side=True)
+
+    config = load_config(config_path)
+    provider = create_provider(config, environ=env)
+    # Never serve convincing mock answers or silently use a cloud provider.
+    from providers.ollama import OllamaProvider
+
+    if not isinstance(provider, OllamaProvider):
+        raise MobileAPIError("Local Ollama is unavailable or not selected; mobile API will not start.")
+    if not provider.is_available():
+        raise MobileAPIError("No installed local Ollama model is available; start Ollama and install a model first.")
+    handler = create_handler(
+        token=token,
+        provider=provider,
+        model_name=config.get("ollama_model") or provider.model or "local model",
+    )
+    server = ThreadingHTTPServer((bind_host, bind_port), handler)
+    server.daemon_threads = True
+    if tls_context is not None:
+        server.socket = tls_context.wrap_socket(server.socket, server_side=True)
     return server
 
 
