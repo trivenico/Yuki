@@ -78,9 +78,14 @@ def _windows_memory() -> tuple[float, float]:
         ]
 
     try:
+        windll = getattr(ctypes, "windll", None)
+        kernel32 = getattr(windll, "kernel32", None)
+        memory_status = getattr(kernel32, "GlobalMemoryStatusEx", None)
+        if memory_status is None:
+            return 0.0, 0.0
         status = MemoryStatusEx()
         status.dwLength = ctypes.sizeof(status)
-        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        if not memory_status(ctypes.byref(status)):
             return 0.0, 0.0
         return (
             round(status.ullTotalPhys / 1024**3, 2),
