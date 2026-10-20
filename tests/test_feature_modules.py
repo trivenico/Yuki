@@ -53,7 +53,9 @@ class FeatureModuleTests(unittest.TestCase):
 
 
     def test_main_runtime_registers_connected_skills(self):
-        agent = build_agent(load_config())
+        # Exercise registration and execution without requiring interactive stdin in CI.
+        # Production keeps the default fail-closed human approval prompt.
+        agent = build_agent(load_config(), approval_callback=lambda _request: True)
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())

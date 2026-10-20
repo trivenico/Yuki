@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+
+from providers.http_client import open_provider_request
 from urllib.parse import urlsplit
 
 
@@ -45,7 +47,7 @@ class OllamaProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+            with open_provider_request(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
@@ -81,7 +83,7 @@ class OllamaProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with open_provider_request(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama request failed.") from exc

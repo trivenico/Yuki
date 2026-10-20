@@ -46,7 +46,7 @@ class DockerSandbox:
             "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m",  # nosec B108: container-only ephemeral tmpfs
             "--mount", f"type=bind,src={self.workspace},dst=/workspace,rw",
             "--workdir", "/workspace", image, *argv,
         ]

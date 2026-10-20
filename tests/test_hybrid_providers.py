@@ -65,7 +65,7 @@ class HybridProviderTests(unittest.TestCase):
 
     def test_ollama_parses_response_and_bounds_request(self):
         provider = OllamaProvider(model="local-model")
-        with patch("urllib.request.urlopen", return_value=Response(
+        with patch("providers.ollama.open_provider_request", return_value=Response(
             json.dumps({"response": "hello"}).encode()
         )) as mocked:
             self.assertEqual(provider.generate("hi"), "hello")
@@ -76,21 +76,21 @@ class HybridProviderTests(unittest.TestCase):
 
     def test_ollama_availability_requires_installed_model(self):
         provider = OllamaProvider(model="local-model")
-        with patch("urllib.request.urlopen", return_value=Response(
+        with patch("providers.ollama.open_provider_request", return_value=Response(
             json.dumps({"models": [{"name": "local-model:latest"}]}).encode()
         )):
             self.assertTrue(provider.is_available())
-        with patch("urllib.request.urlopen", return_value=Response(
+        with patch("providers.ollama.open_provider_request", return_value=Response(
             json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
         )):
             self.assertFalse(provider.is_available())
-        with patch("urllib.request.urlopen", side_effect=OSError("offline")):
+        with patch("providers.ollama.open_provider_request", side_effect=OSError("offline")):
             self.assertFalse(provider.is_available())
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("urllib.request.urlopen", return_value=Response(
+            with patch("providers.openai_compatible.open_provider_request", return_value=Response(
                 json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
             )) as mocked:
                 self.assertTrue(provider.is_available())

@@ -5,6 +5,8 @@ import json
 import os
 import urllib.error
 import urllib.request
+
+from providers.http_client import open_provider_request
 from urllib.parse import urlsplit
 
 
@@ -53,7 +55,7 @@ class OpenAICompatibleProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with open_provider_request(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider request failed.") from exc
