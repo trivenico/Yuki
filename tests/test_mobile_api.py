@@ -81,7 +81,7 @@ class MobileAPITests(unittest.TestCase):
 
     def test_server_refuses_mock_or_cloud_provider(self):
         with patch("mobile.server.create_provider", return_value=FakeProvider()):
-            with self.assertRaisesRegex(MobileAPIError, "local Ollama"):
+            with self.assertRaisesRegex(MobileAPIError, "Local Ollama"):
                 build_server(
                     host="127.0.0.1",
                     port=8765,
