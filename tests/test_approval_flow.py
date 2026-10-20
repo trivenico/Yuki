@@ -2,6 +2,8 @@ import json
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 
 from core.action_approvals import ActionApprovalStore
@@ -164,6 +166,28 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         coordinator.record(planner, result, actor="owner", session_id="cli-session")
         with self.assertRaises(RuntimeError):
             coordinator.record(planner, result, actor="owner", session_id="cli-session")
+
+    def test_concurrent_approval_attempts_execute_at_most_once(self):
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator()
+        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
+        barrier = Barrier(3)
+
+        def attempt():
+            barrier.wait()
+            return coordinator.approve(
+                planner, pending.pending_id, actor="owner", session_id="cli-session",
+                confirm=lambda action: True,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(attempt) for _ in range(2)]
+            barrier.wait()
+            results = [future.result(timeout=5) for future in futures]
+        self.assertEqual(sum(item.ok for item in results), 1)
+        self.assertEqual(sorted(item.status for item in results),
+                         ["completed", "pending_not_found"])
 
 
 class ManifestSchemaHardeningTests(unittest.TestCase):
