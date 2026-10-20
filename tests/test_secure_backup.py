@@ -52,7 +52,8 @@ class SecureBackupTests(unittest.TestCase):
         destination = self.root / "wrong-key-restore"
         with self.assertRaises(BackupError):
             restore_encrypted_backup(backup, destination, b"x" * 32)
-        self.assertEqual(list(destination.iterdir()), [])
+        # Authentication fails before the destination is created or touched.
+        self.assertFalse(destination.exists())
         corrupted = bytearray(backup.read_bytes())
         corrupted[-1] ^= 0x01
         backup.write_bytes(corrupted)
