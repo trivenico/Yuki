@@ -120,7 +120,10 @@ def main():
     if recovered_tasks:
         print(f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed.")
     # Convert SIGTERM to KeyboardInterrupt so active task lifecycle state is persisted.
-    signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
+    signal.signal(
+        signal.SIGTERM,
+        lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
