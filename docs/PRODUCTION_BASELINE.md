@@ -149,3 +149,11 @@ Security correction: the default ReAct access level is `unknown`, not `owner`, s
 **This is not the full requested DarkChocolate system.** Face recognition, egress firewall, real sandboxing, MCP, browser/email, pentest tools, IDS/firewall integrations, ChromaDB, durable queue/daemon, voice, kill switch, and evolution remain unimplemented. The workflow is a one-step proposal, not an LLM-generated multi-step plan. The current app does not load all settings from YAML. The audit redaction is best-effort and not a guarantee against all secret leakage.
 
 No passing CI run has been confirmed for these new files. Run the targeted unit tests and the full repository gates before treating this increment as verified.
+
+## Architecture correction — Chocolate capabilities belong inside Yuki
+
+The initial `dark_chocolate/` spike was removed from the active tree to avoid creating a second product, entry point, dependency manifest, or safety stack. Its useful integration direction is being applied to Yuki's existing modules instead: `core/task_agent.py` is Yuki's bounded model-guided tool loop, `core/agent.py` and `core/permissions.py` remain the skill execution and approval boundary, `providers/` remains the inference adapter layer, `companion/` and `knowledge/` remain the memory/personality stores, and `voice/`, `defense/`, and `hackback/` remain optional Yuki capability modules.
+
+This increment routes direct `YukiAgent.ask()` prompts through `core.prompt_guard.scan_untrusted_text()` and screens task goals in `ApprovedTaskAgent.run()` before the first model call. A regression test verifies that a flagged task goal does not reach the provider. The guard is heuristic; a match is a conservative block, and a non-match is not a safety guarantee.
+
+The repository has not yet been fully tested after these changes. The active project remains **Yuki**; no separate DarkChocolate app is intended.
