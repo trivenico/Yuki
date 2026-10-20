@@ -201,9 +201,9 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         executed = []
         original = planner.dispatcher.execute_approved
 
-        def track_execution(action):
+        def track_execution(action, **kwargs):
             executed.append(True)
-            return original(action)
+            return original(action, **kwargs)
 
         planner.dispatcher.execute_approved = track_execution
         approved = coordinator.approve(
@@ -311,6 +311,24 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             coordinator.record(planner, result, actor="owner", session_id="cli-session")
 
+
+    def test_dispatcher_rejects_direct_execution_without_approval_receipt(self):
+        planner = build()
+        proposal = planner.run("Write note")
+        result = planner.dispatcher.execute_approved(proposal.action)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "approval_required")
+
+    def test_approval_receipt_is_single_use(self):
+        planner = build()
+        proposal = planner.run("Write note")
+        dispatcher = planner.dispatcher
+        receipt = dispatcher._issue_approval_receipt()
+        first = dispatcher.execute_approved(proposal.action, approval_receipt=receipt)
+        second = dispatcher.execute_approved(proposal.action, approval_receipt=receipt)
+        self.assertTrue(first.ok)
+        self.assertFalse(second.ok)
+        self.assertEqual(second.status, "approval_required")
 
 if __name__ == "__main__":
     unittest.main()
