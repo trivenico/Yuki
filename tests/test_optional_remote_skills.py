@@ -35,7 +35,7 @@ class OptionalRemoteSkillTests(unittest.TestCase):
         client = Mock()
         client.images.generate.return_value.data = [data]
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("openai.OpenAI", return_value=client):
+            with patch.dict("sys.modules", {"openai": Mock(OpenAI=Mock(return_value=client))}):
                 result = ImageGenerationSkill().run("a tree")
         self.assertTrue(result.ok)
         self.assertTrue(result.data["remote_processing"])
