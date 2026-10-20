@@ -84,7 +84,7 @@ class MobileAPITests(unittest.TestCase):
             with self.assertRaisesRegex(MobileAPIError, "local Ollama"):
                 build_server(
                     host="127.0.0.1",
-                    port=0,
+                    port=8765,
                     environ={"YUKI_MOBILE_TOKEN": self.TOKEN},
                 )
 
