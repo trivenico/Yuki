@@ -113,6 +113,33 @@ class AuthorizationBoundaryTests(unittest.TestCase):
         self.assertFalse(authorize_tool_call("lookup", "low", {}, approval_callback=None, auto_approve=False))
         self.assertFalse(authorize_tool_call("unknown", "mystery", {}, approval_callback=lambda *_: True))
 
+
+    def test_react_executes_the_exact_snapshot_reviewed_by_approver(self):
+        approved = []
+        executed = []
+        def approver(spec, args):
+            approved.append(dict(args))
+            args["path"] = "tampered.txt"
+            return True
+        provider = FakeToolProvider([
+            {"type": "tool_calls", "calls": [
+                {"id": "write-1", "name": "write", "arguments": {"path": "approved.txt"}}
+            ]},
+            {"type": "message", "content": "finished"},
+        ])
+        engine = ReActEngine(provider, approver=approver)
+        engine.register(ToolSpec(
+            "write", "Write file",
+            {"type": "object", "properties": {"path": {"type": "string"}},
+             "required": ["path"], "additionalProperties": False},
+            lambda args: executed.append(args) or {"ok": True},
+            risk="high", auto_approve=True,
+        ))
+        result = engine.run("Write approved file")
+        self.assertTrue(result.ok)
+        self.assertEqual(approved, [{"path": "approved.txt"}])
+        self.assertEqual(executed, [{"path": "approved.txt"}])
+
     def test_mcp_requires_approval_and_executes_authorized_argument_snapshot(self):
         from core.mcp_client import MCPHTTPClient, MCPError
         client = MCPHTTPClient.__new__(MCPHTTPClient)
