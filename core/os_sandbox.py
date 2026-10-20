@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Sequence
@@ -41,7 +42,7 @@ class LinuxBubblewrapExecutor(SubprocessExecutor):
             timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes,
         )
-        if os.name != "posix" or not __import__("sys").platform.startswith("linux"):
+        if os.name != "posix" or not sys.platform.startswith("linux"):
             raise SandboxUnavailableError(
                 "Linux Bubblewrap isolation is only available on Linux; "
                 "this platform has no verified Yuki sandbox backend."
