@@ -111,27 +111,12 @@ def _load_onboarding_json_config(selected_config_path, body):
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError("Onboarding JSON configuration is invalid.") from exc
 
-    provider = onboarding["provider"]
-    if provider not in {"mock", "ollama"}:
-        raise RuntimeError(
-            f"Provider '{provider}' is configured in onboarding but is not yet supported "
-            "by the integrated runtime config bridge. Use mock/ollama or configure the "
-            "runtime provider separately; cloud execution is not enabled implicitly."
-        )
-    if any(server.get("enabled", False) for server in onboarding["mcp_servers"]):
-        raise RuntimeError("Enabled MCP servers are not yet wired into the integrated runtime; disable them before startup.")
-    if onboarding["daemon"]["enabled"] or onboarding["messaging"]["enabled"]:
-        raise RuntimeError("Daemon/messaging onboarding settings are not yet wired into the integrated runtime.")
-    security = onboarding["security"]
-    if security["allow_shell"] or security["allow_file_write"] or security["allow_network"]:
-        raise RuntimeError("Onboarding requested capabilities not enabled by the integrated runtime bridge.")
+    from core.config_schema import onboarding_to_runtime_config
 
-    # Translate only settings with an explicit, implemented runtime equivalent.
-    return {
-        "provider": provider,
-        "ollama_base_url": onboarding["base_url"] or "http://127.0.0.1:11434",
-        "ollama_model": onboarding["model"],
-    }
+    try:
+        return onboarding_to_runtime_config(onboarding)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def load_config(path=None):
