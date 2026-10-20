@@ -362,6 +362,17 @@ class OnboardingTests(unittest.TestCase):
             with self.subTest(config=config), self.assertRaises(ValueError):
                 validate_config(config)
 
+    def test_non_string_configuration_keys_are_rejected_cleanly(self):
+        from core.onboarding import validate_config
+        with self.assertRaisesRegex(ValueError, "keys must be strings"):
+            validate_config({"provider": "mock", 7: "unexpected"})
+        with self.assertRaisesRegex(ValueError, "security keys must be strings"):
+            validate_config({"provider": "mock", "security": {False: True}})
+        with self.assertRaisesRegex(ValueError, "MCP server keys must be strings"):
+            validate_config({
+                "provider": "mock",
+                "mcp_servers": [{"endpoint": "https://mcp.example/sse", 1: "unexpected"}],
+            })
     def test_api_key_environment_name_uses_portable_ascii_syntax(self):
         from core.onboarding import validate_config
         for name in ("1BAD_KEY", "OPENAI-KEY", "OPENAI.KEY", "ＡＰＩ_KEY", "API KEY"):
