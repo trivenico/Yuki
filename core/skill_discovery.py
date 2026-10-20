@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-_MODULE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}\\.py\\Z")
+_MODULE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,79}\.py\Z")
 _MAX_SKILL_BYTES = 512 * 1024
 
 
