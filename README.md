@@ -140,7 +140,7 @@ Yuki is still under active engineering. Passing CI verifies tested code paths, n
 The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. Provider selection is opt-in:
 
 - Keep `provider: mock` for offline tests.
-- Set `provider: ollama` and configure `ollama_model` (or `YUKI_OLLAMA_MODEL`) to use a locally running Ollama instance.
+- Set `provider: ollama` to use a locally running Ollama instance. If `ollama_model` and `YUKI_OLLAMA_MODEL` are both empty, Yuki inventories installed Ollama models on the first request and selects the largest one whose reported size fits a conservative detected-RAM budget. If hardware/model size is unknown or no model fits, it fails with guidance instead of claiming compatibility. Explicitly configured models are never silently replaced.
 - Set `provider: hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
 - Cloud requests are never an automatic fallback. Use `/ask-cloud TASK | PROMPT` only for a configured task; Yuki asks for approval before sending prompt text to the cloud provider.
 - `/ask PROMPT` is a text-only model request and does not invoke tools. `/task GOAL` uses a bounded JSON-only model loop over registered skills, with a maximum of `max_agent_steps` (1–5) steps. Each skill invocation requires a fresh human approval. Model output cannot run shell commands or arbitrary code; unregistered skills and malformed responses are rejected.

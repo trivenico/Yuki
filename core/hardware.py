@@ -298,7 +298,6 @@ def recommend_installed_model(models: list[dict], hardware: HardwareInfo) -> str
     reserve_gb = max(2.0, hardware.ram_total_gb * 0.15)
     budget_gb = max(0.0, available - reserve_gb)
     sized: list[tuple[float, str]] = []
-    unsized: list[str] = []
     for item in valid:
         name = item["name"].strip()
         size = item.get("size")
@@ -306,8 +305,6 @@ def recommend_installed_model(models: list[dict], hardware: HardwareInfo) -> str
             size_gb = size / 1024**3
             if size_gb * 1.35 <= budget_gb:
                 sized.append((size_gb, name))
-        else:
-            unsized.append(name)
 
     if sized:
         return max(sized, key=lambda pair: (pair[0], pair[1].casefold()))[1]
