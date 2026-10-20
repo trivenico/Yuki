@@ -126,5 +126,100 @@ class ApprovedTaskAgentTests(unittest.TestCase):
             ApprovedTaskAgent(FakeProvider([]), FakeSkillAgent(), max_steps=6)
 
 
+class DurableTaskStoreTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from core.task_store import TaskStore
+
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.store = TaskStore(Path(self.temp_dir.name) / "tasks.sqlite3")
+
+    def test_task_lifecycle_persists_and_rejects_replay(self):
+        task = self.store.create("summarize files")
+        self.assertEqual(task["status"], "queued")
+        self.store.transition(task["task_id"], "running")
+        completed = self.store.transition(
+            task["task_id"], "completed", result={"ok": True, "message": "done"}
+        )
+        self.assertEqual(completed["result"], {"ok": True, "message": "done"})
+        from core.task_store import TaskStore
+
+        reopened = TaskStore(self.store.path).get(task["task_id"])
+        self.assertEqual(reopened["status"], "completed")
+        with self.assertRaisesRegex(ValueError, "invalid task transition"):
+            self.store.transition(task["task_id"], "running")
+
+    def test_task_store_rejects_invalid_goals_and_transitions(self):
+        for goal in ("", "   ", None, "x" * 4001):
+            with self.subTest(goal_type=type(goal).__name__), self.assertRaises(ValueError):
+                self.store.create(goal)
+        with self.assertRaisesRegex(KeyError, "task not found"):
+            self.store.transition("missing", "running")
+        task = self.store.create("task")
+        with self.assertRaisesRegex(ValueError, "invalid task transition"):
+            self.store.transition(task["task_id"], "completed")
+
+    def test_task_store_rejects_invalid_or_oversized_results(self):
+        task = self.store.create("task")
+        self.store.transition(task["task_id"], "running")
+        with self.assertRaisesRegex(ValueError, "JSON-serializable"):
+            self.store.transition(task["task_id"], "failed", result=object())
+        with self.assertRaisesRegex(ValueError, "storage limit"):
+            self.store.transition(task["task_id"], "failed", result={"data": "x" * 17000})
+        self.assertEqual(self.store.get(task["task_id"])["status"], "running")
+
+    def test_recovery_marks_queued_and_running_tasks_interrupted(self):
+        queued = self.store.create("queued task")
+        running = self.store.create("running task")
+        self.store.transition(running["task_id"], "running")
+        done = self.store.create("done task")
+        self.store.transition(done["task_id"], "running")
+        self.store.transition(done["task_id"], "completed", result={"ok": True})
+        self.assertEqual(self.store.recover_interrupted(), 2)
+        self.assertEqual(self.store.get(queued["task_id"])["status"], "interrupted")
+        self.assertEqual(self.store.get(running["task_id"])["status"], "interrupted")
+        self.assertEqual(self.store.get(done["task_id"])["status"], "completed")
+        self.assertEqual(self.store.recover_interrupted(), 0)
+
+    def test_durable_runner_records_success_failure_and_interrupt(self):
+        from core.task_runtime import DurableTaskRunner
+
+        runner = DurableTaskRunner(self.store)
+        good_id, good = runner.run("good", lambda goal: AgentResponse(True, "done", "time"))
+        self.assertTrue(good.ok)
+        self.assertEqual(self.store.get(good_id)["status"], "completed")
+        bad_id, bad = runner.run(
+            "bad", lambda goal: AgentResponse(False, "denied", "time", stage="permission_denied")
+        )
+        self.assertFalse(bad.ok)
+        self.assertEqual(self.store.get(bad_id)["status"], "failed")
+
+        def interrupt(goal):
+            raise KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            runner.run("interrupt", interrupt)
+        self.assertEqual(self.store.list_tasks()[0]["status"], "interrupted")
+
+    def test_durable_runner_marks_unexpected_exception_interrupted(self):
+        from core.task_runtime import DurableTaskRunner
+
+        runner = DurableTaskRunner(self.store)
+
+        def crash(goal):
+            raise RuntimeError("failure")
+
+        with self.assertRaisesRegex(RuntimeError, "failure"):
+            runner.run("crash", crash)
+        self.assertEqual(self.store.list_tasks()[0]["status"], "interrupted")
+
+    def test_list_bounds_are_enforced(self):
+        for limit in (0, 501, True, 1.5):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                self.store.list_tasks(limit=limit)
+
+
 if __name__ == "__main__":
     unittest.main()
