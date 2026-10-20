@@ -337,6 +337,55 @@ class OnboardingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(ValueError): save_config({"provider":"mock","api_key":"never-save"},Path(d)/"config.json")
 
+    def test_runtime_loads_supported_onboarding_json_config(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text(json.dumps({
+                "version": 1,
+                "provider": "ollama",
+                "model": "qwen2.5",
+                "base_url": "http://127.0.0.1:11434",
+                "api_key_env": None,
+                "mcp_servers": [],
+                "security": {
+                    "allow_network": False,
+                    "allow_file_write": False,
+                    "allow_shell": False,
+                    "require_approval_for_unknown_tools": True,
+                },
+                "daemon": {"enabled": False, "poll_seconds": 1.0},
+                "messaging": {"enabled": False},
+            }), encoding="utf-8")
+            loaded = load_config(path)
+            self.assertEqual(loaded["provider"], "ollama")
+            self.assertEqual(loaded["ollama_model"], "qwen2.5")
+            self.assertEqual(loaded["ollama_base_url"], "http://127.0.0.1:11434")
+
+    def test_runtime_rejects_onboarding_config_with_unwired_capabilities(self):
+        from core.config import load_config
+        invalid_configs = [
+            {"provider": "openai", "api_key_env": "OPENAI_API_KEY"},
+            {"provider": "ollama", "security": {"allow_shell": True}},
+            {"provider": "ollama", "daemon": {"enabled": True}},
+            {"provider": "ollama", "mcp_servers": [{"endpoint": "https://mcp.example/sse", "enabled": True, "allowed_tools": ["read"]}]},
+        ]
+        for override in invalid_configs:
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "config.json"
+                payload = {
+                    "version": 1, "provider": "ollama", "model": "",
+                    "base_url": "http://127.0.0.1:11434", "api_key_env": None,
+                    "mcp_servers": [],
+                    "security": {"allow_network": False, "allow_file_write": False, "allow_shell": False, "require_approval_for_unknown_tools": True},
+                    "daemon": {"enabled": False, "poll_seconds": 1.0},
+                    "messaging": {"enabled": False},
+                }
+                payload.update(override)
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    load_config(path)
+
 class SkillSynthesisTests(unittest.TestCase):
     def test_hash_bound_low_risk_review_activates_declarative_file(self):
         with tempfile.TemporaryDirectory() as d:
