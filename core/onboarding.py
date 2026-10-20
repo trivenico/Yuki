@@ -193,7 +193,7 @@ def run_onboarding(
     path = Path(path).expanduser()
     if not needs_onboarding(path):
         try:
-            loaded = _load_json_config(path.read_text(encoding="utf-8"))
+            loaded = loads_strict(path.read_text(encoding="utf-8"))
             return validate_config(loaded)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             raise RuntimeError("Existing Yuki config is invalid; it was not overwritten. Back it up and repair it before retrying.") from exc
