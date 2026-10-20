@@ -103,3 +103,15 @@ Remediation committed on the hardening branch:
 - Added unit tests for rejecting both cross-host and same-host redirects.
 
 **Not yet verified:** the post-fix CI/security workflow results. The prior CI run still fails at Ruff before format, mypy, entry-point smoke test, or unit tests execute. Gitleaks passing means that scan found no findings in that run; it does not prove all secrets are absent or that private data never entered history.
+
+### Follow-up provider-boundary regression coverage — 2026-10-20
+
+Added `tests/test_provider_security.py` to cover:
+- rejection of plain HTTP for non-loopback Ollama endpoints;
+- rejection of URL-embedded credentials;
+- rejection of non-HTTPS OpenAI-compatible endpoints;
+- a real loopback-only HTTP redirect test proving the provider helper does not follow the redirect.
+
+The tests do not call external services. They are committed but not yet confirmed passing in CI. They complement the unit tests for same-host and cross-host redirect handler behavior; they do not establish complete SSRF protection, DNS-rebinding resistance, or a network-level egress firewall.
+
+Latest commit observed: `d533fd0d16ef43e1a39b9888f9132f76a9ecb463`. CI, Security, and Yuki tests workflows were queued when checked; no passing result is claimed.
