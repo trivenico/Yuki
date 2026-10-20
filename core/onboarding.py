@@ -62,6 +62,8 @@ def validate_config(config: Any) -> dict[str, Any]:
     """Validate loaded or newly-created config identically; reject unknown top-level keys."""
     if not isinstance(config, dict):
         raise ValueError("Config must be an object")
+    if any(not isinstance(key, str) for key in config):
+        raise ValueError("Configuration keys must be strings")
     allowed = {
         "version", "provider", "model", "base_url", "api_key_env", "mcp_servers",
         "security", "daemon", "messaging",
@@ -94,7 +96,11 @@ def validate_config(config: Any) -> dict[str, Any]:
         raise ValueError("mcp_servers must be a list of at most 32 servers")
     seen_mcp_endpoints: set[str] = set()
     for server in mcp_servers:
-        if not isinstance(server, dict) or set(server) - {"endpoint", "enabled", "allowed_tools"}:
+        if not isinstance(server, dict):
+            raise ValueError("Each MCP server must be an object")
+        if any(not isinstance(key, str) for key in server):
+            raise ValueError("MCP server keys must be strings")
+        if set(server) - {"endpoint", "enabled", "allowed_tools"}:
             raise ValueError("Each MCP server must contain only endpoint, enabled, and allowed_tools")
         endpoint = server.get("endpoint")
         if not isinstance(endpoint, str) or not endpoint.strip():
@@ -120,6 +126,8 @@ def validate_config(config: Any) -> dict[str, Any]:
         value = config.get(section, {})
         if not isinstance(value, dict):
             raise ValueError(f"{section} must be an object")
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError(f"{section} keys must be strings")
         unknown = set(value) - allowed_keys
         if unknown:
             raise ValueError(f"Unknown {section} keys: " + ", ".join(sorted(unknown)))
