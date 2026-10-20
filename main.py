@@ -72,6 +72,9 @@ def build_agent(config, *, approval_callback=None):
 
 def print_help():
     print("""Yuki guarded core
+  /model status                  Show Ollama model detection status
+  /model list                    List models already installed in local Ollama
+  /model use MODEL_NAME          Select an already installed local model
   /help                          Show commands
   /status                        Show capability status
   /skills                        List registered skills
@@ -109,6 +112,62 @@ def print_help():
 
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
 """)
+
+def _handle_model_command(command, config, ai):
+    """Inspect/select installed Ollama models; never download a model."""
+    parts = shlex.split(command)
+    if len(parts) == 2 and parts[1] == "status":
+        try:
+            provider = create_provider({**config, "provider": "ollama"})
+            available = provider.is_available()
+            print(f"Yuki > Ollama: {'available' if available else 'not ready'}")
+            if available:
+                print(f"Yuki > Selected local model: {provider.model}")
+            else:
+                print("Yuki > Start Ollama and install a model, or run /model list.")
+            return True
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"Yuki > Model detection failed: {exc}")
+            return True
+    if len(parts) == 2 and parts[1] == "list":
+        try:
+            from providers.ollama import OllamaProvider
+            provider = OllamaProvider(
+                base_url=config["ollama_base_url"],
+                model="",
+            )
+            models = provider.list_models()
+            if not models:
+                print("Yuki > No installed Ollama models found. No model was downloaded.")
+            else:
+                print("Yuki > Installed local Ollama models:")
+                for name in models:
+                    print(f"  - {name}")
+            return True
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"Yuki > Could not list local models: {exc}")
+            return True
+    if len(parts) >= 3 and parts[1] == "use":
+        selected = " ".join(parts[2:]).strip()
+        try:
+            from providers.ollama import OllamaProvider
+            provider = OllamaProvider(
+                base_url=config["ollama_base_url"],
+                model="",
+            )
+            if selected not in provider.list_models():
+                print("Yuki > That model is not installed locally. I will not download it.")
+                return True
+            config["provider"] = "ollama"
+            config["ollama_model"] = selected
+            ai.provider = create_provider(config)
+            print(f"Yuki > Selected installed local model: {selected}")
+            return True
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"Yuki > Could not select local model: {exc}")
+            return True
+    print("Yuki > Usage: /model status | /model list | /model use MODEL_NAME")
+    return True
 
 
 def _run_doctor(config):
