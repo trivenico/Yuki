@@ -118,7 +118,9 @@ def main():
     recovered_tasks = task_store.recover_interrupted()
     task_runner = DurableTaskRunner(task_store)
     if recovered_tasks:
-        print(f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed.")
+        print(
+            f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed."
+        )
     # Convert SIGTERM to KeyboardInterrupt so active task lifecycle state is persisted.
     signal.signal(
         signal.SIGTERM,
@@ -216,10 +218,7 @@ def main():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
         elif command == "/tasks":
             for task in task_store.list_tasks(limit=20):
-                print(
-                    f"- {task['task_id']} [{task['status']}] "
-                    f"{task['goal'][:100]}"
-                )
+                print(f"- {task['task_id']} [{task['status']}] {task['goal'][:100]}")
         elif command.startswith("/task "):
             goal = command[len("/task ") :].strip()
             if not goal:
@@ -231,7 +230,9 @@ def main():
             try:
                 task_id, result = task_runner.run(goal, task_agent.run)
             except KeyboardInterrupt:
-                print("\nYuki > Shutdown requested. Task will not be replayed; check /tasks for its final status.")
+                print(
+                    "\nYuki > Shutdown requested. Task will not be replayed; check /tasks for its final status."
+                )
                 return
             except Exception as exc:
                 print(f"Yuki > Task failed safely ({type(exc).__name__}).")
