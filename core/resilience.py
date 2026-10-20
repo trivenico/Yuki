@@ -110,6 +110,7 @@ class CircuitBreaker:
         self._failures = 0
         self._opened_at: float | None = None
         self._probe_in_flight = False
+        self._generation = 0
 
     @property
     def state(self) -> str:
@@ -133,18 +134,40 @@ class CircuitBreaker:
                     raise CircuitOpenError("Circuit recovery probe is already running.")
                 self._probe_in_flight = True
                 probe = True
+            generation = self._generation
 
         try:
             result = operation(*args, **kwargs)
         except Exception:
             with self._lock:
-                self._failures += 1
-                if probe or self._failures >= self.failure_threshold:
-                    self._opened_at = self._clock()
-                self._probe_in_flight = False
+                # A late failure from a request started before another request
+                # opened the circuit must not alter the newer circuit generation.
+                if generation == self._generation:
+                    self._failures += 1
+                    if probe or self._failures >= self.failure_threshold:
+                        self._opened_at = self._clock()
+                        self._generation += 1
+                if probe:
+                    self._probe_in_flight = False
             raise
+        except BaseException:
+            # KeyboardInterrupt/SystemExit should propagate, but must never leave
+            # the single half-open probe permanently reserved.
+            if probe:
+                with self._lock:
+                    self._probe_in_flight = False
+            raise
+
         with self._lock:
-            self._failures = 0
-            self._opened_at = None
-            self._probe_in_flight = False
+            # A slow request that began while closed cannot close a circuit
+            # another request has since opened. Only a current-generation success
+            # (including the half-open probe) may reset the breaker.
+            if generation == self._generation:
+                self._failures = 0
+                self._opened_at = None
+                self._probe_in_flight = False
+                if probe:
+                    self._generation += 1
+            elif probe:
+                self._probe_in_flight = False
         return result
