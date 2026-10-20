@@ -100,6 +100,39 @@ _UniqueKeyLoader.add_constructor(
 )
 
 
+def _load_onboarding_json_config(selected_config_path, body):
+    """Bridge the onboarding schema to the runtime schema without silently dropping features."""
+    import json
+    from core.onboarding import validate_config
+
+    try:
+        onboarding = validate_config(json.loads(body.decode("utf-8")))
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError("Onboarding JSON configuration is invalid.") from exc
+
+    provider = onboarding["provider"]
+    if provider not in {"mock", "ollama"}:
+        raise RuntimeError(
+            f"Provider '{provider}' is configured in onboarding but is not yet supported "
+            "by the integrated runtime config bridge. Use mock/ollama or configure the "
+            "runtime provider separately; cloud execution is not enabled implicitly."
+        )
+    if any(server.get("enabled", False) for server in onboarding["mcp_servers"]):
+        raise RuntimeError("Enabled MCP servers are not yet wired into the integrated runtime; disable them before startup.")
+    if onboarding["daemon"]["enabled"] or onboarding["messaging"]["enabled"]:
+        raise RuntimeError("Daemon/messaging onboarding settings are not yet wired into the integrated runtime.")
+    security = onboarding["security"]
+    if security["allow_shell"] or security["allow_file_write"] or security["allow_network"]:
+        raise RuntimeError("Onboarding requested capabilities not enabled by the integrated runtime bridge.")
+
+    # Translate only settings with an explicit, implemented runtime equivalent.
+    return {
+        "provider": provider,
+        "ollama_base_url": onboarding["base_url"] or "http://127.0.0.1:11434",
+        "ollama_model": onboarding["model"],
+    }
+
+
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
     try:
@@ -107,7 +140,10 @@ def load_config(path=None):
         body = selected_config_path.read_bytes()
         if len(body) > _MAX_CONFIG_BYTES:
             raise RuntimeError("Configuration file exceeds 128 KiB.")
-        raw = yaml.load(body.decode("utf-8"), Loader=_UniqueKeyLoader) or {}
+        if selected_config_path.suffix.lower() == ".json":
+            raw = _load_onboarding_json_config(selected_config_path, body)
+        else:
+            raw = yaml.load(body.decode("utf-8"), Loader=_UniqueKeyLoader) or {}
     except OSError as exc:
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except UnicodeError as exc:
