@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,17 @@ class TaskStore:
             raise ValueError("busy_timeout_ms must be between 1 and 30000")
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            # Create/restrict the ledger before SQLite opens it, and reject a
+            # symlink at the configured database path.
+            flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.path, flags, 0o600)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("task database path must be a regular file")
+                os.fchmod(descriptor, 0o600)
+            finally:
+                os.close(descriptor)
         self.busy_timeout_ms = busy_timeout_ms
         with self._connect() as connection:
             connection.execute(
