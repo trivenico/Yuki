@@ -24,9 +24,13 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
-    def test_unknown_provider_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "provider must be one of"):
-            create_provider({"provider": "automatic-cloud-fallback"})
+    def test_unknown_provider_fails_before_constructing_local_provider(self):
+        from unittest.mock import patch
+
+        with patch("providers.factory.OllamaProvider") as ollama:
+            with self.assertRaisesRegex(ValueError, "provider must be one of"):
+                create_provider({"provider": "automatic-cloud-fallback"})
+        ollama.assert_not_called()
 
 
 if __name__ == "__main__":
