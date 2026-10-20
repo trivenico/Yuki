@@ -7,6 +7,7 @@ client file must be configured locally; credentials/token files must not be comm
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 
 class EmailSkillError(RuntimeError):
@@ -29,7 +30,7 @@ class GmailReadSkill:
         self.enabled = enabled
         self.credentials_path = Path(credentials_path).expanduser().resolve()
         self.token_path = Path(token_path).expanduser().resolve()
-        self._service = None
+        self._service: Any | None = None
 
     def _connect(self):
         if not self.enabled:
@@ -66,9 +67,12 @@ class GmailReadSkill:
             raise ValueError("Gmail query must be non-empty and bounded.")
         if self._service is None:
             self._connect()
+        service = self._service
+        if service is None:
+            raise EmailSkillError("Gmail service could not be initialized.")
         try:
             result = (
-                self._service.users()
+                service.users()
                 .messages()
                 .list(userId="me", q=query, maxResults=limit)
                 .execute()
@@ -76,7 +80,7 @@ class GmailReadSkill:
             messages = []
             for item in result.get("messages", []):
                 message = (
-                    self._service.users()
+                    service.users()
                     .messages()
                     .get(
                         userId="me",
