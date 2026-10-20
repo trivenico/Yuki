@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 from pathlib import Path
@@ -69,6 +70,14 @@ class SQLiteActionApprovalStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_action_approval_expiry ON action_approvals(expires_at)")
+        # Approval tokens are bearer credentials: restrict the database file
+        # to the current user wherever POSIX permission bits are supported.
+        # Do not follow a symlink to an unexpected target.
+        db_path = Path(self.database_path)
+        if db_path.is_symlink():
+            raise ValueError("Approval database must not be a symbolic link.")
+        if os.name == "posix":
+            os.chmod(db_path, 0o600)
 
     def _now(self) -> float:
         if self._clock is not None:
