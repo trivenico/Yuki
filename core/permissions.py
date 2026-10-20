@@ -1,4 +1,5 @@
 """Human-in-the-loop approval. Fail closed: no callback means no approval."""
+
 from dataclasses import dataclass
 from typing import Callable, Optional
 

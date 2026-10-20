@@ -1,4 +1,5 @@
 """Explicit recording and transcription helpers; microphone capture is opt-in and bounded."""
+
 from __future__ import annotations
 from pathlib import Path
 import wave
@@ -14,7 +15,12 @@ class FasterWhisperSTT:
             raise ValueError("Unsupported model size.")
         if device not in {"cpu", "cuda"}:
             raise ValueError("device must be cpu or cuda.")
-        self.enabled, self.model_size, self.device, self.compute_type = enabled, model_size, device, compute_type
+        self.enabled, self.model_size, self.device, self.compute_type = (
+            enabled,
+            model_size,
+            device,
+            compute_type,
+        )
         self._model = None
 
     def record_wav(self, output_path, *, seconds=5, sample_rate=16000):
@@ -33,11 +39,15 @@ class FasterWhisperSTT:
         except ImportError as exc:
             raise STTError("Install optional sounddevice and numpy to record audio.") from exc
         try:
-            audio = sd.rec(int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
+            audio = sd.rec(
+                int(seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16"
+            )
             sd.wait()
             path.parent.mkdir(parents=True, exist_ok=True)
             with wave.open(str(path), "wb") as handle:
-                handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(sample_rate)
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(sample_rate)
                 handle.writeframes(np.asarray(audio, dtype=np.int16).tobytes())
             return path
         except Exception as exc:
@@ -56,11 +66,17 @@ class FasterWhisperSTT:
         try:
             if self._model is None:
                 from faster_whisper import WhisperModel
-                self._model = WhisperModel(self.model_size, device=self.device, compute_type=self.compute_type)
+
+                self._model = WhisperModel(
+                    self.model_size, device=self.device, compute_type=self.compute_type
+                )
             segments, info = self._model.transcribe(str(path), language=language, vad_filter=True)
             text = " ".join(segment.text.strip() for segment in segments).strip()
-            return {"text": text[:20000], "language": info.language,
-                    "language_probability": float(info.language_probability)}
+            return {
+                "text": text[:20000],
+                "language": info.language,
+                "language_probability": float(info.language_probability),
+            }
         except ImportError as exc:
             raise STTError("Install faster-whisper to enable STT.") from exc
         except Exception as exc:

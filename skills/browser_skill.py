@@ -1,4 +1,5 @@
 """Human-approved read-only browser skill."""
+
 from skills.base import Skill, SkillResult
 from automation.browser import SafeBrowser, BrowserAutomationError
 from core.prompt_guard import scan_untrusted_text

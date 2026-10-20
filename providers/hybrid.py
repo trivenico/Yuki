@@ -1,4 +1,5 @@
 """Explicit per-task hybrid routing with local-first privacy defaults."""
+
 from __future__ import annotations
 
 
@@ -57,5 +58,7 @@ class HybridProvider:
             if self.local_provider.is_available() is not True:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
-            raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
+            raise RuntimeError(
+                "Local provider is not available; cloud fallback is disabled."
+            ) from exc
         return self.local_provider.generate(prompt)

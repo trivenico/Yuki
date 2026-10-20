@@ -1,4 +1,5 @@
 """Read-only local clock skill."""
+
 import time
 from .base import Skill, SkillResult
 

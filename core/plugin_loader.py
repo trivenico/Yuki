@@ -3,12 +3,14 @@
 Importing Python executes code with Yuki's privileges. This loader only discovers
 local modules and validates their class shape; it is not a security sandbox.
 """
+
 from __future__ import annotations
 import importlib
 import pkgutil
 import re
 
 EXCLUDED = {"base", "registry", "discovery", "role_skill", "__init__"}
+
 
 class PluginLoader:
     def __init__(self, package_name="skills", *, trusted_modules=None, enabled=False):
@@ -33,29 +35,47 @@ class PluginLoader:
             self.last_report = report
             return report
         from skills.base import Skill
+
         for item in sorted(pkgutil.iter_modules(paths), key=lambda x: x.name):
             name = item.name
-            if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+            if (
+                name.startswith("_")
+                or name in EXCLUDED
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name)
+            ):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
-                report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
+            if self.trusted_modules is None or (
+                "*" not in self.trusted_modules and name not in self.trusted_modules
+            ):
+                report["skipped"].append(
+                    {"module": name, "reason": "module not in explicit trust list"}
+                )
                 continue
             try:
                 module = importlib.import_module(self.package_name + "." + name)
                 classes = []
                 for candidate in vars(module).values():
-                    if (isinstance(candidate, type) and candidate is not Skill
-                            and issubclass(candidate, Skill) and candidate.__module__ == module.__name__
-                            and not getattr(candidate, "abstract", False)):
+                    if (
+                        isinstance(candidate, type)
+                        and candidate is not Skill
+                        and issubclass(candidate, Skill)
+                        and candidate.__module__ == module.__name__
+                        and not getattr(candidate, "abstract", False)
+                    ):
                         instance = candidate()
-                        if not isinstance(getattr(instance, "name", None), str) or not instance.name:
+                        if (
+                            not isinstance(getattr(instance, "name", None), str)
+                            or not instance.name
+                        ):
                             raise ValueError("Plugin skill has no valid name.")
                         if not callable(getattr(instance, "execute", None)):
                             raise TypeError("Plugin skill must implement execute().")
                         classes.append(instance)
                 if not classes:
-                    report["skipped"].append({"module": name, "reason": "no local Skill subclass found"})
+                    report["skipped"].append(
+                        {"module": name, "reason": "no local Skill subclass found"}
+                    )
                 else:
                     report["loaded"].extend(classes)
             except Exception as exc:

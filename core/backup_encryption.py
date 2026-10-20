@@ -4,6 +4,7 @@ This module encrypts an already-created archive. It deliberately does not create
 choose backup contents, or persist keys. Callers must supply a 32-byte key from an external
 secret store and must never write the plaintext archive to a temporary file.
 """
+
 from __future__ import annotations
 
 import os
@@ -101,11 +102,13 @@ def decrypt_backup(
     header_size = len(_MAGIC) + _NONCE_SIZE
     if len(encrypted) < header_size + 16 or not encrypted.startswith(_MAGIC):
         raise BackupEncryptionError("Backup format is invalid or unsupported.")
-    nonce = encrypted[len(_MAGIC):header_size]
+    nonce = encrypted[len(_MAGIC) : header_size]
     try:
         plaintext = AESGCM(key).decrypt(nonce, encrypted[header_size:], _MAGIC)
     except InvalidTag as exc:
-        raise BackupEncryptionError("Backup authentication failed; key or data is invalid.") from exc
+        raise BackupEncryptionError(
+            "Backup authentication failed; key or data is invalid."
+        ) from exc
     if len(plaintext) > max_bytes:
         raise BackupEncryptionError("Decrypted backup exceeds the configured size limit.")
     _atomic_write(destination, plaintext)

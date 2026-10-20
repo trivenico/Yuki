@@ -21,6 +21,25 @@ A controlled plugin loader is available in `core/plugin_loader.py`. Plugin disco
 
 A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(self, argument="")`, and provide a unique simple `name`, `description`, and safe input validation. The loader imports the module and instantiates the class with no arguments. Plugin imports execute Python with Yuki's permissions: this is **not a sandbox**. Never trust downloaded or user-supplied plugin code without reviewing it. Duplicate skill names are skipped; discovery failures do not crash core startup.
 
+## Automatic local model detection
+
+The default configuration uses `provider: auto`. At startup, Yuki checks the configured Ollama endpoint (loopback by default) and asks Ollama for its already-installed model list. If a model is available, Yuki selects one deterministically; if a model name is explicitly configured and installed, that model is preferred. If Ollama is unavailable or has no installed models, Yuki falls back to the mock provider rather than downloading a model or routing to a cloud service.
+
+Commands:
+- `/model status` — check Ollama and show the selected model
+- `/model list` — list models already installed locally
+- `/model use MODEL_NAME` — switch to an installed local model for the current session
+
+No model is downloaded automatically. To use real local inference, install and start Ollama, pull a model yourself, then launch Yuki. The mock provider is a safe fallback for testing and is not a real LLM.
+
+## Safe skill discovery and self-evolution boundary
+
+`core/skill_discovery.py` provides a non-executing candidate scanner. It reads skill files as bounded bytes, checks filenames and path/symlink constraints, computes SHA-256 fingerprints, and reports changed files under `pending_review`. It does **not** import a candidate, execute its code, install it, or hot-reload it. This is intentional: Python module import can run arbitrary code with the current user's permissions.
+
+A safe self-evolution pipeline should be implemented as separate stages: draft proposal → static checks → isolated tests with no secrets/network by default → human review of the diff and requested capabilities → explicit approval → trusted activation → rollback/audit. The scanner is only the discovery stage; it does not yet implement the entire pipeline, a 10-second watcher, automatic skill curation, A/B prompt testing, or nightly evolution.
+
+The product brief's `BaseSkill.execute(args, agent_context)` example does not match the repository's current `skills.base.Skill.run(argument)` interface. New skills must target the actual interface and registry until a deliberate, tested migration is made. Do not drop untrusted Python files into the live skill package and enable wildcard trust as a substitute for isolation.
+
 ## Ruflo-inspired capability infrastructure
 
 - `skills/discovery.py` is a discovery prototype that scans skill modules and reports import failures. It is **not wired into the default registry** because importing arbitrary Python executes it with Yuki's permissions; a reviewed plugin trust policy is required first.
@@ -179,3 +198,13 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+## Android / mobile companion (initial phase)
+
+Yuki includes an initial installable Android-friendly PWA backed by an authenticated API on your computer. The computer continues to run local Ollama; the mobile API is text-only and does not execute skills or approve actions. It refuses to start without an available local Ollama model and requires TLS for non-loopback binding. See [Android/mobile setup and security boundaries](docs/ANDROID_MOBILE.md) before enabling LAN access. This is an initial mobile client, not yet a native Android app or a production-reviewed internet-facing service.
+
+
+## Hardware-aware local model selection
+
+Yuki can inspect the Linux host's CPU, RAM, free disk, and supported NVIDIA GPU metadata, then estimate which installed Ollama model best fits available memory. Run `yuki --hardware` to inspect the profile and recommendation. Selection never downloads models and an explicitly configured model takes precedence. This is a conservative estimate, not a performance guarantee. See [Oracle Cloud Linux deployment guidance](docs/ORACLE_CLOUD_LINUX.md).

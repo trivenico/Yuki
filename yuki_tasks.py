@@ -14,8 +14,14 @@ def load_tasks():
         data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, list):
             return []
-        return [x for x in data if isinstance(x, dict) and isinstance(x.get("id"), int)
-                and isinstance(x.get("description"), str) and isinstance(x.get("completed"), bool)]
+        return [
+            x
+            for x in data
+            if isinstance(x, dict)
+            and isinstance(x.get("id"), int)
+            and isinstance(x.get("description"), str)
+            and isinstance(x.get("completed"), bool)
+        ]
     except (OSError, json.JSONDecodeError):
         return []
 
@@ -38,8 +44,14 @@ def add_task(tasks, description):
     if not isinstance(description, str) or not description.strip():
         return "Please provide a task description."
     next_id = max((x["id"] for x in tasks), default=0) + 1
-    tasks.append({"id": next_id, "description": description.strip()[:500], "completed": False,
-                  "created_at": datetime.now(timezone.utc).isoformat()})
+    tasks.append(
+        {
+            "id": next_id,
+            "description": description.strip()[:500],
+            "completed": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     if save_tasks(tasks):
         return "Task added."
     tasks.pop()
@@ -49,7 +61,9 @@ def add_task(tasks, description):
 def list_tasks(tasks):
     if not tasks:
         return "No tasks yet. Add one with /task add <description>."
-    return "\n".join(f'{x["id"]}. [{"x" if x["completed"] else " "}] {x["description"]}' for x in tasks)
+    return "\n".join(
+        f"{x['id']}. [{'x' if x['completed'] else ' '}] {x['description']}" for x in tasks
+    )
 
 
 def complete_task(tasks, task_id):

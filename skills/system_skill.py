@@ -1,6 +1,6 @@
 """Read-only runtime information; never executes shell commands."""
+
 import platform
-import sys
 from .base import Skill, SkillResult
 
 

@@ -1,4 +1,5 @@
 """Read-only directory listing constrained to a configured workspace."""
+
 from pathlib import Path
 from .base import Skill, SkillResult
 
@@ -20,7 +21,9 @@ class FileSkill(Skill):
         if not requested.exists():
             return SkillResult(False, "That path does not exist in the workspace.")
         if not requested.is_dir():
-            return SkillResult(False, "Only directory listing is supported; file contents are never read.")
+            return SkillResult(
+                False, "Only directory listing is supported; file contents are never read."
+            )
         try:
             entries = sorted(requested.iterdir(), key=lambda p: (not p.is_dir(), p.name.casefold()))
         except OSError:
@@ -30,4 +33,6 @@ class FileSkill(Skill):
             for item in entries[:100]
             if not item.is_symlink()
         ]
-        return SkillResult(True, f"Listed {len(names)} entr{'y' if len(names) == 1 else 'ies'}.", names)
+        return SkillResult(
+            True, f"Listed {len(names)} entr{'y' if len(names) == 1 else 'ies'}.", names
+        )

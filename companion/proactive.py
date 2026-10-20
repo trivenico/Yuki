@@ -1,4 +1,5 @@
 """Local reminder queue: emits due reminders, never runs arbitrary actions."""
+
 from __future__ import annotations
 
 import json
@@ -31,10 +32,12 @@ class ReminderQueue:
 
     def _save(self, items):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-reminders-", suffix=".tmp", dir=str(self.path.parent))
+        fd, temp_name = tempfile.mkstemp(
+            prefix=".yuki-reminders-", suffix=".tmp", dir=str(self.path.parent)
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(items[-self.MAX_REMINDERS:], handle, ensure_ascii=False, indent=2)
+                json.dump(items[-self.MAX_REMINDERS :], handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, self.path)
@@ -53,8 +56,12 @@ class ReminderQueue:
             items = self._load()
             if len(items) >= self.MAX_REMINDERS:
                 raise ValueError("Reminder queue is full.")
-            item = {"id": uuid4().hex, "text": text.strip(),
-                    "due_at": due_at.astimezone(timezone.utc).isoformat(), "delivered": False}
+            item = {
+                "id": uuid4().hex,
+                "text": text.strip(),
+                "due_at": due_at.astimezone(timezone.utc).isoformat(),
+                "delivered": False,
+            }
             items.append(item)
             self._save(items)
             return dict(item)
@@ -79,10 +86,10 @@ class ReminderQueue:
             return [dict(item) for item in self._load()]
 
 
-
 def summarize_habit_streaks(entries, *, today=None):
     """Summarize explicitly logged habit entries; never infer unrecorded behavior."""
     from datetime import date, timedelta
+
     if not isinstance(entries, (list, tuple)):
         raise ValueError("entries must be a list of health log records.")
     current = today or datetime.now(timezone.utc).date()
@@ -102,7 +109,9 @@ def summarize_habit_streaks(entries, *, today=None):
             day = datetime.fromisoformat(stamp).date()
         except ValueError:
             continue
-        dates_by_habit.setdefault(detail.strip().casefold(), {"label": detail.strip(), "dates": set()})["dates"].add(day)
+        dates_by_habit.setdefault(
+            detail.strip().casefold(), {"label": detail.strip(), "dates": set()}
+        )["dates"].add(day)
     summaries = []
     for item in dates_by_habit.values():
         dates = item["dates"]
@@ -111,7 +120,16 @@ def summarize_habit_streaks(entries, *, today=None):
         while cursor in dates:
             streak += 1
             cursor -= timedelta(days=1)
-        summaries.append({"habit": item["label"], "logged_days": len(dates), "current_streak_days": streak,
-                          "last_logged_date": max(dates).isoformat() if dates else None,
-                          "source": "explicit_user_logs"})
-    return sorted(summaries, key=lambda x: (-x["current_streak_days"], -x["logged_days"], x["habit"].casefold()))
+        summaries.append(
+            {
+                "habit": item["label"],
+                "logged_days": len(dates),
+                "current_streak_days": streak,
+                "last_logged_date": max(dates).isoformat() if dates else None,
+                "source": "explicit_user_logs",
+            }
+        )
+    return sorted(
+        summaries,
+        key=lambda x: (-x["current_streak_days"], -x["logged_days"], x["habit"].casefold()),
+    )

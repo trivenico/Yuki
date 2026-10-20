@@ -1,4 +1,5 @@
 """Stable, user-facing identity for Yuki; no model calls or hidden state."""
+
 from dataclasses import dataclass
 
 

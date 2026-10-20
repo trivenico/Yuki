@@ -1,7 +1,6 @@
 """Small synchronous in-process event bus for agent lifecycle events."""
 
 from collections import defaultdict
-from collections.abc import Callable
 from threading import RLock
 
 
@@ -27,6 +26,7 @@ class EventBus:
                     callbacks.remove(callback)
                 if not callbacks:
                     self._subscribers.pop(event_name, None)
+
         return unsubscribe
 
     def publish(self, event_name, payload=None):

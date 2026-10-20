@@ -22,13 +22,19 @@ def load_memory():
         return []
     if not isinstance(data, list):
         return []
-    return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]
-            if isinstance(item, str) and item.strip()]
+    return [
+        sanitize_text(item, MAX_MEMORY_TEXT)
+        for item in data[-MAX_MEMORY_ITEMS:]
+        if isinstance(item, str) and item.strip()
+    ]
 
 
 def save_memory(memory):
-    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
-                   if isinstance(item, str) and item.strip()]
+    safe_memory = [
+        sanitize_text(item, MAX_MEMORY_TEXT)
+        for item in memory[-MAX_MEMORY_ITEMS:]
+        if isinstance(item, str) and item.strip()
+    ]
     temp = MEMORY_FILE.with_suffix(".tmp")
     try:
         temp.write_text(json.dumps(safe_memory, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -97,12 +103,17 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 agent.set_provider(adapter)
             except Exception:
                 return "Provider selection failed. The previous provider remains active."
-        write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
+        write_audit_event(
+            "provider:select",
+            "completed" if result.startswith("Selected provider:") else "rejected",
+        )
         return result
     if command == "/dashboard":
         current = providers.current()
         available_tools = ", ".join(policy.allowed_tools())
-        tasks_open = sum(1 for item in tasks if isinstance(item, dict) and not item.get("completed", False))
+        tasks_open = sum(
+            1 for item in tasks if isinstance(item, dict) and not item.get("completed", False)
+        )
         return (
             "Yuki dashboard\\n"
             f"Provider: {current.name if current else 'none'} ({agent.status()})\\n"
@@ -114,8 +125,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         )
     if command == "/providers":
         return "\n".join(
-            f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
-            f'{" (selected)" if item["selected"] else ""}; auth metadata: {", ".join(item["auth_methods"])}'
+            f"{item['name']}: {'implemented' if item['implemented'] else 'not implemented'}"
+            f"{' (selected)' if item['selected'] else ''}; auth metadata: {', '.join(item['auth_methods'])}"
             for item in providers.list_providers()
         )
     if command == "/tool" or command.startswith("/tool "):
@@ -140,14 +151,23 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if parts[1] in ("done", "delete"):
             if len(parts) < 3:
                 return f"Usage: /task {parts[1]} ID"
-            result = complete_task(tasks, parts[2]) if parts[1] == "done" else delete_task(tasks, parts[2])
-            write_audit_event("task:" + parts[1], "completed" if result in ("Task completed.", "Task deleted.") else "failed")
+            result = (
+                complete_task(tasks, parts[2])
+                if parts[1] == "done"
+                else delete_task(tasks, parts[2])
+            )
+            write_audit_event(
+                "task:" + parts[1],
+                "completed" if result in ("Task completed.", "Task deleted.") else "failed",
+            )
             return result
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
     if command == "/memory":
-        return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
+        return (
+            "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
+        )
     if command.startswith("/memory add "):
-        note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
+        note = sanitize_text(command[len("/memory add ") :].strip(), MAX_MEMORY_TEXT)
         if not note:
             return "Please provide a note."
         memory.append(note[:MAX_MEMORY_TEXT])
@@ -167,32 +187,48 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         memory.extend(old)
         return "Could not clear memory."
     if command.startswith("/learn "):
-        parts = command[len("/learn "):].split("|", 2)
+        parts = command[len("/learn ") :].split("|", 2)
         if len(parts) < 2:
             return "Usage: /learn TASK | OUTCOME | LESSON"
-        result = record_outcome(parts[0].strip(), parts[1].strip(),
-                                "Recorded through terminal", parts[2].strip() if len(parts) > 2 else "")
-        write_audit_event("learning:record", "completed" if result.startswith("Outcome recorded") else "failed")
+        result = record_outcome(
+            parts[0].strip(),
+            parts[1].strip(),
+            "Recorded through terminal",
+            parts[2].strip() if len(parts) > 2 else "",
+        )
+        write_audit_event(
+            "learning:record", "completed" if result.startswith("Outcome recorded") else "failed"
+        )
         return result
     if command.startswith("/lessons"):
-        task = command[len("/lessons"):].strip()
+        task = command[len("/lessons") :].strip()
         lessons = suggest_lessons(task)
-        return "\n".join(f"- {lesson}" for lesson in lessons) if lessons else "No matching lessons saved yet."
+        return (
+            "\n".join(f"- {lesson}" for lesson in lessons)
+            if lessons
+            else "No matching lessons saved yet."
+        )
     if command == "/learning":
         history = load_history()
         if not history:
             return "No learning history yet."
-        return "\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
-                         for item in history[-10:])
+        return "\n".join(
+            f"{item.get('created_at', '')[:10]} — {item.get('task', '')}: {item.get('outcome', '')}"
+            for item in history[-10:]
+        )
     if command == "/learning clear":
         result = clear_history()
-        write_audit_event("learning:clear", "completed" if result == "Learning history cleared." else "failed")
+        write_audit_event(
+            "learning:clear", "completed" if result == "Learning history cleared." else "failed"
+        )
         return result
     if command == "/audit":
         events = load_audit_events()[-10:]
         if not events:
             return "No audit events yet."
-        return "\n".join(f'{item["timestamp"][:19]} {item["action"]}: {item["outcome"]}' for item in events)
+        return "\n".join(
+            f"{item['timestamp'][:19]} {item['action']}: {item['outcome']}" for item in events
+        )
 
     related = suggest_lessons(command)
     response = agent.ask(command)
@@ -208,7 +244,9 @@ def main():
     memory = load_memory()
     tasks = load_tasks()
     print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
-    print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
+    print(
+        "Safety note: tools are allow-listed; audit records contain metadata, not command arguments."
+    )
     while True:
         try:
             message = input("\nYou > ")

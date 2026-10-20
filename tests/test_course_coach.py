@@ -2,6 +2,7 @@ import unittest
 from skills.course_coach import CourseCoachSkill
 from companion.mood_engine import MoodEngine
 
+
 class CourseCoachTests(unittest.TestCase):
     def setUp(self):
         self.skill = CourseCoachSkill()
@@ -36,6 +37,7 @@ class CourseCoachTests(unittest.TestCase):
         self.assertEqual(sad.source, "user_report")
         engine.clear()
         self.assertIsNone(engine.adapt("hello")["mood"])
+
 
 if __name__ == "__main__":
     unittest.main()

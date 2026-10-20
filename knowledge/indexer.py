@@ -1,4 +1,5 @@
 """Local, opt-in text knowledge index with size limits and explicit source paths."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,6 +29,9 @@ class KnowledgeIndexer:
         content = resolved.read_text(encoding="utf-8", errors="replace").strip()
         if not content:
             raise ValueError("File is empty.")
-        chunks = [content[i:i + 3000] for i in range(0, min(len(content), 30000), 3000)]
-        ids = [self.memory.remember(f"Source: {resolved.name}\n{chunk}", category="lesson")["id"] for chunk in chunks]
+        chunks = [content[i : i + 3000] for i in range(0, min(len(content), 30000), 3000)]
+        ids = [
+            self.memory.remember(f"Source: {resolved.name}\n{chunk}", category="lesson")["id"]
+            for chunk in chunks
+        ]
         return {"source": resolved.name, "chunks_indexed": len(ids), "memory_ids": ids}

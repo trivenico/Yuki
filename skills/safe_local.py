@@ -1,9 +1,11 @@
 """Small bounded JSON persistence helper for explicitly local Yuki features."""
+
 from __future__ import annotations
 import json
 from pathlib import Path
 
 MAX_BYTES = 1_000_000
+
 
 def load_json(path: Path, default):
     try:
@@ -14,6 +16,7 @@ def load_json(path: Path, default):
         return value
     except (OSError, ValueError, TypeError):
         return default
+
 
 def save_json(path: Path, value) -> bool:
     try:
@@ -27,6 +30,7 @@ def save_json(path: Path, value) -> bool:
         return True
     except (OSError, ValueError, TypeError):
         return False
+
 
 def parse_object(argument: str):
     try:

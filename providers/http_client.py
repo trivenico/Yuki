@@ -3,6 +3,7 @@
 Provider endpoints are configuration inputs. Refusing redirects prevents a configured
 loopback endpoint from redirecting requests (or bearer credentials) to another host.
 """
+
 from __future__ import annotations
 
 import urllib.request

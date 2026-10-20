@@ -1,4 +1,5 @@
 """Check whether the current Python environment can run the Yuki prototype."""
+
 import importlib
 import sys
 from pathlib import Path
@@ -28,7 +29,9 @@ def main():
         print("FAIL: Python 3.10 or newer is required.")
         return 1
 
-    missing = [name for name in ("yuki.py", "requirements.txt", "tests") if not (ROOT / name).exists()]
+    missing = [
+        name for name in ("yuki.py", "requirements.txt", "tests") if not (ROOT / name).exists()
+    ]
     if missing:
         print("FAIL: Missing project paths: " + ", ".join(missing))
         return 1

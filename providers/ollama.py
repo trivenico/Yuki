@@ -1,4 +1,5 @@
 """Local Ollama chat/generation adapter using only the Python standard library."""
+
 from __future__ import annotations
 
 import json
@@ -24,23 +25,35 @@ class OllamaProvider:
         loopback = host == "localhost"
         if host:
             import ipaddress
+
             try:
                 loopback = loopback or ipaddress.ip_address(host).is_loopback
             except ValueError:
                 pass
-        if (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback)
-                or not host or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        if (
+            parsed.scheme != "https"
+            and not (parsed.scheme == "http" and loopback)
+            or not host
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
-        if not isinstance(model, str) or not model.strip() or len(model) > 120:
-            raise ValueError("Configure a valid Ollama model name.")
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
+        if not isinstance(model, str) or len(model.strip()) > 120:
+            raise ValueError("Ollama model name must be text no longer than 120 characters.")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not 1 <= timeout <= 120
+        ):
             raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout = timeout
 
-    def is_available(self):
-        """Return true only when the local server responds and the model is installed."""
+    def list_models(self):
+        """Return installed Ollama model names; never install or download models."""
         request = urllib.request.Request(
             self.base_url + "/api/tags",
             headers={"Accept": "application/json"},
@@ -50,32 +63,103 @@ class OllamaProvider:
             with open_provider_request(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
         except (urllib.error.URLError, TimeoutError, OSError):
-            return False
+            return []
         if len(raw) > 500_000:
-            return False
+            return []
         try:
             body = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
-            return False
+            return []
         models = body.get("models") if isinstance(body, dict) else None
         if not isinstance(models, list):
-            return False
+            return []
+        names = []
         for item in models:
             if not isinstance(item, dict) or not isinstance(item.get("name"), str):
                 continue
-            installed = item["name"]
-            if installed == self.model or installed.startswith(self.model + ":"):
-                return True
-        return False
+            name = item["name"].strip()
+            if name and len(name) <= 120 and name not in names:
+                names.append(name)
+        return sorted(names, key=str.casefold)
+
+    def list_model_details(self):
+        """Return bounded metadata for installed models, including size when available."""
+        request = urllib.request.Request(
+            self.base_url + "/api/tags",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with open_provider_request(request, timeout=min(self.timeout, 5)) as response:
+                raw = response.read(500_001)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return []
+        if len(raw) > 500_000:
+            return []
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return []
+        models = body.get("models") if isinstance(body, dict) else None
+        if not isinstance(models, list):
+            return []
+        result = []
+        seen = set()
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+                continue
+            name = name.strip()
+            if name in seen:
+                continue
+            seen.add(name)
+            size = item.get("size")
+            result.append({"name": name, "size": size if isinstance(size, int) and not isinstance(size, bool) and size > 0 else None})
+        return sorted(result, key=lambda item: item["name"].casefold())
+
+    def _select_installed_model(self):
+        """Use configured model when installed; otherwise choose a deterministic local model."""
+        models = self.list_model_details()
+        names = [item["name"] for item in models]
+        if self.model:
+            for installed in names:
+                if installed == self.model or installed.startswith(self.model + ":"):
+                    self.model = installed
+                    return installed
+            return None
+        if not models:
+            return None
+        try:
+            from core.hardware import detect_hardware, recommend_installed_model
+
+            selected = recommend_installed_model(models, detect_hardware())
+        except (OSError, RuntimeError, ValueError):
+            selected = None
+        # If resource detection is unavailable, retain deterministic selection.
+        self.model = selected if selected in names else names[0]
+        return self.model
+
+    def is_available(self):
+        """Return true when Ollama responds and an installed model can be selected."""
+        return self._select_installed_model() is not None
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        payload = json.dumps({
-            "model": self.model,
-            "prompt": prompt.strip()[:20000],
-            "stream": False,
-        }).encode("utf-8")
+        if not self.model and not self._select_installed_model():
+            raise RuntimeError(
+                "No installed Ollama model was found. Start Ollama and pull a model, "
+                "or configure ollama_model explicitly."
+            )
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "prompt": prompt.strip()[:20000],
+                "stream": False,
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + "/api/generate",
             data=payload,

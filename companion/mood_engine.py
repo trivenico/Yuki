@@ -1,4 +1,5 @@
 """Mood adaptation based on user self-report, never hidden biometric inference."""
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ STYLES = {
     "neutral": "natural and conversational",
 }
 
+
 @dataclass(frozen=True)
 class MoodResult:
     mood: str
@@ -22,8 +24,10 @@ class MoodResult:
     source: str
     updated_at: str
 
+
 class MoodEngine:
     """Adapt tone to an explicit self-report; no face/voice inference or diagnosis."""
+
     def __init__(self):
         self._current = None
 

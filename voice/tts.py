@@ -1,4 +1,5 @@
 """Optional local Piper TTS adapter with chunked speech and best-effort interruption."""
+
 from __future__ import annotations
 import subprocess
 import tempfile
@@ -11,8 +12,16 @@ class TTSError(RuntimeError):
 
 
 class LocalTTS:
-    def __init__(self, *, enabled=False, rate=170, volume=1.0, backend="piper",
-                 model_path=None, piper_binary="piper"):
+    def __init__(
+        self,
+        *,
+        enabled=False,
+        rate=170,
+        volume=1.0,
+        backend="piper",
+        model_path=None,
+        piper_binary="piper",
+    ):
         if isinstance(rate, bool) or not isinstance(rate, int) or not 80 <= rate <= 260:
             raise ValueError("rate must be between 80 and 260.")
         if not isinstance(volume, (int, float)) or isinstance(volume, bool) or not 0 <= volume <= 1:
@@ -32,6 +41,7 @@ class LocalTTS:
         self._interrupt_event.set()
         try:
             import sounddevice as sd
+
             sd.stop()
         except Exception:
             pass
@@ -78,13 +88,27 @@ class LocalTTS:
                 import sounddevice as sd
                 import soundfile as sf
             except ImportError as exc:
-                raise TTSError("Install optional sounddevice and soundfile to play Piper audio.") from exc
+                raise TTSError(
+                    "Install optional sounddevice and soundfile to play Piper audio."
+                ) from exc
             try:
                 with tempfile.TemporaryDirectory(prefix="yuki-tts-") as directory:
                     output = Path(directory) / "speech.wav"
-                    subprocess.run([self.piper_binary, "--model", str(self.model_path),
-                                    "--output_file", str(output)], input=text, text=True,
-                                   capture_output=True, timeout=30, shell=False, check=True)
+                    subprocess.run(
+                        [
+                            self.piper_binary,
+                            "--model",
+                            str(self.model_path),
+                            "--output_file",
+                            str(output),
+                        ],
+                        input=text,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
+                        shell=False,
+                        check=True,
+                    )
                     if not output.is_file() or output.stat().st_size <= 44:
                         raise TTSError("Piper did not produce a valid audio file.")
                     if self._interrupt_event.is_set():
@@ -107,6 +131,7 @@ class LocalTTS:
             return
         try:
             import pyttsx3
+
             engine = pyttsx3.init()
             self._engine = engine
             engine.setProperty("rate", self.rate)

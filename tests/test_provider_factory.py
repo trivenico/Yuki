@@ -10,7 +10,22 @@ class ProviderFactoryTests(unittest.TestCase):
     def test_default_factory_keeps_mock_provider(self):
         self.assertIsInstance(create_provider({}), MockProvider)
 
-    def test_local_provider_requires_model_configuration(self):
+    def test_auto_provider_detects_installed_local_model(self):
+        from unittest.mock import patch
+
+        with patch("providers.factory.OllamaProvider.is_available", return_value=True):
+            provider = create_provider({"provider": "auto"}, environ={})
+        self.assertIsInstance(provider, OllamaProvider)
+
+    def test_auto_provider_falls_back_to_mock_when_ollama_unavailable(self):
+        from unittest.mock import patch
+
+        with patch("providers.factory.OllamaProvider.is_available", return_value=False):
+            provider = create_provider({"provider": "auto"}, environ={})
+        self.assertIsInstance(provider, MockProvider)
+
+
+    def test_explicit_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
 

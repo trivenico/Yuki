@@ -40,10 +40,13 @@ dev = [
   "mypy==1.15.0",
   "pre-commit==4.2.0",
   "pytest==8.3.5",
+  "pytest-cov==6.1.1",
+  "types-PyYAML==6.0.12.20250915",
 ]
 
 [project.scripts]
 yuki = "main:main"
+yuki-mobile = "mobile.server:main"
 
 [tool.setuptools]
 py-modules = ["main", "yuki_agent"]
@@ -60,8 +63,12 @@ include = [
   "hackback*",
   "providers*",
   "ui*",
+  "mobile*",
 ]
 exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+mobile = ["web/*.html", "web/*.js", "web/*.webmanifest"]
 
 [tool.ruff]
 target-version = "py310"

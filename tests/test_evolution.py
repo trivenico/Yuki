@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from companion.evolution import DailyEvolutionCycle, redact_secrets
 
@@ -18,9 +17,13 @@ class DailyEvolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cycle = DailyEvolutionCycle(directory)
             now = datetime(2026, 10, 17, 3, tzinfo=timezone.utc)
-            cycle.record("failure", "deployment test failed twice", occurred_at=now - timedelta(days=1))
+            cycle.record(
+                "failure", "deployment test failed twice", occurred_at=now - timedelta(days=1)
+            )
             cycle.record("feedback", "please keep reports concise", occurred_at=now)
-            cycle.record("lesson", "deployment tests should run first", occurred_at=now - timedelta(days=40))
+            cycle.record(
+                "lesson", "deployment tests should run first", occurred_at=now - timedelta(days=40)
+            )
             report = cycle.run_cycle(now=now, lookback_days=7)
             self.assertEqual(report["observations_reviewed"], 2)
             self.assertEqual(report["summary"]["failures"], 1)
@@ -52,6 +55,7 @@ class DailyEvolutionTests(unittest.TestCase):
 
     def test_daily_scheduler_is_opt_in(self):
         from companion.evolution import main
+
         with self.assertRaises(SystemExit):
             main([])
 

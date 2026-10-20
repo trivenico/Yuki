@@ -20,7 +20,9 @@ class YukiAgent:
 
     def status(self):
         try:
-            return "Provider is ready." if self.provider.is_available() else "Provider is unavailable."
+            return (
+                "Provider is ready." if self.provider.is_available() else "Provider is unavailable."
+            )
         except Exception:
             return "Provider status is unknown."
 

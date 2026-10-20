@@ -20,18 +20,18 @@ class MultilingualVoicePolicyTests(unittest.TestCase):
         self.assertIsNone(same_language_reply_instruction(None))
 
     def test_speech_requires_enabled_voice_mode_and_nonempty_reply(self):
-        self.assertTrue(should_speak_reply(
-            voice_enabled=True, voice_mode_active=True, reply_text="こんにちは"
-        ))
-        self.assertFalse(should_speak_reply(
-            voice_enabled=False, voice_mode_active=True, reply_text="hello"
-        ))
-        self.assertFalse(should_speak_reply(
-            voice_enabled=True, voice_mode_active=False, reply_text="hello"
-        ))
-        self.assertFalse(should_speak_reply(
-            voice_enabled=True, voice_mode_active=True, reply_text=" "
-        ))
+        self.assertTrue(
+            should_speak_reply(voice_enabled=True, voice_mode_active=True, reply_text="こんにちは")
+        )
+        self.assertFalse(
+            should_speak_reply(voice_enabled=False, voice_mode_active=True, reply_text="hello")
+        )
+        self.assertFalse(
+            should_speak_reply(voice_enabled=True, voice_mode_active=False, reply_text="hello")
+        )
+        self.assertFalse(
+            should_speak_reply(voice_enabled=True, voice_mode_active=True, reply_text=" ")
+        )
 
 
 if __name__ == "__main__":

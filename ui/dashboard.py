@@ -1,4 +1,5 @@
 """Optional Textual supervision UI for status and explicitly safe commands."""
+
 from __future__ import annotations
 
 
@@ -8,11 +9,14 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
         from textual.containers import Vertical
         from textual.widgets import Footer, Header, Input, Label, RichLog
     except ImportError as exc:
-        raise RuntimeError("Install optional Textual with: pip install -r requirements-ui.txt") from exc
+        raise RuntimeError(
+            "Install optional Textual with: pip install -r requirements-ui.txt"
+        ) from exc
 
     class YukiDashboard(App):
         TITLE = "Yuki — Supervision"
         CSS = "Screen { padding: 1; } #log { height: 1fr; border: round $primary; } #command { dock: bottom; }"
+
         def compose(self) -> ComposeResult:
             yield Header()
             with Vertical():
@@ -20,8 +24,12 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
                 yield RichLog(id="log", wrap=True, markup=False)
                 yield Input(placeholder="Enter /help, /status, /skills, or /quit", id="command")
             yield Footer()
+
         def on_mount(self):
-            self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
+            self.query_one("#log", RichLog).write(
+                "Dashboard ready. No background actions are running."
+            )
+
         def on_input_submitted(self, event: Input.Submitted):
             command = event.value.strip()
             event.input.value = ""
@@ -40,5 +48,8 @@ def run_dashboard(agent=None, *, command_handler=None) -> None:
                 for skill in agent.available_skills():
                     log.write(f"{skill['name']} [{skill['risk']}]: {skill['description']}")
             else:
-                log.write("This dashboard accepts only safe status commands; no action was executed.")
+                log.write(
+                    "This dashboard accepts only safe status commands; no action was executed."
+                )
+
     YukiDashboard().run()

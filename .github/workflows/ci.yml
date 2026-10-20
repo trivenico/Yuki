@@ -54,11 +54,27 @@ jobs:
       - name: Console entry point smoke test
         continue-on-error: true
         id: entrypoint
-        run: printf '' | yuki
-      - name: Run unit tests
+        run: python -c "from importlib.metadata import entry_points; eps = [ep for ep in entry_points(group='console_scripts') if ep.name == 'yuki']; assert any(ep.value == 'main:main' for ep in eps), eps"
+      - name: Run pytest with coverage report
         continue-on-error: true
         id: unit_tests
-        run: python -m unittest discover -s tests -v
+        run: python -m pytest tests -v --cov=core --cov=skills --cov=knowledge --cov=providers --cov-report=term-missing --cov-report=xml
+      - name: Enforce coverage threshold
+        if: always() && steps.unit_tests.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path("coverage.xml")
+          if not report.is_file():
+              raise SystemExit("coverage.xml was not generated")
+          root = ET.parse(report).getroot()
+          rate = float(root.attrib.get("line-rate", "0"))
+          print(f"Line coverage: {rate:.1%} (required: 80.0%)")
+          if rate < 0.80:
+              raise SystemExit("Coverage is below the 80% acceptance threshold")
+          PY
       - name: Enforce quality gates
         if: always()
         env:
@@ -78,3 +94,29 @@ jobs:
             fi
           done
           exit "$failed"
+
+  windows-compatibility:
+    name: Windows / Python 3.12 compatibility
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and quality tools
+        run: python -m pip install --upgrade pip; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; python -m pip install -e ".[dev,backup]"
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format
+        run: ruff format --check .
+      - name: Mypy
+        run: mypy core skills knowledge
+      - name: Run tests on Windows
+        run: python -m pytest tests -q
