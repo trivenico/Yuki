@@ -9,27 +9,14 @@ import tempfile
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from core.config_json import loads_strict
+
 DEFAULT_CONFIG = Path.home() / ".yuki" / "config.json"
 PROVIDERS = {
     "mock", "ollama", "llama_cpp", "lm_studio", "vllm", "openai",
     "anthropic", "deepseek", "glm", "openai_compatible",
 }
 _SECRET_KEYS = {"api_key", "secret", "password", "access_token", "refresh_token", "token"}
-
-
-def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """JSON object-pairs hook that rejects duplicate keys at every nesting level."""
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"Duplicate JSON configuration key: {key}")
-        result[key] = value
-    return result
-
-
-def _load_json_config(text: str) -> Any:
-    """Parse JSON configuration without last-key-wins ambiguity."""
-    return json.loads(text, object_pairs_hook=_unique_json_object)
 
 
 def _check_no_secret_values(value: Any, trail: str = "config") -> None:
