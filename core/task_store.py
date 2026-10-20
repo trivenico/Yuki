@@ -59,7 +59,7 @@ class TaskStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=self.busy_timeout_ms / 1000)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout = ?", (self.busy_timeout_ms,))
+        connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
