@@ -56,7 +56,12 @@ class SQLiteActionApprovalStore:
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
         self._clock = clock
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        db_path = Path(self.database_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Reject symlinks before SQLite opens the path; checking only after
+        # connect would already have followed an attacker-controlled target.
+        if db_path.is_symlink():
+            raise ValueError("Approval database must not be a symbolic link.")
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS action_approvals (
@@ -73,9 +78,6 @@ class SQLiteActionApprovalStore:
         # Approval tokens are bearer credentials: restrict the database file
         # to the current user wherever POSIX permission bits are supported.
         # Do not follow a symlink to an unexpected target.
-        db_path = Path(self.database_path)
-        if db_path.is_symlink():
-            raise ValueError("Approval database must not be a symbolic link.")
         if os.name == "posix":
             os.chmod(db_path, 0o600)
 
