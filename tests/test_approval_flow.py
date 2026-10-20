@@ -166,5 +166,97 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             coordinator.record(planner, result, actor="owner", session_id="cli-session")
 
 
+class ManifestSchemaHardeningTests(unittest.TestCase):
+    def manifest(self, input_schema=None, output_schema=None):
+        return {
+            "skill_id": "safe.echo",
+            "version": "1.0.0",
+            "entrypoint": "worker.run",
+            "input_schema": input_schema or {
+                "type": "object",
+                "properties": {"text": {"type": "string", "minLength": 1, "maxLength": 8}},
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+            "output_schema": output_schema or {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+            "capabilities": [],
+            "risk": "low",
+            "timeout_seconds": 3,
+            "max_output_bytes": 1024,
+        }
+
+    def test_nested_schema_constraints_are_enforced(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"count": {"type": "integer", "minimum": 1, "maximum": 3}},
+                        "required": ["count"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        }
+        manifest = SkillManifest.from_dict(self.manifest(input_schema=schema))
+        self.assertEqual(manifest.validate_object({"items": [{"count": 2}]}, manifest.input_schema),
+                         {"items": [{"count": 2}]})
+        with self.assertRaises(ValueError):
+            manifest.validate_object({"items": [{"count": 0}]}, manifest.input_schema)
+        with self.assertRaises(ValueError):
+            manifest.validate_object({"items": [{"count": True}]}, manifest.input_schema)
+
+    def test_unknown_schema_keywords_fail_closed(self):
+        bad = {
+            "type": "object",
+            "properties": {"text": {"type": "string", "pattern": ".*"}},
+            "required": ["text"],
+            "additionalProperties": False,
+        }
+        with self.assertRaisesRegex(ValueError, "unsupported schema keyword"):
+            SkillManifest.from_dict(self.manifest(input_schema=bad))
+
+    def test_required_keys_must_be_declared(self):
+        bad = {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["missing"],
+            "additionalProperties": False,
+        }
+        with self.assertRaisesRegex(ValueError, "required must name"):
+            SkillManifest.from_dict(self.manifest(input_schema=bad))
+
+    def test_string_bounds_and_enum_are_enforced(self):
+        schema = {
+            "type": "object",
+            "properties": {"mode": {"type": "string", "enum": ["read", "write"]}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        }
+        manifest = SkillManifest.from_dict(self.manifest(input_schema=schema))
+        with self.assertRaises(ValueError):
+            manifest.validate_object({"mode": "delete"}, manifest.input_schema)
+
+    def test_schema_depth_is_bounded(self):
+        nested = {"type": "string"}
+        for _ in range(18):
+            nested = {"type": "array", "items": nested}
+        bad = self.manifest(input_schema={
+            "type": "object", "properties": {"items": nested},
+            "required": ["items"], "additionalProperties": False,
+        })
+        with self.assertRaisesRegex(ValueError, "invalid schema"):
+            SkillManifest.from_dict(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

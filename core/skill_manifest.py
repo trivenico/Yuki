@@ -36,12 +36,7 @@ class SkillManifest:
             raise ValueError("invalid entrypoint")
         schemas = (value.get("input_schema"), value.get("output_schema"))
         for schema in schemas:
-            if not isinstance(schema, dict) or schema.get("type") != "object":
-                raise ValueError("schemas must be object schemas")
-            if schema.get("additionalProperties", False) is not False:
-                raise ValueError("additionalProperties must be false")
-            if not isinstance(schema.get("properties", {}), dict):
-                raise ValueError("properties must be an object")
+            SkillManifest._validate_schema(schema, root=True)
         capabilities = value.get("capabilities", [])
         if not isinstance(capabilities, list) or any(
             not isinstance(c, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", c)
@@ -69,33 +64,122 @@ class SkillManifest:
         )
 
     @staticmethod
+    def _validate_schema(schema, *, root=False, depth=0):
+        """Reject unsupported or malformed schema rules at registration time."""
+        if depth > 16 or not isinstance(schema, dict):
+            raise ValueError("invalid schema")
+        allowed = {
+            "type", "properties", "required", "additionalProperties", "maxLength",
+            "minLength", "minimum", "maximum", "enum", "items",
+        }
+        if set(schema) - allowed:
+            raise ValueError("unsupported schema keyword")
+        kind = schema.get("type")
+        supported = {"object", "string", "boolean", "integer", "number", "array"}
+        if kind not in supported or (root and kind != "object"):
+            raise ValueError("unsupported schema type")
+        if kind == "object":
+            if schema.get("additionalProperties", False) is not False:
+                raise ValueError("additionalProperties must be false")
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            if not isinstance(properties, dict) or len(properties) > 128:
+                raise ValueError("properties must be a bounded object")
+            if not isinstance(required, list) or any(
+                not isinstance(key, str) or key not in properties for key in required
+            ) or len(set(required)) != len(required):
+                raise ValueError("required must name unique declared properties")
+            for key, rule in properties.items():
+                if not isinstance(key, str) or not key or len(key) > 128:
+                    raise ValueError("invalid property name")
+                SkillManifest._validate_schema(rule, depth=depth + 1)
+        elif "properties" in schema or "required" in schema or "additionalProperties" in schema:
+            raise ValueError("object keywords require object type")
+        if kind == "array":
+            if "items" not in schema:
+                raise ValueError("array schemas require items")
+            SkillManifest._validate_schema(schema["items"], depth=depth + 1)
+        elif "items" in schema:
+            raise ValueError("items requires array type")
+        for key in ("minLength", "maxLength"):
+            if key in schema and (type(schema[key]) is not int or not 0 <= schema[key] <= 65536):
+                raise ValueError("invalid string length bound")
+        if "minLength" in schema and "maxLength" in schema and schema["minLength"] > schema["maxLength"]:
+            raise ValueError("minLength exceeds maxLength")
+        for key in ("minimum", "maximum"):
+            if key in schema and (
+                type(schema[key]) not in (int, float)
+                or not __import__("math").isfinite(schema[key])
+            ):
+                raise ValueError("invalid numeric bound")
+        if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+            raise ValueError("minimum exceeds maximum")
+        if "enum" in schema:
+            choices = schema["enum"]
+            if not isinstance(choices, list) or not choices or len(choices) > 256:
+                raise ValueError("enum must be a bounded non-empty list")
+            if any(not SkillManifest._matches_type(choice, kind) for choice in choices):
+                raise ValueError("enum values must match schema type")
+
+    @staticmethod
+    def _matches_type(value, kind):
+        import math
+
+        if kind == "string":
+            return isinstance(value, str)
+        if kind == "boolean":
+            return type(value) is bool
+        if kind == "integer":
+            return type(value) is int
+        if kind == "number":
+            return type(value) in (int, float) and math.isfinite(value)
+        if kind == "object":
+            return isinstance(value, dict)
+        if kind == "array":
+            return isinstance(value, list)
+        return False
+
+    @staticmethod
     def validate_object(value, schema):
+        """Validate supported JSON-schema constraints recursively and fail closed."""
+        SkillManifest._validate_schema(schema, root=True)
         if not isinstance(value, dict):
             raise ValueError("value must be an object")
-        properties, required = schema.get("properties", {}), schema.get("required", [])
-        if not isinstance(required, list) or any(key not in value for key in required):
-            raise ValueError("required field missing")
-        if schema.get("additionalProperties", False) is False and any(
-            key not in properties for key in value
-        ):
-            raise ValueError("unexpected field")
-        for key, item in value.items():
-            rule = properties.get(key, {})
-            kind = rule.get("type")
-            checks = {
-                "string": lambda x: isinstance(x, str),
-                "boolean": lambda x: type(x) is bool,
-                "integer": lambda x: type(x) is int,
-                "number": lambda x: type(x) in (int, float),
-                "object": lambda x: isinstance(x, dict),
-                "array": lambda x: isinstance(x, list),
-            }
-            if kind in checks and not checks[kind](item):
-                raise ValueError("invalid field type")
-            if (
-                isinstance(item, str)
-                and isinstance(rule.get("maxLength"), int)
-                and len(item) > rule["maxLength"]
-            ):
-                raise ValueError("field too long")
+        SkillManifest._validate_value(value, schema, depth=0)
         return value
+
+    @staticmethod
+    def _validate_value(value, schema, *, depth):
+        if depth > 16:
+            raise ValueError("value nesting exceeds limit")
+        kind = schema["type"]
+        if not SkillManifest._matches_type(value, kind):
+            raise ValueError("invalid value type")
+        if kind == "object":
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            if any(key not in value for key in required):
+                raise ValueError("required field missing")
+            if schema.get("additionalProperties", False) is False and any(
+                key not in properties for key in value
+            ):
+                raise ValueError("unexpected field")
+            for key, item in value.items():
+                SkillManifest._validate_value(item, properties[key], depth=depth + 1)
+        elif kind == "array":
+            if len(value) > 4096:
+                raise ValueError("array exceeds item limit")
+            for item in value:
+                SkillManifest._validate_value(item, schema["items"], depth=depth + 1)
+        elif kind == "string":
+            if "minLength" in schema and len(value) < schema["minLength"]:
+                raise ValueError("string too short")
+            if "maxLength" in schema and len(value) > schema["maxLength"]:
+                raise ValueError("string too long")
+        elif kind in {"integer", "number"}:
+            if "minimum" in schema and value < schema["minimum"]:
+                raise ValueError("number below minimum")
+            if "maximum" in schema and value > schema["maximum"]:
+                raise ValueError("number above maximum")
+        if "enum" in schema and value not in schema["enum"]:
+            raise ValueError("value is not in enum")
