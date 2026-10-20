@@ -36,7 +36,6 @@ class SubprocessExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(TimeoutError, "timed out"):
             executor.execute([sys.executable, "-c", "import time; time.sleep(5)"], {})
 
-
     def test_timeout_kills_descendant_that_ignores_sigterm(self):
         import os
         import tempfile
@@ -47,9 +46,7 @@ class SubprocessExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             pid_file = os.path.join(temp_dir, "child.pid")
             child_code = (
-                "import signal,time; "
-                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                "time.sleep(30)"
+                "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
             )
             parent_code = (
                 "import subprocess,sys,time; "
