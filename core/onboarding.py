@@ -1,6 +1,7 @@
 """Validated first-run configuration; credentials are environment references only."""
 from __future__ import annotations
 
+import copy
 import ipaddress
 import json
 import os
@@ -134,7 +135,8 @@ def validate_config(config: Any) -> dict[str, Any]:
     messaging = config.get("messaging", {})
     if "enabled" in messaging and not isinstance(messaging["enabled"], bool):
         raise ValueError("messaging.enabled must be boolean")
-    normalized = dict(config)
+    # Keep normalized state independent from mutable caller-owned nested objects.
+    normalized = copy.deepcopy(config)
     normalized.setdefault("version", 1)
     normalized.setdefault("provider", "mock")
     normalized.setdefault("model", "")
