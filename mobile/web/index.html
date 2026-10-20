@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Private mobile companion for your Yuki local AI.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>Yuki Mobile</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif;background:#0b1020;color:#f3f4f6}*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:env(safe-area-inset-top) 1rem env(safe-area-inset-bottom);display:flex;justify-content:center}.app{width:min(100%,760px);display:flex;flex-direction:column;min-height:100vh;gap:1rem;padding:1rem 0}.top{display:flex;justify-content:space-between;align-items:center}.brand{font-size:1.35rem;font-weight:750}.sub{font-size:.85rem;color:#a5b4fc}.panel,.bubble{border:1px solid #30394e;border-radius:1rem;padding:1rem;background:#111827}.settings{display:grid;gap:.6rem}.settings label{font-size:.9rem;color:#cbd5e1}input,textarea,button{font:inherit;border-radius:.7rem;border:1px solid #46516a;padding:.8rem;background:#0b1020;color:#f9fafb;width:100%}button{background:#4f46e5;border:0;font-weight:650;cursor:pointer}button.secondary{background:#273449}button:disabled{opacity:.5}.status{font-size:.82rem;color:#a5b4fc;min-height:1.2rem}.messages{display:flex;flex-direction:column;gap:.7rem;flex:1}.bubble{white-space:pre-wrap;overflow-wrap:anywhere}.bubble.user{background:#1e293b}.bubble.error{border-color:#b91c1c}.composer{display:grid;gap:.6rem}.composer textarea{resize:vertical;min-height:5rem}.foot{color:#94a3b8;font-size:.8rem;line-height:1.4}#settings[hidden]{display:none}
+  </style>
+  <script src="/app.js" defer></script>
+</head>
+<body><main class="app">
+  <header class="top"><div><div class="brand">Yuki <span class="sub">mobile</span></div><div class="sub">Your computer. Your local model.</div></div><button id="settingsToggle" class="secondary" style="width:auto">Connection</button></header>
+  <section id="settings" class="panel settings"><label for="endpoint">Yuki server URL</label><input id="endpoint" type="url" inputmode="url" placeholder="https://your-computer.example:8765" autocomplete="url"><label for="token">Mobile access token</label><input id="token" type="password" autocomplete="off" placeholder="Paste your YUKI_MOBILE_TOKEN"><button id="connect">Check connection</button><div class="foot">Token is held in this browser tab only. Use HTTPS when connecting over a network. Never expose Ollama's port directly.</div></section>
+  <div id="status" class="status" role="status" aria-live="polite">Configure your Yuki server connection to begin.</div>
+  <section id="messages" class="messages" aria-label="Conversation"></section>
+  <form id="chatForm" class="composer"><label for="message">Message Yuki</label><textarea id="message" maxlength="8000" placeholder="Ask a question (text-only; no skills are executed from mobile)." required></textarea><button id="send" type="submit">Send message</button></form>
+  <footer class="foot">Mobile chat does not approve or execute skills. Sensitive actions remain in Yuki's trusted local supervision flow.</footer>
+</main></body></html>
