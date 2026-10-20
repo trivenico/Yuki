@@ -4,15 +4,24 @@ import asyncio
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Any
 
 class OllamaError(RuntimeError):
     pass
 class OllamaClient:
     def __init__(self, base_url: str = "http://127.0.0.1:11434", model: str = "llama3.1:8b", timeout: float = 60.0) -> None:
-        allowed = base_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]", "https://"))
-        if not allowed or "@" in base_url:
-            raise ValueError("Ollama endpoint must be loopback HTTP or HTTPS without credentials")
+        parsed = urlsplit(base_url)
+        allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in allowed_hosts
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Ollama endpoint must be plain HTTP on an exact loopback host")
         self.base_url, self.model, self.timeout = base_url.rstrip("/"), model, timeout
     async def chat(self, messages: list[dict[str, str]], system: str | None = None) -> str:
         items = ([{"role": "system", "content": system}] if system else []) + messages
