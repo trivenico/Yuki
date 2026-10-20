@@ -5,6 +5,14 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+## Cross-platform hardware detection
+
+Yuki inventories host OS/architecture, CPU, RAM, free disk space, selected GPU information, and local inference executables at startup. Use `/hardware` for the detailed report. The detector is read-only, uses bounded vendor-tool probes, and does not require administrator privileges.
+
+For local Ollama, set `provider: ollama` and leave `ollama_model: ""` (with `YUKI_OLLAMA_MODEL` unset) to enable first-request model selection. Yuki checks the installed model inventory and recommends a model only when reported model size fits a conservative RAM budget. It does not download models, change drivers, or silently switch to a cloud provider. If memory/model-size information is missing or no model fits the estimate, it fails with guidance; configure a model explicitly if you want to override this behavior.
+
+**Detection limitations:** NVIDIA details depend on `nvidia-smi`. Apple Silicon is identified heuristically, not as proof that Metal is available. AMD/Intel GPU inventory, per-runtime accelerator validation, VRAM-aware model selection, Windows/macOS device testing, and live Ollama health checks are not yet comprehensive. Model file size is only a rough proxy for actual inference memory. See [Phase 6 hardware notes](docs/PHASE6_HARDWARE.md).
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
