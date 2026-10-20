@@ -221,6 +221,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Yuki local-first guarded personal agent")
     parser.add_argument("--check-config", action="store_true", help="validate configuration and exit")
     parser.add_argument("--doctor", action="store_true", help="run bounded local readiness checks and exit")
+    parser.add_argument("--hardware", action="store_true", help="detect host resources and recommend an installed Ollama model")
     parser.add_argument("--version", action="version", version="Yuki 0.1.0")
     args = parser.parse_args(argv)
 
@@ -231,6 +232,31 @@ def main(argv=None):
     except (RuntimeError, OSError) as exc:
         print(f"Yuki startup blocked: {exc}")
         return 2
+    if args.hardware:
+        from core.hardware import detect_hardware, recommend_installed_model
+        from providers.ollama import OllamaProvider
+
+        hardware = detect_hardware(workspace=config["workspace"])
+        print("Yuki hardware profile")
+        for key, value in hardware.to_dict().items():
+            print(f"{key}: {value}")
+        provider = OllamaProvider(
+            base_url=config["ollama_base_url"],
+            model=config.get("ollama_model", ""),
+        )
+        models = provider.list_model_details()
+        if not models:
+            print("Ollama models: none detected (is Ollama running with models installed?)")
+        else:
+            print("Installed Ollama models:")
+            for item in models:
+                size = item.get("size")
+                size_label = f"{size / 1024**3:.2f} GiB" if isinstance(size, int) else "size unknown"
+                print(f"  - {item['name']} ({size_label})")
+            selected = config.get("ollama_model") or recommend_installed_model(models, hardware)
+            print(f"Hardware-based recommendation: {selected or 'none'}")
+            print("Recommendation is an estimate; context length and concurrent workloads affect memory use.")
+        return 0
     if args.check_config:
         print("Yuki configuration is valid.")
         print(f"Workspace: {config['workspace']}")
