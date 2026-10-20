@@ -215,7 +215,6 @@ class DurableTaskStoreTests(unittest.TestCase):
             runner.run("crash", crash)
         self.assertEqual(self.store.list_tasks()[0]["status"], "interrupted")
 
-
     def test_task_database_permissions_are_owner_only_on_posix(self):
         import os
         import stat
