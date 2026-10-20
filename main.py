@@ -331,6 +331,8 @@ def main(argv=None):
             return
         if command == "/help":
             print_help()
+        elif command == "/model" or command.startswith("/model "):
+            _handle_model_command(command, config, ai)
         elif command == "/status":
             counts = task_store.status_counts()
             print("Tasks: " + ", ".join(f"{name}={count}" for name, count in counts.items()))
