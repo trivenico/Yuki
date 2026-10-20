@@ -17,6 +17,21 @@ PROVIDERS = {
 _SECRET_KEYS = {"api_key", "secret", "password", "access_token", "refresh_token", "token"}
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """JSON object-pairs hook that rejects duplicate keys at every nesting level."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON configuration key: {key}")
+        result[key] = value
+    return result
+
+
+def _load_json_config(text: str) -> Any:
+    """Parse JSON configuration without last-key-wins ambiguity."""
+    return json.loads(text, object_pairs_hook=_unique_json_object)
+
+
 def _check_no_secret_values(value: Any, trail: str = "config") -> None:
     if isinstance(value, dict):
         for key, item in value.items():
@@ -191,7 +206,7 @@ def run_onboarding(
     path = Path(path).expanduser()
     if not needs_onboarding(path):
         try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
+            loaded = _load_json_config(path.read_text(encoding="utf-8"))
             return validate_config(loaded)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             raise RuntimeError("Existing Yuki config is invalid; it was not overwritten. Back it up and repair it before retrying.") from exc
