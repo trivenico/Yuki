@@ -281,6 +281,29 @@ class OnboardingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config({"provider":"mock","mcp_servers":[{"endpoint":"https://user:pass@example.com/mcp","enabled":False,"allowed_tools":[]}]})
 
+    def test_onboarding_rejects_unknown_nested_keys(self):
+        from core.onboarding import validate_config
+        invalid = [
+            {"provider":"mock","security":{"allow_shell":False,"typo_guard":True}},
+            {"provider":"mock","daemon":{"enabled":False,"exec_untrusted":True}},
+            {"provider":"mock","messaging":{"enabled":False,"token":"should-not-be-here"}},
+        ]
+        for config in invalid:
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                validate_config(config)
+
+    def test_onboarding_rejects_duplicate_or_blank_mcp_tools_and_endpoints(self):
+        from core.onboarding import validate_config
+        invalid = [
+            {"provider":"mock","mcp_servers":[{"endpoint":"https://mcp.example/sse","enabled":False,"allowed_tools":["read","read"]}]},
+            {"provider":"mock","mcp_servers":[{"endpoint":"https://mcp.example/sse","enabled":False,"allowed_tools":[""]}]},
+            {"provider":"mock","mcp_servers":[{"endpoint":"https://mcp.example/sse","enabled":False,"allowed_tools":[]},{"endpoint":"https://mcp.example/sse/","enabled":False,"allowed_tools":[]}]},
+            {"provider":"mock","mcp_servers":[{"endpoint":"","enabled":False,"allowed_tools":[]}]},
+        ]
+        for config in invalid:
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                validate_config(config)
+
     def test_cloud_config_requires_secret_environment_reference(self):
         from core.onboarding import validate_config
         with self.assertRaises(ValueError):
