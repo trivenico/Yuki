@@ -152,6 +152,62 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertNotIn("owner-secret", rendered)
         self.assertNotIn("session-secret", rendered)
 
+    def test_post_execution_audit_failure_reports_completed_with_warning(self):
+        class FailingExecutedAudit:
+            def record(self, event, **kwargs):
+                if event == "executed":
+                    raise OSError("audit disk unavailable")
+
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator(audit_log=FailingExecutedAudit())
+        with self.assertLogs("yuki.approval", level="ERROR") as captured:
+            pending = coordinator.record(
+                planner, result, actor="owner", session_id="cli-session"
+            )
+            approved = coordinator.approve(
+                planner,
+                pending.pending_id,
+                actor="owner",
+                session_id="cli-session",
+                confirm=lambda action: True,
+            )
+        self.assertTrue(approved.ok)
+        self.assertEqual(approved.status, "completed_audit_warning")
+        self.assertIn("approval.execution_audit_persistence_failed", "\\n".join(captured.output))
+        self.assertIn("audit_sink_unavailable", "\\n".join(captured.output))
+
+    def test_approval_audit_failure_before_execution_fails_closed(self):
+        class FailingApprovedAudit:
+            def record(self, event, **kwargs):
+                if event == "approved":
+                    raise OSError("audit disk unavailable")
+
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator(audit_log=FailingApprovedAudit())
+        pending = coordinator.record(
+            planner, result, actor="owner", session_id="cli-session"
+        )
+        executed = []
+        original = planner.dispatcher.execute_approved
+
+        def track_execution(action):
+            executed.append(True)
+            return original(action)
+
+        planner.dispatcher.execute_approved = track_execution
+        approved = coordinator.approve(
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="cli-session",
+            confirm=lambda action: True,
+        )
+        self.assertFalse(approved.ok)
+        self.assertEqual(approved.status, "approval_failed")
+        self.assertEqual(executed, [])
+
     def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             planner = build()
