@@ -48,6 +48,18 @@ class YukiCoreAgent:
         return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
+        # Production must not reach legacy in-process skill implementations.
+        # The manifest dispatcher/facade is not yet the universal runtime path,
+        # and no verified OS sandbox backend is shipped, so fail closed here.
+        import os
+        if os.environ.get("YUKI_ENV", "development").strip().lower() == "production":
+            return AgentResponse(
+                False,
+                "Blocked: production skill execution is disabled until the runtime "
+                "uses the reviewed invocation path and a verified OS sandbox.",
+                name,
+                stage="blocked",
+            )
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
