@@ -17,7 +17,13 @@ def build_skill_dispatcher(workspace: str | os.PathLike[str], *, capability_gran
     root.mkdir(parents=True, exist_ok=True)
     if root.is_symlink():
         raise RuntimeError("Yuki workspace must not be a symbolic link for approval storage.")
-    database_path = root / "action_approvals.sqlite3"
+    security_dir = root / ".yuki-security"
+    security_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if security_dir.is_symlink():
+        raise RuntimeError("Approval storage directory must not be a symbolic link.")
+    if os.name == "posix":
+        os.chmod(security_dir, 0o700)
+    database_path = security_dir / "action_approvals.sqlite3"
     store = SQLiteActionApprovalStore(str(database_path))
     dispatcher = SkillDispatcher(
         capability_grants=capability_grants,
