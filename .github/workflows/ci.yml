@@ -70,7 +70,8 @@ jobs:
         run: |
           failed=0
           for gate in RUFF_LINT RUFF_FORMAT MYPY ENTRYPOINT UNIT_TESTS; do
-            outcome="${!gate}_OUTCOME"
+            outcome_var="${gate}_OUTCOME"
+            outcome="${!outcome_var}"
             if [ "$outcome" != "success" ]; then
               echo "::error::$gate gate failed: $outcome"
               failed=1
