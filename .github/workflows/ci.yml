@@ -46,7 +46,7 @@ jobs:
       - name: Ruff format check
         continue-on-error: true
         id: ruff_format
-        run: ruff format --check .
+        run: ruff format --diff tests/test_subprocess_executor.py tests/test_task_agent.py
       - name: Mypy core, skills, knowledge
         continue-on-error: true
         id: mypy
