@@ -41,12 +41,18 @@ def _bool_setting(env_name, raw, key, default=False):
     return value
 
 
-def _string_list(raw, key):
+def _string_list(raw, key, *, max_item_length=512):
     value = raw.get(key, [])
-    if not isinstance(value, list) or any(not isinstance(x, str) or not x.strip() for x in value):
-        raise RuntimeError(f"{key} must be a list of non-empty strings.")
-    if len(value) > 100: raise RuntimeError(f"{key} may contain at most 100 entries.")
-    return list(dict.fromkeys(x.strip() for x in value))
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() or len(item.strip()) > max_item_length
+        for item in value
+    ):
+        raise RuntimeError(
+            f"{key} must be a list of non-empty strings no longer than {max_item_length} characters."
+        )
+    if len(value) > 100:
+        raise RuntimeError(f"{key} may contain at most 100 entries.")
+    return list(dict.fromkeys(item.strip() for item in value))
 
 
 _ALLOWED_CONFIG_KEYS = {
@@ -165,14 +171,25 @@ def load_config(path=None):
         os.environ.get("YUKI_OLLAMA_MODEL", raw.get("ollama_model", "")),
         "ollama_model", maximum=120,
     )
-    language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
-    if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
-    voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
-    if voice_style != "natural_realistic_female": raise RuntimeError("voice_style must be natural_realistic_female.")
-    spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
-    if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
+    language_behavior = _bounded_string(
+        raw.get("language_behavior", "auto_detect"), "language_behavior", maximum=32, allow_empty=False
+    ).lower()
+    if language_behavior != "auto_detect":
+        raise RuntimeError("language_behavior must be auto_detect.")
+    voice_style = _bounded_string(
+        raw.get("voice_style", "natural_realistic_female"), "voice_style", maximum=64, allow_empty=False
+    ).lower()
+    if voice_style != "natural_realistic_female":
+        raise RuntimeError("voice_style must be natural_realistic_female.")
+    spoken_reply_policy = _bounded_string(
+        raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active"),
+        "spoken_reply_policy", maximum=80, allow_empty=False,
+    ).lower()
+    if spoken_reply_policy != "every_reply_when_voice_mode_active":
+        raise RuntimeError("spoken_reply_policy is unsupported.")
+    display_name = _bounded_string(raw.get("name", "Yuki"), "name", maximum=120, allow_empty=False)
     return {
-        "name": "Yuki", "workspace": str(workspace.resolve()),
+        "name": display_name, "workspace": str(workspace.resolve()),
         "language_behavior": language_behavior, "voice_style": voice_style,
         "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
@@ -183,10 +200,10 @@ def load_config(path=None):
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),
         "wakeword_enabled": _bool_setting("YUKI_WAKEWORD_ENABLED", raw, "wakeword_enabled", False),
         "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
-        "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
-        "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
-        "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
-        "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
+        "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules", max_item_length=200),
+        "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets", max_item_length=253),
+        "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images", max_item_length=512),
+        "web_allowed_hosts": _string_list(raw, "web_allowed_hosts", max_item_length=253),
         "provider": selected_provider,
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": _bounded_string(raw.get("stt_model", "small"), "stt_model", maximum=120, allow_empty=False),
