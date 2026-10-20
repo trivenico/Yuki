@@ -71,3 +71,23 @@ The README is comparatively candid and says the project is not production-ready.
 - After each phase, run its full required test suite, commit with a conventional commit, and report changed behavior, coverage, and residual risks.
 - Do not start the next phase with failing tests. A failed or unavailable validation run is reported as blocked, never passed.
 - Preserve local-first defaults, no secrets in source/logs/tests/docs, no telemetry without explicit opt-in, and fail-closed approval on all error paths.
+
+## P0/P1 follow-up audit — 2026-10-20
+
+### Confirmed source facts
+
+- `config.yaml` defaults `provider: mock`. The repository also contains Ollama and OpenAI-compatible text-generation adapters and a bounded JSON task loop in `core/task_agent.py`; this is not evidence of a production-grade native tool-calling runtime or a verified end-to-end agent.
+- `README.md` already labels Yuki not production-ready and discloses that the model-guided task loop is bounded and not a production-grade native tool-calling/ReAct runtime.
+- `SECURITY.md` now more precisely distinguishes provider adapters from verified live behavior and says a private reporting channel must be explicitly configured by repository owners.
+- A new `.github/workflows/security.yml` adds dependency auditing with pinned `pip-audit`, Bandit static analysis, and Gitleaks history scanning. Its results must be reviewed; adding a workflow is not evidence that the scans passed.
+- The expected backup implementation was not found at `core/backup.py`, `core/backup_manager.py`, `automation/backup.py`, `scripts/backup.py`, or repository-root `backup.py` on the audited branch. This is not an exhaustive inventory of every possible backup/archive path. Do not claim encrypted backup support until the actual implementation is located, integrated, and restore-tested.
+- `docs/PORTABLE_SSD.md` recommends full-drive encryption, but that is a user-operational mitigation, not application-level authenticated encryption of backup archives.
+- The previously observed Phase 1 CI blocker remains Ruff lint failures. Do not advance the phase gate until lint, formatting, type checking, package install/entrypoint smoke test, and the full test matrix pass on the same commit.
+
+### Immediate release blockers
+
+1. Locate every backup/export/archive path using a complete tracked-file inventory; document exactly which private data is included.
+2. Implement authenticated encryption with externally managed keys and no plaintext temporary archive; add wrong-key/tamper rejection, size-bound, and restore round-trip tests.
+3. Review Gitleaks findings across full history and rotate exposed credentials before considering history rewriting.
+4. Review security workflow results and remediate findings rather than disabling checks to obtain a green build.
+5. Keep the repository's public capability claims aligned with the default mock provider and the verified runtime path.
