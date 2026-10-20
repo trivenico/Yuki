@@ -407,6 +407,16 @@ class OnboardingTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     load_config(path)
 
+    def test_boolean_config_version_is_rejected(self):
+        from core.onboarding import validate_config
+        with self.assertRaises(ValueError):
+            validate_config({"version": True, "provider": "mock"})
+
+    def test_float_config_version_is_rejected(self):
+        from core.onboarding import validate_config
+        with self.assertRaises(ValueError):
+            validate_config({"version": 1.0, "provider": "mock"})
+
     def test_runtime_json_config_rejects_duplicate_keys(self):
         from core.config import load_config
         payload = '{"version":1,"provider":"mock","provider":"ollama"}'
