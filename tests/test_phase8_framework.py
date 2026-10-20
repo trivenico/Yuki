@@ -423,6 +423,29 @@ class OnboardingTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     load_config(path)
 
+    def test_partial_sections_receive_safe_defaults(self):
+        from core.onboarding import validate_config
+        config = validate_config({
+            "provider": "mock",
+            "security": {"allow_network": True},
+            "daemon": {"enabled": True},
+        })
+        self.assertEqual(config["security"], {
+            "allow_network": True,
+            "allow_file_write": False,
+            "allow_shell": False,
+            "require_approval_for_unknown_tools": True,
+        })
+        self.assertEqual(config["daemon"], {"enabled": True, "poll_seconds": 1.0})
+        self.assertEqual(config["messaging"], {"enabled": False})
+
+    def test_normalized_config_does_not_share_mutable_default_sections(self):
+        from core.onboarding import validate_config
+        first = validate_config({"provider": "mock"})
+        second = validate_config({"provider": "mock"})
+        first["security"]["allow_shell"] = True
+        self.assertFalse(second["security"]["allow_shell"])
+
     def test_boolean_config_version_is_rejected(self):
         from core.onboarding import validate_config
         with self.assertRaises(ValueError):
