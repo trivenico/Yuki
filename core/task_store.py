@@ -88,10 +88,13 @@ class TaskStore:
         now = _now()
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO tasks(task_id, goal, status, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?)",
+                "INSERT INTO tasks(task_id, goal, status, created_at, updated_at) "
+                "VALUES (?, ?, 'queued', ?, ?)",
                 (task_id, goal.strip(), now, now),
             )
-            row = connection.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
         record = self._record(row)
         assert record is not None
         return record
@@ -111,7 +114,9 @@ class TaskStore:
                 raise ValueError("task result exceeds storage limit")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
             if row is None:
                 raise KeyError("task not found")
             current = row["status"]
