@@ -407,6 +407,23 @@ class OnboardingTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     load_config(path)
 
+    def test_runtime_json_config_rejects_duplicate_keys(self):
+        from core.config import load_config
+        payload = '{"version":1,"provider":"mock","provider":"ollama"}'
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text(payload, encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+    def test_onboarding_rejects_duplicate_keys_in_existing_json(self):
+        from core.onboarding import run_onboarding
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.json"
+            path.write_text('{"version":1,"provider":"mock","provider":"openai"}', encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                run_onboarding(path=path)
+
 class SkillSynthesisTests(unittest.TestCase):
     def test_hash_bound_low_risk_review_activates_declarative_file(self):
         with tempfile.TemporaryDirectory() as d:
