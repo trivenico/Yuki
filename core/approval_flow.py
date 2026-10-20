@@ -50,7 +50,6 @@ class ApprovalCoordinator:
             raise ValueError("Only a valid proposed action can be sent for approval.")
         skill_id = action.skill_id
         args = copy.deepcopy(action.arguments)
-        # Validate against the registered manifest before recording the exact action shown to a human.
         registered = planner.dispatcher._registered.get(skill_id)
         if not registered or not registered[0].validate_object(registered[0].input_schema, args):
             raise ValueError("Proposed action failed manifest validation.")
@@ -77,7 +76,7 @@ class ApprovalCoordinator:
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict[str, Any]], bool]) -> ApprovalResult:
-        if not isinstance(confirm, Callable) or not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+        if not callable(confirm) or not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             return ApprovalResult(False, "invalid_request", "A trusted actor, session, and confirmation callback are required.")
         with self._lock:
             if self.pending_store:
@@ -92,8 +91,6 @@ class ApprovalCoordinator:
                     self._audit("failed", pending_id, actor, stored.skill_id)
                     return ApprovalResult(False, "tampered", "Stored action integrity validation failed.")
             else:
-                # Do not consume an approval on an identity mismatch; otherwise a caller
-                # who guesses an ID could invalidate the legitimate owner's request.
                 item = self._memory.get(pending_id)
                 if not item or item["actor"] != actor or item["session"] != session_id:
                     return ApprovalResult(False, "pending_not_found", "Approval is missing or bound to another identity.")
@@ -116,12 +113,16 @@ class ApprovalCoordinator:
             if decision is not True:
                 self._audit("denied", pending_id, actor, action_for_display["skill_id"])
                 return ApprovalResult(False, "approval_denied", "Human approval was not granted.")
-            # Callback receives a detached copy; execute only the canonical stored snapshot.
             canonical = action_for_display
             skill_id, args = canonical["skill_id"], copy.deepcopy(canonical["arguments"])
             self._audit("approved", pending_id, actor, skill_id)
             try:
-                output = planner.dispatcher.execute(skill_id, args, approved=True)
+                # The coordinator is the human approval boundary. Mint a short-lived
+                # dispatcher token only after approval, then execute the exact stored args.
+                dispatch_request = planner.dispatcher.request_approval(skill_id, args)
+                output = planner.dispatcher.execute(
+                    skill_id, args, approval_id=dispatch_request["approval_id"],
+                )
             except Exception:
                 self._audit("failed", pending_id, actor, skill_id)
                 return ApprovalResult(False, "execution_failed", "Approved action failed safely.")
