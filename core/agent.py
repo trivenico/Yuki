@@ -1,9 +1,11 @@
 """Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
 from dataclasses import dataclass
+import json
 from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
+from core.tool_authorization import authorize_tool_call
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
 
@@ -49,17 +51,34 @@ class YukiCoreAgent:
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
-        # Strict policy: request fresh approval for every skill invocation. This is
-        # intentionally stricter than per-skill defaults so model output cannot
-        # invoke a state-changing or external capability without human confirmation.
-        approved = self.permission_gate.request(
-            action=f"skill:{skill.name}", reason=f"Invoke {skill.name} ({skill.description}); argument={argument[:500]!r}", risk=skill.risk
+        if not isinstance(argument, str) or len(argument) > 500:
+            return AgentResponse(False, "Blocked: skill argument must be text of at most 500 characters.",
+                                 name, stage="blocked")
+        # Freeze the exact invocation payload before authorization. All skill calls
+        # require approval here; skill metadata cannot enable implicit autonomy.
+        try:
+            approved_snapshot = json.dumps(
+                {"argument": argument}, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+            )
+            approval_args = json.loads(approved_snapshot)
+        except (TypeError, ValueError):
+            return AgentResponse(False, "Blocked: invalid skill arguments.", name, stage="blocked")
+        def request_approval(tool_name, risk, args):
+            return self.permission_gate.request(
+                action=f"skill:{tool_name}",
+                reason=f"Invoke {tool_name} ({skill.description}); argument={args['argument']!r}",
+                risk=risk,
+            )
+        allowed = authorize_tool_call(
+            skill.name, skill.risk, approval_args,
+            approval_callback=request_approval, auto_approve=False,
         )
-        if not approved:
+        if not allowed:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
                                  name, stage="permission_denied")
         try:
-            result = skill.execute(argument)
+            execution_args = json.loads(approved_snapshot)
+            result = skill.execute(execution_args["argument"])
             if isinstance(result, dict):
                 ok = bool(result.get("ok", True))
                 message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
