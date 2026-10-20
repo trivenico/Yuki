@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import secrets
+import threading
 from dataclasses import dataclass
 
 from core.observability import log_event
@@ -30,6 +31,7 @@ class ApprovalCoordinator:
             raise ValueError("max_pending must be between 1 and 4096")
         self.pending_store, self.audit_log, self.max_pending = pending_store, audit_log, max_pending
         self._pending = {}
+        self._pending_lock = threading.Lock()
 
     @staticmethod
     def _identity(value):
@@ -73,9 +75,10 @@ class ApprovalCoordinator:
             )
             pending_id = stored.pending_id
         else:
-            if len(self._pending) >= self.max_pending:
-                raise RuntimeError("Pending approval capacity reached.")
-            self._pending[pending_id] = (action, actor_hash, session_hash)
+            with self._pending_lock:
+                if len(self._pending) >= self.max_pending:
+                    raise RuntimeError("Pending approval capacity reached.")
+                self._pending[pending_id] = (action, actor_hash, session_hash)
         try:
             self._audit("requested", pending_id, action, actor, session_id)
         except Exception as exc:
@@ -95,7 +98,8 @@ class ApprovalCoordinator:
                         },
                     )
             else:
-                self._pending.pop(pending_id, None)
+                with self._pending_lock:
+                    self._pending.pop(pending_id, None)
             raise RuntimeError(
                 "Approval request could not be audited; no approval was issued."
             ) from exc
@@ -113,15 +117,17 @@ class ApprovalCoordinator:
                     return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
                 action = stored.action
             else:
-                item = self._pending.get(pending_id)
-                if item is None:
-                    return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
-                action, actor_hash, session_hash = item
-                if actor_hash != self._identity(actor) or session_hash != self._identity(
-                    session_id
-                ):
-                    return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
-                del self._pending[pending_id]
+                # Claim and remove atomically so concurrent approvals cannot both win.
+                with self._pending_lock:
+                    item = self._pending.get(pending_id)
+                    if item is None:
+                        return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
+                    action, actor_hash, session_hash = item
+                    if actor_hash != self._identity(actor) or session_hash != self._identity(
+                        session_id
+                    ):
+                        return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
+                    del self._pending[pending_id]
                 action = json.loads(json.dumps(action, allow_nan=False))
             # Confirmation sees a detached copy; only the stored snapshot is executed.
             approved = confirm(json.loads(json.dumps(action, allow_nan=False))) is True

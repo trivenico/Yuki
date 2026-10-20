@@ -7,6 +7,7 @@ process; untrusted skill code must remain in the subprocess worker.
 
 import json
 import secrets
+import threading
 from dataclasses import dataclass
 
 from core.skill_manifest import SkillManifest
@@ -26,8 +27,9 @@ class SkillDispatcher:
         self.capability_grants = frozenset(capability_grants)
         self.approval_store = approval_store
         self._workers = {}
-        self._receipt_secret = secrets.token_urlsafe(32)
         self._issued_receipts = set()
+        self._receipt_lock = threading.Lock()
+        self._workers_lock = threading.RLock()
 
     def register_subprocess(self, manifest, command, *, executor=None):
         if not isinstance(manifest, SkillManifest):
@@ -40,9 +42,7 @@ class SkillDispatcher:
             raise ValueError("invalid command")
         if any(capability not in self.capability_grants for capability in manifest.capabilities):
             raise PermissionError("ungranted capability")
-        if manifest.skill_id in self._workers:
-            raise ValueError("duplicate skill")
-        self._workers[manifest.skill_id] = (
+        worker = (
             manifest,
             tuple(command),
             executor
@@ -50,11 +50,17 @@ class SkillDispatcher:
                 timeout_seconds=manifest.timeout_seconds, max_output_bytes=manifest.max_output_bytes
             ),
         )
+        with self._workers_lock:
+            if manifest.skill_id in self._workers:
+                raise ValueError("duplicate skill")
+            self._workers[manifest.skill_id] = worker
 
     def prepare(self, skill_id, arguments):
-        if skill_id not in self._workers:
+        with self._workers_lock:
+            worker = self._workers.get(skill_id)
+        if worker is None:
             raise ValueError("unknown skill")
-        manifest, _, _ = self._workers[skill_id]
+        manifest, _, _ = worker
         args = manifest.validate_object(arguments, manifest.input_schema)
         args = json.loads(json.dumps(args, allow_nan=False))
         return {
@@ -68,21 +74,28 @@ class SkillDispatcher:
     def _issue_approval_receipt(self):
         """Mint a single-use receipt for the approval coordinator."""
         receipt = secrets.token_urlsafe(32)
-        self._issued_receipts.add(receipt)
+        with self._receipt_lock:
+            self._issued_receipts.add(receipt)
         return receipt
 
     def execute_approved(self, action, *, approval_receipt=None):
         """Execute only after the coordinator supplies a valid, single-use receipt."""
-        if (
-            not isinstance(approval_receipt, str)
-            or approval_receipt not in self._issued_receipts
-        ):
-            return DispatchResult(False, "approval_required", "Human approval is required.")
-        self._issued_receipts.remove(approval_receipt)
+        # Receipt validation and consumption must be one atomic operation.
+        with self._receipt_lock:
+            if (
+                not isinstance(approval_receipt, str)
+                or approval_receipt not in self._issued_receipts
+            ):
+                return DispatchResult(False, "approval_required", "Human approval is required.")
+            self._issued_receipts.remove(approval_receipt)
         try:
             if not isinstance(action, dict):
                 raise ValueError("invalid action")
-            manifest, command, executor = self._workers[action["skill_id"]]
+            with self._workers_lock:
+                worker = self._workers.get(action["skill_id"])
+            if worker is None:
+                raise ValueError("unknown skill")
+            manifest, command, executor = worker
             if (
                 action.get("manifest_version") != manifest.version
                 or action.get("capabilities") != list(manifest.capabilities)
