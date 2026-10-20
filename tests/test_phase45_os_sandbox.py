@@ -37,13 +37,9 @@ class LinuxSandboxContractTests(unittest.TestCase):
             rootfs = Path(directory) / "rootfs"
             rootfs.mkdir()
             (rootfs / ".yuki-sandbox-rootfs").write_text("explicit minimal rootfs\n", encoding="utf-8")
-            rootfs.chmod(0o755)
-            with patch("core.os_sandbox.Path.stat") as stat:
-                class FakeStat:
-                    st_mode = 0o777
-                stat.return_value = FakeStat()
-                with self.assertRaisesRegex(ValueError, "writable"):
-                    LinuxBubblewrapExecutor(rootfs=rootfs, bubblewrap_path="/bin/true")
+            rootfs.chmod(0o777)
+            with self.assertRaisesRegex(ValueError, "writable"):
+                LinuxBubblewrapExecutor(rootfs=rootfs, bubblewrap_path="/bin/true")
 
     def test_rejects_missing_bubblewrap_binary(self):
         if not sys.platform.startswith("linux"):
