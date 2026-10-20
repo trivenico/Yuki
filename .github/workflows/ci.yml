@@ -59,6 +59,22 @@ jobs:
         continue-on-error: true
         id: unit_tests
         run: python -m pytest tests -v --cov=core --cov=skills --cov=knowledge --cov=providers --cov-report=term-missing --cov-report=xml
+      - name: Enforce coverage threshold
+        if: always() && steps.unit_tests.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path("coverage.xml")
+          if not report.is_file():
+              raise SystemExit("coverage.xml was not generated")
+          root = ET.parse(report).getroot()
+          rate = float(root.attrib.get("line-rate", "0"))
+          print(f"Line coverage: {rate:.1%} (required: 80.0%)")
+          if rate < 0.80:
+              raise SystemExit("Coverage is below the 80% acceptance threshold")
+          PY
       - name: Enforce quality gates
         if: always()
         env:
