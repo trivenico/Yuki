@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
+from core.invocation_facade import InvocationFacade
 from core.tool_authorization import authorize_tool_call
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
@@ -46,6 +47,28 @@ class YukiCoreAgent:
 
     def available_skills(self):
         return self.registry.describe()
+
+    def invoke_manifest_skill(self, skill_id: str, arguments: dict, *, confirm) -> AgentResponse:
+        """Invoke only a registered manifest skill through the shared review facade."""
+        if self.dispatcher is None:
+            return AgentResponse(
+                False, "Blocked: no manifest skill dispatcher is configured.",
+                skill_id, stage="blocked",
+            )
+        try:
+            facade = InvocationFacade(self.dispatcher)
+            result = facade.invoke(skill_id, arguments, confirm=confirm)
+            ok = result.get("ok") is True
+            status = str(result.get("status", "completed" if ok else "failed"))
+            message = "Manifest skill completed." if ok else f"Manifest skill not executed ({status})."
+            data = {key: value for key, value in result.items() if key not in {"ok", "status", "message"}}
+            return AgentResponse(ok, message, skill_id, data, stage="report" if ok else status)
+        except Exception:
+            # Do not expose internal errors or approval tokens to callers.
+            return AgentResponse(
+                False, "Manifest skill invocation failed safely.",
+                skill_id, stage="blocked",
+            )
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
         # Production must not reach legacy in-process skill implementations.
