@@ -157,3 +157,31 @@ The initial `dark_chocolate/` spike was removed from the active tree to avoid cr
 This increment routes direct `YukiAgent.ask()` prompts through `core.prompt_guard.scan_untrusted_text()` and screens task goals in `ApprovedTaskAgent.run()` before the first model call. A regression test verifies that a flagged task goal does not reach the provider. The guard is heuristic; a match is a conservative block, and a non-match is not a safety guarantee.
 
 The repository has not yet been fully tested after these changes. The active project remains **Yuki**; no separate DarkChocolate app is intended.
+
+## Hardening follow-up — 2026-10-20
+
+The initial baseline above records the earlier audit snapshot and its historical CI failure. The latest inspected branch head before the CI diagnostics change was `3d522232a3113b0de57329316af687a8cd8c1bc4`.
+
+### Verified current findings
+
+- Latest Yuki tests workflow passed and the latest Security workflow passed on that commit.
+- The CI quality workflow failed in the Ruff lint step on all three supported Python matrix entries.
+- Ruff reported 231 findings: primarily E701/E702 one-line statements, E401 multiple imports, and F401 unused imports. The CI log said 12 findings were auto-fixable with `ruff check --fix`.
+- Because the prior workflow stopped at the first failure, Ruff format, mypy, console entry-point smoke test, and unit tests in that workflow were skipped. Passing separate test/security workflows does not establish that these skipped quality gates pass.
+- No coverage percentage has been measured; the project has not yet satisfied the stated 80% coverage acceptance target.
+- The pytest migration remains incomplete: CI currently uses `python -m unittest discover -s tests -v`.
+
+### CI diagnostic improvement
+
+The CI workflow was changed to run lint, format, mypy, entry-point, and unit-test checks independently and then fail the job if any gate fails. This is diagnostic-only; it does not fix lint findings or declare Phase 1 complete. The next run must verify the workflow syntax and actual outcomes before relying on this improvement.
+
+### Remaining Phase 1 acceptance criteria
+
+1. Resolve all Ruff lint findings without relaxing configured rules.
+2. Apply formatting intentionally and verify `ruff format --check .`.
+3. Resolve mypy findings in the configured modules.
+4. Verify editable install and `yuki` entry-point behavior on Python 3.10, 3.11, and 3.12.
+5. Run all tests and record actual coverage; proceed only after the gates pass.
+6. Run a tracked-file TODO/FIXME/XXX/HACK/NotImplemented inventory and record its results; prior indexed search was not exhaustive.
+
+Until these criteria pass, status remains **Phase 1 blocked / not production-ready**.
