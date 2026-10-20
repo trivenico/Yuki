@@ -17,6 +17,18 @@ def _bounded_int(value, minimum, maximum):
     return value
 
 
+def _bounded_string(value, key, *, default="", maximum=512, allow_empty=True):
+    if value is None:
+        value = default
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    value = value.strip()
+    if (not allow_empty and not value) or len(value) > maximum:
+        qualifier = "non-empty " if not allow_empty else ""
+        raise RuntimeError(f"{key} must be a {qualifier}string of at most {maximum} characters.")
+    return value
+
+
 def _bool_setting(env_name, raw, key, default=False):
     value = os.environ.get(env_name)
     if value is not None:
@@ -102,11 +114,17 @@ def load_config(path=None):
     if unknown_keys:
         raise RuntimeError("Unknown configuration keys: " + ", ".join(sorted(unknown_keys)))
     # Reject invalid YAML scalar types instead of silently coercing them to strings.
-    for key in ("name", "workspace", "provider", "ollama_base_url", "ollama_model",
-                "language_behavior", "voice_style", "spoken_reply_policy", "stt_model",
-                "tts_backend", "piper_model_path", "wakeword_model_path"):
-        if key in raw and not isinstance(raw[key], str):
-            raise RuntimeError(f"{key} must be a string.")
+    string_limits = {
+        "name": 120, "workspace": 2048, "provider": 32,
+        "ollama_base_url": 2048, "ollama_model": 120,
+        "language_behavior": 32, "voice_style": 64,
+        "spoken_reply_policy": 80, "stt_model": 120,
+        "tts_backend": 40, "piper_model_path": 2048,
+        "wakeword_model_path": 2048,
+    }
+    for key, maximum in string_limits.items():
+        if key in raw:
+            _bounded_string(raw[key], key, maximum=maximum)
     for key in ("voice_enabled", "security_lab_enabled", "sandbox_enabled", "gmail_enabled",
                 "firewall_enabled", "firewall_dry_run", "wakeword_enabled", "plugin_discovery_enabled"):
         if key in raw and not isinstance(raw[key], bool):
@@ -114,12 +132,16 @@ def load_config(path=None):
     selected_provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower()
     if selected_provider not in _SUPPORTED_PROVIDERS:
         raise RuntimeError("provider must be one of: mock, ollama, hybrid.")
-    workspace_value = os.environ.get("YUKI_WORKSPACE", raw.get("workspace", "./yuki_workspace"))
-    if not isinstance(workspace_value, str) or not workspace_value.strip():
-        raise RuntimeError("workspace must be a non-empty path.")
+    workspace_value = _bounded_string(
+        os.environ.get("YUKI_WORKSPACE", raw.get("workspace", "./yuki_workspace")),
+        "workspace", maximum=2048, allow_empty=False,
+    )
     workspace = Path(workspace_value).expanduser()
     if not workspace.is_absolute(): workspace = workspace_path(str(workspace))
-    base_url = os.environ.get("YUKI_OLLAMA_BASE_URL", str(raw.get("ollama_base_url", "http://127.0.0.1:11434"))).strip().rstrip("/")
+    base_url = _bounded_string(
+        os.environ.get("YUKI_OLLAMA_BASE_URL", raw.get("ollama_base_url", "http://127.0.0.1:11434")),
+        "ollama_base_url", maximum=2048, allow_empty=False,
+    ).rstrip("/")
     try:
         parsed_url = urlsplit(base_url)
         hostname = parsed_url.hostname
@@ -139,8 +161,10 @@ def load_config(path=None):
             raise ValueError("unsafe URL")
     except ValueError as exc:
         raise RuntimeError("Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment.") from exc
-    model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
-    if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    model = _bounded_string(
+        os.environ.get("YUKI_OLLAMA_MODEL", raw.get("ollama_model", "")),
+        "ollama_model", maximum=120,
+    )
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -165,10 +189,10 @@ def load_config(path=None):
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": selected_provider,
         "ollama_base_url": base_url, "ollama_model": model,
-        "stt_model": str(raw.get("stt_model", "small")),
+        "stt_model": _bounded_string(raw.get("stt_model", "small"), "stt_model", maximum=120, allow_empty=False),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
-        "tts_backend": str(raw.get("tts_backend", "piper")),
-        "piper_model_path": str(raw.get("piper_model_path", "")),
-        "wakeword_model_path": str(raw.get("wakeword_model_path", "")),
+        "tts_backend": _bounded_string(raw.get("tts_backend", "piper"), "tts_backend", maximum=40, allow_empty=False),
+        "piper_model_path": _bounded_string(raw.get("piper_model_path", ""), "piper_model_path", maximum=2048),
+        "wakeword_model_path": _bounded_string(raw.get("wakeword_model_path", ""), "wakeword_model_path", maximum=2048),
     }
