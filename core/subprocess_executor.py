@@ -181,7 +181,11 @@ class SubprocessExecutor:
             return
         try:
             if os.name == "posix":
-                os.killpg(process.pid, signal.SIGTERM)
+                killpg = getattr(os, "killpg", None)
+                if killpg is None:
+                    process.terminate()
+                else:
+                    killpg(process.pid, signal.SIGTERM)
             else:
                 process.terminate()
         except ProcessLookupError:
@@ -193,7 +197,12 @@ class SubprocessExecutor:
             SubprocessExecutor._kill(process)
             return
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            killpg = getattr(os, "killpg", None)
+            sigkill = getattr(signal, "SIGKILL", None)
+            if killpg is None or sigkill is None:
+                SubprocessExecutor._kill(process)
+            else:
+                killpg(process.pid, sigkill)
         except ProcessLookupError:
             pass
 
@@ -203,7 +212,12 @@ class SubprocessExecutor:
             return
         try:
             if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
+                killpg = getattr(os, "killpg", None)
+                sigkill = getattr(signal, "SIGKILL", None)
+                if killpg is None or sigkill is None:
+                    process.kill()
+                else:
+                    killpg(process.pid, sigkill)
             else:
                 process.kill()
         except ProcessLookupError:
