@@ -48,7 +48,7 @@ class OptionalRemoteSkillTests(unittest.TestCase):
         client = Mock()
         client.images.generate.return_value.data = [data]
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("openai.OpenAI", return_value=client):
+            with patch.dict("sys.modules", {"openai": Mock(OpenAI=Mock(return_value=client))}):
                 result = ImageGenerationSkill().run("a tree")
         self.assertFalse(result.ok)
         self.assertIn("HTTPS", result.message)
@@ -57,7 +57,7 @@ class OptionalRemoteSkillTests(unittest.TestCase):
         client = Mock()
         client.images.generate.side_effect = RuntimeError("sensitive provider detail")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-            with patch("openai.OpenAI", return_value=client):
+            with patch.dict("sys.modules", {"openai": Mock(OpenAI=Mock(return_value=client))}):
                 result = ImageGenerationSkill().run("a tree")
         self.assertFalse(result.ok)
         self.assertNotIn("sensitive provider detail", result.message)
