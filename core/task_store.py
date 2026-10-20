@@ -110,9 +110,7 @@ class TaskStore:
                 raise ValueError("task result exceeds storage limit")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError("task not found")
             current = row["status"]
