@@ -242,7 +242,7 @@ class DurableTaskStoreTests(unittest.TestCase):
                 "interrupted": 0,
             },
         )
-        queued = self.store.create("queued")
+        self.store.create("queued")
         running = self.store.create("running")
         self.store.transition(running["task_id"], "running")
         done = self.store.create("completed")
