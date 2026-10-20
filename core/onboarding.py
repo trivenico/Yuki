@@ -136,13 +136,26 @@ def validate_config(config: Any) -> dict[str, Any]:
         raise ValueError("messaging.enabled must be boolean")
     normalized = dict(config)
     normalized.setdefault("version", 1)
+    normalized.setdefault("provider", "mock")
     normalized.setdefault("model", "")
     normalized.setdefault("base_url", "")
     normalized.setdefault("api_key_env", None)
     normalized.setdefault("mcp_servers", [])
-    normalized.setdefault("security", {"allow_network": False, "allow_file_write": False, "allow_shell": False, "require_approval_for_unknown_tools": True})
-    normalized.setdefault("daemon", {"enabled": False, "poll_seconds": 1.0})
-    normalized.setdefault("messaging", {"enabled": False})
+    # Merge section defaults, rather than setdefault on the whole section. Partial
+    # user-supplied sections are valid and must still produce a complete normalized
+    # object for runtime consumers.
+    section_defaults = {
+        "security": {
+            "allow_network": False,
+            "allow_file_write": False,
+            "allow_shell": False,
+            "require_approval_for_unknown_tools": True,
+        },
+        "daemon": {"enabled": False, "poll_seconds": 1.0},
+        "messaging": {"enabled": False},
+    }
+    for section, defaults in section_defaults.items():
+        normalized[section] = {**defaults, **config.get(section, {})}
     return normalized
 
 
