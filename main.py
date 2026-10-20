@@ -9,6 +9,7 @@ from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
+from core.runtime_composition import build_skill_dispatcher
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
@@ -56,7 +57,15 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    dispatcher = build_skill_dispatcher(
+        workspace,
+        capability_grants=("system.clock.read",),
+    )
+    return YukiCoreAgent(
+        registry=registry,
+        permission_gate=PermissionGate(_ask_approval),
+        dispatcher=dispatcher,
+    )
 
 
 def build_react_engine(agent):
