@@ -14,9 +14,15 @@ The coordinator should:
 5. If approved, consume that same token and execute its stored snapshot; never mint a replacement token after approval.
 6. Keep the existing actor/session binding on the pending request and audit the outcome without logging arguments or bearer tokens.
 
-## Current phase status
+## Changes committed
 
-The repository audit identified this ordering gap. The attempted source update was blocked by the connected repository operation's safety checks, so this file records the finding and exact acceptance criteria rather than claiming the source fix is committed. Phase 41 is not complete until the coordinator implementation and regression tests land and latest-head CI passes.
+- The coordinator now creates the one-time dispatcher token before calling the confirmation callback.
+- The confirmation callback receives the exact action, payload SHA-256 digest, and token expiry, but never receives the bearer token.
+- A denial or callback exception revokes the prepared token.
+- Approval executes using the same prepared token; no replacement token is minted after confirmation.
+- Regression coverage asserts that the reviewed action includes the digest and expiry.
+
+The coordinator pending request and dispatcher token remain separate records, so this is not a single cross-store transaction. Latest-head CI must pass before the phase is verified.
 
 ## Additional blockers
 
