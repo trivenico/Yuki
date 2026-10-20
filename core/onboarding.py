@@ -5,6 +5,7 @@ import copy
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 from typing import Any, Callable
@@ -81,8 +82,11 @@ def validate_config(config: Any) -> dict[str, Any]:
     _validate_endpoint(base_url, allow_loopback_http=provider in {"ollama", "llama_cpp", "lm_studio", "vllm"}, label="base_url")
     key_env = config.get("api_key_env")
     cloud_provider = provider in {"openai", "anthropic", "deepseek", "glm", "openai_compatible"}
-    if key_env is not None and (not isinstance(key_env, str) or not key_env.isidentifier()):
-        raise ValueError("api_key_env must be an environment variable name")
+    if key_env is not None and (
+        not isinstance(key_env, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env) is None
+    ):
+        raise ValueError("api_key_env must be an ASCII environment variable name")
     if cloud_provider and key_env is None:
         raise ValueError("Cloud providers require api_key_env; the key value itself must remain in the environment")
     mcp_servers = config.get("mcp_servers", [])
@@ -223,8 +227,8 @@ def run_onboarding(
     key_env = None
     if provider in {"openai", "anthropic", "deepseek", "glm", "openai_compatible"}:
         key_env = input_fn("Environment variable name for API key (e.g. OPENAI_API_KEY): ").strip()
-        if not key_env.isidentifier():
-            raise ValueError("Invalid environment variable name")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key_env) is None:
+            raise ValueError("Invalid ASCII environment variable name")
     if validator and not validator(provider, {"model": model, "base_url": base_url, "api_key_env": key_env}):
         raise RuntimeError("Provider validation failed")
     # Validate URLs even when no network validator is supplied.
