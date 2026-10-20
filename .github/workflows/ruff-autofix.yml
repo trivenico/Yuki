@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install ruff==0.11.2
       - name: Apply safe Ruff fixes and formatting
         run: |
-          ruff check --fix .
+          ruff check --fix . || true
           ruff format .
       - name: Verify lint, format, and whitespace
         run: |
