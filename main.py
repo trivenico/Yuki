@@ -113,7 +113,7 @@ def print_help():
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
 """)
 
-def _handle_model_command(command, config, ai):
+def _handle_model_command(command, config, ai, task_agent):
     """Inspect/select installed Ollama models; never download a model."""
     parts = shlex.split(command)
     if len(parts) == 2 and parts[1] == "status":
@@ -161,6 +161,7 @@ def _handle_model_command(command, config, ai):
             config["provider"] = "ollama"
             config["ollama_model"] = selected
             ai.provider = create_provider(config)
+            task_agent.provider = ai.provider
             print(f"Yuki > Selected installed local model: {selected}")
             return True
         except (ValueError, RuntimeError, OSError) as exc:
@@ -332,7 +333,7 @@ def main(argv=None):
         if command == "/help":
             print_help()
         elif command == "/model" or command.startswith("/model "):
-            _handle_model_command(command, config, ai)
+            _handle_model_command(command, config, ai, task_agent)
         elif command == "/status":
             counts = task_store.status_counts()
             print("Tasks: " + ", ".join(f"{name}={count}" for name, count in counts.items()))
