@@ -61,6 +61,8 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(approved.status, "completed")
         self.assertEqual(shown[0]["skill_id"], "notes.write")
         self.assertEqual(shown[0]["arguments"], {"text": "exact note"})
+        self.assertEqual(len(shown[0]["payload_sha256"]), 64)
+        self.assertIn("approval_expires_at", shown[0])
 
     def test_denial_does_not_execute(self):
         planner = build()
