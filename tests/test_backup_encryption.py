@@ -1,4 +1,5 @@
 """Tests for authenticated backup encryption without external services."""
+
 from __future__ import annotations
 
 import os

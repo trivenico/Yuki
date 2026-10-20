@@ -17,7 +17,7 @@ _SECRET_PATTERNS = [
 
 def sanitize_text(value, limit=1000):
     """Bound text and redact common token/credential patterns before local storage."""
-    text = str(value or "")[:max(0, limit)]
+    text = str(value or "")[: max(0, limit)]
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     return text
@@ -45,9 +45,11 @@ def load_audit_events():
     if not isinstance(data, list):
         return []
     return [
-        {"timestamp": str(item.get("timestamp", ""))[:64],
-         "action": str(item.get("action", ""))[:80],
-         "outcome": str(item.get("outcome", ""))[:32]}
+        {
+            "timestamp": str(item.get("timestamp", ""))[:64],
+            "action": str(item.get("action", ""))[:80],
+            "outcome": str(item.get("outcome", ""))[:32],
+        }
         for item in data[-MAX_AUDIT_RECORDS:]
         if isinstance(item, dict)
     ]
@@ -66,7 +68,9 @@ def write_audit_event(action, outcome):
     data.append(event)
     temp = AUDIT_FILE.with_suffix(".tmp")
     try:
-        temp.write_text(json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(
+            json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         temp.replace(AUDIT_FILE)
         return True
     except OSError:

@@ -1,4 +1,5 @@
 """Restricted MCP Streamable HTTP client. No stdio subprocesses or implicit tool trust."""
+
 from __future__ import annotations
 import ipaddress
 import json
@@ -38,12 +39,20 @@ class MCPHTTPClient:
         parts = urlsplit(endpoint.strip())
         host = (parts.hostname or "").lower().rstrip(".")
         allowed = frozenset(str(h).lower().rstrip(".") for h in allowed_hosts)
-        if parts.scheme != "https" or not host or parts.username or parts.password or parts.port not in (None, 443):
+        if (
+            parts.scheme != "https"
+            or not host
+            or parts.username
+            or parts.password
+            or parts.port not in (None, 443)
+        ):
             raise MCPError("Only HTTPS MCP endpoints on the default port are accepted.")
         if not allowed or host not in allowed:
             raise MCPError("MCP host is not on the explicit allow-list.")
         try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+            addresses = {
+                item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            }
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
                 raise MCPError("Non-public MCP destinations are blocked.")
         except OSError as exc:
@@ -60,8 +69,9 @@ class MCPHTTPClient:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
-        request = urllib.request.Request(self.endpoint, data=json.dumps(payload).encode("utf-8"),
-                                          headers=headers, method="POST")
+        request = urllib.request.Request(
+            self.endpoint, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
+        )
         try:
             with self._opener.open(request, timeout=self.timeout) as response:
                 self.session_id = response.headers.get("Mcp-Session-Id", self.session_id)
@@ -71,10 +81,14 @@ class MCPHTTPClient:
                 if not body and notification:
                     return None
                 if "application/json" not in response.headers.get("Content-Type", "").lower():
-                    raise MCPError("This client currently supports JSON MCP responses, not SSE-only responses.")
+                    raise MCPError(
+                        "This client currently supports JSON MCP responses, not SSE-only responses."
+                    )
                 result = json.loads(body.decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            raise MCPError(f"MCP HTTP request failed ({exc.code}); redirects are disabled.") from exc
+            raise MCPError(
+                f"MCP HTTP request failed ({exc.code}); redirects are disabled."
+            ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise MCPError("MCP server was unreachable or timed out.") from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -86,16 +100,21 @@ class MCPHTTPClient:
         return result.get("result")
 
     def initialize(self):
-        result = self._rpc("initialize", {
-            "protocolVersion": self.PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "Yuki", "version": "0.1"},
-        })
+        result = self._rpc(
+            "initialize",
+            {
+                "protocolVersion": self.PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "Yuki", "version": "0.1"},
+            },
+        )
         if not isinstance(result, dict):
             raise MCPError("MCP initialize response is invalid.")
         self._rpc("notifications/initialized", notification=True)
-        return {"server_info": result.get("serverInfo", {}),
-                "protocol_version": result.get("protocolVersion", self.PROTOCOL_VERSION)}
+        return {
+            "server_info": result.get("serverInfo", {}),
+            "protocol_version": result.get("protocolVersion", self.PROTOCOL_VERSION),
+        }
 
     def list_tools(self):
         result = self._rpc("tools/list", {})
@@ -106,8 +125,13 @@ class MCPHTTPClient:
         for tool in tools[:200]:
             if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
                 continue
-            safe.append({"name": tool["name"][:128], "description": str(tool.get("description", ""))[:500],
-                         "input_schema": tool.get("inputSchema", {})})
+            safe.append(
+                {
+                    "name": tool["name"][:128],
+                    "description": str(tool.get("description", ""))[:500],
+                    "input_schema": tool.get("inputSchema", {}),
+                }
+            )
         return safe
 
     def call_tool(self, name, arguments):

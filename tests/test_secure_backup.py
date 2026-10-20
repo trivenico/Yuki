@@ -22,7 +22,9 @@ class SecureBackupTests(unittest.TestCase):
         self.key = b"y" * 32
         self.source = self.root / "private"
         self.source.mkdir()
-        (self.source / "memory.txt").write_text("private memory and token-like text", encoding="utf-8")
+        (self.source / "memory.txt").write_text(
+            "private memory and token-like text", encoding="utf-8"
+        )
         (self.source / "nested").mkdir()
         (self.source / "nested" / "note.txt").write_text("nested note", encoding="utf-8")
 
@@ -72,7 +74,9 @@ class SecureBackupTests(unittest.TestCase):
 
     def test_source_size_limit_is_enforced(self):
         with self.assertRaises(BackupError):
-            create_encrypted_backup([self.source], self.root / "too-small.yukibak", self.key, max_bytes=2)
+            create_encrypted_backup(
+                [self.source], self.root / "too-small.yukibak", self.key, max_bytes=2
+            )
 
     def test_key_length_is_validated(self):
         with self.assertRaises(BackupError):

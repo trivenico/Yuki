@@ -1,4 +1,5 @@
 """Small YAML configuration loader with safe environment overrides."""
+
 import ipaddress
 import os
 from pathlib import Path
@@ -21,11 +22,14 @@ def _bool_setting(env_name, raw, key, default=False):
     value = os.environ.get(env_name)
     if value is not None:
         normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}: return True
-        if normalized in {"0", "false", "no", "off"}: return False
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
         raise RuntimeError(f"{env_name} must be true or false.")
     value = raw.get(key, default)
-    if not isinstance(value, bool): raise RuntimeError(f"{key} must be true or false.")
+    if not isinstance(value, bool):
+        raise RuntimeError(f"{key} must be true or false.")
     return value
 
 
@@ -33,7 +37,8 @@ def _string_list(raw, key):
     value = raw.get(key, [])
     if not isinstance(value, list) or any(not isinstance(x, str) or not x.strip() for x in value):
         raise RuntimeError(f"{key} must be a list of non-empty strings.")
-    if len(value) > 100: raise RuntimeError(f"{key} may contain at most 100 entries.")
+    if len(value) > 100:
+        raise RuntimeError(f"{key} may contain at most 100 entries.")
     return list(dict.fromkeys(x.strip() for x in value))
 
 
@@ -45,13 +50,21 @@ def load_config(path=None):
         raise RuntimeError(f"Cannot read configuration file: {selected_config_path}") from exc
     except yaml.YAMLError as exc:
         raise RuntimeError("Configuration YAML is invalid.") from exc
-    if not isinstance(raw, dict): raise RuntimeError("Configuration must be a YAML mapping.")
+    if not isinstance(raw, dict):
+        raise RuntimeError("Configuration must be a YAML mapping.")
     workspace_value = os.environ.get("YUKI_WORKSPACE", raw.get("workspace", "./yuki_workspace"))
     if not isinstance(workspace_value, str) or not workspace_value.strip():
         raise RuntimeError("workspace must be a non-empty path.")
     workspace = Path(workspace_value).expanduser()
-    if not workspace.is_absolute(): workspace = workspace_path(str(workspace))
-    base_url = os.environ.get("YUKI_OLLAMA_BASE_URL", str(raw.get("ollama_base_url", "http://127.0.0.1:11434"))).strip().rstrip("/")
+    if not workspace.is_absolute():
+        workspace = workspace_path(str(workspace))
+    base_url = (
+        os.environ.get(
+            "YUKI_OLLAMA_BASE_URL", str(raw.get("ollama_base_url", "http://127.0.0.1:11434"))
+        )
+        .strip()
+        .rstrip("/")
+    )
     try:
         parsed_url = urlsplit(base_url)
         hostname = parsed_url.hostname
@@ -66,37 +79,60 @@ def load_config(path=None):
         safe_transport = parsed_url.scheme == "https" or (
             parsed_url.scheme == "http" and is_loopback_name
         )
-        if (not safe_transport or not hostname or parsed_url.username or parsed_url.password
-                or parsed_url.query or parsed_url.fragment):
+        if (
+            not safe_transport
+            or not hostname
+            or parsed_url.username
+            or parsed_url.password
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
             raise ValueError("unsafe URL")
     except ValueError as exc:
-        raise RuntimeError("Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment.") from exc
+        raise RuntimeError(
+            "Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment."
+        ) from exc
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
-    if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    if len(model) > 120:
+        raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
-    if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
+    if language_behavior != "auto_detect":
+        raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
-    if voice_style != "natural_realistic_female": raise RuntimeError("voice_style must be natural_realistic_female.")
-    spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
-    if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
+    if voice_style != "natural_realistic_female":
+        raise RuntimeError("voice_style must be natural_realistic_female.")
+    spoken_reply_policy = (
+        str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
+    )
+    if spoken_reply_policy != "every_reply_when_voice_mode_active":
+        raise RuntimeError("spoken_reply_policy is unsupported.")
     return {
-        "name": "Yuki", "workspace": str(workspace.resolve()),
-        "language_behavior": language_behavior, "voice_style": voice_style,
+        "name": "Yuki",
+        "workspace": str(workspace.resolve()),
+        "language_behavior": language_behavior,
+        "voice_style": voice_style,
         "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
-        "security_lab_enabled": _bool_setting("YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False),
+        "security_lab_enabled": _bool_setting(
+            "YUKI_SECURITY_LAB_ENABLED", raw, "security_lab_enabled", False
+        ),
         "sandbox_enabled": _bool_setting("YUKI_SANDBOX_ENABLED", raw, "sandbox_enabled", False),
         "gmail_enabled": _bool_setting("YUKI_GMAIL_ENABLED", raw, "gmail_enabled", False),
         "firewall_enabled": _bool_setting("YUKI_FIREWALL_ENABLED", raw, "firewall_enabled", False),
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),
         "wakeword_enabled": _bool_setting("YUKI_WAKEWORD_ENABLED", raw, "wakeword_enabled", False),
-        "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
+        "plugin_discovery_enabled": _bool_setting(
+            "YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False
+        ),
         "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
-        "ollama_base_url": base_url, "ollama_model": model,
+        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock")))
+        .strip()
+        .lower(),
+        "ollama_base_url": base_url,
+        "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),

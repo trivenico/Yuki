@@ -45,7 +45,13 @@ _ALLOWED_TRANSITIONS = {
     Stage.PERCEIVE: {Stage.UNDERSTAND, Stage.CANCELLED, Stage.FAILED},
     Stage.UNDERSTAND: {Stage.PLAN, Stage.REPORT, Stage.CANCELLED, Stage.FAILED},
     Stage.PLAN: {Stage.CHECK_TOOLS, Stage.REPORT, Stage.CANCELLED, Stage.FAILED},
-    Stage.CHECK_TOOLS: {Stage.ASK_PERMISSION, Stage.EXECUTE, Stage.BLOCKED, Stage.CANCELLED, Stage.FAILED},
+    Stage.CHECK_TOOLS: {
+        Stage.ASK_PERMISSION,
+        Stage.EXECUTE,
+        Stage.BLOCKED,
+        Stage.CANCELLED,
+        Stage.FAILED,
+    },
     Stage.ASK_PERMISSION: {Stage.EXECUTE, Stage.BLOCKED, Stage.CANCELLED},
     Stage.EXECUTE: {Stage.OBSERVE, Stage.BLOCKED, Stage.CANCELLED, Stage.FAILED},
     Stage.OBSERVE: {Stage.FEEDBACK, Stage.FAILED, Stage.CANCELLED},
@@ -80,7 +86,9 @@ def transition(workflow, next_stage, note=""):
     except (ValueError, TypeError):
         raise ValueError("Unknown workflow stage.") from None
     if next_stage not in _ALLOWED_TRANSITIONS[workflow.stage]:
-        raise ValueError(f"Illegal workflow transition: {workflow.stage.value} -> {next_stage.value}")
+        raise ValueError(
+            f"Illegal workflow transition: {workflow.stage.value} -> {next_stage.value}"
+        )
     now = datetime.now(timezone.utc).isoformat()
     workflow.stage = next_stage
     safe_note = str(note or "")[:300]

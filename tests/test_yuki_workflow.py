@@ -29,7 +29,13 @@ class WorkflowTests(unittest.TestCase):
 
     def test_sensitive_action_can_be_gated_by_permission_stage(self):
         workflow = create_workflow("Perform an active security test")
-        for stage in (Stage.PERCEIVE, Stage.UNDERSTAND, Stage.PLAN, Stage.CHECK_TOOLS, Stage.ASK_PERMISSION):
+        for stage in (
+            Stage.PERCEIVE,
+            Stage.UNDERSTAND,
+            Stage.PLAN,
+            Stage.CHECK_TOOLS,
+            Stage.ASK_PERMISSION,
+        ):
             transition(workflow, stage)
         self.assertEqual(workflow.stage, Stage.ASK_PERMISSION)
         transition(workflow, Stage.BLOCKED, "Approval was not granted")

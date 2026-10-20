@@ -1,4 +1,5 @@
 """Interview practice skill using bounded, deterministic prompts."""
+
 from __future__ import annotations
 
 
@@ -18,5 +19,9 @@ class InterviewSkill:
         topic = (argument or "behavioral").strip().lower()
         if topic not in self.PROMPTS:
             return {"ok": False, "message": "Choose behavioral, technical, or security."}
-        return {"ok": True, "topic": topic, "prompt": self.PROMPTS[topic],
-                "guidance": "Answer in your own words; Yuki has not evaluated your answer yet."}
+        return {
+            "ok": True,
+            "topic": topic,
+            "prompt": self.PROMPTS[topic],
+            "guidance": "Answer in your own words; Yuki has not evaluated your answer yet.",
+        }

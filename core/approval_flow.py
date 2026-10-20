@@ -1,12 +1,15 @@
 """One-time human approval of immutable planner proposals."""
+
 import hashlib
 import json
 import secrets
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class PendingApproval:
     pending_id: str
+
 
 @dataclass(frozen=True)
 class ApprovalResult:
@@ -14,6 +17,7 @@ class ApprovalResult:
     status: str
     message: str
     data: object = None
+
 
 class ApprovalCoordinator:
     def __init__(self, *, pending_store=None, audit_log=None, max_pending=128):
@@ -30,18 +34,27 @@ class ApprovalCoordinator:
 
     def _audit(self, event, pending_id, action, actor, session_id):
         if self.audit_log is not None:
-            self.audit_log.record(event, pending_id=pending_id, skill_id=action["skill_id"],
-                actor=actor, session_id=session_id, arguments=action["arguments"])
+            self.audit_log.record(
+                event,
+                pending_id=pending_id,
+                skill_id=action["skill_id"],
+                actor=actor,
+                session_id=session_id,
+                arguments=action["arguments"],
+            )
 
     def record(self, planner, result, *, actor, session_id):
-        if getattr(result, "ok", False) is not True or not isinstance(getattr(result, "action", None), dict):
+        if getattr(result, "ok", False) is not True or not isinstance(
+            getattr(result, "action", None), dict
+        ):
             raise ValueError("only a planner proposal can be recorded")
         actor_hash, session_hash = self._identity(actor), self._identity(session_id)
         action = json.loads(json.dumps(result.action, allow_nan=False))
         pending_id = secrets.token_urlsafe(24)
         if self.pending_store is not None:
-            stored = self.pending_store.put(action["skill_id"], action["arguments"], action,
-                                            actor=actor, session_id=session_id)
+            stored = self.pending_store.put(
+                action["skill_id"], action["arguments"], action, actor=actor, session_id=session_id
+            )
             pending_id = stored.pending_id
         else:
             if len(self._pending) >= self.max_pending:
@@ -66,7 +79,9 @@ class ApprovalCoordinator:
                 if item is None:
                     return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
                 action, actor_hash, session_hash = item
-                if actor_hash != self._identity(actor) or session_hash != self._identity(session_id):
+                if actor_hash != self._identity(actor) or session_hash != self._identity(
+                    session_id
+                ):
                     return ApprovalResult(False, "pending_not_found", "Pending approval not found.")
                 del self._pending[pending_id]
                 action = json.loads(json.dumps(action, allow_nan=False))

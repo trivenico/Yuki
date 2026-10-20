@@ -2,12 +2,12 @@
 
 These tests use only loopback sockets and never contact a public service.
 """
+
 from __future__ import annotations
 
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
 
 from providers.http_client import open_provider_request
 from providers.ollama import OllamaProvider
@@ -65,9 +65,7 @@ class ProviderEndpointSecurityTests(unittest.TestCase):
             import urllib.error
             import urllib.request
 
-            request = urllib.request.Request(
-                f"http://127.0.0.1:{server.server_port}/start"
-            )
+            request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/start")
             with self.assertRaises(urllib.error.HTTPError):
                 open_provider_request(request, timeout=2)
             self.assertEqual(_RedirectHandler.destination_hits, 0)

@@ -34,13 +34,15 @@ def load_history():
     for item in data[-MAX_RECORDS:]:
         if not isinstance(item, dict):
             continue
-        clean_records.append({
-            "task": _clean(item.get("task", "")),
-            "outcome": _clean(item.get("outcome", "")),
-            "approach": _clean(item.get("approach", "")),
-            "lesson": _clean(item.get("lesson", "")),
-            "created_at": _clean(item.get("created_at", ""))[:64],
-        })
+        clean_records.append(
+            {
+                "task": _clean(item.get("task", "")),
+                "outcome": _clean(item.get("outcome", "")),
+                "approach": _clean(item.get("approach", "")),
+                "lesson": _clean(item.get("lesson", "")),
+                "created_at": _clean(item.get("created_at", ""))[:64],
+            }
+        )
     return clean_records
 
 
@@ -49,13 +51,15 @@ def save_history(history):
     for item in history[-MAX_RECORDS:]:
         if not isinstance(item, dict):
             continue
-        safe_history.append({
-            "task": _clean(item.get("task", "")),
-            "outcome": _clean(item.get("outcome", "")),
-            "approach": _clean(item.get("approach", "")),
-            "lesson": _clean(item.get("lesson", "")),
-            "created_at": _clean(item.get("created_at", ""))[:64],
-        })
+        safe_history.append(
+            {
+                "task": _clean(item.get("task", "")),
+                "outcome": _clean(item.get("outcome", "")),
+                "approach": _clean(item.get("approach", "")),
+                "lesson": _clean(item.get("lesson", "")),
+                "created_at": _clean(item.get("created_at", ""))[:64],
+            }
+        )
     temp = HISTORY_FILE.with_suffix(".tmp")
     try:
         temp.write_text(json.dumps(safe_history, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -73,13 +77,15 @@ def record_outcome(task, outcome, approach="", lesson=""):
     if not isinstance(task, str) or not task.strip():
         return "Please provide a task description."
     history = load_history()
-    history.append({
-        "task": _clean(task),
-        "outcome": _clean(outcome),
-        "approach": _clean(approach),
-        "lesson": _clean(lesson),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    history.append(
+        {
+            "task": _clean(task),
+            "outcome": _clean(outcome),
+            "approach": _clean(approach),
+            "lesson": _clean(lesson),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     if not save_history(history):
         return "Could not save learning history."
     return "Outcome recorded. Lessons are stored locally; the AI model is not trained or modified."

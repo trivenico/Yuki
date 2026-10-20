@@ -3,6 +3,7 @@
 Install the optional `backup` extra to enable AES-256-GCM. Keys are supplied by
 the caller (for example, from an OS key store); this module never writes keys.
 """
+
 from __future__ import annotations
 
 import io
@@ -36,8 +37,10 @@ def _aesgcm(key: bytes):
 
 def _safe_relative(path: str) -> PurePosixPath:
     candidate = PurePosixPath(path)
-    if candidate.is_absolute() or not candidate.parts or any(
-        part in {"", ".", ".."} for part in candidate.parts
+    if (
+        candidate.is_absolute()
+        or not candidate.parts
+        or any(part in {"", ".", ".."} for part in candidate.parts)
     ):
         raise BackupError("Archive contains an unsafe path.")
     if "\\" in path or "\x00" in path:
@@ -137,7 +140,7 @@ def restore_encrypted_backup(backup_path, destination, key: bytes, *, max_bytes=
         raise BackupError("Backup format is invalid.")
     if len(encrypted) > max_bytes + 2 * 1024 * 1024:
         raise BackupError("Encrypted backup exceeds the configured size limit.")
-    nonce = encrypted[len(MAGIC):header_len]
+    nonce = encrypted[len(MAGIC) : header_len]
     try:
         plaintext = aes.decrypt(nonce, encrypted[header_len:], MAGIC)
     except Exception as exc:

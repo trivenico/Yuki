@@ -1,4 +1,5 @@
 """Base class for narrowly scoped, permissioned skills."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -26,8 +27,10 @@ class Skill(ABC):
             return SkillResult(False, "Argument must be text.")
         try:
             result = self.run(argument[:500])
-            return result if isinstance(result, SkillResult) else SkillResult(
-                False, "Skill returned an invalid result."
+            return (
+                result
+                if isinstance(result, SkillResult)
+                else SkillResult(False, "Skill returned an invalid result.")
             )
         except Exception as exc:
             return SkillResult(False, f"Skill failed safely ({type(exc).__name__}).")

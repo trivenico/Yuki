@@ -2,6 +2,7 @@
 
 Memory is opt-in at the call site. No network, embeddings, or model training occur.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,16 +32,20 @@ class MemoryStore:
         if not isinstance(raw, list) or len(raw) > self.MAX_ENTRIES:
             raise RuntimeError("Memory file has an invalid structure or exceeds limits.")
         for item in raw:
-            if not isinstance(item, dict) or not all(k in item for k in ("id", "created_at", "text")):
+            if not isinstance(item, dict) or not all(
+                k in item for k in ("id", "created_at", "text")
+            ):
                 raise RuntimeError("Memory file contains an invalid entry.")
         return raw
 
     def _save(self, entries: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-memory-", suffix=".tmp", dir=str(self.path.parent))
+        fd, temp_name = tempfile.mkstemp(
+            prefix=".yuki-memory-", suffix=".tmp", dir=str(self.path.parent)
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(entries[-self.MAX_ENTRIES:], handle, ensure_ascii=False, indent=2)
+                json.dump(entries[-self.MAX_ENTRIES :], handle, ensure_ascii=False, indent=2)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, self.path)
@@ -57,8 +62,12 @@ class MemoryStore:
             raise ValueError("category must be note, preference, or lesson.")
         with self._lock:
             entries = self._load()
-            item = {"id": uuid4().hex, "created_at": datetime.now(timezone.utc).isoformat(),
-                    "category": category, "text": text.strip()}
+            item = {
+                "id": uuid4().hex,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "category": category,
+                "text": text.strip(),
+            }
             entries.append(item)
             self._save(entries)
             return dict(item)

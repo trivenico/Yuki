@@ -4,6 +4,7 @@ YUKI_HOME optionally points at the Yuki data root (for example, a folder on an
 external SSD). Without it, data stays under the repository root. No secrets or
 credentials are created by this module.
 """
+
 from __future__ import annotations
 
 import os

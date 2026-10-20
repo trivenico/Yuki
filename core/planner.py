@@ -1,4 +1,5 @@
 """Bounded inspectable planner. It proposes work; it does not autonomously execute tools."""
+
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -19,7 +20,11 @@ class Plan:
 
 class Planner:
     def __init__(self, *, max_steps=5, max_goal_chars=2000):
-        if isinstance(max_steps, bool) or not isinstance(max_steps, int) or not 1 <= max_steps <= 10:
+        if (
+            isinstance(max_steps, bool)
+            or not isinstance(max_steps, int)
+            or not 1 <= max_steps <= 10
+        ):
             raise ValueError("max_steps must be between 1 and 10")
         self.max_steps, self.max_goal_chars = max_steps, max_goal_chars
 
@@ -35,4 +40,4 @@ class Planner:
             PlanStep("verify", "Inspect output and run relevant tests"),
             PlanStep("report", "Summarize verified outcomes and remaining risks", False),
         )
-        return Plan(goal.strip(), steps[:self.max_steps], context)
+        return Plan(goal.strip(), steps[: self.max_steps], context)

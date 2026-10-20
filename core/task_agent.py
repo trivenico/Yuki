@@ -4,6 +4,7 @@ Model output is untrusted data. Only strict JSON requests for existing registere
 skills are considered, and every invocation passes through YukiCoreAgent's
 human approval gate. This module never executes shell commands or arbitrary code.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,8 +43,9 @@ class ApprovedTaskAgent:
         goal = goal.strip()[:4000]
         guard = scan_untrusted_text(goal, max_chars=4000)
         if guard["flagged"]:
-            return TaskResult(False, "Task stopped by Yuki's prompt safety guard.",
-                              status="prompt_guard")
+            return TaskResult(
+                False, "Task stopped by Yuki's prompt safety guard.", status="prompt_guard"
+            )
         observations = []
         for step_number in range(1, self.max_steps + 1):
             skills = self.skill_agent.available_skills()
@@ -65,44 +67,77 @@ class ApprovedTaskAgent:
             try:
                 raw = self.provider.generate(prompt)
             except Exception as exc:
-                return TaskResult(False, f"AI provider failed safely ({type(exc).__name__}).",
-                                  step_number - 1, "provider_error")
+                return TaskResult(
+                    False,
+                    f"AI provider failed safely ({type(exc).__name__}).",
+                    step_number - 1,
+                    "provider_error",
+                )
             if not isinstance(raw, str) or len(raw) > 12000:
-                return TaskResult(False, "AI provider returned an invalid or oversized plan.",
-                                  step_number, "invalid_model_output")
+                return TaskResult(
+                    False,
+                    "AI provider returned an invalid or oversized plan.",
+                    step_number,
+                    "invalid_model_output",
+                )
             # Model output is another untrusted input boundary. This is a
             # conservative heuristic block; schema validation remains mandatory.
             output_guard = scan_untrusted_text(raw, max_chars=12000)
             if output_guard["flagged"]:
-                return TaskResult(False, "AI output stopped by Yuki's prompt safety guard.",
-                                  step_number, "prompt_guard")
+                return TaskResult(
+                    False,
+                    "AI output stopped by Yuki's prompt safety guard.",
+                    step_number,
+                    "prompt_guard",
+                )
             try:
                 proposal = json.loads(raw)
             except json.JSONDecodeError:
-                return TaskResult(False, "AI response was not valid JSON; no action was executed.",
-                                  step_number, "invalid_model_output")
+                return TaskResult(
+                    False,
+                    "AI response was not valid JSON; no action was executed.",
+                    step_number,
+                    "invalid_model_output",
+                )
             if not isinstance(proposal, dict):
-                return TaskResult(False, "AI response must be one JSON object; no action was executed.",
-                                  step_number, "invalid_model_output")
+                return TaskResult(
+                    False,
+                    "AI response must be one JSON object; no action was executed.",
+                    step_number,
+                    "invalid_model_output",
+                )
             kind = proposal.get("type")
             if kind == "final":
                 message = proposal.get("message")
                 if not isinstance(message, str) or not message.strip():
-                    return TaskResult(False, "AI final response was invalid.", step_number,
-                                      "invalid_model_output")
+                    return TaskResult(
+                        False, "AI final response was invalid.", step_number, "invalid_model_output"
+                    )
                 return TaskResult(True, message.strip()[:4000], step_number, "completed")
             if kind != "tool_call":
-                return TaskResult(False, "AI requested an unsupported action; nothing was executed.",
-                                  step_number, "invalid_model_output")
+                return TaskResult(
+                    False,
+                    "AI requested an unsupported action; nothing was executed.",
+                    step_number,
+                    "invalid_model_output",
+                )
             skill_name = proposal.get("skill")
             argument = proposal.get("argument", "")
             registered = {item["name"] for item in skills}
             if not isinstance(skill_name, str) or skill_name not in registered:
-                return TaskResult(False, "AI requested an unregistered skill; nothing was executed.",
-                                  step_number, "blocked")
+                return TaskResult(
+                    False,
+                    "AI requested an unregistered skill; nothing was executed.",
+                    step_number,
+                    "blocked",
+                )
             if not isinstance(argument, str) or len(argument) > 500:
-                return TaskResult(False, "AI supplied an invalid skill argument; nothing was executed.",
-                                  step_number, "invalid_model_output")
+                return TaskResult(
+                    False,
+                    "AI supplied an invalid skill argument; nothing was executed.",
+                    step_number,
+                    "invalid_model_output",
+                )
             result = self.skill_agent.run_skill(skill_name, argument)
             observation = {
                 "skill": skill_name,
@@ -113,7 +148,15 @@ class ApprovedTaskAgent:
             }
             observations.append(observation)
             if not result.ok:
-                return TaskResult(False, result.message, step_number,
-                                  "approval_denied" if result.stage == "permission_denied" else "tool_failed")
-        return TaskResult(False, "Action budget exhausted; no further tools were called.",
-                          self.max_steps, "step_limit")
+                return TaskResult(
+                    False,
+                    result.message,
+                    step_number,
+                    "approval_denied" if result.stage == "permission_denied" else "tool_failed",
+                )
+        return TaskResult(
+            False,
+            "Action budget exhausted; no further tools were called.",
+            self.max_steps,
+            "step_limit",
+        )

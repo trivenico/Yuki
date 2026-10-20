@@ -51,7 +51,6 @@ class FeatureModuleTests(unittest.TestCase):
         alert = detector.observe("192.0.2.4", 80, timestamp=3)
         self.assertEqual(alert["type"], "possible_port_scan")
 
-
     def test_main_runtime_registers_connected_skills(self):
         # Exercise registration and execution without requiring interactive stdin in CI.
         # Production keeps the default fail-closed human approval prompt.

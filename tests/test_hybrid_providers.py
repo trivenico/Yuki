@@ -65,24 +65,30 @@ class HybridProviderTests(unittest.TestCase):
 
     def test_ollama_parses_response_and_bounds_request(self):
         provider = OllamaProvider(model="local-model")
-        with patch("providers.ollama.open_provider_request", return_value=Response(
-            json.dumps({"response": "hello"}).encode()
-        )) as mocked:
+        with patch(
+            "providers.ollama.open_provider_request",
+            return_value=Response(json.dumps({"response": "hello"}).encode()),
+        ) as mocked:
             self.assertEqual(provider.generate("hi"), "hello")
         request = mocked.call_args.args[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
         self.assertEqual(json.loads(request.data)["prompt"], "hi")
 
-
     def test_ollama_availability_requires_installed_model(self):
         provider = OllamaProvider(model="local-model")
-        with patch("providers.ollama.open_provider_request", return_value=Response(
-            json.dumps({"models": [{"name": "local-model:latest"}]}).encode()
-        )):
+        with patch(
+            "providers.ollama.open_provider_request",
+            return_value=Response(
+                json.dumps({"models": [{"name": "local-model:latest"}]}).encode()
+            ),
+        ):
             self.assertTrue(provider.is_available())
-        with patch("providers.ollama.open_provider_request", return_value=Response(
-            json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
-        )):
+        with patch(
+            "providers.ollama.open_provider_request",
+            return_value=Response(
+                json.dumps({"models": [{"name": "different-model:latest"}]}).encode()
+            ),
+        ):
             self.assertFalse(provider.is_available())
         with patch("providers.ollama.open_provider_request", side_effect=OSError("offline")):
             self.assertFalse(provider.is_available())
@@ -90,9 +96,12 @@ class HybridProviderTests(unittest.TestCase):
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("providers.openai_compatible.open_provider_request", return_value=Response(
-                json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-            )) as mocked:
+            with patch(
+                "providers.openai_compatible.open_provider_request",
+                return_value=Response(
+                    json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
+                ),
+            ) as mocked:
                 self.assertTrue(provider.is_available())
                 self.assertEqual(provider.generate("question"), "answer")
         self.assertIn("Bearer test-secret", mocked.call_args.args[0].get_header("Authorization"))

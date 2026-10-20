@@ -9,6 +9,7 @@ from core.role_engine import RoleEngine
 from skills.role_skill import RoleSkill
 from skills.registry import SkillRegistry
 
+
 class RoleAndPluginTests(unittest.TestCase):
     def test_role_engine_switches_known_profiles_only(self):
         engine = RoleEngine()
@@ -68,8 +69,11 @@ class RoleAndPluginTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             default = SkillRegistry.defaults(Path(d))
             self.assertIn("role", default.names())
-            enabled = SkillRegistry.defaults(Path(d), plugin_discovery_enabled=True, trusted_plugin_modules=[])
+            enabled = SkillRegistry.defaults(
+                Path(d), plugin_discovery_enabled=True, trusted_plugin_modules=[]
+            )
             self.assertIn("role", enabled.names())
+
 
 if __name__ == "__main__":
     unittest.main()

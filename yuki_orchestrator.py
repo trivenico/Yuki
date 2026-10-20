@@ -3,6 +3,7 @@
 This module prepares and checks tasks only. It intentionally does not execute tools,
 run shell commands, access the network, or claim that an action has completed.
 """
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -50,16 +51,24 @@ class TaskOrchestrator:
         names = list(required_tools)
         if any(not isinstance(name, str) or not name.strip() for name in names):
             transition(workflow, Stage.BLOCKED, "Tool names must be non-empty strings.")
-            result = PreparedTask(workflow, plan, "blocked", message="Tool names must be non-empty strings.")
+            result = PreparedTask(
+                workflow, plan, "blocked", message="Tool names must be non-empty strings."
+            )
             self._tasks[workflow.id] = result
-            self.events.publish("task.blocked", {"workflow_id": workflow.id, "reason": "invalid_tool_names"})
+            self.events.publish(
+                "task.blocked", {"workflow_id": workflow.id, "reason": "invalid_tool_names"}
+            )
             return result
         normalized_names = [name.strip() for name in names]
         if len(set(normalized_names)) != len(normalized_names):
             transition(workflow, Stage.BLOCKED, "Duplicate tool names are not allowed.")
-            result = PreparedTask(workflow, plan, "blocked", message="Duplicate tool names are not allowed.")
+            result = PreparedTask(
+                workflow, plan, "blocked", message="Duplicate tool names are not allowed."
+            )
             self._tasks[workflow.id] = result
-            self.events.publish("task.blocked", {"workflow_id": workflow.id, "reason": "duplicate_tool_names"})
+            self.events.publish(
+                "task.blocked", {"workflow_id": workflow.id, "reason": "duplicate_tool_names"}
+            )
             return result
         requested = sorted(normalized_names)
 
@@ -69,7 +78,9 @@ class TaskOrchestrator:
             transition(workflow, Stage.BLOCKED, reason)
             result = PreparedTask(workflow, plan, "blocked", message=reason)
             self._tasks[workflow.id] = result
-            self.events.publish("task.blocked", {"workflow_id": workflow.id, "reason": "tool_policy"})
+            self.events.publish(
+                "task.blocked", {"workflow_id": workflow.id, "reason": "tool_policy"}
+            )
             return result
 
         if requires_approval:
@@ -78,17 +89,23 @@ class TaskOrchestrator:
             request = self.approvals.request(goal, rationale)
             transition(workflow, Stage.ASK_PERMISSION, "Waiting for explicit human approval.")
             result = PreparedTask(
-                workflow, plan, "awaiting_approval", approval_request_id=request.id,
+                workflow,
+                plan,
+                "awaiting_approval",
+                approval_request_id=request.id,
                 message="Plan prepared; no tools have executed. Awaiting human approval.",
             )
             self._tasks[workflow.id] = result
-            self.events.publish("task.approval_requested", {
-                "workflow_id": workflow.id, "approval_request_id": request.id
-            })
+            self.events.publish(
+                "task.approval_requested",
+                {"workflow_id": workflow.id, "approval_request_id": request.id},
+            )
             return result
 
         result = PreparedTask(
-            workflow, plan, "prepared",
+            workflow,
+            plan,
+            "prepared",
             message="Plan and tool policy checks completed; no tools have executed.",
         )
         self._tasks[workflow.id] = result
@@ -111,7 +128,9 @@ class TaskOrchestrator:
             transition(result.workflow, Stage.BLOCKED, "Human approval was rejected.")
             result.status = "blocked"
             result.message = "Approval rejected; no tools have executed."
-            self.events.publish("task.blocked", {"workflow_id": workflow_id, "reason": "approval_rejected"})
+            self.events.publish(
+                "task.blocked", {"workflow_id": workflow_id, "reason": "approval_rejected"}
+            )
         else:
             return decision
         return result.message

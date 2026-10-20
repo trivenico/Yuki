@@ -8,15 +8,20 @@ WORKSPACE = Path(__file__).resolve().parent / "yuki_workspace"
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 _ALLOWED_BINARY = {
-    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod, ast.Pow: operator.pow,
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
 }
 _ALLOWED_UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
 
 
 def get_time(argument=""):
     from datetime import datetime
+
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
@@ -38,7 +43,11 @@ def save_note(text=""):
 def _calculate_node(node):
     if isinstance(node, ast.Expression):
         return _calculate_node(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    ):
         if abs(node.value) > 1_000_000_000:
             raise ValueError("Number is too large.")
         return node.value

@@ -3,6 +3,7 @@
 Counts are exact only when the provider supplies usage metadata. Otherwise callers
 may record an explicitly marked estimate; estimates must never be presented as exact.
 """
+
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import threading
+
 
 @dataclass(frozen=True)
 class UsageEvent:
@@ -21,14 +23,26 @@ class UsageEvent:
     estimated: bool
     created_at: str
 
+
 class TokenUsageTracker:
     MAX_EVENTS = 10000
-    def __init__(self, path=None, *, session_id="default", alert_threshold=100000, spike_multiplier=3.0):
+
+    def __init__(
+        self, path=None, *, session_id="default", alert_threshold=100000, spike_multiplier=3.0
+    ):
         self.path = Path(path).expanduser().resolve() if path else None
         self.session_id = str(session_id)[:100]
-        if isinstance(alert_threshold, bool) or not isinstance(alert_threshold, int) or alert_threshold < 1:
+        if (
+            isinstance(alert_threshold, bool)
+            or not isinstance(alert_threshold, int)
+            or alert_threshold < 1
+        ):
             raise ValueError("alert_threshold must be a positive integer")
-        if isinstance(spike_multiplier, bool) or not isinstance(spike_multiplier, (int, float)) or spike_multiplier <= 1:
+        if (
+            isinstance(spike_multiplier, bool)
+            or not isinstance(spike_multiplier, (int, float))
+            or spike_multiplier <= 1
+        ):
             raise ValueError("spike_multiplier must be greater than one")
         self.alert_threshold = alert_threshold
         self.spike_multiplier = float(spike_multiplier)
@@ -68,10 +82,13 @@ class TokenUsageTracker:
             if len(self._events) >= self.MAX_EVENTS:
                 raise RuntimeError("Usage event limit reached; archive or clear the log.")
             event = UsageEvent(
-                session_id=self.session_id, provider=provider.strip(), model=model,
+                session_id=self.session_id,
+                provider=provider.strip(),
+                model=model,
                 input_tokens=self._count(input_tokens, "input_tokens"),
                 output_tokens=self._count(output_tokens, "output_tokens"),
-                estimated=estimated, created_at=datetime.now(timezone.utc).isoformat()
+                estimated=estimated,
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
             self._events.append(event)
             self._save()
@@ -89,8 +106,10 @@ class TokenUsageTracker:
         if previous and current > previous * self.spike_multiplier:
             alerts.append("usage_spike")
         return {
-            "session_id": self.session_id, "calls": len(events),
-            "input_tokens": total_input, "output_tokens": total_output,
+            "session_id": self.session_id,
+            "calls": len(events),
+            "input_tokens": total_input,
+            "output_tokens": total_output,
             "total_tokens": total_input + total_output,
             "exact_events": sum(not e.estimated for e in events),
             "estimated_events": sum(e.estimated for e in events),

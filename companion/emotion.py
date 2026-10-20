@@ -1,4 +1,5 @@
 """Small, transparent conversational tone helper; not a diagnosis or user profiling."""
+
 from dataclasses import dataclass
 
 

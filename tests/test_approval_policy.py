@@ -30,7 +30,9 @@ class StrictApprovalPolicyTests(unittest.TestCase):
     def test_each_call_requests_approval_again(self):
         requests = []
         skill = NormallyUnapprovedSkill()
-        agent = YukiCoreAgent([skill], PermissionGate(lambda request: requests.append(request) or True))
+        agent = YukiCoreAgent(
+            [skill], PermissionGate(lambda request: requests.append(request) or True)
+        )
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertEqual(len(requests), 2)

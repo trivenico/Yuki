@@ -1,4 +1,5 @@
 """Local long-term lexical memory; no embeddings or network calls."""
+
 import re
 from pathlib import Path
 from companion.memory import MemoryStore

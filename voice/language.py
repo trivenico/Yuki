@@ -3,6 +3,7 @@
 These helpers express preferences; they do not provide translation, language models,
 or voice models by themselves.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,9 +22,19 @@ def normalize_language_code(value):
     if not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", value):
         return None
     parts = value.split("-")
-    return "-".join([parts[0].lower(), *[p.title() if len(p) == 4 and p.isalpha()
-                                         else p.upper() if len(p) == 2 and p.isalpha()
-                                         else p for p in parts[1:]]])
+    return "-".join(
+        [
+            parts[0].lower(),
+            *[
+                p.title()
+                if len(p) == 4 and p.isalpha()
+                else p.upper()
+                if len(p) == 2 and p.isalpha()
+                else p
+                for p in parts[1:]
+            ],
+        ]
+    )
 
 
 def same_language_reply_instruction(detected_language):

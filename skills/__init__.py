@@ -1,4 +1,5 @@
 """Built-in, narrowly scoped Yuki skills."""
+
 from .base import Skill, SkillResult
 from .time_skill import TimeSkill
 from .system_skill import SystemSkill

@@ -18,7 +18,6 @@ from yuki_events import EventBus
 from yuki_approvals import ApprovalGate
 
 
-
 class PlannerTests(unittest.TestCase):
     def test_plan_is_bounded_and_does_not_execute(self):
         plan = create_plan("Review repository", ["Inspect files", "Run tests"])
@@ -47,8 +46,9 @@ class ApprovalTests(unittest.TestCase):
         gate = ApprovalGate()
         request = gate.request("Publish release", "User requested a release")
         self.assertEqual(request.status, "pending")
-        self.assertEqual(gate.decide(request.id, True),
-                         f"Request {request.id} approved. No action was executed.")
+        self.assertEqual(
+            gate.decide(request.id, True), f"Request {request.id} approved. No action was executed."
+        )
         self.assertEqual(gate.decide(request.id, False), "Request already approved.")
 
 
@@ -63,10 +63,13 @@ class ProviderTests(unittest.TestCase):
         class BrokenProvider:
             def is_available(self):
                 raise RuntimeError("private provider details")
+
             def generate(self, prompt):
                 raise AssertionError("should not be called")
-        self.assertEqual(YukiAgent(BrokenProvider()).ask("hello"),
-                         "Yuki: The provider encountered an error.")
+
+        self.assertEqual(
+            YukiAgent(BrokenProvider()).ask("hello"), "Yuki: The provider encountered an error."
+        )
 
 
 class ProviderManagerTests(unittest.TestCase):
@@ -85,16 +88,23 @@ class ProviderManagerTests(unittest.TestCase):
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
-        result = handle_command("/provider select openai", [], [], agent, manager,
-                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+        result = handle_command(
+            "/provider select openai",
+            [],
+            [],
+            agent,
+            manager,
+            SecurityPolicy(allowed_tools=TOOLS.keys()),
+        )
         self.assertIn("not implemented", result)
         self.assertIsInstance(agent.provider, MockProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
-        result = handle_command("/dashboard", [], [], agent, manager,
-                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+        result = handle_command(
+            "/dashboard", [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys())
+        )
         self.assertIn("Yuki dashboard", result)
         self.assertIn("Provider: mock", result)
 
@@ -164,8 +174,10 @@ class LearningTests(unittest.TestCase):
             path = Path(folder) / "learning.json"
             with patch.object(yuki_learning, "HISTORY_FILE", path):
                 result = yuki_learning.record_outcome(
-                    "Organize project files", "success",
-                    "Group files by type", "Group related files before reviewing them"
+                    "Organize project files",
+                    "success",
+                    "Group files by type",
+                    "Group related files before reviewing them",
                 )
                 self.assertIn("recorded", result.lower())
                 self.assertTrue(yuki_learning.suggest_lessons("Organize project files"))

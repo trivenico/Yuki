@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from pathlib import Path
 
 from hackback.exploit_runner import ExploitRunner
 from hackback.recon import NmapRecon, ReconError, validate_lab_target

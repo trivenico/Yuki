@@ -1,4 +1,5 @@
 """Construct the configured provider without implicit cloud fallback."""
+
 from __future__ import annotations
 
 import os

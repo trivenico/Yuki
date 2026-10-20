@@ -3,6 +3,7 @@
 This is a fail-closed integration boundary. Real speaker verification requires a
 validated model, enrolled consented samples, and spoof/replay testing.
 """
+
 from __future__ import annotations
 
 

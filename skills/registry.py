@@ -1,4 +1,5 @@
 """Validated registry for Yuki's explicitly enabled skills."""
+
 from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
@@ -58,7 +59,11 @@ class SkillRegistry:
 
     def register(self, skill):
         name = getattr(skill, "name", None)
-        if not isinstance(name, str) or not name or not name.replace("_", "").replace("-", "").isalnum():
+        if (
+            not isinstance(name, str)
+            or not name
+            or not name.replace("_", "").replace("-", "").isalnum()
+        ):
             raise ValueError("Skill name must be a simple identifier.")
         if name in self._skills:
             raise ValueError(f"Duplicate skill name: {name}")
@@ -73,32 +78,78 @@ class SkillRegistry:
         return tuple(sorted(self._skills))
 
     def describe(self):
-        return [{"name": s.name, "description": s.description, "risk": s.risk}
-                for s in sorted(self._skills.values(), key=lambda item: item.name)]
+        return [
+            {"name": s.name, "description": s.description, "risk": s.risk}
+            for s in sorted(self._skills.values(), key=lambda item: item.name)
+        ]
 
     def __len__(self):
         return len(self._skills)
 
     @classmethod
-    def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None):
+    def defaults(
+        cls,
+        workspace,
+        *,
+        gmail_enabled=False,
+        gmail_credentials="credentials.json",
+        gmail_token="token.json",
+        web_allowed_hosts=(),
+        plugin_discovery_enabled=False,
+        trusted_plugin_modules=None,
+    ):
         root = Path(workspace).expanduser().resolve()
-        registry = cls((
-            TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
-            GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
-            DeepReadSkill(allowed_hosts=web_allowed_hosts),
-            KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
-            BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
-            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
-            ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
-            PredictionEngineSkill(), MultiModelCritiqueSkill(), AIMentorSkill(root), AIHumanizerSkill(),
-            YouTubeShortsSkill(), SEOGEOOptimizerSkill(), ConversationAnalyzerSkill(root), VibeCoderSkill(), LongVideoGeneratorSkill(),
-            VideoGeneratorSkill(root), AutoPersonalizerSkill(root), ChatOrganizerSkill(root),
-            SmartHomeFullSkill(), DeviceScannerSkill(), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
-            FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
-            MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            RoleSkill(),
-        ))
+        registry = cls(
+            (
+                TimeSkill(),
+                SystemSkill(),
+                FileSkill(root),
+                InterviewSkill(),
+                CourseCoachSkill(),
+                WebSkill(allowed_hosts=web_allowed_hosts),
+                GmailReadSkill(
+                    enabled=gmail_enabled,
+                    credentials_path=gmail_credentials,
+                    token_path=gmail_token,
+                ),
+                DeepReadSkill(allowed_hosts=web_allowed_hosts),
+                KnowledgeSkill(root),
+                HealthSkill(root),
+                ExploitSuggesterSkill(),
+                BrowserSkill(allowed_hosts=web_allowed_hosts),
+                YouTubeSkill(),
+                ImageGenerationSkill(),
+                WebcamSkill(),
+                WikiSkill(allowed_hosts=web_allowed_hosts),
+                IdentitySkill(IdentityManager(root / "yuki_identities.json")),
+                ProjectSkill(),
+                ContentMarketerSkill(),
+                SEOOptimizerSkill(),
+                MonetizationAdvisorSkill(),
+                PredictionEngineSkill(),
+                MultiModelCritiqueSkill(),
+                AIMentorSkill(root),
+                AIHumanizerSkill(),
+                YouTubeShortsSkill(),
+                SEOGEOOptimizerSkill(),
+                ConversationAnalyzerSkill(root),
+                VibeCoderSkill(),
+                LongVideoGeneratorSkill(),
+                VideoGeneratorSkill(root),
+                AutoPersonalizerSkill(root),
+                ChatOrganizerSkill(root),
+                SmartHomeFullSkill(),
+                DeviceScannerSkill(),
+                CarIntegrationSkill(),
+                CanvasWorkspaceSkill(root),
+                FinancialManagerSkill(root),
+                HealthAgentSkill(root),
+                HomeSecuritySkill(root),
+                MessagingExpandedSkill(root),
+                TieredAutonomySkill(root),
+                RoleSkill(),
+            )
+        )
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
             discovered = loader.discover()

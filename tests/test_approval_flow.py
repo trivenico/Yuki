@@ -24,25 +24,50 @@ class Provider:
 
 
 def build():
-    manifest = SkillManifest.from_dict({
-        "skill_id": "notes.write",
-        "version": "1.0.0",
-        "entrypoint": "worker.run",
-        "input_schema": {"type": "object", "properties": {"text": {"type": "string", "maxLength": 100}},
-                         "required": ["text"], "additionalProperties": False},
-        "output_schema": {"type": "object", "properties": {"saved": {"type": "boolean"}},
-                          "required": ["saved"], "additionalProperties": False},
-        "capabilities": ["workspace.write"], "risk": "low",
-        "timeout_seconds": 3, "max_output_bytes": 1024,
-    })
-    dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=ActionApprovalStore())
+    manifest = SkillManifest.from_dict(
+        {
+            "skill_id": "notes.write",
+            "version": "1.0.0",
+            "entrypoint": "worker.run",
+            "input_schema": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "maxLength": 100}},
+                "required": ["text"],
+                "additionalProperties": False,
+            },
+            "output_schema": {
+                "type": "object",
+                "properties": {"saved": {"type": "boolean"}},
+                "required": ["saved"],
+                "additionalProperties": False,
+            },
+            "capabilities": ["workspace.write"],
+            "risk": "low",
+            "timeout_seconds": 3,
+            "max_output_bytes": 1024,
+        }
+    )
+    dispatcher = SkillDispatcher(
+        capability_grants={"workspace.write"}, approval_store=ActionApprovalStore()
+    )
     script = "import json,sys; json.load(sys.stdin); print(json.dumps({'ok':True,'result':{'output':{'saved':True}}}))"
-    dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
-                                   executor=SubprocessExecutor(timeout_seconds=3))
+    dispatcher.register_subprocess(
+        manifest, [sys.executable, "-c", script], executor=SubprocessExecutor(timeout_seconds=3)
+    )
     agent = YukiCoreAgent(dispatcher=dispatcher)
-    planner = ManifestTaskAgent(Provider(json.dumps({
-        "type": "tool_call", "skill_id": "notes.write", "arguments": {"text": "exact note"}
-    })), agent, dispatcher)
+    planner = ManifestTaskAgent(
+        Provider(
+            json.dumps(
+                {
+                    "type": "tool_call",
+                    "skill_id": "notes.write",
+                    "arguments": {"text": "exact note"},
+                }
+            )
+        ),
+        agent,
+        dispatcher,
+    )
     return planner
 
 
@@ -54,7 +79,10 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         shown = []
         approved = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="cli-session",
             confirm=lambda action: shown.append(action) or True,
         )
         self.assertTrue(approved.ok)
@@ -68,13 +96,19 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         coordinator = ApprovalCoordinator()
         pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         denied = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="cli-session",
             confirm=lambda action: False,
         )
         self.assertFalse(denied.ok)
         self.assertEqual(denied.status, "approval_denied")
         replay = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="cli-session",
             confirm=lambda action: True,
         )
         self.assertEqual(replay.status, "pending_not_found")
@@ -103,13 +137,18 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             result = planner.run("Write note")
             pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
             approved = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="cli-session",
+                planner,
+                pending.pending_id,
+                actor="owner",
+                session_id="cli-session",
                 confirm=lambda action: action["arguments"] == {"text": "exact note"},
             )
             self.assertTrue(approved.ok)
             events = audit.list_events()
-            self.assertEqual([event["event_type"] for event in reversed(events)],
-                             ["requested", "approved", "executed"])
+            self.assertEqual(
+                [event["event_type"] for event in reversed(events)],
+                ["requested", "approved", "executed"],
+            )
             self.assertNotIn("exact note", str(events))
 
     def test_pending_approval_is_bound_to_creator_actor_and_session(self):
@@ -118,17 +157,26 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         coordinator = ApprovalCoordinator()
         pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
         wrong_actor = coordinator.approve(
-            planner, pending.pending_id, actor="other-user", session_id="cli-session",
+            planner,
+            pending.pending_id,
+            actor="other-user",
+            session_id="cli-session",
             confirm=lambda action: True,
         )
         self.assertEqual(wrong_actor.status, "pending_not_found")
         wrong_session = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="other-session",
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="other-session",
             confirm=lambda action: True,
         )
         self.assertEqual(wrong_session.status, "pending_not_found")
         valid = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
+            planner,
+            pending.pending_id,
+            actor="owner",
+            session_id="cli-session",
             confirm=lambda action: True,
         )
         self.assertTrue(valid.ok)
@@ -142,17 +190,26 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 planner, planner.run("Write note"), actor="owner", session_id="cli-session"
             )
             wrong = coordinator.approve(
-                planner, pending.pending_id, actor="other-user", session_id="cli-session",
+                planner,
+                pending.pending_id,
+                actor="other-user",
+                session_id="cli-session",
                 confirm=lambda action: True,
             )
             self.assertEqual(wrong.status, "pending_not_found")
             wrong_session = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="other-session",
+                planner,
+                pending.pending_id,
+                actor="owner",
+                session_id="other-session",
                 confirm=lambda action: True,
             )
             self.assertEqual(wrong_session.status, "pending_not_found")
             valid = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="cli-session",
+                planner,
+                pending.pending_id,
+                actor="owner",
+                session_id="cli-session",
                 confirm=lambda action: True,
             )
             self.assertTrue(valid.ok)

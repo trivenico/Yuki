@@ -16,8 +16,16 @@ class ProductionIntegrationTests(unittest.TestCase):
     def test_optional_skills_are_registered_without_starting_external_services(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = SkillRegistry.defaults(Path(directory), web_allowed_hosts=[])
-            for name in ("web_deep_read", "knowledge", "health_log", "security_remediation",
-                         "browser_read", "youtube_transcript", "image_generate", "webcam_analyze"):
+            for name in (
+                "web_deep_read",
+                "knowledge",
+                "health_log",
+                "security_remediation",
+                "browser_read",
+                "youtube_transcript",
+                "image_generate",
+                "webcam_analyze",
+            ):
                 self.assertIn(name, registry.names())
 
     def test_browser_denies_navigation_without_allowlist(self):
@@ -49,6 +57,7 @@ class ProductionIntegrationTests(unittest.TestCase):
     def test_cloud_media_skills_fail_closed_without_api_key(self):
         from skills.image_skill import ImageGenerationSkill
         from skills.webcam_skill import WebcamSkill
+
         with patch.dict("os.environ", {}, clear=True):
             image_result = ImageGenerationSkill().execute("A quiet garden")
             webcam_result = WebcamSkill().execute("")
@@ -61,10 +70,12 @@ class ProductionIntegrationTests(unittest.TestCase):
             def __init__(self):
                 super().__init__(enabled=True, backend="pyttsx3")
                 self.spoken = []
+
             def speak(self, text):
                 self.spoken.append(text)
                 if text == "first":
                     self.stop()
+
         tts = FakeTTS()
         result = tts.speak_stream(["first", "second"])
         self.assertEqual(tts.spoken, ["first"])

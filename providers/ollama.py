@@ -1,4 +1,5 @@
 """Local Ollama chat/generation adapter using only the Python standard library."""
+
 from __future__ import annotations
 
 import json
@@ -24,16 +25,28 @@ class OllamaProvider:
         loopback = host == "localhost"
         if host:
             import ipaddress
+
             try:
                 loopback = loopback or ipaddress.ip_address(host).is_loopback
             except ValueError:
                 pass
-        if (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback)
-                or not host or parsed.username or parsed.password or parsed.query or parsed.fragment):
+        if (
+            parsed.scheme != "https"
+            and not (parsed.scheme == "http" and loopback)
+            or not host
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid Ollama model name.")
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not 1 <= timeout <= 120
+        ):
             raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
@@ -71,11 +84,13 @@ class OllamaProvider:
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        payload = json.dumps({
-            "model": self.model,
-            "prompt": prompt.strip()[:20000],
-            "stream": False,
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "prompt": prompt.strip()[:20000],
+                "stream": False,
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + "/api/generate",
             data=payload,
