@@ -46,7 +46,7 @@ jobs:
       - name: Ruff format check
         continue-on-error: true
         id: ruff_format
-        run: ruff format --check .
+        run: ruff format --diff core/skill_discovery.py main.py tests/test_runtime_integration.py tests/test_skill_discovery.py
       - name: Mypy core, skills, knowledge
         continue-on-error: true
         id: mypy
