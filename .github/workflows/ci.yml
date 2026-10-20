@@ -46,7 +46,7 @@ jobs:
       - name: Ruff format check
         continue-on-error: true
         id: ruff_format
-        run: ruff format --diff main.py tests/test_observability.py
+        run: ruff format --check .
       - name: Mypy core, skills, knowledge
         continue-on-error: true
         id: mypy
