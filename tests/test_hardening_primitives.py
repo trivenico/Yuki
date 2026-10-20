@@ -57,7 +57,9 @@ class HardeningPrimitiveTests(unittest.TestCase):
 
     def test_permission_gate_only_accepts_literal_true_and_handles_exceptions(self):
         self.assertFalse(PermissionGate(lambda _: 1).request("run", "reason"))
-        self.assertFalse(PermissionGate(lambda _: (_ for _ in ()).throw(RuntimeError())).request("run", "reason"))
+        self.assertFalse(
+            PermissionGate(lambda _: (_ for _ in ()).throw(RuntimeError())).request("run", "reason")
+        )
         seen = []
         gate = PermissionGate(lambda request: seen.append(request) or True)
         self.assertTrue(gate.request("delete", "user approved", "high"))
@@ -81,37 +83,55 @@ class HardeningPrimitiveTests(unittest.TestCase):
         self.assertEqual(json.loads(capability_inventory_json(Registry())), result)
 
     def test_skill_manifest_accepts_valid_object_and_checks_schema(self):
-        manifest = SkillManifest.from_dict({
-            "skill_id": "demo.skill",
-            "version": "1.2.3",
-            "entrypoint": "package.worker",
-            "input_schema": {
-                "type": "object", "additionalProperties": False,
-                "properties": {"name": {"type": "string", "maxLength": 5}},
-                "required": ["name"],
-            },
-            "output_schema": {"type": "object", "additionalProperties": False, "properties": {}},
-            "capabilities": ["read"],
-            "risk": "low",
-            "timeout_seconds": 5,
-            "max_output_bytes": 1024,
-        })
+        manifest = SkillManifest.from_dict(
+            {
+                "skill_id": "demo.skill",
+                "version": "1.2.3",
+                "entrypoint": "package.worker",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"name": {"type": "string", "maxLength": 5}},
+                    "required": ["name"],
+                },
+                "output_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {},
+                },
+                "capabilities": ["read"],
+                "risk": "low",
+                "timeout_seconds": 5,
+                "max_output_bytes": 1024,
+            }
+        )
         self.assertEqual(manifest.skill_id, "demo.skill")
-        self.assertEqual(SkillManifest.validate_object({"name": "Yuki"}, manifest.input_schema), {"name": "Yuki"})
+        self.assertEqual(
+            SkillManifest.validate_object({"name": "Yuki"}, manifest.input_schema), {"name": "Yuki"}
+        )
         for value in ([], {"name": "toolong"}, {"name": "ok", "extra": 1}, {}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 SkillManifest.validate_object(value, manifest.input_schema)
 
     def test_skill_manifest_rejects_unsafe_metadata(self):
         base = {
-            "skill_id": "demo", "version": "1.0.0", "entrypoint": "worker.main",
+            "skill_id": "demo",
+            "version": "1.0.0",
+            "entrypoint": "worker.main",
             "input_schema": {"type": "object", "additionalProperties": False, "properties": {}},
             "output_schema": {"type": "object", "additionalProperties": False, "properties": {}},
-            "capabilities": [], "risk": "low", "timeout_seconds": 5, "max_output_bytes": 1024,
+            "capabilities": [],
+            "risk": "low",
+            "timeout_seconds": 5,
+            "max_output_bytes": 1024,
         }
         variants = [
-            {"skill_id": "../bad"}, {"version": "latest"}, {"entrypoint": "worker;os.system"},
-            {"risk": "critical"}, {"timeout_seconds": True}, {"max_output_bytes": 0},
+            {"skill_id": "../bad"},
+            {"version": "latest"},
+            {"entrypoint": "worker;os.system"},
+            {"risk": "critical"},
+            {"timeout_seconds": True},
+            {"max_output_bytes": 0},
             {"capabilities": ["bad capability"]},
             {"input_schema": {"type": "object", "additionalProperties": True, "properties": {}}},
         ]
@@ -154,13 +174,17 @@ class HardeningPrimitiveTests(unittest.TestCase):
             executor.execute(["python", "-c", "import time; time.sleep(2)"], {})
 
     def test_local_skills_validate_inputs_without_external_calls(self):
-        with unittest.mock.patch("companion.health_tracker.HealthTracker.add", return_value={"id": "1"}):
+        with unittest.mock.patch(
+            "companion.health_tracker.HealthTracker.add", return_value={"id": "1"}
+        ):
             health = HealthSkill("/tmp/yuki-test")
             self.assertFalse(health.run("").ok)
             self.assertFalse(health.run("add sleep").ok)
             self.assertTrue(health.run("add sleep | 8 hours").ok)
             self.assertTrue(health.run("list").ok)
-        with unittest.mock.patch("knowledge.knowledge_graph.KnowledgeGraph.add_entity", return_value={"id": "1"}):
+        with unittest.mock.patch(
+            "knowledge.knowledge_graph.KnowledgeGraph.add_entity", return_value={"id": "1"}
+        ):
             knowledge = KnowledgeSkill("/tmp/yuki-test")
             self.assertFalse(knowledge.run("").ok)
             self.assertFalse(knowledge.run("unknown").ok)
@@ -177,10 +201,14 @@ class HardeningPrimitiveTests(unittest.TestCase):
         self.assertIn("OPENAI_API_KEY", result.message)
 
     def test_discovery_reports_package_and_returns_skill_classes(self):
-        result = discover_skill_classes("skills", excluded={"base", "registry", "discovery", "__init__"})
+        result = discover_skill_classes(
+            "skills", excluded={"base", "registry", "discovery", "__init__"}
+        )
         self.assertIn("classes", result)
         self.assertIn("failures", result)
-        self.assertTrue(any(getattr(cls, "name", None) == "health_log" for cls in result["classes"]))
+        self.assertTrue(
+            any(getattr(cls, "name", None) == "health_log" for cls in result["classes"])
+        )
 
 
 if __name__ == "__main__":

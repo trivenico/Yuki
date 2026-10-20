@@ -12,8 +12,13 @@ class WebSkillSecurityTests(unittest.TestCase):
     def test_rejects_invalid_url_forms_before_network_access(self):
         skill = WebSkill(allowed_hosts=("example.com",))
         for url in (
-            "", "http://example.com", "https://user@example.com", "https://example.com:8443",
-            "https://localhost", "https://service.local", "https://example.com" + "x" * 2050,
+            "",
+            "http://example.com",
+            "https://user@example.com",
+            "https://example.com:8443",
+            "https://localhost",
+            "https://service.local",
+            "https://example.com" + "x" * 2050,
         ):
             with self.subTest(url=url[:40]), self.assertRaises(WebSkillError):
                 skill.execute(url)
@@ -37,7 +42,9 @@ class WebSkillSecurityTests(unittest.TestCase):
     @patch("skills.web_skill.socket.getaddrinfo")
     @patch("skills.web_skill.urllib.request.build_opener")
     def test_rejects_non_text_content_type(self, build_opener, getaddrinfo):
-        getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
         response = Mock()
         response.headers = {"Content-Type": "application/octet-stream"}
         response.__enter__ = Mock(return_value=response)
@@ -50,7 +57,9 @@ class WebSkillSecurityTests(unittest.TestCase):
     @patch("skills.web_skill.socket.getaddrinfo")
     @patch("skills.web_skill.urllib.request.build_opener")
     def test_rejects_oversized_page(self, build_opener, getaddrinfo):
-        getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
         response = Mock()
         response.headers = {"Content-Type": "text/plain; charset=utf-8"}
         response.read.return_value = b"x" * 11
@@ -63,10 +72,14 @@ class WebSkillSecurityTests(unittest.TestCase):
     @patch("skills.web_skill.socket.getaddrinfo")
     @patch("skills.web_skill.urllib.request.build_opener")
     def test_extracts_text_and_returns_bounded_fields(self, build_opener, getaddrinfo):
-        getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
         response = Mock()
         response.headers = {"Content-Type": "text/html"}
-        response.read.return_value = b"<html><title>Example</title><body>Hello &amp; welcome</body></html>"
+        response.read.return_value = (
+            b"<html><title>Example</title><body>Hello &amp; welcome</body></html>"
+        )
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         build_opener.return_value.open.return_value = response
@@ -80,7 +93,9 @@ class WebSkillSecurityTests(unittest.TestCase):
     @patch("skills.web_skill.socket.getaddrinfo")
     @patch("skills.web_skill.urllib.request.build_opener")
     def test_redirects_are_not_followed(self, build_opener, getaddrinfo):
-        getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ]
         build_opener.return_value.open.side_effect = urllib.error.HTTPError(
             "https://example.com", 302, "redirect", {}, None
         )

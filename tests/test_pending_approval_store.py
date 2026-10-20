@@ -17,8 +17,11 @@ class PendingApprovalStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             store = self.make_store(root)
             item = store.put(
-                "file.read", {"path": "report.txt"}, {"operation": "read"},
-                actor="alice", session_id="session-a",
+                "file.read",
+                {"path": "report.txt"},
+                {"operation": "read"},
+                actor="alice",
+                session_id="session-a",
             )
             loaded = store.get(item.pending_id)
             self.assertEqual(loaded.arguments, {"path": "report.txt"})
@@ -32,7 +35,12 @@ class PendingApprovalStoreTests(unittest.TestCase):
     def test_store_rejects_invalid_configuration_and_identity(self):
         with tempfile.TemporaryDirectory() as root:
             path = str(Path(root) / "a.sqlite3")
-            for kwargs in ({"ttl_seconds": 0}, {"ttl_seconds": 3601}, {"max_pending": 0}, {"max_pending": True}):
+            for kwargs in (
+                {"ttl_seconds": 0},
+                {"ttl_seconds": 3601},
+                {"max_pending": 0},
+                {"max_pending": True},
+            ):
                 with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                     SQLitePendingApprovalStore(path, **kwargs)
             store = SQLitePendingApprovalStore(path)
@@ -70,7 +78,9 @@ class PendingApprovalStoreTests(unittest.TestCase):
     def test_persists_across_store_instances_and_hashes_identity(self):
         with tempfile.TemporaryDirectory() as root:
             first = self.make_store(root)
-            item = first.put("note", {"x": 1}, {"kind": "note"}, actor="alice", session_id="secret-session")
+            item = first.put(
+                "note", {"x": 1}, {"kind": "note"}, actor="alice", session_id="secret-session"
+            )
             second = self.make_store(root)
             self.assertEqual(second.get(item.pending_id).arguments, {"x": 1})
             with sqlite3.connect(second.database_path) as db:
@@ -95,7 +105,10 @@ class PendingApprovalStoreTests(unittest.TestCase):
             self.assertIsNone(store.get(item.pending_id))
             with store._connect() as db:
                 self.assertEqual(
-                    db.execute("SELECT COUNT(*) FROM pending_approvals WHERE pending_id=?", (item.pending_id,)).fetchone()[0],
+                    db.execute(
+                        "SELECT COUNT(*) FROM pending_approvals WHERE pending_id=?",
+                        (item.pending_id,),
+                    ).fetchone()[0],
                     0,
                 )
 
@@ -105,6 +118,7 @@ class PendingApprovalStoreTests(unittest.TestCase):
             item = store.put("note", {}, {}, actor="alice", session_id="s")
             with patch("core.pending_approvals.datetime") as clock:
                 from datetime import datetime, timedelta, timezone
+
                 future = datetime.now(timezone.utc) + timedelta(days=1)
                 clock.now.return_value = future
                 clock.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
