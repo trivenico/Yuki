@@ -1,6 +1,7 @@
 """Capability-gated dispatcher for explicitly registered subprocess skills."""
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from core.action_approvals import ActionApprovalStore
@@ -9,13 +10,26 @@ from core.subprocess_executor import SubprocessExecutor
 
 
 class SkillDispatcher:
-    def __init__(self, *, capability_grants=(), approval_store: ActionApprovalStore | None = None):
+    def __init__(self, *, capability_grants=(), approval_store=None):
         if isinstance(capability_grants, (str, bytes)):
             raise TypeError("capability_grants must be an iterable of exact capability names.")
         grants = tuple(capability_grants)
         if any(not isinstance(cap, str) or not cap for cap in grants):
             raise ValueError("Capability grants must be non-empty strings.")
         self.capability_grants = frozenset(grants)
+
+        # Production must explicitly inject durable storage; silently falling back
+        # to memory would make approval state disappear across restarts.
+        environment = os.environ.get("YUKI_ENV", "development").strip().lower()
+        if environment == "production" and approval_store is None:
+            raise RuntimeError(
+                "Production requires an explicitly configured durable approval store. "
+                "Inject SQLiteActionApprovalStore with a private persistent database path."
+            )
+        if approval_store is not None and not all(
+            callable(getattr(approval_store, method, None)) for method in ("create", "consume", "deny")
+        ):
+            raise TypeError("approval_store must implement create(), consume(), and deny().")
         self.approval_store = approval_store or ActionApprovalStore()
         self._registered: dict[str, tuple[SkillManifest, tuple[str, ...], SubprocessExecutor]] = {}
 
@@ -65,13 +79,11 @@ class SkillDispatcher:
             raise PermissionError("Required capability grants are missing.")
         if not SkillManifest.validate_object(manifest.input_schema, arguments):
             raise ValueError("Skill arguments do not match the input schema.")
-        # Atomically consume before execution. Mismatch burns the token, failing closed.
         approved = self.approval_store.consume(
             approval_id, skill_id=skill_id, arguments=arguments, risk=manifest.risk,
         )
         if approved is None:
             raise PermissionError("Missing, expired, replayed, or mismatched approval.")
-        # Execute the immutable snapshot that was actually approved, never caller-owned data.
         result = executor.run(
             command, {"skill_id": skill_id, "arguments": approved.arguments},
             timeout_seconds=manifest.timeout_seconds, max_output_bytes=manifest.max_output_bytes,
