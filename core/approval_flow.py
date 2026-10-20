@@ -30,6 +30,16 @@ class ApprovalCoordinator:
                  audit_log: SQLiteApprovalAuditLog | None = None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        # Production must not silently downgrade approval durability or auditability.
+        # These stores are still separate transactions; this guard only prevents
+        # accidental in-memory/no-audit composition.
+        import os
+        if os.environ.get("YUKI_ENV", "development").strip().lower() == "production":
+            if pending_store is None or audit_log is None:
+                raise RuntimeError(
+                    "Production approval coordination requires durable pending storage "
+                    "and an audit log; inject SQLitePendingApprovalStore and SQLiteApprovalAuditLog."
+                )
         self.pending_store = pending_store
         self.audit_log = audit_log
         self.max_pending = max_pending
