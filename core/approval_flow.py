@@ -76,7 +76,29 @@ class ApprovalCoordinator:
             if len(self._pending) >= self.max_pending:
                 raise RuntimeError("Pending approval capacity reached.")
             self._pending[pending_id] = (action, actor_hash, session_hash)
-        self._audit("requested", pending_id, action, actor, session_id)
+        try:
+            self._audit("requested", pending_id, action, actor, session_id)
+        except Exception as exc:
+            # Do not return an approval token when the durable request audit
+            # could not be written. Remove the orphaned pending snapshot.
+            if self.pending_store is not None:
+                try:
+                    self.pending_store.deny(pending_id)
+                except Exception:
+                    _LOGGER.error(
+                        "approval.pending_cleanup_failed",
+                        extra={
+                            "event": "approval.pending_cleanup_failed",
+                            "component": "approval_flow",
+                            "status": "cleanup_warning",
+                            "reason_code": "pending_store_unavailable",
+                        },
+                    )
+            else:
+                self._pending.pop(pending_id, None)
+            raise RuntimeError(
+                "Approval request could not be audited; no approval was issued."
+            ) from exc
         return PendingApproval(pending_id)
 
     def approve(self, planner, pending_id, *, actor, session_id, confirm):
