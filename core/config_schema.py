@@ -71,3 +71,33 @@ def normalize_onboarding_defaults(config: dict[str, Any]) -> dict[str, Any]:
         # Validation of section/key types is performed before this function is called.
         normalized[section] = {**defaults, **supplied}
     return normalized
+
+
+
+def onboarding_to_runtime_config(config: dict[str, Any]) -> dict[str, str]:
+    """Translate only onboarding settings supported by the current runtime.
+
+    The caller must validate the onboarding object first. Unsupported capabilities
+    fail closed so config cannot imply that disabled runtime features are active.
+    """
+    provider = config["provider"]
+    if provider not in {"mock", "ollama"}:
+        raise ValueError(
+            f"Provider '{provider}' is configured in onboarding but is not yet supported "
+            "by the integrated runtime config bridge. Use mock/ollama or configure the "
+            "runtime provider separately; cloud execution is not enabled implicitly."
+        )
+    if any(server.get("enabled", False) for server in config["mcp_servers"]):
+        raise ValueError(
+            "Enabled MCP servers are not yet wired into the integrated runtime; disable them before startup."
+        )
+    if config["daemon"]["enabled"] or config["messaging"]["enabled"]:
+        raise ValueError("Daemon/messaging onboarding settings are not yet wired into the integrated runtime.")
+    security = config["security"]
+    if security["allow_shell"] or security["allow_file_write"] or security["allow_network"]:
+        raise ValueError("Onboarding requested capabilities not enabled by the integrated runtime bridge.")
+    return {
+        "provider": provider,
+        "ollama_base_url": config["base_url"] or "http://127.0.0.1:11434",
+        "ollama_model": config["model"],
+    }
