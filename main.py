@@ -31,6 +31,9 @@ from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.task_store import TaskStore
 from core.task_runtime import DurableTaskRunner
+from core.observability import configure_logging, log_event
+import logging
+import time
 
 
 def _ask_approval(request):
@@ -108,6 +111,8 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 
 def main():
+    configure_logging()
+    logger = logging.getLogger("yuki.runtime")
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -118,6 +123,10 @@ def main():
     recovered_tasks = task_store.recover_interrupted()
     task_runner = DurableTaskRunner(task_store)
     if recovered_tasks:
+        log_event(
+            logger, logging.WARNING, "task.recovery_completed",
+            component="task_store", status="interrupted", recovered_count=recovered_tasks,
+        )
         print(
             f"Yuki > Marked {recovered_tasks} unfinished task(s) interrupted; none were replayed."
         )
@@ -227,16 +236,34 @@ def main():
                 )
                 continue
             print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
+            started_at = time.monotonic()
             try:
                 task_id, result = task_runner.run(goal, task_agent.run)
             except KeyboardInterrupt:
+                log_event(
+                    logger, logging.WARNING, "task.interrupted",
+                    component="task_runner", status="interrupted",
+                    duration_ms=int((time.monotonic() - started_at) * 1000),
+                )
                 print(
                     "\nYuki > Shutdown requested. Task will not be replayed; check /tasks for its final status."
                 )
                 return
             except Exception as exc:
+                log_event(
+                    logger, logging.ERROR, "task.failed",
+                    component="task_runner", status="failed",
+                    reason_code=type(exc).__name__,
+                    duration_ms=int((time.monotonic() - started_at) * 1000),
+                )
                 print(f"Yuki > Task failed safely ({type(exc).__name__}).")
                 continue
+            log_event(
+                logger, logging.INFO, "task.finished",
+                component="task_runner", task_id=task_id, status=result.status,
+                duration_ms=int((time.monotonic() - started_at) * 1000),
+                step_count=result.steps,
+            )
             print(
                 f"Yuki > {result.message} "
                 f"[task={task_id}, status={result.status}, steps={result.steps}]"
