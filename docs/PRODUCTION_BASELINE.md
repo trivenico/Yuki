@@ -131,3 +131,11 @@ Corrective commits:
 - `02badf911fb87da3a890aa8db6cfa7965cc51fb3`: skip the editable local project in pip-audit.
 
 **Verification status:** these corrective commits have not yet been confirmed by a fresh passing CI/security run. Do not treat the version-floor change or mock correction as verified until the workflows run successfully.
+
+### Backup encryption implementation increment — 2026-10-20
+
+Added `core/backup_encryption.py` with AES-256-GCM authenticated encryption for an already-created archive, a versioned magic header, bounded input reads, rejection of symlink inputs/destinations, same-file protection, atomic destination replacement, mode `0600`, and authentication failure before writing decrypted output. The helper accepts a 32-byte key from its caller and intentionally does not persist keys or create the archive itself.
+
+Added `tests/test_backup_encryption.py` covering round-trip, ciphertext not containing the test plaintext, wrong-key rejection, tamper rejection, invalid key, size limit, same-file rejection, and symlink input rejection.
+
+**Important limitations:** this is a focused encryption primitive, not a complete backup/restore workflow. It reads the archive into memory up to the configured limit (default 512 MiB), does not inventory/select sensitive data, does not source keys from a secret manager, and does not prevent callers from creating an unencrypted archive before invoking it. Integration into backup/export paths and restore testing remain required. Tests are committed but no passing CI result is confirmed yet.
