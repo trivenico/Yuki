@@ -53,6 +53,15 @@ class ActionApprovalStore:
         self._pending: dict[str, ActionApproval] = {}
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _copy(item: ActionApproval) -> ActionApproval:
+        # Round-trip JSON to ensure callers never receive the internal mutable dict.
+        snapshot = json.loads(json.dumps(item.arguments, ensure_ascii=False, allow_nan=False))
+        return ActionApproval(
+            item.approval_id, item.skill_id, item.risk, snapshot,
+            item.payload_sha256, item.created_at, item.expires_at,
+        )
+
     def create(self, skill_id: str, arguments: dict[str, Any], *, risk: str = "high") -> ActionApproval:
         if not isinstance(skill_id, str) or not skill_id.strip():
             raise ValueError("A skill id is required.")
@@ -69,7 +78,7 @@ class ActionApprovalStore:
             if len(self._pending) >= self.max_pending:
                 raise RuntimeError("Pending approval capacity reached.")
             self._pending[item.approval_id] = item
-        return item
+        return self._copy(item)
 
     def consume(self, approval_id: str, *, skill_id: str, arguments: dict[str, Any],
                 risk: str) -> ActionApproval | None:
@@ -87,7 +96,7 @@ class ActionApprovalStore:
                 return None
             if item.skill_id != skill_id or item.risk != risk or not secrets.compare_digest(item.payload_sha256, digest):
                 return None
-            return item
+            return self._copy(item)
 
     def deny(self, approval_id: str) -> bool:
         with self._lock:
