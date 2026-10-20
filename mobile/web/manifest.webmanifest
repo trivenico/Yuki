@@ -1,0 +1,11 @@
+{
+  "name": "Yuki Mobile",
+  "short_name": "Yuki",
+  "description": "Mobile companion for your local Yuki AI",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#111827",
+  "orientation": "any"
+}
