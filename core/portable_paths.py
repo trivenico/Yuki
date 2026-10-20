@@ -22,11 +22,22 @@ def data_root() -> Path:
 
 
 def config_path() -> Path:
+    """Resolve the single runtime config entry point.
+
+    Explicit YUKI_CONFIG wins. Otherwise prefer the user's onboarding config when
+    it exists, retaining repository config.yaml as a backwards-compatible fallback.
+    """
     configured = os.environ.get("YUKI_CONFIG", "").strip()
-    path = Path(configured).expanduser() if configured else REPOSITORY_ROOT / "config.yaml"
-    if not path.is_absolute():
-        path = (REPOSITORY_ROOT / path).resolve()
-    return path.resolve()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = REPOSITORY_ROOT / path
+        return path.resolve()
+
+    onboarding_config = Path.home() / ".yuki" / "config.json"
+    if onboarding_config.is_file():
+        return onboarding_config.resolve()
+    return (REPOSITORY_ROOT / "config.yaml").resolve()
 
 
 def workspace_path(configured_workspace: str) -> Path:

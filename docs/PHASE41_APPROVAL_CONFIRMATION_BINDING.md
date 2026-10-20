@@ -1,0 +1,32 @@
+# Phase 41 — Approval confirmation binding audit
+
+## Finding
+
+The coordinator currently asks the human to confirm an action and only afterward creates a dispatcher approval token. Although it copies the stored arguments, this ordering makes the approval relationship implicit: the durable pending request and the dispatcher token are separate records, and the token is minted after the decision rather than being the token for the reviewed action.
+
+## Required fix
+
+The coordinator should:
+1. Validate the stored action against the current registered manifest.
+2. Create the dispatcher token for the exact immutable action snapshot before invoking the confirmation callback.
+3. Present the action, risk, required capabilities, payload digest, and expiry to the user. Never expose the bearer token to the UI.
+4. If the callback denies, throws, or is interrupted, revoke the prepared token.
+5. If approved, consume that same token and execute its stored snapshot; never mint a replacement token after approval.
+6. Keep the existing actor/session binding on the pending request and audit the outcome without logging arguments or bearer tokens.
+
+## Changes committed
+
+- The coordinator now creates the one-time dispatcher token before calling the confirmation callback.
+- The confirmation callback receives the exact action, payload SHA-256 digest, and token expiry, but never receives the bearer token.
+- A denial or callback exception revokes the prepared token.
+- Approval executes using the same prepared token; no replacement token is minted after confirmation.
+- Regression coverage asserts that the reviewed action includes the digest and expiry.
+
+The coordinator pending request and dispatcher token remain separate records, so this is not a single cross-store transaction. Latest-head CI must pass before the phase is verified.
+
+## Additional blockers
+
+- The pending request and dispatcher token remain separate SQLite/in-memory or SQLite/SQLite state transitions.
+- Production configuration must inject the durable store explicitly.
+- Legacy `YukiCoreAgent.run_skill()` still executes in-process objects.
+- Subprocess execution is not a complete OS sandbox.

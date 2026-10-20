@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from core.planner import Planner
 from core.config import load_config
@@ -53,11 +54,14 @@ class FeatureModuleTests(unittest.TestCase):
 
 
     def test_main_runtime_registers_connected_skills(self):
-        agent = build_agent(load_config())
-        self.assertIn("interview", agent.registry.names())
-        self.assertIn("web_fetch", agent.registry.names())
-        self.assertIn("gmail_search", agent.registry.names())
-        result = agent.run_skill("interview", "technical")
+        # This test verifies wiring, not terminal input. Mock explicit approval so
+        # CI is deterministic without weakening the runtime's fail-closed behavior.
+        with patch("main._ask_approval", return_value=True):
+            agent = build_agent(load_config())
+            self.assertIn("interview", agent.registry.names())
+            self.assertIn("web_fetch", agent.registry.names())
+            self.assertIn("gmail_search", agent.registry.names())
+            result = agent.run_skill("interview", "technical")
         self.assertTrue(result.ok)
         self.assertIn("technical decision", result.data["prompt"])
 

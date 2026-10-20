@@ -1,5 +1,6 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import shlex
 
@@ -8,6 +9,7 @@ from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
+from core.runtime_composition import build_skill_dispatcher
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
@@ -27,6 +29,8 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.react_engine import ReActEngine, ToolSpec
+from providers.openai_tool_calling import OpenAIToolCallingProvider
 
 
 def _ask_approval(request):
@@ -53,7 +57,60 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    dispatcher = build_skill_dispatcher(
+        workspace,
+        capability_grants=("system.clock.read",),
+    )
+    return YukiCoreAgent(
+        registry=registry,
+        permission_gate=PermissionGate(_ask_approval),
+        dispatcher=dispatcher,
+    )
+
+
+def build_react_engine(agent):
+    """Opt-in tool calling over the existing approval-gated skill API."""
+    model = os.environ.get("YUKI_REACT_MODEL", "").strip()
+    if not model:
+        raise RuntimeError("Set YUKI_REACT_MODEL to enable /react.")
+    provider = OpenAIToolCallingProvider(
+        model,
+        api_key_env=os.environ.get("YUKI_REACT_API_KEY_ENV", "OPENAI_API_KEY"),
+        base_url=os.environ.get("YUKI_REACT_BASE_URL", "https://api.openai.com/v1"),
+        timeout=45,
+        allow_local_http=os.environ.get("YUKI_REACT_ALLOW_LOOPBACK_HTTP", "").lower() in {"1", "true", "yes"},
+    )
+    engine = ReActEngine(provider, max_turns=8, max_tool_calls=12)
+    for skill in agent.available_skills():
+        skill_name = skill["name"]
+        engine.register(ToolSpec(
+            name=skill_name,
+            description=str(skill["description"])[:1000],
+            parameters={"type": "object", "properties": {"argument": {"type": "string", "maxLength": 500}},
+                        "required": ["argument"], "additionalProperties": False},
+            handler=lambda args, name=skill_name: _react_skill_handler(agent, name, args),
+            # Each handler still routes through YukiCoreAgent.run_skill's permission gate.
+            risk="low", auto_approve=True,
+        ))
+    return engine
+
+
+def _react_skill_handler(agent, skill_name, args):
+    result = agent.run_skill(skill_name, args["argument"])
+    return {"ok": result.ok, "status": result.stage, "message": result.message[:2000]}
+
+
+def _confirm_manifest_invocation(review):
+    """Review a manifest skill's exact arguments and digest; never display approval id."""
+    print("\\nManifest skill permission request")
+    print(f"  Skill: {review['skill_id']}\\n  Risk: {review['risk']}")
+    print(f"  Arguments: {review['arguments']!r}")
+    print(f"  Payload SHA-256: {review['payload_sha256']}")
+    print(f"  Expires at: {review['expires_at']}")
+    try:
+        return input("Approve this exact manifest action? [y/N] ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        return False
 
 
 def print_help():
@@ -62,7 +119,8 @@ def print_help():
   /status                        Show capability status
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
-  /task GOAL                      Bounded model-guided task; approve each skill call
+  /task GOAL                      Bounded JSON task planner; approve each skill call
+  /react GOAL                     Opt-in native tool-calling loop; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -162,6 +220,17 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/react "):
+            goal = command[len("/react "):].strip()
+            if not goal:
+                print("Yuki > Provide a goal: /react summarize the notes in my workspace")
+                continue
+            try:
+                react_engine = build_react_engine(agent)
+                result = react_engine.run(goal)
+                print(f"Yuki > {result.message} [status={result.status}, turns={result.turns}, tool_calls={result.tool_calls}]")
+            except Exception as exc:
+                print(f"Yuki > ReAct unavailable: {type(exc).__name__}. Check YUKI_REACT_MODEL and provider configuration.")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
@@ -201,6 +270,23 @@ def main():
                 print("Yuki > " + answer)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
+        elif command.startswith("/invoke "):
+            payload = command[len("/invoke "):].strip()
+            import json
+            try:
+                skill_id, raw_arguments = payload.split(maxsplit=1)
+                arguments = json.loads(raw_arguments)
+                if not isinstance(arguments, dict):
+                    raise ValueError("arguments must be a JSON object")
+            except (ValueError, json.JSONDecodeError):
+                print('Yuki > Use /invoke SKILL_ID {"key":"value"}')
+                continue
+            result = agent.invoke_manifest_skill(
+                skill_id, arguments, confirm=_confirm_manifest_invocation
+            )
+            print(f"Yuki > {result.message} [status={result.stage}]")
+            if result.ok and result.data is not None:
+                print(result.data)
         elif command.startswith("/skill "):
             parts = command.split(maxsplit=2)
             name, argument = parts[1], parts[2] if len(parts) > 2 else ""

@@ -1,26 +1,52 @@
-"""Controlled plugin discovery for trusted skills in the skills package.
+"""Controlled plugin discovery for explicitly trusted skills.
 
-Importing Python executes code with Yuki's privileges. This loader only discovers
-local modules and validates their class shape; it is not a security sandbox.
+Importing Python executes code with Yuki's privileges. This loader validates
+configuration and module shape, but is NOT a sandbox. Untrusted plugins must
+not be enabled until they run in an OS-isolated worker with least privilege.
 """
 from __future__ import annotations
+
 import importlib
 import pkgutil
 import re
+from collections.abc import Iterable
 
 EXCLUDED = {"base", "registry", "discovery", "role_skill", "__init__"}
+_MODULE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
+
 
 class PluginLoader:
     def __init__(self, package_name="skills", *, trusted_modules=None, enabled=False):
+        if not isinstance(package_name, str) or not _MODULE_NAME.fullmatch(package_name.replace(".", "_")):
+            raise ValueError("package_name must be a dotted Python package name.")
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a boolean; truthy strings are not accepted.")
+        if trusted_modules is None:
+            trusted = frozenset()
+        else:
+            if isinstance(trusted_modules, (str, bytes)) or not isinstance(trusted_modules, Iterable):
+                raise TypeError("trusted_modules must be an iterable of exact module names.")
+            supplied = tuple(trusted_modules)
+            if any(not isinstance(name, str) or not _MODULE_NAME.fullmatch(name) for name in supplied):
+                raise ValueError("Each trusted module must be an exact simple module name.")
+            if "*" in supplied:
+                raise ValueError("Wildcard plugin trust is forbidden; enumerate exact modules.")
+            if len(set(supplied)) != len(supplied):
+                raise ValueError("Duplicate trusted module names are not allowed.")
+            trusted = frozenset(supplied)
         self.package_name = package_name
-        self.trusted_modules = None if trusted_modules is None else frozenset(trusted_modules)
-        self.enabled = bool(enabled)
+        self.trusted_modules = trusted
+        self.enabled = enabled
         self.last_report = {"loaded": [], "skipped": [], "failed": []}
 
     def discover(self):
         report = {"loaded": [], "skipped": [], "failed": []}
         if not self.enabled:
             report["skipped"].append({"module": "*", "reason": "plugin discovery disabled"})
+            self.last_report = report
+            return report
+        if not self.trusted_modules:
+            report["skipped"].append({"module": "*", "reason": "no exact trusted modules configured"})
             self.last_report = report
             return report
         try:
@@ -35,13 +61,15 @@ class PluginLoader:
         from skills.base import Skill
         for item in sorted(pkgutil.iter_modules(paths), key=lambda x: x.name):
             name = item.name
-            if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+            if name.startswith("_") or name in EXCLUDED or not _MODULE_NAME.fullmatch(name):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
+            if name not in self.trusted_modules:
                 report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
                 continue
             try:
+                # SECURITY NOTE: this import executes module top-level code in-process.
+                # The trust list is an operator allowlist, not an isolation boundary.
                 module = importlib.import_module(self.package_name + "." + name)
                 classes = []
                 for candidate in vars(module).values():
