@@ -263,9 +263,9 @@ def main():
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
         elif command.startswith("/invoke "):
             payload = command[len("/invoke "):].strip()
+            import json
             try:
                 skill_id, raw_arguments = payload.split(maxsplit=1)
-                import json
                 arguments = json.loads(raw_arguments)
                 if not isinstance(arguments, dict):
                     raise ValueError("arguments must be a JSON object")
