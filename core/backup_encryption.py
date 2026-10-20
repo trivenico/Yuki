@@ -73,7 +73,7 @@ def encrypt_backup(
 ) -> Path:
     """Encrypt an existing archive using AES-256-GCM; only ciphertext is written to disk."""
     _validate_key(key)
-    source = Path(source_path).expanduser().resolve(strict=True)
+    source = Path(source_path).expanduser().absolute()
     destination = Path(destination_path).expanduser().absolute()
     if source == destination or destination.exists() and source.samefile(destination):
         raise BackupEncryptionError("Source and destination must be different files.")
