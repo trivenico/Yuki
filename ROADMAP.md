@@ -67,3 +67,16 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 ## Release gate
 
 A phase is not complete merely because code has been committed. It needs passing automated tests, a review of failure modes, clear capability documentation, and a reproducible verification result.
+
+## Architecture alignment checkpoint (2026-10-20)
+
+The seven-layer target architecture, cross-cutting security boundaries, implementation-status map, and acceptance gates are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). That document is a target design and gap map, not a claim that all components are implemented.
+
+Before advancing the roadmap:
+- [ ] Restore green Phase 1 quality CI without relaxing lint policy.
+- [ ] Review security workflow results after the provider redirect hardening.
+- [ ] Inventory and protect all backup/export and sensitive runtime data paths.
+- [ ] Prove every skill invocation is approved immediately before dispatch and fails closed on timeout, stale approval, mutation, and replay.
+- [ ] Add and pass end-to-end tests for the bounded task loop, cancellation, and kill-switch behavior.
+- [ ] Validate egress restrictions and sandbox boundaries with negative tests.
+- [ ] Verify real provider and voice paths separately from mock/unit tests.
