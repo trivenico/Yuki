@@ -362,6 +362,16 @@ class OnboardingTests(unittest.TestCase):
             with self.subTest(config=config), self.assertRaises(ValueError):
                 validate_config(config)
 
+    def test_onboarding_uses_shared_schema_normalizer(self):
+        from core.config_schema import normalize_onboarding_defaults
+        from core.onboarding import validate_config
+        source = {"provider": "mock", "security": {"allow_network": True}}
+        expected = normalize_onboarding_defaults(source)
+        actual = validate_config(source)
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual["version"], 1)
+        self.assertEqual(actual["daemon"], {"enabled": False, "poll_seconds": 1.0})
+        self.assertEqual(actual["messaging"], {"enabled": False})
     def test_non_string_configuration_keys_are_rejected_cleanly(self):
         from core.onboarding import validate_config
         with self.assertRaisesRegex(ValueError, "keys must be strings"):
