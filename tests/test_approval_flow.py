@@ -128,6 +128,30 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(approved.ok)
 
+    def test_approval_lifecycle_logs_metadata_without_arguments(self):
+        planner = build()
+        result = planner.run("Write note")
+        coordinator = ApprovalCoordinator()
+        with self.assertLogs("yuki.approval", level="INFO") as captured:
+            pending = coordinator.record(
+                planner, result, actor="owner-secret", session_id="session-secret"
+            )
+            approved = coordinator.approve(
+                planner,
+                pending.pending_id,
+                actor="owner-secret",
+                session_id="session-secret",
+                confirm=lambda action: action["arguments"] == {"text": "exact note"},
+            )
+        self.assertTrue(approved.ok)
+        rendered = "\\n".join(captured.output)
+        self.assertIn("approval.requested", rendered)
+        self.assertIn("approval.approved", rendered)
+        self.assertIn("approval.executed", rendered)
+        self.assertNotIn("exact note", rendered)
+        self.assertNotIn("owner-secret", rendered)
+        self.assertNotIn("session-secret", rendered)
+
     def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             planner = build()
