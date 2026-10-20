@@ -82,18 +82,63 @@ class OllamaProvider:
                 names.append(name)
         return sorted(names, key=str.casefold)
 
+    def list_model_details(self):
+        """Return bounded metadata for installed models, including size when available."""
+        request = urllib.request.Request(
+            self.base_url + "/api/tags",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with open_provider_request(request, timeout=min(self.timeout, 5)) as response:
+                raw = response.read(500_001)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return []
+        if len(raw) > 500_000:
+            return []
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return []
+        models = body.get("models") if isinstance(body, dict) else None
+        if not isinstance(models, list):
+            return []
+        result = []
+        seen = set()
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120:
+                continue
+            name = name.strip()
+            if name in seen:
+                continue
+            seen.add(name)
+            size = item.get("size")
+            result.append({"name": name, "size": size if isinstance(size, int) and not isinstance(size, bool) and size > 0 else None})
+        return sorted(result, key=lambda item: item["name"].casefold())
+
     def _select_installed_model(self):
         """Use configured model when installed; otherwise choose a deterministic local model."""
-        models = self.list_models()
+        models = self.list_model_details()
+        names = [item["name"] for item in models]
         if self.model:
-            for installed in models:
+            for installed in names:
                 if installed == self.model or installed.startswith(self.model + ":"):
                     self.model = installed
                     return installed
             return None
         if not models:
             return None
-        self.model = models[0]
+        try:
+            from core.hardware import detect_hardware, recommend_installed_model
+
+            selected = recommend_installed_model(models, detect_hardware())
+        except (OSError, RuntimeError, ValueError):
+            selected = None
+        # If resource detection is unavailable, retain deterministic selection.
+        self.model = selected if selected in names else names[0]
         return self.model
 
     def is_available(self):
