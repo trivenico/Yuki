@@ -180,6 +180,22 @@ class RuntimeConfigTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_config(path)
 
+    def test_duplicate_yaml_keys_are_rejected(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_text("provider: mock\\nprovider: ollama\\n",encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
+    def test_config_size_is_checked_on_bytes_read(self):
+        from core.config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"config.yaml"
+            path.write_bytes(b"provider: mock\\n" + b"#" * (128 * 1024))
+            with self.assertRaises(RuntimeError):
+                load_config(path)
+
     def test_oversized_runtime_config_fails_closed(self):
         from core.config import load_config
         with tempfile.TemporaryDirectory() as d:
