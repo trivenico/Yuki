@@ -104,22 +104,29 @@ class ApprovalCoordinator:
                 if expected != item["hash"]:
                     self._audit("failed", pending_id, actor, action_for_display["skill_id"])
                     return ApprovalResult(False, "tampered", "Stored action integrity validation failed.")
-            shown = copy.deepcopy(action_for_display)
-            try:
-                decision = confirm(shown)
-            except Exception:
-                self._audit("denied", pending_id, actor, action_for_display["skill_id"])
-                return ApprovalResult(False, "approval_denied", "Confirmation failed closed.")
-            if decision is not True:
-                self._audit("denied", pending_id, actor, action_for_display["skill_id"])
-                return ApprovalResult(False, "approval_denied", "Human approval was not granted.")
             canonical = action_for_display
             skill_id, args = canonical["skill_id"], copy.deepcopy(canonical["arguments"])
+            dispatch_request = None
+            try:
+                # Prepare a one-time token for the exact payload before confirmation.
+                # Never expose the bearer token to the confirmation callback.
+                dispatch_request = planner.dispatcher.request_approval(skill_id, args)
+                shown = copy.deepcopy(canonical)
+                shown["payload_sha256"] = dispatch_request["payload_sha256"]
+                shown["approval_expires_at"] = dispatch_request["expires_at"]
+                decision = confirm(shown)
+            except Exception:
+                if dispatch_request is not None:
+                    planner.dispatcher.approval_store.deny(dispatch_request["approval_id"])
+                self._audit("denied", pending_id, actor, skill_id)
+                return ApprovalResult(False, "approval_denied", "Confirmation failed closed.")
+            if decision is not True:
+                planner.dispatcher.approval_store.deny(dispatch_request["approval_id"])
+                self._audit("denied", pending_id, actor, skill_id)
+                return ApprovalResult(False, "approval_denied", "Human approval was not granted.")
             self._audit("approved", pending_id, actor, skill_id)
             try:
-                # The coordinator is the human approval boundary. Mint a short-lived
-                # dispatcher token only after approval, then execute the exact stored args.
-                dispatch_request = planner.dispatcher.request_approval(skill_id, args)
+                # Consume the same token that was prepared for the reviewed payload.
                 output = planner.dispatcher.execute(
                     skill_id, args, approval_id=dispatch_request["approval_id"],
                 )
