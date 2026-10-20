@@ -23,19 +23,26 @@ class DurableTaskRunner:
         self.store.transition(task_id, "running")
         try:
             result = operation(goal)
+            ok = getattr(result, "ok", False) is True
+            status = getattr(result, "status", "")
+            persisted = {
+                "ok": ok,
+                "status": str(status)[:80],
+                "steps": getattr(result, "steps", 0),
+                "message": str(getattr(result, "message", ""))[:2000],
+            }
+            self.store.transition(task_id, "completed" if ok else "failed", result=persisted)
+            return task_id, result
         except BaseException:
-            # Includes KeyboardInterrupt / SIGTERM translated to KeyboardInterrupt.
-            # The next process can show this task as interrupted; it is never replayed.
-            self.store.transition(task_id, "interrupted")
+            # A shutdown may arrive during the operation or while committing its
+            # result. Only mark unfinished work interrupted; never rewrite a
+            # terminal result or replay a task with uncertain side effects.
+            try:
+                current = self.store.get(task_id)
+                if current is not None and current["status"] in {"queued", "running"}:
+                    self.store.transition(task_id, "interrupted")
+            except Exception:
+                # Preserve the original exception; startup recovery can reconcile
+                # any task that remains queued/running.
+                pass
             raise
-
-        ok = getattr(result, "ok", False) is True
-        status = getattr(result, "status", "")
-        persisted = {
-            "ok": ok,
-            "status": str(status)[:80],
-            "steps": getattr(result, "steps", 0),
-            "message": str(getattr(result, "message", ""))[:2000],
-        }
-        self.store.transition(task_id, "completed" if ok else "failed", result=persisted)
-        return task_id, result
