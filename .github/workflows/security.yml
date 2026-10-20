@@ -1,0 +1,64 @@
+name: Security
+
+on:
+  push:
+    branches: [main, "phase-**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and pinned auditor
+        run: python -m pip install --upgrade pip && python -m pip install -e . pip-audit==2.9.0
+      - name: Audit installed runtime dependencies
+        run: pip-audit
+
+  static-security-analysis:
+    name: Bandit static security analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Bandit
+        run: python -m pip install bandit==1.8.3
+      - name: Scan application code
+        run: bandit -r main.py yuki_agent.py core providers skills knowledge voice defense hackback -ll
+
+  secret-scan:
+    name: Secret and credential scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan repository history for secrets
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
