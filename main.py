@@ -118,7 +118,11 @@ def _handle_model_command(command, config, ai, task_agent):
     parts = shlex.split(command)
     if len(parts) == 2 and parts[1] == "status":
         try:
-            provider = create_provider({**config, "provider": "ollama"})
+            from providers.ollama import OllamaProvider
+            provider = OllamaProvider(
+                base_url=config["ollama_base_url"],
+                model=config.get("ollama_model", ""),
+            )
             available = provider.is_available()
             print(f"Yuki > Ollama: {'available' if available else 'not ready'}")
             if available:
@@ -238,7 +242,14 @@ def main(argv=None):
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    selected_provider = create_provider(config)
+    if config["provider"] == "auto":
+        if hasattr(selected_provider, "model") and selected_provider.is_available():
+            config["provider"] = "ollama"
+            config["ollama_model"] = selected_provider.model
+        else:
+            config["provider"] = "mock"
+    ai = YukiAgent(selected_provider)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     task_store = TaskStore(workspace / "yuki_tasks.sqlite3")
     recovered_tasks = task_store.recover_interrupted()
