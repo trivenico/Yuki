@@ -43,6 +43,12 @@ class OnboardingConfig(TypedDict):
     messaging: MessagingConfig
 
 
+class RuntimeConfig(TypedDict):
+    provider: str
+    ollama_base_url: str
+    ollama_model: str
+
+
 ONBOARDING_CONFIG_VERSION = 1
 
 SECTION_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -74,12 +80,14 @@ def normalize_onboarding_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def onboarding_to_runtime_config(config: dict[str, Any]) -> dict[str, str]:
+def onboarding_to_runtime_config(config: dict[str, Any]) -> RuntimeConfig:
     """Translate only onboarding settings supported by the current runtime.
 
     The caller must validate the onboarding object first. Unsupported capabilities
     fail closed so config cannot imply that disabled runtime features are active.
     """
+    if config.get("version") != ONBOARDING_CONFIG_VERSION:
+        raise ValueError("Unsupported onboarding configuration version.")
     provider = config["provider"]
     if provider not in {"mock", "ollama"}:
         raise ValueError(
@@ -96,6 +104,8 @@ def onboarding_to_runtime_config(config: dict[str, Any]) -> dict[str, str]:
     security = config["security"]
     if security["allow_shell"] or security["allow_file_write"] or security["allow_network"]:
         raise ValueError("Onboarding requested capabilities not enabled by the integrated runtime bridge.")
+    if not security["require_approval_for_unknown_tools"]:
+        raise ValueError("Runtime bridge requires approval for unknown tools; disabling this guard is unsupported.")
     return {
         "provider": provider,
         "ollama_base_url": config["base_url"] or "http://127.0.0.1:11434",
