@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sqlite3
+from contextlib import closing
 import tempfile
 
 
@@ -47,15 +48,20 @@ def backup_sqlite_database(source: str | Path, destination: str | Path) -> Path:
         temporary_path = Path(temporary_name)
 
         # backup() obtains a consistent SQLite snapshot, including WAL content.
-        with sqlite3.connect(str(source_resolved), timeout=5.0) as source_db:
-            with sqlite3.connect(str(temporary_path), timeout=5.0) as backup_db:
+        # sqlite3.Connection's context manager manages transactions but does not
+        # close the connection; closing() is essential on Windows before replace
+        # and temporary-file cleanup.
+        with closing(sqlite3.connect(str(source_resolved), timeout=5.0)) as source_db:
+            with closing(sqlite3.connect(str(temporary_path), timeout=5.0)) as backup_db:
                 source_db.backup(backup_db)
                 check = backup_db.execute("PRAGMA integrity_check").fetchone()
                 if check is None or check[0] != "ok":
                     raise JournalBackupError("backup failed SQLite integrity validation")
+                backup_db.commit()
 
         # Ensure bytes are flushed before publishing the completed backup.
-        with temporary_path.open("rb") as backup_file:
+        with temporary_path.open("rb+") as backup_file:
+            backup_file.flush()
             os.fsync(backup_file.fileno())
         os.replace(temporary_path, destination_path)
         temporary_path = None
