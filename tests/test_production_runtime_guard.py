@@ -20,6 +20,18 @@ class ProductionRuntimeGuardTests(unittest.TestCase):
     def test_missing_environment_defaults_to_development(self):
         assert_production_runtime_supported({})
 
+    def test_unknown_environment_fails_closed(self):
+        with self.assertRaisesRegex(RuntimeError, "unrecognized environment"):
+            assert_production_runtime_supported({"environment": "prodution"})
+
+    def test_blank_environment_fails_closed(self):
+        with self.assertRaisesRegex(RuntimeError, "non-empty string"):
+            assert_production_runtime_supported({"environment": " "})
+
+    def test_non_string_environment_fails_closed(self):
+        with self.assertRaisesRegex(RuntimeError, "non-empty string"):
+            assert_production_runtime_supported({"environment": None})
+
 
 if __name__ == "__main__":
     unittest.main()
