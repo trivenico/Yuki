@@ -5,6 +5,7 @@ replace GitHub branch protection. Keep tokens and other secrets out of the paylo
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -50,7 +51,6 @@ class SQLiteEngineeringEvidenceStore:
                 CREATE INDEX IF NOT EXISTS idx_engineering_evidence_pr
                 ON engineering_evidence(repository, pr_number, evidence_id)
             """)
-            # Prevent accidental mutation through the normal application connection.
             db.execute("""
                 CREATE TRIGGER IF NOT EXISTS engineering_evidence_no_update
                 BEFORE UPDATE ON engineering_evidence
@@ -62,6 +62,7 @@ class SQLiteEngineeringEvidenceStore:
                 BEGIN SELECT RAISE(ABORT, 'engineering evidence is append-only'); END
             """)
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         try:
@@ -144,9 +145,7 @@ class SQLiteEngineeringEvidenceStore:
 
     def list_for_pull_request(self, *, repository: str, pr_number: int,
                               limit: int = 100) -> list[dict[str, Any]]:
-        repository, pr_number, _ = self._validate_identity(
-            repository, pr_number, "0" * 40
-        )
+        repository, pr_number, _ = self._validate_identity(repository, pr_number, "0" * 40)
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
         with self._connect() as db:
