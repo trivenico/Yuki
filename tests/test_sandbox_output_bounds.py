@@ -17,9 +17,11 @@ class FakeProcess:
         self.stderr = io.BytesIO(stderr)
         self.returncode = returncode
         self.killed = False
+        self.wait_calls = 0
 
     def wait(self, timeout=None):
-        if timeout is not None:
+        self.wait_calls += 1
+        if timeout is not None and self.wait_calls == 1:
             raise subprocess.TimeoutExpired(cmd="docker run", timeout=timeout)
         return self.returncode
 
@@ -69,7 +71,7 @@ class SandboxOutputBoundsTests(unittest.TestCase):
                     sandbox.run(IMAGE, ["worker"], timeout=1)
 
         self.assertTrue(process.killed)
-        self.assertEqual(process.wait(), -9)
+        self.assertEqual(process.wait_calls, 2)
         popen.assert_called_once()
     
     def test_approval_denial_prevents_process_creation(self):
