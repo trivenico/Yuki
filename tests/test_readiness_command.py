@@ -35,15 +35,14 @@ class ReadinessCommandTests(unittest.TestCase):
         started = []
         try:
             for item in patches:
-                started.append(item)
-                item.start()
+                started.append((item, item.start()))
             if report_side_effect is None:
-                readiness_mock = readiness.new
+                readiness_mock = started[-1][1]
                 readiness_mock.return_value.to_dict.return_value = report_value
             main.main()
             return output.getvalue()
         finally:
-            for item in reversed(started):
+            for item, _mock in reversed(started):
                 item.stop()
 
     def test_readiness_command_prints_platform_and_capabilities(self):
