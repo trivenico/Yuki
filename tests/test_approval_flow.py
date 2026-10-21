@@ -214,6 +214,57 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual([event["event_type"] for event in audit.events],
                          ["requested", "approved", "execution_failed"])
 
+    def test_execution_ledger_records_success_before_completed_outcome(self):
+        from core.execution_ledger import SQLiteExecutionLedger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = SQLiteExecutionLedger(str(Path(tmp) / "ledger.sqlite3"))
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = MemoryAudit()
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=audit, execution_ledger=ledger
+            )
+            pending = coordinator.record(
+                self.planner, action_result("ledger-success"),
+                actor="owner", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+            self.assertTrue(outcome.ok)
+            self.assertEqual(outcome.status, "completed")
+            record = ledger.get(pending.pending_id)
+            self.assertEqual(record.state, "completed")
+
+    def test_execution_ledger_marks_raised_execution_uncertain_and_does_not_retry(self):
+        from core.execution_ledger import SQLiteExecutionLedger
+
+        class CrashingPlanner:
+            def execute_approved_action(self, action):
+                raise TimeoutError("remote result unknown")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = SQLiteExecutionLedger(str(Path(tmp) / "ledger.sqlite3"))
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=MemoryAudit(), execution_ledger=ledger
+            )
+            pending = coordinator.record(
+                self.planner, action_result("ledger-uncertain"),
+                actor="owner", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                CrashingPlanner(), pending.pending_id, actor="owner",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertEqual(ledger.get(pending.pending_id).state, "uncertain")
+            self.assertEqual(
+                [r.idempotency_key for r in ledger.list_reconciliation_required()],
+                [pending.pending_id],
+            )
+
     def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
         def mutate(display_action):
             display_action["arguments"]["text"] = "tampered"
