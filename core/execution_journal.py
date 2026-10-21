@@ -178,12 +178,16 @@ class SQLiteExecutionJournal:
         return self.get(execution_id)
 
     def mark_interrupted_for_reconciliation(self) -> tuple[str, ...]:
-        """Mark stale created/running records for cleanup; never automatically rerun."""
+        """Return jobs requiring cleanup, including previously interrupted recovery.
+
+        Existing cleanup_required rows remain in that state but are returned so
+        recovery can resume after the recovery worker itself crashes.
+        """
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 rows = db.execute(
-                    "SELECT execution_id FROM sandbox_executions WHERE state IN ('created','running') ORDER BY created_at"
+                    "SELECT execution_id FROM sandbox_executions WHERE state IN ('created','running','cleanup_required') ORDER BY created_at"
                 ).fetchall()
                 ids = tuple(row[0] for row in rows)
                 if ids:
