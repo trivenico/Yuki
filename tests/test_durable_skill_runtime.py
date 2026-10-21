@@ -85,6 +85,45 @@ class DurableSkillRuntimeTests(unittest.TestCase):
         self.assertIn("invalid result contract", result.data["message"])
         self.assertEqual(self.registry.skill.calls, [])
 
+    def test_reporting_boundary_rejects_non_boolean_persisted_success(self):
+        # Simulate a future coordinator/adapter returning a malformed persisted
+        # outcome after execution; the response layer must still fail closed.
+        from unittest.mock import patch
+        from core.approval_flow import ApprovalOutcome
+
+        with patch.object(
+            self.coordinator,
+            "approve",
+            return_value=ApprovalOutcome(
+                ok=True, status="completed", pending_id="pending-test",
+                result={"ok": "false", "message": "untrusted status"},
+            ),
+        ):
+            result = self.runtime.run_skill("notes.write", "hello")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "observe")
+        self.assertEqual(result.data, {"error": "invalid_result_contract"})
+        self.assertEqual(self.registry.skill.calls, [])
+
+    def test_reporting_boundary_rejects_missing_success_flag(self):
+        from unittest.mock import patch
+        from core.approval_flow import ApprovalOutcome
+
+        with patch.object(
+            self.coordinator,
+            "approve",
+            return_value=ApprovalOutcome(
+                ok=True, status="completed", pending_id="pending-test",
+                result={"message": "looks successful"},
+            ),
+        ):
+            result = self.runtime.run_skill("notes.write", "hello")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.data, {"error": "invalid_result_contract"})
+        self.assertEqual(self.registry.skill.calls, [])
+
     def test_execution_ledger_records_completed(self):
         result = self.runtime.run_skill("notes.write", "hello")
         self.assertTrue(result.ok)
