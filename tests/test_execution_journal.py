@@ -65,11 +65,15 @@ class ExecutionJournalTests(unittest.TestCase):
         self.journal.transition(record.execution_id, "running")
         self.journal.transition(record.execution_id, "cleanup_required")
         self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-stale", 60))
-        with sqlite3.connect(self.journal.database_path) as db:
+        db = sqlite3.connect(self.journal.database_path)
+        try:
             db.execute(
                 "UPDATE sandbox_recovery_claims SET lease_expires_at=? WHERE execution_id=?",
                 ("2000-01-01T00:00:00+00:00", record.execution_id),
             )
+            db.commit()
+        finally:
+            db.close()
         self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-stale", 60))
         with self.assertRaisesRegex(ExecutionJournalError, "missing, expired, or owned"):
             self.journal.transition(
@@ -113,17 +117,17 @@ class ExecutionJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionJournalError, "invalid transition"):
             self.journal.transition("exec-1", "running")
 
-    def test_interrupted_jobs_are_marked_for_reconciliation_not_replayed(self):
+    def test_recovery_only_discovers_explicit_cleanup_required_jobs(self):
         self.journal.create("exec-1", self.context)
         self.journal.create("exec-2", dict(self.context, proposal_sha256="c" * 64))
         self.journal.transition("exec-2", "running")
         self.journal.transition("exec-2", "cleanup_required")
         marked = self.journal.mark_interrupted_for_reconciliation()
-        self.assertEqual(set(marked), {"exec-1", "exec-2"})
-        self.assertEqual(self.journal.get("exec-1").state, "cleanup_required")
+        self.assertEqual(marked, ("exec-2",))
+        self.assertEqual(self.journal.get("exec-1").state, "created")
         self.assertEqual(self.journal.get("exec-2").state, "cleanup_required")
         # Pending cleanup remains discoverable so a restarted recovery worker can resume.
-        self.assertEqual(set(self.journal.mark_interrupted_for_reconciliation()), {"exec-1", "exec-2"})
+        self.assertEqual(self.journal.mark_interrupted_for_reconciliation(), ("exec-2",))
 
     def test_result_size_and_non_json_values_are_rejected(self):
         self.journal.create("exec-1", self.context)
