@@ -13,7 +13,6 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
-from typing import Iterable
 
 
 class ExecutionJournalError(RuntimeError):
@@ -178,12 +177,17 @@ class SQLiteExecutionJournal:
         return self.get(execution_id)
 
     def mark_interrupted_for_reconciliation(self) -> tuple[str, ...]:
-        """Mark stale created/running records for cleanup; never automatically rerun."""
+        """Return every job needing cleanup; move active jobs into that state.
+
+        Existing cleanup_required rows are included in the returned set so a
+        recovery worker can retry cleanup after its own interruption. They are
+        not transitioned or replayed by this method.
+        """
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 rows = db.execute(
-                    "SELECT execution_id FROM sandbox_executions WHERE state IN ('created','running') ORDER BY created_at"
+                    "SELECT execution_id FROM sandbox_executions WHERE state IN ('created','running','cleanup_required') ORDER BY created_at"
                 ).fetchall()
                 ids = tuple(row[0] for row in rows)
                 if ids:
