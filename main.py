@@ -36,6 +36,7 @@ from core.execution_ledger import SQLiteExecutionLedger
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
 from core.durable_memory_runtime import DurableMemoryRuntime
+from core.durable_reminder_runtime import DurableReminderRuntime
 from core.performance_monitor import collect_performance, format_performance_report
 from core.token_usage import TokenUsageTracker
 
@@ -83,7 +84,7 @@ def print_help():
   /memory list | /memory search QUERY
   /memory delete ID | /memory clear
   /knowledge index RELATIVE_PATH Index a text file inside workspace (approval required)
-  /reminder add ISO_DATETIME | TEXT
+  /reminder add ISO_DATETIME | TEXT (approval required)
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
@@ -198,6 +199,14 @@ def main():
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
+    durable_reminders = DurableReminderRuntime(
+        reminders=reminders, coordinator=approval_coordinator, actor="local-owner",
+        confirm=lambda action: _confirm(
+            "reminder:add",
+            "Save approved reminder: " + str(action.get("arguments", {}))[:500],
+            "medium",
+        ),
+    )
     evolution = DailyEvolutionCycle(workspace)
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
@@ -365,8 +374,8 @@ def main():
                 due_at = datetime.fromisoformat(timestamp.strip())
                 if due_at.tzinfo is None or due_at.utcoffset() is None:
                     raise ValueError("include a timezone offset such as +00:00")
-                item = reminders.add(reminder_text.strip(), due_at)
-                print(f"Yuki > Reminder saved ({item['id']}); no background actions will run.")
+                result = durable_reminders.add(reminder_text.strip(), due_at)
+                print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Reminder was not saved: {exc}")
         elif command == "/reminders":
