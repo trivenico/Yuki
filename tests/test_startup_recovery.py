@@ -101,6 +101,40 @@ class StartupRecoveryTests(unittest.TestCase):
         self.assertEqual(self.journal.get("done-1").state, "succeeded")
         reconcile.assert_called_once_with("run-1")
 
+    def test_cleanup_before_journal_finalize_is_retried_idempotently(self):
+        self.create_pending("run-crash-window")
+        physically_removed = ContainerRecoveryResult(
+            "run-crash-window", inspected=True, removed=True, already_absent=False
+        )
+
+        def cleanup_then_lose_claim(execution_id):
+            self.assertTrue(self.journal.release_recovery_claim(execution_id, "recovery-test"))
+            return physically_removed
+
+        first = recover_interrupted_executions(
+            self.journal,
+            reconcile=cleanup_then_lose_claim,
+            worker_id="recovery-test",
+        )
+        self.assertEqual((first.cleaned, first.pending), (0, 1))
+        record = self.journal.get("run-crash-window")
+        self.assertEqual(record.state, "cleanup_required")
+        self.assertFalse(record.cleanup_confirmed)
+
+        # The next pass sees an absent container and can safely finalize the journal.
+        absent = ContainerRecoveryResult(
+            "run-crash-window", inspected=False, removed=False, already_absent=True
+        )
+        second = recover_interrupted_executions(
+            self.journal,
+            reconcile=Mock(return_value=absent),
+            worker_id="recovery-next",
+        )
+        self.assertEqual((second.cleaned, second.pending), (1, 0))
+        record = self.journal.get("run-crash-window")
+        self.assertEqual(record.state, "cleaned")
+        self.assertTrue(record.cleanup_confirmed)
+
 
 if __name__ == "__main__":
     unittest.main()
