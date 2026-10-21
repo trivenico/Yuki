@@ -31,7 +31,7 @@ class ContainerRecoveryTests(unittest.TestCase):
         # Patch the deterministic name into inspect output to ensure exact ownership validation.
         name = container_name_for_execution("run-1")
         run.side_effect = [
-            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", ""),
+            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\ttrue\trun-1\n", ""),
             subprocess.CompletedProcess([], 0, "", ""),
         ]
         result = reconcile_execution_container("run-1")
@@ -44,7 +44,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_claim_callback_rejection_prevents_docker_remove(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\ttrue\trun-1\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "claim expired or changed"):
             reconcile_execution_container("run-1", before_remove=lambda: False)
         run.assert_called_once()
@@ -52,7 +52,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_claim_callback_exception_fails_closed(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\ttrue\trun-1\n", "")
         def fail_claim():
             raise RuntimeError("journal unavailable")
         with self.assertRaisesRegex(ContainerRecoveryError, "could not be verified"):
@@ -61,7 +61,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_wrong_owner_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\tfalse\trun-1\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "ownership labels"):
             reconcile_execution_container("run-1")
         run.assert_called_once()
@@ -69,11 +69,18 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_wrong_execution_label_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\tother-run\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\ttrue\tother-run\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "ownership labels"):
             reconcile_execution_container("run-1")
         run.assert_called_once()
 
+    @patch("core.container_recovery.subprocess.run")
+    def test_running_container_refuses_cleanup(self, run):
+        name = container_name_for_execution("run-1")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\ttrue\trun-1\n", "")
+        with self.assertRaisesRegex(ContainerRecoveryError, "still running"):
+            reconcile_execution_container("run-1")
+        run.assert_called_once()
     @patch("core.container_recovery.subprocess.run")
     def test_malformed_inspect_metadata_refuses_cleanup(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, "not-enough-fields\n", "")
@@ -84,7 +91,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_invalid_container_id_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"not-a-container-id\t/{name}\ttrue\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"not-a-container-id\t/{name}\tfalse\ttrue\trun-1\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "invalid immutable container ID"):
             reconcile_execution_container("run-1")
         run.assert_called_once()
@@ -93,7 +100,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     def test_docker_remove_failure_is_not_reported_as_success(self, run):
         name = container_name_for_execution("run-1")
         run.side_effect = [
-            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", ""),
+            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\ttrue\trun-1\n", ""),
             subprocess.CompletedProcess([], 1, "", "permission denied"),
         ]
         with self.assertRaisesRegex(ContainerRecoveryError, "cleanup failed"):
