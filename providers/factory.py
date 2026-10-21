@@ -31,6 +31,10 @@ def create_provider(config=None, *, environ=None):
             model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
         )
     if selected == "hybrid":
+        local = OllamaProvider(
+            base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
+            model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        )
         cloud_model = str(env.get("YUKI_CLOUD_MODEL", "")).strip()
         cloud = None
         if cloud_model:
