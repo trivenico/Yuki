@@ -41,6 +41,23 @@ class ContainerRecoveryTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])
 
     @patch("core.container_recovery.subprocess.run")
+    def test_claim_callback_rejection_prevents_docker_remove(self, run):
+        name = container_name_for_execution("run-1")
+        run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\ttrue\trun-1\n", "")
+        with self.assertRaisesRegex(ContainerRecoveryError, "claim expired or changed"):
+            reconcile_execution_container("run-1", before_remove=lambda: False)
+        run.assert_called_once()
+
+    @patch("core.container_recovery.subprocess.run")
+    def test_claim_callback_exception_fails_closed(self, run):
+        name = container_name_for_execution("run-1")
+        run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\ttrue\trun-1\n", "")
+        def fail_claim():
+            raise RuntimeError("journal unavailable")
+        with self.assertRaisesRegex(ContainerRecoveryError, "could not be verified"):
+            reconcile_execution_container("run-1", before_remove=fail_claim)
+        run.assert_called_once()
+    @patch("core.container_recovery.subprocess.run")
     def test_wrong_owner_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
         run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\tfalse\trun-1\n", "")

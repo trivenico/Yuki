@@ -34,11 +34,11 @@ class ExecutionJournalTests(unittest.TestCase):
         self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-a", 60))
         self.assertTrue(self.journal.renew_recovery_claim(record.execution_id, "worker-a", 120))
         self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-b", 120))
-        self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-a", 0))
+        self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-a", 1))
 
     def test_recovery_claim_rejects_invalid_lease(self):
         with self.assertRaises(ExecutionJournalError):
-            self.journal.claim_recovery("missing", "worker-a", 0)
+            self.journal.claim_recovery("missing", "worker-a", 1)
     def test_cleanup_finalization_requires_active_claim(self):
         record = self.journal.create("fenced-job", {"proposal": "x"})
         self.journal.transition(record.execution_id, "running")
