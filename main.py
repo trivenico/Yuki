@@ -30,6 +30,11 @@ from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
 from core.recovery_bootstrap import recover_workspace_on_startup
 from core.production_guard import assert_production_runtime_supported
+from core.pending_approvals import SQLitePendingApprovalStore
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.execution_ledger import SQLiteExecutionLedger
+from core.approval_flow import ApprovalCoordinator
+from core.durable_skill_runtime import DurableSkillRuntime
 
 
 def _ask_approval(request):
@@ -113,7 +118,34 @@ def main():
         print(f"Yuki recovery: {recovery.cleaned} cleaned, {recovery.pending} still pending; uncertain jobs will not be replayed.")
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+
+    # Route model-planned and direct skill calls through durable approval state.
+    # Production startup remains blocked until every other side-effect command is
+    # routed through the same coordinator and integration tests cover those paths.
+    pending_store = SQLitePendingApprovalStore(str(workspace / "pending_approvals.sqlite3"))
+    audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
+    execution_ledger = SQLiteExecutionLedger(str(workspace / "execution_ledger.sqlite3"))
+    approval_coordinator = ApprovalCoordinator(
+        pending_store=pending_store, audit_log=audit_log, execution_ledger=execution_ledger
+    )
+
+    def confirm_durable_skill(action):
+        skill_id = action.get("skill_id", "unknown")
+        arguments = action.get("arguments", {})
+        argument = arguments.get("argument", "") if isinstance(arguments, dict) else ""
+        skill = agent.registry.get(skill_id)
+        risk = getattr(skill, "risk", "high")
+        return _confirm(
+            f"skill:{skill_id}",
+            f"Execute registered skill {skill_id!r} with argument {argument!r}.",
+            risk,
+        )
+
+    durable_agent = DurableSkillRuntime(
+        registry=agent.registry, coordinator=approval_coordinator,
+        actor="local-owner", confirm=confirm_durable_skill,
+    )
+    task_agent = ApprovedTaskAgent(ai.provider, durable_agent, max_steps=config["max_agent_steps"])
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -224,7 +256,7 @@ def main():
         elif command.startswith("/skill "):
             parts = command.split(maxsplit=2)
             name, argument = parts[1], parts[2] if len(parts) > 2 else ""
-            response = agent.run_skill(name, argument)
+            response = durable_agent.run_skill(name, argument)
             print(f"Yuki > {response.message}")
             if response.ok and response.data is not None:
                 print(response.data)
