@@ -151,13 +151,37 @@ def main():
     task_agent = ApprovedTaskAgent(ai.provider, durable_agent, max_steps=config["max_agent_steps"])
     token_usage = TokenUsageTracker(workspace / "token_usage.json", session_id="cli-session")
     # Attach usage accounting to active provider adapters without changing routing.
-    def attach_usage_tracker(provider):
+    def attach_usage_tracker(provider, visited=None):
+        # Provider wrappers can contain nested local/cloud adapters. Guard cycles
+        # and inspect declared/instance attributes only: dynamic mocks and proxy
+        # objects may synthesize arbitrary attributes on getattr().
         if provider is None:
             return
-        if hasattr(provider, "usage_tracker"):
-            provider.usage_tracker = token_usage
-        attach_usage_tracker(getattr(provider, "local_provider", None))
-        attach_usage_tracker(getattr(provider, "cloud_provider", None))
+        if visited is None:
+            visited = set()
+        identity = id(provider)
+        if identity in visited:
+            return
+        visited.add(identity)
+        try:
+            declared = vars(provider)
+        except TypeError:
+            declared = {}
+        if "usage_tracker" in declared or hasattr(type(provider), "usage_tracker"):
+            try:
+                provider.usage_tracker = token_usage
+            except (AttributeError, TypeError):
+                pass
+        for attr in ("local_provider", "cloud_provider"):
+            if attr in declared:
+                attach_usage_tracker(declared[attr], visited)
+            else:
+                class_attr = getattr(type(provider), attr, None)
+                if class_attr is not None:
+                    try:
+                        attach_usage_tracker(getattr(provider, attr), visited)
+                    except (AttributeError, TypeError):
+                        pass
     attach_usage_tracker(ai.provider)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
