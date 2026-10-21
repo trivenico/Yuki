@@ -38,7 +38,8 @@ def action_result(text="safe note"):
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator(audit_log=MemoryAudit())
+        self.pending_store = SQLitePendingApprovalStore(str(Path(tempfile.mkdtemp()) / "pending.sqlite3"))
+        self.coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=MemoryAudit())
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -51,14 +52,14 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
 
     def test_missing_audit_sink_blocks_before_creating_pending_request(self):
-        coordinator = ApprovalCoordinator()
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store)
         with self.assertRaisesRegex(RuntimeError, "audit sink is required"):
             coordinator.record(self.planner, action_result(), actor="owner", session_id="session-a")
         self.assertEqual(coordinator._pending, {})
         self.assertEqual(self.planner.executed, [])
 
     def test_missing_audit_sink_blocks_approval_execution(self):
-        coordinator = ApprovalCoordinator()
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store)
         outcome = coordinator.approve(
             self.planner, "unknown", actor="owner", session_id="session-a",
             confirm=lambda _action: True,
@@ -71,7 +72,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             def append(self, **_event):
                 raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=BrokenAudit())
         with self.assertRaisesRegex(RuntimeError, "could not be audited"):
             coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="session-a"
@@ -102,7 +103,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "approved":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=SelectiveAudit())
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -119,7 +120,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "executed":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=SelectiveAudit())
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
