@@ -19,6 +19,8 @@ class FakeProcess:
         self.killed = False
 
     def wait(self, timeout=None):
+        if timeout is not None:
+            raise subprocess.TimeoutExpired(cmd="docker run", timeout=timeout)
         return self.returncode
 
     def kill(self):
@@ -53,6 +55,23 @@ class SandboxOutputBoundsTests(unittest.TestCase):
         self.assertIn(IMAGE, args[0])
         self.assertEqual(args[0][-1], "worker")
 
+    def test_timeout_kills_and_reaps_docker_client(self):
+        process = FakeProcess(b"", b"", returncode=-9)
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = DockerSandbox(
+                directory,
+                allowed_images=[IMAGE],
+                enabled=True,
+                approver=lambda _reason: True,
+            )
+            with mock.patch("hackback.sandbox.subprocess.Popen", return_value=process) as popen:
+                with self.assertRaisesRegex(SandboxError, "timed out"):
+                    sandbox.run(IMAGE, ["worker"], timeout=1)
+
+        self.assertTrue(process.killed)
+        self.assertEqual(process.wait(), -9)
+        popen.assert_called_once()
+    
     def test_approval_denial_prevents_process_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             sandbox = DockerSandbox(
