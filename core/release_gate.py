@@ -90,6 +90,28 @@ def evaluate_release_gate(
     }
 
     try:
+        if store.verify_chain() is not True:
+            return ReleaseGateDecision(
+                decision="block",
+                reasons=("audit_evidence_chain_invalid",),
+                repository=repository.lower(),
+                pull_request=pull_request,
+                expected_head_sha=expected_sha,
+                evidence_id=None,
+                audit_persisted=False,
+            )
+    except Exception:
+        return ReleaseGateDecision(
+            decision="block",
+            reasons=("audit_evidence_chain_verification_failed",),
+            repository=repository.lower(),
+            pull_request=pull_request,
+            expected_head_sha=expected_sha,
+            evidence_id=None,
+            audit_persisted=False,
+        )
+
+    try:
         evidence = client.fetch_pull_request_evidence(
             owner,
             repo,
