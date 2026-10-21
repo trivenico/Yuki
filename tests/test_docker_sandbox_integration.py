@@ -57,8 +57,8 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
                 "python",
                 "-c",
                 "import socket; s=socket.socket(); s.settimeout(1); "
-                "exec(\\"try: s.connect(('1.1.1.1', 53)); print('CONNECTED')\\n"
-                "except OSError: print('BLOCKED')\\")",
+                "result=s.connect_ex(('1.1.1.1', 53)); "
+                "print('CONNECTED' if result == 0 else 'BLOCKED')",
             ],
         )
         self.assertEqual(result["returncode"], 0, result["stderr"])
