@@ -34,6 +34,19 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.append(event_type="requested", pending_id="", actor="owner", skill_id="x")
 
+    def test_recovery_required_event_is_persisted_and_chain_verifies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            audit.append(
+                event_type="execution_recovery_required",
+                pending_id="pending-recovery",
+                actor="owner",
+                skill_id="notes.write",
+            )
+            events = audit.list_events()
+            self.assertEqual(events[0]["event_type"], "execution_recovery_required")
+            self.assertTrue(audit.verify_chain())
+
     def test_audit_chain_verifies_and_detects_tampering(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "audit.sqlite3")
