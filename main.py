@@ -42,7 +42,7 @@ def _confirm(action, reason, risk="medium"):
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
-def build_agent(config):
+def build_agent(config, *, approver=None):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
     registry = SkillRegistry.defaults(
@@ -53,7 +53,8 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    approval_callback = _ask_approval if approver is None else approver
+    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(approval_callback))
 
 
 def print_help():
