@@ -1,9 +1,8 @@
 """Supervised test execution for staged self-improvement proposals.
 
-This runner accepts only a managed disposable workspace and argument-vector
-commands. It does not apply proposals, commit, merge, or deploy. Callers should
-use a no-network policy and a read-only mount unless the test command requires
-writes and that capability was explicitly authorized.
+Only known test/lint entry points are accepted. This runner does not apply
+proposals, commit, merge, or deploy. Use no-network policies and a read-only
+workspace unless writes were explicitly authorized.
 """
 from __future__ import annotations
 
@@ -36,6 +35,27 @@ def _managed_workspace(workspace: str | os.PathLike[str], parent_dir: str | os.P
     return resolved
 
 
+def _validate_test_command(command: Sequence[str]) -> None:
+    if not isinstance(command, (list, tuple)) or not command:
+        raise ProposalTestRunError("Each check must be a non-empty argument vector.")
+    if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in command):
+        raise ProposalTestRunError("Check arguments must be non-empty NUL-free strings.")
+    if len(command) > 128 or any(len(arg) > 4096 for arg in command):
+        raise ProposalTestRunError("Check command exceeds configured argument bounds.")
+    allowed = (
+        command[0] == "pytest"
+        or (command[0] == "ruff" and len(command) >= 2 and command[1] == "check")
+        or (
+            command[0] in {"python", "python3"} and len(command) >= 3
+            and command[1] == "-m" and command[2] in {"pytest", "unittest", "ruff"}
+        )
+    )
+    if not allowed:
+        raise ProposalTestRunError("Only pytest, unittest, and ruff check entry points are permitted.")
+    if "-c" in command or any(arg in {"sh", "bash", "cmd", "powershell", "pwsh"} for arg in command):
+        raise ProposalTestRunError("Shell and inline-code execution are not permitted.")
+
+
 def run_proposal_checks(
     *,
     workspace: str | os.PathLike[str],
@@ -47,14 +67,9 @@ def run_proposal_checks(
     """Run ordered checks in the same disposable workspace, stopping on failure."""
     managed = _managed_workspace(workspace, parent_dir)
     if not isinstance(commands, (list, tuple)) or not commands:
-        raise ProposalTestRunError("At least one explicit argument-vector check is required.")
+        raise ProposalTestRunError("At least one explicit check is required.")
     for command in commands:
-        if not isinstance(command, (list, tuple)) or not command:
-            raise ProposalTestRunError("Each check must be a non-empty argument vector.")
-        if any(not isinstance(arg, str) or not arg or "\x00" in arg for arg in command):
-            raise ProposalTestRunError("Check arguments must be non-empty NUL-free strings.")
-        if len(command) > 128 or any(len(arg) > 4096 for arg in command):
-            raise ProposalTestRunError("Check command exceeds configured argument bounds.")
+        _validate_test_command(command)
 
     try:
         policy.validate()
