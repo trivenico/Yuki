@@ -11,6 +11,15 @@ The repository README already correctly labels Yuki as not production-ready. Thi
 
 ## What was verified in GitHub
 
+### Latest CI failure reproduced from GitHub Actions logs
+
+Workflow run [39403021416](https://github.com/trivenico/Yuki/actions/runs/39403021416) for the current `main` commit completed with **162 tests run, 1 failure, and 7 errors**. Dependency installation passed; the unit-test step failed. The logs identify two concrete defects:
+
+- `SkillRegistry.defaults()` called `DeviceScannerSkill(root)`, but `DeviceScannerSkill` has no constructor accepting a workspace argument. This caused multiple registry/feature tests to error.
+- `create_provider()` constructed `OllamaProvider` before rejecting an unknown provider name. With no Ollama model configured, the error was about the model rather than the expected provider allow-list.
+
+The Phase 8 branch fixes both code paths. The pull request's CI run is the verification gate; do not treat the fixes as passing until that run completes.
+
 - The repository is public and the connected GitHub identity has push/admin permissions.
 - `main` currently points to `30c3f83c00bac7514f1ace95fca9bd931c852956`; its latest commit message is `revert: remove accidentally committed task tests from default branch`.
 - That revert removed `tests/test_task_store.py` (121 lines). Current `main` does not expose `core/task_store.py` or `core/task_runtime.py` at those paths, so restoring that test file alone would create a broken test suite. Reintroduce the implementation and tests together only after deciding whether durable task execution belongs in the next phase.
