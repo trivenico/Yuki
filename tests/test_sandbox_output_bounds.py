@@ -57,6 +57,24 @@ class SandboxOutputBoundsTests(unittest.TestCase):
         self.assertIn(IMAGE, args[0])
         self.assertEqual(args[0][-1], "worker")
 
+    def test_shell_metacharacters_remain_literal_argv(self):
+        process = FakeProcess(b"", b"")
+        payload = "; touch /tmp/yuki-should-not-exist"
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = DockerSandbox(
+                directory,
+                allowed_images=[IMAGE],
+                enabled=True,
+                approver=lambda _reason: True,
+            )
+            with mock.patch("hackback.sandbox.subprocess.Popen", return_value=process) as popen:
+                result = sandbox.run(IMAGE, ["worker", payload])
+
+        self.assertEqual(result["returncode"], 0)
+        command = popen.call_args.args[0]
+        self.assertIs(popen.call_args.kwargs["shell"], False)
+        self.assertEqual(command[-2:], ["worker", payload])
+
     def test_timeout_kills_and_reaps_docker_client(self):
         process = FakeProcess(b"", b"", returncode=-9)
         with tempfile.TemporaryDirectory() as directory:
