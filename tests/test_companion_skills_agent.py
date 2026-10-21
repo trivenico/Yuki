@@ -39,7 +39,7 @@ class CompanionSkillAgentTests(unittest.TestCase):
         gate = PermissionGate(lambda request: seen.append(request) or True)
         agent = YukiCoreAgent([TimeSkill()], gate)
         oversized = agent.run_skill("time", "x" * 501)
-        nulled = agent.run_skill("time", "safe\\x00unsafe")
+        nulled = agent.run_skill("time", "safe\x00unsafe")
         self.assertEqual(oversized.stage, "invalid_input")
         self.assertEqual(nulled.stage, "invalid_input")
         self.assertEqual(seen, [])
