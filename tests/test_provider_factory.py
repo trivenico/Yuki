@@ -24,6 +24,23 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_production_factory_rejects_mock_even_without_config_loader(self):
+        with self.assertRaisesRegex(RuntimeError, "Production requires a real provider"):
+            create_provider({"environment": "production", "provider": "mock"}, environ={})
+
+    def test_factory_rejects_invalid_environment(self):
+        with self.assertRaisesRegex(ValueError, "environment must be"):
+            create_provider({"environment": "prod", "provider": "ollama", "ollama_model": "m"}, environ={})
+
+    def test_staging_factory_requires_model(self):
+        with self.assertRaisesRegex(RuntimeError, "model is required"):
+            create_provider({"environment": "staging", "provider": "ollama"}, environ={})
+
+    def test_provider_environment_override_is_validated(self):
+        with self.assertRaisesRegex(RuntimeError, "Production requires a real provider"):
+            create_provider({"environment": "production", "provider": "ollama", "ollama_model": "model"},
+                            environ={"YUKI_PROVIDER": "mock", "YUKI_OLLAMA_MODEL": "model"})
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
