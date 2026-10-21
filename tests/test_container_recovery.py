@@ -31,14 +31,14 @@ class ContainerRecoveryTests(unittest.TestCase):
         # Patch the deterministic name into inspect output to ensure exact ownership validation.
         name = container_name_for_execution("run-1")
         run.side_effect = [
-            subprocess.CompletedProcess([], 0, f"/{name}\ttrue\trun-1\n", ""),
+            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", ""),
             subprocess.CompletedProcess([], 0, "", ""),
         ]
         result = reconcile_execution_container("run-1")
         self.assertTrue(result.removed)
         self.assertFalse(result.already_absent)
         self.assertEqual(run.call_count, 2)
-        self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])
+        self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])\n        self.assertEqual(run.call_args.args[0][3], "a" * 64)
 
     @patch("core.container_recovery.subprocess.run")
     def test_claim_callback_rejection_prevents_docker_remove(self, run):
@@ -60,7 +60,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_wrong_owner_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\tfalse\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\tfalse\trun-1\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "ownership labels"):
             reconcile_execution_container("run-1")
         run.assert_called_once()
@@ -68,7 +68,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_wrong_execution_label_refuses_cleanup(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\ttrue\tother-run\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\tother-run\n", "")
         with self.assertRaisesRegex(ContainerRecoveryError, "ownership labels"):
             reconcile_execution_container("run-1")
         run.assert_called_once()
