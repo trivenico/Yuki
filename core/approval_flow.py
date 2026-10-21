@@ -97,15 +97,43 @@ class ApprovalCoordinator:
         except Exception:
             confirmed = False
         if not confirmed:
-            self._audit("denied", pending_id, actor, pending["skill_id"])
+            try:
+                self._audit("denied", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
-        self._audit("approved", pending_id, actor, pending["skill_id"])
+
+        # Approval must be durably recorded before any side effect is attempted.
         try:
-            result = planner.agent.execute_approved_action(action) if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action") else planner.execute_approved_action(action)
+            self._audit("approved", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+
+        try:
+            result = (
+                planner.agent.execute_approved_action(action)
+                if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action")
+                else planner.execute_approved_action(action)
+            )
         except Exception as exc:
-            self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+            try:
+                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_error": type(exc).__name__, "audit": "unavailable"},
+                )
             return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
-        self._audit("executed", pending_id, actor, pending["skill_id"])
+
+        # The external side effect may already have happened. If its receipt cannot
+        # be persisted, never report an ordinary failure that could trigger replay.
+        try:
+            self._audit("executed", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"execution_result": result, "audit": "unavailable"},
+            )
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
 
     def _consume(self, pending_id, *, actor, session_id):
