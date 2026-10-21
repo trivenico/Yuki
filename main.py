@@ -35,6 +35,7 @@ from core.approval_audit import SQLiteApprovalAuditLog
 from core.execution_ledger import SQLiteExecutionLedger
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
+from core.durable_memory_runtime import DurableMemoryRuntime
 from core.performance_monitor import collect_performance, format_performance_report
 from core.token_usage import TokenUsageTracker
 
@@ -185,6 +186,14 @@ def main():
     attach_usage_tracker(ai.provider)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
+    durable_memory = DurableMemoryRuntime(
+        memory=memory, coordinator=approval_coordinator, actor="local-owner",
+        confirm=lambda action: _confirm(
+            str(action.get("skill_id", "memory:unknown")),
+            "Apply approved local memory mutation: " + str(action.get("arguments", {}))[:500],
+            "high" if action.get("skill_id") == "memory:clear" else "medium",
+        ),
+    )
     searchable_memory = VectorMemory(memory_path)
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
@@ -319,14 +328,8 @@ def main():
                 print(f"Yuki > Cannot plan: {exc}")
         elif command.startswith("/memory add "):
             note = command[len("/memory add "):].strip()
-            if _confirm("memory:add", "Save the supplied note to local Yuki memory."):
-                try:
-                    item = memory.add(note)
-                    print(f"Yuki > Saved note {item['id']}.")
-                except (ValueError, RuntimeError) as exc:
-                    print(f"Yuki > Memory was not changed: {exc}")
-            else:
-                print("Yuki > Memory write cancelled.")
+            result = durable_memory.mutate("memory:add", {"text": note})
+            print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
         elif command == "/memory list":
             for item in memory.list():
                 print(f"{item['id']} [{item.get('category', 'note')}] {item['created_at']}: {item['text']}")
@@ -338,15 +341,11 @@ def main():
                 print(f"Yuki > Search failed: {exc}")
         elif command.startswith("/memory delete "):
             memory_id = command[len("/memory delete "):].strip()
-            if _confirm("memory:delete", f"Delete memory entry {memory_id}."):
-                print("Yuki > Deleted." if memory.delete(memory_id) else "Yuki > Entry not found.")
-            else:
-                print("Yuki > Memory deletion cancelled.")
+            result = durable_memory.mutate("memory:delete", {"memory_id": memory_id})
+            print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
         elif command == "/memory clear":
-            if _confirm("memory:clear", "Permanently delete all local memory entries.", "high"):
-                print(f"Yuki > Deleted {memory.clear()} entries.")
-            else:
-                print("Yuki > Memory clear cancelled.")
+            result = durable_memory.mutate("memory:clear", {})
+            print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
         elif command.startswith("/knowledge index "):
             relative_path = command[len("/knowledge index "):].strip()
             if not _confirm("knowledge:index", f"Read and index {relative_path!r} inside the workspace."):
