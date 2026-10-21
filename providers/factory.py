@@ -17,7 +17,7 @@ def create_provider(config=None, *, environ=None):
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    environment = str(cfg.get("environment", "development")).strip().lower()
+    environment = str(env.get("YUKI_ENVIRONMENT", cfg.get("environment", "development"))).strip().lower()
     if environment not in {"development", "test", "staging", "production"}:
         raise ValueError("environment must be development, test, staging, or production.")
     selected = str(env.get("YUKI_PROVIDER", cfg.get("provider", "mock"))).strip().lower()
