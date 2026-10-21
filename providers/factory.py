@@ -20,6 +20,8 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "mock")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected not in {"ollama", "hybrid"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid.")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
@@ -38,4 +40,3 @@ def create_provider(config=None, *, environ=None):
         raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
         cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
         return HybridProvider(local, cloud, cloud_tasks=cloud_tasks)
-    raise ValueError("provider must be one of: mock, ollama, hybrid.")

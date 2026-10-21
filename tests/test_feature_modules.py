@@ -5,6 +5,7 @@ from core.planner import Planner
 from core.config import load_config
 from main import build_agent
 from core.vector_memory import VectorMemory
+from core.permissions import PermissionGate
 from defense.firewall import FirewallManager, FirewallError
 from defense.ids import PortScanDetector
 from knowledge.indexer import KnowledgeIndexer
@@ -57,6 +58,8 @@ class FeatureModuleTests(unittest.TestCase):
         self.assertIn("interview", agent.registry.names())
         self.assertIn("web_fetch", agent.registry.names())
         self.assertIn("gmail_search", agent.registry.names())
+        # This test verifies the skill integration, not the interactive approval UI.
+        agent.permission_gate = PermissionGate(lambda request: True)
         result = agent.run_skill("interview", "technical")
         self.assertTrue(result.ok)
         self.assertIn("technical decision", result.data["prompt"])
