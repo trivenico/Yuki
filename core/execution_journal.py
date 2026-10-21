@@ -139,7 +139,8 @@ class SQLiteExecutionJournal:
         return self._record(row)
 
     def transition(self, execution_id: str, new_state: str, *, result: dict | None = None,
-                   cleanup_confirmed: bool | None = None) -> ExecutionRecord:
+                   cleanup_confirmed: bool | None = None,
+                   recovery_worker_id: str | None = None) -> ExecutionRecord:
         if new_state not in _ALLOWED_TRANSITIONS:
             raise ExecutionJournalError("unknown execution state")
         result_json = None
@@ -162,6 +163,12 @@ class SQLiteExecutionJournal:
                 if new_state not in _ALLOWED_TRANSITIONS[old_state]:
                     raise ExecutionJournalError(f"invalid transition: {old_state} -> {new_state}")
                 now = self._now()
+                if old_state == "cleanup_required" and new_state == "cleaned":
+                    if not isinstance(recovery_worker_id, str) or not recovery_worker_id:
+                        raise ExecutionJournalError("cleanup finalization requires the active recovery worker claim")
+                    claim = db.execute("SELECT worker_id, lease_expires_at FROM sandbox_recovery_claims WHERE execution_id=?", (execution_id,)).fetchone()
+                    if claim is None or claim[0] != recovery_worker_id or claim[1] <= now:
+                        raise ExecutionJournalError("recovery claim is missing, expired, or owned by another worker")
                 cleanup = None if cleanup_confirmed is None else int(cleanup_confirmed)
                 db.execute(
                     """UPDATE sandbox_executions

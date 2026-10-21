@@ -30,6 +30,18 @@ class ExecutionJournalTests(unittest.TestCase):
     def test_recovery_claim_rejects_invalid_lease(self):
         with self.assertRaises(ExecutionJournalError):
             self.journal.claim_recovery("missing", "worker-a", 0)
+    def test_cleanup_finalization_requires_active_claim(self):
+        record = self.journal.create("fenced-job", {"proposal": "x"})
+        self.journal.transition(record.execution_id, "running")
+        self.journal.transition(record.execution_id, "cleanup_required")
+        with self.assertRaisesRegex(ExecutionJournalError, "requires the active recovery worker claim"):
+            self.journal.transition(record.execution_id, "cleaned", cleanup_confirmed=True)
+        self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-a", 60))
+        with self.assertRaisesRegex(ExecutionJournalError, "missing, expired, or owned"):
+            self.journal.transition(record.execution_id, "cleaned", cleanup_confirmed=True, recovery_worker_id="worker-b")
+        cleaned = self.journal.transition(record.execution_id, "cleaned", cleanup_confirmed=True, recovery_worker_id="worker-a")
+        self.assertEqual(cleaned.state, "cleaned")
+
     def test_create_is_idempotent_for_same_context(self):
         first = self.journal.create("exec-1", self.context)
         second = self.journal.create("exec-1", self.context)
