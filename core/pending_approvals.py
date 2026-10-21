@@ -160,7 +160,7 @@ class SQLitePendingApprovalStore:
                         db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                     db.execute("COMMIT")
                     return None
-                if not row[6] or self._action_digest(row[2]) != row[6]:
+                if not row[6] or self._action_digest(row[0], row[1], row[2]) != row[6]:
                     db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                     db.execute("COMMIT")
                     return None
