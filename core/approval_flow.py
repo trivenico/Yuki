@@ -66,7 +66,21 @@ class ApprovalCoordinator:
                 "skill_id": skill_id, "arguments": arguments, "action": action,
                 "actor": actor, "session_id": session_id,
             }
-        self._audit("requested", pending_id, actor, skill_id)
+        try:
+            self._audit("requested", pending_id, actor, skill_id)
+        except Exception as exc:
+            # Never leave an un-audited approval request available for later execution.
+            if self.pending_store is not None:
+                try:
+                    self.pending_store.deny(pending_id)
+                except Exception:
+                    # The store may be unavailable; do not issue or return the token.
+                    pass
+            else:
+                self._pending.pop(pending_id, None)
+            raise RuntimeError(
+                "Approval request could not be audited; no approval was issued."
+            ) from exc
         return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
