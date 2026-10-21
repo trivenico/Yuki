@@ -63,14 +63,27 @@ class DurableSkillRuntime:
             )
         result = outcome.result
         if isinstance(result, dict):
-            ok = result.get("ok", True)
-            message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
+            ok = result.get("ok")
+            message = str(result.get("message", ""))
             data = {key: value for key, value in result.items() if key not in {"ok", "message"}}
         else:
-            ok = getattr(result, "ok", True)
-            message = str(getattr(result, "message", "Skill completed."))
+            ok = getattr(result, "ok", None)
+            message = str(getattr(result, "message", ""))
             data = getattr(result, "data", None)
-        return DurableSkillResponse(bool(ok), message, name, data, "report" if ok else "observe")
+        # Validate again at the reporting boundary: coordinator implementations,
+        # persisted outcomes, and future adapters must not turn missing or truthy
+        # non-boolean values (for example, "false") into a successful response.
+        if type(ok) is not bool:
+            return DurableSkillResponse(
+                False,
+                "Skill returned an invalid result contract; success must be an explicit boolean.",
+                name,
+                {"error": "invalid_result_contract"},
+                "observe",
+            )
+        if not message:
+            message = "Skill completed." if ok else "Skill failed."
+        return DurableSkillResponse(ok, message, name, data, "report" if ok else "observe")
 
     def execute_approved_action(self, action: dict):
         """Coordinator-only executor; action must match the stored approved snapshot."""
