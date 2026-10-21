@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
+import threading
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class ApprovalCoordinator:
         self.audit_log = audit_log
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
+        # Protect the in-process fallback's capacity check and one-time claim.
+        # Production deployments should inject SQLitePendingApprovalStore.
+        self._pending_lock = threading.Lock()
 
     def _require_audit(self) -> None:
         if self.audit_log is None or not callable(getattr(self.audit_log, "append", None)):
@@ -65,14 +69,15 @@ class ApprovalCoordinator:
             )
             pending_id = stored.pending_id
         else:
-            if len(self._pending) >= self.max_pending:
-                raise RuntimeError("Pending approval capacity reached.")
-            import secrets
-            pending_id = secrets.token_urlsafe(24)
-            self._pending[pending_id] = {
-                "skill_id": skill_id, "arguments": arguments, "action": action,
-                "actor": actor, "session_id": session_id,
-            }
+            with self._pending_lock:
+                if len(self._pending) >= self.max_pending:
+                    raise RuntimeError("Pending approval capacity reached.")
+                import secrets
+                pending_id = secrets.token_urlsafe(24)
+                self._pending[pending_id] = {
+                    "skill_id": skill_id, "arguments": arguments, "action": action,
+                    "actor": actor, "session_id": session_id,
+                }
         try:
             self._audit("requested", pending_id, actor, skill_id)
         except Exception as exc:
@@ -82,7 +87,8 @@ class ApprovalCoordinator:
                 except Exception:
                     pass
             else:
-                self._pending.pop(pending_id, None)
+                with self._pending_lock:
+                    self._pending.pop(pending_id, None)
             raise RuntimeError(
                 "Approval request could not be audited; no approval was issued."
             ) from exc
@@ -150,10 +156,11 @@ class ApprovalCoordinator:
                 return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
                     "action": item.action, "actor": actor, "session_id": session_id}
-        item = self._pending.get(pending_id)
-        if item is None or item["actor"] != actor or item["session_id"] != session_id:
-            return None
-        return self._pending.pop(pending_id)
+        with self._pending_lock:
+            item = self._pending.get(pending_id)
+            if item is None or item["actor"] != actor or item["session_id"] != session_id:
+                return None
+            return self._pending.pop(pending_id)
 
     def _audit(self, event_type, pending_id, actor, skill_id):
         self.audit_log.append(event_type=event_type, pending_id=pending_id,
