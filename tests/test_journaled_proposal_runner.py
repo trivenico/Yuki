@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +74,28 @@ class JournaledProposalRunnerTests(unittest.TestCase):
     def test_invalid_command_never_creates_journal_or_launches(self, run):
         with self.assertRaises(JournaledProposalRunError):
             self.run_checks(commands=(("python", "-c", "print(1)"),))
+        run.assert_not_called()
+        with self.assertRaisesRegex(Exception, "not found"):
+            self.journal.get("run-1")
+
+    @patch("core.journaled_proposal_runner.run_proposal_checks")
+    def test_aggregate_output_is_bounded_before_journal_persistence(self, run):
+        huge = "é" * 50000
+        run.return_value = (
+            SandboxResult(0, huge, huge, False, False, True),
+            SandboxResult(0, huge, huge, False, False, True),
+        )
+        result = self.run_checks(commands=(("pytest", "-q"), ("ruff", "check", ".")))
+        payload = json.loads(result.execution.result_json)
+        self.assertTrue(payload["journal_output_truncated"])
+        self.assertLessEqual(len(result.execution.result_json.encode("utf-8")), 65536)
+        self.assertTrue(any(item["output_truncated"] for item in payload["checks"]))
+
+    @patch("core.journaled_proposal_runner.run_proposal_checks")
+    def test_too_many_checks_are_rejected_before_journaling(self, run):
+        commands = tuple(("pytest", "-q") for _ in range(33))
+        with self.assertRaisesRegex(JournaledProposalRunError, "Preflight validation failed"):
+            self.run_checks(commands=commands)
         run.assert_not_called()
         with self.assertRaisesRegex(Exception, "not found"):
             self.journal.get("run-1")
