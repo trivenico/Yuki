@@ -26,6 +26,20 @@ class StartupRecoveryTests(unittest.TestCase):
             self.journal.transition(execution_id, "running")
         self.journal.mark_interrupted_for_reconciliation()
 
+    def test_live_claim_by_other_worker_skips_cleanup(self):
+        self.create_pending("run-claimed")
+        self.assertTrue(self.journal.claim_recovery("run-claimed", "worker-owner", 60))
+        reconcile = Mock(return_value=ContainerRecoveryResult("run-claimed", False, False, True))
+        report = recover_interrupted_executions(
+            self.journal, reconcile=reconcile, worker_id="worker-contender"
+        )
+        self.assertEqual(report.discovered, 1)
+        self.assertEqual(report.cleaned, 0)
+        self.assertEqual(report.pending, 1)
+        self.assertEqual(report.items[0].outcome, "claimed_by_other_worker")
+        reconcile.assert_not_called()
+        self.assertEqual(self.journal.get("run-claimed").state, "cleanup_required")
+
     def test_successful_cleanup_is_persisted(self):
         self.create_pending("run-1")
         reconcile = Mock(return_value=ContainerRecoveryResult("run-1", True, True, False))
