@@ -11,6 +11,38 @@ import os
 from pathlib import Path
 from typing import Sequence
 
+_MAX_CHECKS = 32
+_MAX_JOURNAL_OUTPUT_BYTES = 48 * 1024
+
+
+def _clip_utf8(value: str, budget: int) -> tuple[str, int]:
+    """Return valid UTF-8 text fitting budget and the bytes consumed."""
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= budget:
+        return value, len(encoded)
+    clipped = encoded[:max(0, budget)].decode("utf-8", errors="ignore")
+    return clipped, len(clipped.encode("utf-8"))
+
+
+def _bounded_result(checks: Sequence[SandboxResult]) -> dict:
+    """Keep aggregate journal output below the DB result cap with room for metadata."""
+    remaining = _MAX_JOURNAL_OUTPUT_BYTES
+    summaries = []
+    for item in checks:
+        stdout, used = _clip_utf8(item.stdout, remaining)
+        remaining -= used
+        stderr, used = _clip_utf8(item.stderr, remaining)
+        remaining -= used
+        was_clipped = stdout != item.stdout or stderr != item.stderr
+        summaries.append({
+            "returncode": int(item.returncode),
+            "timed_out": bool(item.timed_out),
+            "output_truncated": bool(item.output_truncated or was_clipped),
+            "stdout": stdout,
+            "stderr": stderr,
+        })
+    return {"checks": summaries, "journal_output_truncated": remaining == 0}
+
 from core.execution_journal import ExecutionJournalError, ExecutionRecord, SQLiteExecutionJournal
 from core.proposal_test_runner import (
     ProposalTestRunError,
@@ -50,6 +82,8 @@ def run_journaled_proposal_checks(
         managed = _managed_workspace(workspace, parent_dir)
         if not isinstance(commands, (list, tuple)) or not commands:
             raise ProposalTestRunError("At least one explicit check is required.")
+        if len(commands) > _MAX_CHECKS:
+            raise ProposalTestRunError("At most 32 checks may be scheduled per execution.")
         for command in commands:
             _validate_test_command(command)
         policy.validate()
@@ -99,18 +133,7 @@ def run_journaled_proposal_checks(
         record = journal.transition(
             execution_id,
             terminal_state,
-            result={
-                "checks": [
-                    {
-                        "returncode": item.returncode,
-                        "timed_out": item.timed_out,
-                        "output_truncated": item.output_truncated,
-                        "stdout": item.stdout,
-                        "stderr": item.stderr,
-                    }
-                    for item in checks
-                ]
-            },
+            result=_bounded_result(checks),
             cleanup_confirmed=True,
         )
         return JournaledProposalResult(record, checks)
