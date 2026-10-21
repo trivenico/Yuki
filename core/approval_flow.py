@@ -139,6 +139,15 @@ class ApprovalCoordinator:
                     )
                 except Exception:
                     pass
+            if self.execution_ledger is not None:
+                try:
+                    self._audit("execution_uncertain", pending_id, actor, pending["skill_id"])
+                except Exception:
+                    pass
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_error": type(exc).__name__, "execution_state": "uncertain"},
+                )
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
             except Exception:
