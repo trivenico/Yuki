@@ -250,27 +250,17 @@ class SQLiteExecutionJournal:
                 raise
 
     def mark_interrupted_for_reconciliation(self) -> tuple[str, ...]:
-        """Return jobs requiring cleanup, including previously interrupted recovery.
+        """Return only jobs explicitly marked for cleanup.
 
-        Existing cleanup_required rows remain in that state but are returned so
-        recovery can resume after the recovery worker itself crashes.
+        Do not infer that a created/running job is abandoned merely because a
+        process is starting: another live process may own it. The execution
+        supervisor must explicitly transition a job to cleanup_required after
+        it has established that execution has stopped. This method only resumes
+        durable cleanup work left by a prior recovery attempt.
         """
         with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                rows = db.execute(
-                    "SELECT execution_id FROM sandbox_executions WHERE state IN ('created','running','cleanup_required') ORDER BY created_at"
-                ).fetchall()
-                ids = tuple(row[0] for row in rows)
-                if ids:
-                    now = self._now()
-                    db.executemany(
-                        "UPDATE sandbox_executions SET state='cleanup_required', updated_at=? WHERE execution_id=? AND state IN ('created','running')",
-                        [(now, execution_id) for execution_id in ids],
-                    )
-                db.execute("COMMIT")
-                return ids
-            except Exception:
-                if db.in_transaction:
-                    db.execute("ROLLBACK")
-                raise
+            rows = db.execute(
+                "SELECT execution_id FROM sandbox_executions "
+                "WHERE state='cleanup_required' ORDER BY created_at"
+            ).fetchall()
+        return tuple(row[0] for row in rows)
