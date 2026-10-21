@@ -12,7 +12,7 @@ class OpenAICompatibleProvider:
     """A small Chat Completions adapter. No API key is stored in source/config files."""
 
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
-                 base_url="https://api.openai.com/v1", timeout=45):
+                 base_url="https://api.openai.com/v1", timeout=45, usage_tracker=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
@@ -27,6 +27,7 @@ class OpenAICompatibleProvider:
         self.api_key_env = api_key_env
         self.base_url = base_url.strip().rstrip("/")
         self.timeout = timeout
+        self.usage_tracker = usage_tracker
 
     def is_available(self):
         return bool(os.environ.get(self.api_key_env, "").strip())
@@ -66,4 +67,20 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider returned an unsupported response.") from exc
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Cloud provider returned no text response.")
+        if self.usage_tracker is not None and isinstance(body, dict):
+            usage = body.get("usage")
+            prompt_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+            output_tokens = usage.get("completion_tokens") if isinstance(usage, dict) else None
+            if (type(prompt_tokens) is int and prompt_tokens >= 0
+                    and type(output_tokens) is int and output_tokens >= 0):
+                self.usage_tracker.record(
+                    provider="openai-compatible", model=self.model,
+                    input_tokens=prompt_tokens, output_tokens=output_tokens, estimated=False,
+                )
+            else:
+                self.usage_tracker.record(
+                    provider="openai-compatible", model=self.model,
+                    input_tokens=max(1, len(prompt.strip()) // 4),
+                    output_tokens=max(1, len(text) // 4), estimated=True,
+                )
         return text.strip()
