@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,7 @@ class JournalBackupTests(unittest.TestCase):
     def test_backup_contains_consistent_journal_state(self):
         result = backup_sqlite_database(self.source, self.destination)
         self.assertEqual(result, self.destination)
-        with sqlite3.connect(str(result)) as db:
+        with closing(sqlite3.connect(str(result))) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             row = db.execute(
                 "SELECT execution_id, state FROM sandbox_executions WHERE execution_id=?",
@@ -33,14 +34,14 @@ class JournalBackupTests(unittest.TestCase):
         self.destination.parent.mkdir(parents=True)
         self.destination.write_bytes(b"old backup")
         backup_sqlite_database(self.source, self.destination)
-        with sqlite3.connect(str(self.destination)) as db:
+        with closing(sqlite3.connect(str(self.destination))) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_backup_restores_into_a_fresh_journal_with_state_intact(self):
         backup_sqlite_database(self.source, self.destination)
         restored_path = Path(self.temp.name) / "restored.sqlite3"
-        with sqlite3.connect(str(self.destination)) as backup_db:
-            with sqlite3.connect(str(restored_path)) as restored_db:
+        with closing(sqlite3.connect(str(self.destination))) as backup_db:
+            with closing(sqlite3.connect(str(restored_path))) as restored_db:
                 backup_db.backup(restored_db)
                 self.assertEqual(
                     restored_db.execute("PRAGMA integrity_check").fetchone()[0], "ok"
