@@ -49,7 +49,7 @@ def _module_available(name: str, finder: Callable = importlib.util.find_spec) ->
         return False
 
 
-def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable = urlopen) -> Capability:
+def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None = None) -> Capability:
     """Probe Ollama's local tags endpoint with a strict timeout and no credentials."""
     if not 0 < timeout <= 3:
         return Capability("unavailable", "Probe timeout must be greater than 0 and at most 3 seconds.")
@@ -65,7 +65,8 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable = urlope
             return Capability("unavailable", "Only loopback Ollama endpoints are allowed for local readiness checks.")
         endpoint = base_url.rstrip("/") + "/api/tags"
         request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
-        with opener(request, timeout=timeout) as response:
+        open_url = urlopen if opener is None else opener
+        with open_url(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             if status != 200:
                 return Capability("unavailable", f"Ollama endpoint returned HTTP {status}.")
