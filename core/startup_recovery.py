@@ -59,7 +59,15 @@ def recover_interrupted_executions(
             items.append(RecoveryItem(execution_id, "claimed_by_other_worker"))
             continue
         try:
-            container = reconcile(execution_id)
+            if reconcile is reconcile_execution_container:
+                container = reconcile(
+                    execution_id,
+                    before_remove=lambda: journal.renew_recovery_claim(
+                        execution_id, worker_id, lease_seconds
+                    ),
+                )
+            else:
+                container = reconcile(execution_id)
             journal.transition(execution_id, "cleaned", result={
                 "recovery": "container_absent" if container.already_absent else "container_removed",
                 "container_inspected": container.inspected,

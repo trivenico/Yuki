@@ -213,6 +213,29 @@ class SQLiteExecutionJournal:
                 if db.in_transaction: db.execute("ROLLBACK")
                 raise
 
+    def renew_recovery_claim(self, execution_id: str, worker_id: str, lease_seconds: int = 60) -> bool:
+        """Extend a live claim only while its current owner still holds it."""
+        if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 128 or chr(0) in worker_id:
+            raise ExecutionJournalError("worker_id must be a non-empty bounded string")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 1 <= lease_seconds <= 3600:
+            raise ExecutionJournalError("lease_seconds must be between 1 and 3600")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expiry = datetime.fromtimestamp(now_dt.timestamp() + lease_seconds, timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                claim = db.execute("SELECT worker_id, lease_expires_at FROM sandbox_recovery_claims WHERE execution_id=?", (execution_id,)).fetchone()
+                if claim is None or claim[0] != worker_id or claim[1] <= now:
+                    db.execute("COMMIT")
+                    return False
+                db.execute("UPDATE sandbox_recovery_claims SET lease_expires_at=? WHERE execution_id=? AND worker_id=?", (expiry, execution_id, worker_id))
+                db.execute("COMMIT")
+                return True
+            except Exception:
+                if db.in_transaction: db.execute("ROLLBACK")
+                raise
+
     def release_recovery_claim(self, execution_id: str, worker_id: str) -> bool:
         """Release only the claim owned by this worker."""
         with self._connect() as db:

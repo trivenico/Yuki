@@ -27,6 +27,15 @@ class ExecutionJournalTests(unittest.TestCase):
         self.assertTrue(self.journal.release_recovery_claim("claim-job", "worker-a"))
         self.assertTrue(self.journal.claim_recovery("claim-job", "worker-b", 60))
 
+    def test_recovery_claim_renewal_requires_current_unexpired_owner(self):
+        record = self.journal.create("renew-job", {"proposal": "x"})
+        self.journal.transition(record.execution_id, "running")
+        self.journal.transition(record.execution_id, "cleanup_required")
+        self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-a", 60))
+        self.assertTrue(self.journal.renew_recovery_claim(record.execution_id, "worker-a", 120))
+        self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-b", 120))
+        self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-a", 0))
+
     def test_recovery_claim_rejects_invalid_lease(self):
         with self.assertRaises(ExecutionJournalError):
             self.journal.claim_recovery("missing", "worker-a", 0)
