@@ -162,7 +162,7 @@ class DockerSandboxTests(unittest.TestCase):
             {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "flags": [{}]},
             {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [{"action": {}, "names": ["read"]}]},
             {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [{"action": "SCMP_ACT_ALLOW", "names": ["read"], "args": [{"index": 0, "op": [], "value": 1}]}]},
-            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "listenerPath": "/tmp/\\u0000socket"},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "listenerPath": "/tmp/\\x00socket"},
         ]
         for profile in invalid_profiles:
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
