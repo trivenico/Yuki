@@ -66,15 +66,17 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             def append(self, **_event):
                 raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=BrokenAudit())
-        with self.assertRaisesRegex(RuntimeError, "could not be audited"):
-            coordinator.record(
-                self.planner, action_result(), actor="owner", session_id="session-a"
-            )
-        with self.pending_store._connect() as db:
-            count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
-        self.assertEqual(count, 0)
-        self.assertEqual(self.planner.executed, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit())
+            with self.assertRaisesRegex(RuntimeError, "could not be audited"):
+                coordinator.record(
+                    self.planner, action_result(), actor="owner", session_id="session-a"
+                )
+            with store._connect() as db:
+                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
+            self.assertEqual(count, 0)
+            self.assertEqual(self.planner.executed, [])
 
     def test_persistent_pending_request_is_removed_when_audit_fails(self):
         class BrokenAudit:
