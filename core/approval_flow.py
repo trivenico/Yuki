@@ -19,13 +19,14 @@ class ApprovalOutcome:
 
 
 class ApprovalCoordinator:
-    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
+    def __init__(self, *, pending_store=None, audit_log=None, execution_ledger=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
         if pending_store is None or not callable(getattr(pending_store, "put", None)) or not callable(getattr(pending_store, "consume", None)) or not callable(getattr(pending_store, "deny", None)):
             raise ValueError("A durable pending-approval store is required; in-memory fallback is disabled.")
         self.pending_store = pending_store
         self.audit_log = audit_log
+        self.execution_ledger = execution_ledger
         self.max_pending = max_pending
 
     def _require_audit(self) -> None:
@@ -106,6 +107,23 @@ class ApprovalCoordinator:
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
+        # When configured, durably claim the action before invoking any side effect.
+        # Existing non-prepared records must be reconciled, never replayed blindly.
+        if self.execution_ledger is not None:
+            try:
+                execution, created = self.execution_ledger.begin(pending_id, action)
+                if not created and execution.state != "prepared":
+                    return ApprovalOutcome(
+                        False, "recovery_required", pending_id=pending_id,
+                        result={"execution_state": execution.state},
+                    )
+                self.execution_ledger.transition(pending_id, "running")
+            except Exception as exc:
+                return ApprovalOutcome(
+                    False, "execution_ledger_unavailable", pending_id=pending_id,
+                    result=type(exc).__name__,
+                )
+
         try:
             result = (
                 planner.agent.execute_approved_action(action)
@@ -113,6 +131,14 @@ class ApprovalCoordinator:
                 else planner.execute_approved_action(action)
             )
         except Exception as exc:
+            if self.execution_ledger is not None:
+                try:
+                    self.execution_ledger.transition(
+                        pending_id, "uncertain",
+                        result={"reason": "executor raised", "error_type": type(exc).__name__},
+                    )
+                except Exception:
+                    pass
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
             except Exception:
@@ -129,6 +155,16 @@ class ApprovalCoordinator:
         # {"ok": False} would be incorrectly reported as successful execution.
         result_ok = result.get("ok", True) if isinstance(result, dict) else getattr(result, "ok", True)
         if result_ok is False:
+            if self.execution_ledger is not None:
+                try:
+                    self.execution_ledger.transition(
+                        pending_id, "failed", result={"ok": False, "result_type": type(result).__name__}
+                    )
+                except Exception as exc:
+                    return ApprovalOutcome(
+                        False, "recovery_required", pending_id=pending_id,
+                        result={"execution_result": result, "ledger_error": type(exc).__name__},
+                    )
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
             except Exception:
@@ -137,6 +173,18 @@ class ApprovalCoordinator:
                     result={"execution_result": result, "audit": "unavailable"},
                 )
             return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=result)
+
+        if self.execution_ledger is not None:
+            try:
+                self.execution_ledger.transition(
+                    pending_id, "completed",
+                    result={"ok": True, "result_type": type(result).__name__},
+                )
+            except Exception as exc:
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_result": result, "ledger_error": type(exc).__name__},
+                )
 
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
