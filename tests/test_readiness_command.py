@@ -12,12 +12,12 @@ class ReadinessCommandTests(unittest.TestCase):
             lambda: False,
             {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3},
         )
+        output = io.StringIO()
         patches = [
             patch("builtins.input", side_effect=["/readiness", "/quit"]),
-            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stdout", new=output),
             patch.object(main, "load_config", return_value=config),
         ]
-        # Keep setup maintainable and avoid Python's static nested-with limit.
         for name in (
             "build_agent", "create_provider", "YukiAgent", "ApprovedTaskAgent",
             "MemoryStore", "VectorMemory", "KnowledgeIndexer", "Planner",
@@ -26,21 +26,22 @@ class ReadinessCommandTests(unittest.TestCase):
             "PacketSniffer", "ExploitRunner", "SpeakerVerifier",
         ):
             patches.append(patch.object(main, name))
-        if report_side_effect is not None:
-            patches.append(patch("main.build_readiness_report", side_effect=report_side_effect))
-        else:
-            report = patch("main.build_readiness_report")
-            patches.append(report)
+        readiness = patch(
+            "main.build_readiness_report",
+            side_effect=report_side_effect,
+        ) if report_side_effect is not None else patch("main.build_readiness_report")
+        patches.append(readiness)
+
         started = []
         try:
             for item in patches:
                 started.append(item)
                 item.start()
             if report_side_effect is None:
-                readiness = patches[-1]
-                readiness.return_value.to_dict.return_value = report_value
+                readiness_mock = readiness.new
+                readiness_mock.return_value.to_dict.return_value = report_value
             main.main()
-            return patches[1].return_value.getvalue()
+            return output.getvalue()
         finally:
             for item in reversed(started):
                 item.stop()
