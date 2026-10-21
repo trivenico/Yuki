@@ -106,7 +106,9 @@ class SQLiteEngineeringEvidenceStore:
         if not isinstance(repository, str) or repository.count("/") != 1:
             raise EngineeringEvidenceError("repository must use owner/name format")
         owner, repo = repository.split("/", 1)
-        if not _REPO_PART_RE.fullmatch(owner) or not _REPO_PART_RE.fullmatch(repo):
+        if (owner in {".", ".."} or repo in {".", ".."}
+                or not _REPO_PART_RE.fullmatch(owner)
+                or not _REPO_PART_RE.fullmatch(repo)):
             raise EngineeringEvidenceError("repository contains invalid characters")
         if type(pr_number) is not int or pr_number < 1:
             raise EngineeringEvidenceError("PR number must be a positive integer")
