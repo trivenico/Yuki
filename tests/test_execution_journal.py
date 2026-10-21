@@ -49,7 +49,8 @@ class ExecutionJournalTests(unittest.TestCase):
         self.assertEqual(set(marked), {"exec-1", "exec-2"})
         self.assertEqual(self.journal.get("exec-1").state, "cleanup_required")
         self.assertEqual(self.journal.get("exec-2").state, "cleanup_required")
-        self.assertEqual(self.journal.mark_interrupted_for_reconciliation(), ())
+        # Pending cleanup remains discoverable so a restarted recovery worker can resume.
+        self.assertEqual(set(self.journal.mark_interrupted_for_reconciliation()), {"exec-1", "exec-2"})
 
     def test_result_size_and_non_json_values_are_rejected(self):
         self.journal.create("exec-1", self.context)
