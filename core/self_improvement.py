@@ -29,6 +29,11 @@ PROTECTED_PREFIXES = (
 MAX_FILES = 20
 MAX_FILE_BYTES = 256_000
 MAX_TOTAL_BYTES = 1_000_000
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 
 @dataclass(frozen=True)
@@ -61,12 +66,21 @@ def _validate_path(raw: str) -> str:
         raise ProposalRejected("Each changed file must have a valid relative path.")
     if "\\" in raw or raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
         raise ProposalRejected("Absolute paths and platform-specific separators are forbidden.")
-    path = PurePosixPath(raw)
-    if any(part in {"", ".", ".."} for part in path.parts):
-        raise ProposalRejected("Path traversal and ambiguous path segments are forbidden.")
-    if any(ord(char) < 32 for char in raw):
+    # Validate raw segments before PurePosixPath can normalize away "." or
+    # repeated separators. These forms are ambiguous across filesystems.
+    raw_parts = raw.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise ProposalRejected("Traversal, empty, and dot path segments are forbidden.")
+    if any(ord(char) < 32 or ord(char) == 127 for char in raw):
         raise ProposalRejected("Control characters are forbidden in paths.")
-    if path.parts[0] == ".git" or path.parts[0] == ".hg":
+    for part in raw_parts:
+        if part.endswith((" ", ".")) or ":" in part:
+            raise ProposalRejected("Windows path aliases and alternate data streams are forbidden.")
+        device_name = part.split(".", 1)[0].upper()
+        if device_name in _WINDOWS_RESERVED_NAMES:
+            raise ProposalRejected("Reserved Windows device names are forbidden.")
+    path = PurePosixPath(raw)
+    if path.parts[0].casefold() in {".git", ".hg"}:
         raise ProposalRejected("Version-control internals cannot be modified.")
     if path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}:
         raise ProposalRejected("Secret and private-key file types cannot be changed.")
