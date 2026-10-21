@@ -43,10 +43,10 @@ class YukiCoreAgent:
         return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
-        # Keep the direct public entry point at least as strict as the model planner.
-        # Approval UI and execution must see the same bounded argument, not a truncated
-        # preview of an unbounded value.
-        if not isinstance(argument, str) or len(argument) > 500 or "\\x00" in argument:
+        # Reject invalid inputs before registry access or approval.
+        # Use an actual NUL check; a literal "\\x00" check would only reject
+        # the four-character text sequence and miss embedded NUL bytes.
+        if not isinstance(argument, str) or len(argument) > 500 or "\x00" in argument:
             return AgentResponse(
                 False,
                 "Blocked: skill argument must be a NUL-free string of at most 500 characters.",
@@ -58,15 +58,17 @@ class YukiCoreAgent:
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
-        # Strict policy: request fresh approval for every skill invocation. This is
-        # intentionally stricter than per-skill defaults so model output cannot
-        # invoke a state-changing or external capability without human confirmation.
+        # Strict policy: request fresh approval for every skill invocation.
         approved = self.permission_gate.request(
-            action=f"skill:{skill.name}", reason=f"Invoke {skill.name} ({skill.description}); argument={argument[:500]!r}", risk=skill.risk
+            action=f"skill:{skill.name}",
+            reason=f"Invoke {skill.name} ({skill.description}); argument={argument!r}",
+            risk=skill.risk,
         )
         if not approved:
-            return AgentResponse(False, "Not executed: explicit human approval was not granted.",
-                                 name, stage="permission_denied")
+            return AgentResponse(
+                False, "Not executed: explicit human approval was not granted.",
+                name, stage="permission_denied",
+            )
         try:
             result = skill.execute(argument)
             if isinstance(result, dict):
@@ -79,5 +81,7 @@ class YukiCoreAgent:
                 data = getattr(result, "data", None)
             return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
         except Exception:
-            return AgentResponse(False, "Skill failed safely; detailed exception was not exposed.", name,
-                                 stage="observe")
+            return AgentResponse(
+                False, "Skill failed safely; detailed exception was not exposed.",
+                name, stage="observe",
+            )
