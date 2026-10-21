@@ -22,8 +22,9 @@ def decision(*, allowed=True, persisted=True, repository="trivenico/yuki", pr=74
 
 class ProtectedOperationTests(unittest.TestCase):
     def run_gate(self, evaluate_gate, operation, **target):
+        target_args = {**TARGET, **target}
         return run_protected_operation(
-            evaluate_gate=evaluate_gate, operation=operation, **(target or TARGET)
+            evaluate_gate=evaluate_gate, operation=operation, **target_args
         )
 
     def test_operation_runs_only_after_persisted_allow_for_exact_target(self):
