@@ -36,6 +36,10 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "model is required"):
             create_provider({"environment": "staging", "provider": "ollama"}, environ={})
 
+    def test_production_environment_override_rejects_mock(self):
+        with self.assertRaisesRegex(RuntimeError, "Production requires a real provider"):
+            create_provider({"provider": "mock"}, environ={"YUKI_ENVIRONMENT": "production"})
+
     def test_provider_environment_override_is_validated(self):
         with self.assertRaisesRegex(RuntimeError, "Production requires a real provider"):
             create_provider({"environment": "production", "provider": "ollama", "ollama_model": "model"},
