@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -46,6 +47,32 @@ class SQLiteExecutionLedgerTests(unittest.TestCase):
         pending = self.ledger.list_reconciliation_required()
         self.assertEqual([item.idempotency_key for item in pending], ["request-1"])
         self.assertEqual(pending[0].state, "uncertain")
+
+    def test_prepared_records_are_visible_for_reconciliation(self):
+        self.ledger.begin("request-prepared", self.action)
+        records = self.ledger.list_reconciliation_required()
+        self.assertEqual([record.idempotency_key for record in records], ["request-prepared"])
+        self.assertEqual(records[0].state, "prepared")
+
+    def test_reconciliation_results_use_key_as_stable_tiebreaker(self):
+        self.ledger.begin("request-z", self.action)
+        self.ledger.begin("request-a", self.action)
+        # Force an identical timestamp so this test specifically verifies the
+        # documented secondary sort key, independent of machine clock resolution.
+        db = sqlite3.connect(self.path)
+        try:
+            db.execute(
+                "UPDATE action_execution_ledger SET updated_at = ?",
+                ("2026-01-01T00:00:00+00:00",),
+            )
+            db.commit()
+        finally:
+            db.close()
+        records = self.ledger.list_reconciliation_required()
+        self.assertEqual(
+            [record.idempotency_key for record in records],
+            ["request-a", "request-z"],
+        )
 
     def test_two_instances_cannot_create_duplicate_intent(self):
         second = SQLiteExecutionLedger(self.path)
