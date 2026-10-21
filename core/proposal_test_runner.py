@@ -63,6 +63,7 @@ def run_proposal_checks(
     policy: SandboxPolicy,
     image: str,
     commands: Sequence[Sequence[str]],
+    execution_id: str | None = None,
 ) -> tuple[SandboxResult, ...]:
     """Run ordered checks in the same disposable workspace, stopping on failure."""
     managed = _managed_workspace(workspace, parent_dir)
@@ -84,6 +85,7 @@ def run_proposal_checks(
                 image=image,
                 workspace=str(managed),
                 command=command,
+                execution_id=execution_id,
             )
         except SandboxExecutionError as exc:
             raise ProposalTestRunError("Sandbox check failed to complete safely.") from exc

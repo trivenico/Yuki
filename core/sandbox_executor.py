@@ -15,6 +15,7 @@ from typing import Sequence
 
 from core.sandbox_policy import SandboxPolicy, SandboxPolicyError
 from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
+from core.container_recovery import container_name_for_execution
 
 
 class SandboxExecutionError(RuntimeError):
@@ -52,6 +53,7 @@ def execute_docker_sandbox(
     image: str,
     workspace: str,
     command: Sequence[str],
+    execution_id: str | None = None,
 ) -> SandboxResult:
     """Run one isolated container, enforcing a wall-clock timeout and output cap.
 
@@ -65,12 +67,15 @@ def execute_docker_sandbox(
     except (SandboxPolicyError, SandboxRuntimeError, AttributeError) as exc:
         raise SandboxExecutionError("Sandbox policy or configuration rejected.") from exc
 
-    container_name = "yuki-job-" + secrets.token_hex(12)
+    container_name = container_name_for_execution(execution_id) if execution_id is not None else "yuki-job-" + secrets.token_hex(12)
     # Use a named container and explicit cleanup instead of relying on --rm,
     # which cannot clean up if the Docker client itself is terminated.
     argv = [arg for arg in argv if arg != "--rm"]
     image_index = argv.index(image)
-    argv[image_index:image_index] = ["--name", container_name]
+    identity_args = ["--name", container_name]
+    if execution_id is not None:
+        identity_args.extend(["--label", "com.yuki.managed=true", "--label", f"com.yuki.execution-id={execution_id}"])
+    argv[image_index:image_index] = identity_args
 
     stdout = bytearray()
     stderr = bytearray()
