@@ -38,3 +38,33 @@ jobs:
         run: python -m compileall -q .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  docker-integration:
+    name: Docker sandbox integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install runtime dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Pull sandbox test image
+        run: docker pull python:3.12-slim
+      - name: Resolve immutable image digest
+        id: sandbox-image
+        shell: bash
+        run: |
+          IMAGE_REF="$(docker image inspect --format='{{index .RepoDigests 0}}' python:3.12-slim)"
+          if [[ ! "$IMAGE_REF" =~ ^python@sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve python image to a digest: $IMAGE_REF" >&2
+            exit 1
+          fi
+          echo "image=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+      - name: Exercise real Docker sandbox
+        env:
+          YUKI_DOCKER_INTEGRATION_IMAGE: ${{ steps.sandbox-image.outputs.image }}
+        run: python -m unittest tests.test_docker_sandbox_integration -v
