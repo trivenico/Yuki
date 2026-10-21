@@ -122,6 +122,7 @@ def run_journaled_proposal_checks(
             policy=policy,
             image=image,
             commands=commands,
+            execution_id=execution_id,
         )
         last = checks[-1]
         if last.timed_out:
