@@ -67,6 +67,31 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
 
+    def test_incomplete_approval_is_reported_without_replaying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            audit.append(event_type="requested", pending_id="p-1", actor="owner", skill_id="notes.write")
+            audit.append(event_type="approved", pending_id="p-1", actor="owner", skill_id="notes.write")
+            audit.append(event_type="requested", pending_id="p-2", actor="owner", skill_id="notes.write")
+            audit.append(event_type="approved", pending_id="p-2", actor="owner", skill_id="notes.write")
+            audit.append(event_type="executed", pending_id="p-2", actor="owner", skill_id="notes.write")
+
+            incomplete = audit.find_incomplete_executions()
+            self.assertEqual(len(incomplete), 1)
+            self.assertEqual(
+                incomplete[0]["pending_id_hash"],
+                SQLiteApprovalAuditLog._digest("p-1"),
+            )
+            self.assertNotIn("pending_id", incomplete[0])
+            self.assertTrue(audit.verify_chain())
+
+    def test_recovery_query_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            for limit in (0, -1, 10001, True):
+                with self.assertRaises(ValueError):
+                    audit.find_incomplete_executions(limit=limit)
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
