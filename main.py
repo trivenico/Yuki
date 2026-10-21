@@ -27,6 +27,7 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.readiness import build_readiness_report
 
 
 def _ask_approval(request):
@@ -60,6 +61,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /readiness                     Detect runtime and local model readiness
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -150,6 +152,15 @@ def main():
             return
         if command == "/help":
             print_help()
+        elif command == "/readiness":
+            try:
+                report = build_readiness_report().to_dict()
+                print(f"Yuki runtime: Python {report['python']} ({report['implementation']}); {report['operating_system']} / {report['architecture']}")
+                for name, capability in report["capabilities"].items():
+                    print(f"- {name}: {capability['status']} — {capability['detail']}")
+            except Exception as exc:
+                # Diagnostics must never prevent the guarded core from continuing.
+                print(f"Yuki > Readiness diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
