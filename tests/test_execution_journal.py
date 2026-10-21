@@ -65,11 +65,15 @@ class ExecutionJournalTests(unittest.TestCase):
         self.journal.transition(record.execution_id, "running")
         self.journal.transition(record.execution_id, "cleanup_required")
         self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-stale", 60))
-        with sqlite3.connect(self.journal.database_path) as db:
+        db = sqlite3.connect(self.journal.database_path)
+        try:
             db.execute(
                 "UPDATE sandbox_recovery_claims SET lease_expires_at=? WHERE execution_id=?",
                 ("2000-01-01T00:00:00+00:00", record.execution_id),
             )
+            db.commit()
+        finally:
+            db.close()
         self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-stale", 60))
         with self.assertRaisesRegex(ExecutionJournalError, "missing, expired, or owned"):
             self.journal.transition(
