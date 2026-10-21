@@ -95,7 +95,7 @@ class DockerSandbox:
         unknown_keys = set(profile) - allowed_top_level
         if unknown_keys:
             raise SandboxError("Seccomp profile contains unsupported top-level fields.")
-        if profile.get("defaultAction") not in allowed_actions:
+        if not isinstance(profile.get("defaultAction"), str) or profile.get("defaultAction") not in allowed_actions:
             raise SandboxError("Configured seccomp profile must use a fail-closed defaultAction.")
         errno_ret = profile.get("defaultErrnoRet")
         if errno_ret is not None and (
@@ -115,14 +115,14 @@ class DockerSandbox:
             "SECCOMP_FILTER_FLAG_LOG", "SECCOMP_FILTER_FLAG_SPEC_ALLOW",
             "SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV",
         }
-        if not isinstance(flags, list) or any(flag not in allowed_flags for flag in flags):
+        if not isinstance(flags, list) or any(not isinstance(flag, str) or flag not in allowed_flags for flag in flags):
             raise SandboxError("Seccomp flags contain an unsupported value.")
         if len(set(flags)) != len(flags):
             raise SandboxError("Seccomp flags must not contain duplicates.")
         listener_path = profile.get("listenerPath")
         if listener_path is not None and (
             not isinstance(listener_path, str) or not listener_path.startswith("/")
-            or "\\x00" in listener_path
+            or "\x00" in listener_path
         ):
             raise SandboxError("Seccomp listenerPath must be an absolute path.")
         listener_metadata = profile.get("listenerMetadata")
@@ -139,7 +139,7 @@ class DockerSandbox:
         for entry in syscalls:
             if not isinstance(entry, dict):
                 raise SandboxError("Each seccomp syscall rule must be an object.")
-            if entry.get("action") not in valid_actions:
+            if not isinstance(entry.get("action"), str) or entry.get("action") not in valid_actions:
                 raise SandboxError("Seccomp syscall rule has an unsupported action.")
             names = entry.get("names")
             if not isinstance(names, list) or not names or any(
@@ -156,7 +156,7 @@ class DockerSandbox:
                 index = condition.get("index")
                 if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 5:
                     raise SandboxError("Seccomp syscall argument index must be between 0 and 5.")
-                if condition.get("op") not in valid_comparators:
+                if not isinstance(condition.get("op"), str) or condition.get("op") not in valid_comparators:
                     raise SandboxError("Seccomp syscall argument comparator is unsupported.")
                 for key in ("value", "valueTwo"):
                     value = condition.get(key, 0)
