@@ -64,7 +64,7 @@ def recover_interrupted_executions(
                 "recovery": "container_absent" if container.already_absent else "container_removed",
                 "container_inspected": container.inspected,
                 "container_removed": container.removed,
-            }, cleanup_confirmed=True)
+            }, cleanup_confirmed=True, recovery_worker_id=worker_id)
             cleaned += 1
             items.append(RecoveryItem(execution_id, "cleaned", container=container))
         except (ContainerRecoveryError, ExecutionJournalError, OSError, RuntimeError) as exc:
