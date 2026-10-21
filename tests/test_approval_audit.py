@@ -33,6 +33,30 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.append(event_type="requested", pending_id="", actor="owner", skill_id="x")
 
+    def test_audit_chain_verifies_and_detects_tampering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audit.sqlite3")
+            audit = SQLiteApprovalAuditLog(path)
+            audit.append(event_type="requested", pending_id="pending-1", actor="owner-secret", skill_id="notes.write")
+            audit.append(event_type="approved", pending_id="pending-1", actor="owner-secret", skill_id="notes.write")
+            self.assertTrue(audit.verify_chain())
+            import sqlite3
+            db = sqlite3.connect(path)
+            try:
+                db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
+                db.commit()
+            finally:
+                db.close()
+            self.assertFalse(audit.verify_chain())
+
+    def test_actor_identifier_is_not_persisted_in_plaintext(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audit.sqlite3")
+            audit = SQLiteApprovalAuditLog(path)
+            audit.append(event_type="requested", pending_id="pending-1", actor="secret-actor-123", skill_id="notes.write")
+            with open(path, "rb") as handle:
+                self.assertNotIn(b"secret-actor-123", handle.read())
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
