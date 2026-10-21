@@ -53,6 +53,40 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             self.assertEqual(outcomes.count(True), 1)
             self.assertEqual(outcomes.count(False), 1)
 
+    def test_consume_is_atomic_across_independent_store_instances(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_a = self.make_store(tmp)
+            store_b = self.make_store(tmp)
+            item = store_a.put(
+                "notes.write", {"text": "cross-instance"},
+                {"skill_id": "notes.write", "arguments": {"text": "cross-instance"}},
+                actor="owner", session_id="session-a",
+            )
+            barrier = threading.Barrier(3)
+            outcomes = []
+            lock = threading.Lock()
+
+            def claim(store):
+                barrier.wait()
+                result = store.consume(
+                    item.pending_id, actor="owner", session_id="session-a"
+                )
+                with lock:
+                    outcomes.append(result is not None)
+
+            workers = [
+                threading.Thread(target=claim, args=(store_a,)),
+                threading.Thread(target=claim, args=(store_b,)),
+            ]
+            for worker in workers:
+                worker.start()
+            barrier.wait()
+            for worker in workers:
+                worker.join(timeout=5)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(outcomes.count(True), 1)
+            self.assertEqual(outcomes.count(False), 1)
+
     def test_rejects_oversized_or_non_json_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
