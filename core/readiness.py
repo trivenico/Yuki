@@ -59,8 +59,10 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable = urlope
             return Capability("unavailable", "Ollama endpoint must be an HTTP(S) URL with a hostname.")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             return Capability("unavailable", "Ollama endpoint must not contain credentials, query, or fragment.")
-        if parsed.scheme == "http" and parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
-            return Capability("unavailable", "Non-loopback Ollama endpoints require HTTPS.")
+        # This diagnostic is explicitly for a local model server. Do not let an
+        # environment variable turn a readiness check into a remote network probe.
+        if parsed.hostname.lower() not in {"localhost", "127.0.0.1", "::1"}:
+            return Capability("unavailable", "Only loopback Ollama endpoints are allowed for local readiness checks.")
         endpoint = base_url.rstrip("/") + "/api/tags"
         request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
         with opener(request, timeout=timeout) as response:
