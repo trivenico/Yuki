@@ -112,7 +112,18 @@ class ApprovalCoordinator:
         if self.execution_ledger is not None:
             try:
                 execution, created = self.execution_ledger.begin(pending_id, action)
-                if not created and execution.state != "prepared":
+                if not created:
+                    # Any pre-existing record means this approval key has already
+                    # entered the durable execution lifecycle. Even "prepared" is
+                    # ambiguous across process crashes; fail closed and reconcile
+                    # instead of allowing a second coordinator to start the action.
+                    try:
+                        self._audit(
+                            "execution_recovery_required", pending_id, actor,
+                            pending["skill_id"],
+                        )
+                    except Exception:
+                        pass
                     return ApprovalOutcome(
                         False, "recovery_required", pending_id=pending_id,
                         result={"execution_state": execution.state},
