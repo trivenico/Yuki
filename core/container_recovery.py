@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 class ContainerRecoveryError(RuntimeError):
@@ -56,7 +56,7 @@ def _docker(args: Sequence[str], *, timeout_seconds: int) -> subprocess.Complete
         raise ContainerRecoveryError("Docker state could not be queried safely.") from exc
 
 
-def reconcile_execution_container(execution_id: str) -> ContainerRecoveryResult:
+def reconcile_execution_container(execution_id: str, *, before_remove: Callable[[], bool] | None = None) -> ContainerRecoveryResult:
     """Remove a stopped/running container only after exact label verification."""
     name = container_name_for_execution(execution_id)
     inspected = _docker(
@@ -77,6 +77,13 @@ def reconcile_execution_container(execution_id: str) -> ContainerRecoveryResult:
     if actual_name.lstrip("/") != name or managed != "true" or actual_execution_id != execution_id:
         raise ContainerRecoveryError("Container ownership labels do not match; refusing cleanup.")
 
+    if before_remove is not None:
+        try:
+            authorized = before_remove()
+        except Exception as exc:
+            raise ContainerRecoveryError("Recovery claim could not be verified before container removal.") from exc
+        if authorized is not True:
+            raise ContainerRecoveryError("Recovery claim expired or changed before container removal.")
     removed = _docker(["rm", "-f", name], timeout_seconds=10)
     if removed.returncode != 0:
         raise ContainerRecoveryError("Verified Yuki container cleanup failed.")
