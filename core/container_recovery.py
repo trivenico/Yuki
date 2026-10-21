@@ -60,7 +60,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
     """Remove a stopped/running container only after exact label verification."""
     name = container_name_for_execution(execution_id)
     inspected = _docker(
-        ["inspect", "--format", "{{.Id}}\\t{{.Name}}\\t{{index .Config.Labels \\"com.yuki.managed\\"}}\\t{{index .Config.Labels \\"com.yuki.execution-id\\"}}", name],
+        ["inspect", "--format", "{{.Id}}\t{{.Name}}\t{{index .Config.Labels \"com.yuki.managed\"}}\t{{index .Config.Labels \"com.yuki.execution-id\"}}", name],
         timeout_seconds=5,
     )
     if inspected.returncode != 0:
