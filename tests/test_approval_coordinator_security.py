@@ -1,10 +1,11 @@
-"""Security regression tests for approval coordinator behavior."""
+""""Security regression tests for approval coordinator behavior."""
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 
@@ -22,8 +23,10 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tempdir.cleanup)
-        store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
-        self.coordinator = ApprovalCoordinator(pending_store=store)
+        root = Path(self.tempdir.name)
+        store = SQLitePendingApprovalStore(str(root / "pending.sqlite3"))
+        audit_log = SQLiteApprovalAuditLog(str(root / "audit.sqlite3"))
+        self.coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit_log)
         self.planner = DummyPlanner()
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
