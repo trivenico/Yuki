@@ -51,6 +51,18 @@ class SQLiteTaskLifecycleStoreTests(unittest.TestCase):
             self.store.transition(task.task_id, expected_state="pending", new_state="completed",
                                   result={"ok": True})
 
+    def test_transition_rejects_malformed_identifiers_states_and_versions(self):
+        task = self.create()
+        for invalid_version in (True, -1, 1.5, "0"):
+            with self.subTest(expected_version=invalid_version):
+                with self.assertRaises(ValueError):
+                    self.store.transition(task.task_id, expected_state="pending",
+                                          new_state="approved", expected_version=invalid_version)
+        with self.assertRaises(ValueError):
+            self.store.transition([], expected_state="pending", new_state="approved")
+        with self.assertRaises(ValueError):
+            self.store.transition(task.task_id, expected_state=[], new_state="approved")
+
     def test_stale_version_is_rejected(self):
         task = self.create()
         approved = self.store.transition(task.task_id, expected_state="pending",
