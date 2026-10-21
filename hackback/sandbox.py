@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -45,8 +46,9 @@ class DockerSandbox:
         self.workspace.mkdir(parents=True, exist_ok=True)
         if self.approver is None or self.approver(f"Run approved image {image} with argv {list(argv)!r}") is not True:
             raise SandboxError("Explicit approval was not granted.")
+        container_name = f"yuki-sandbox-{uuid.uuid4().hex}"
         command = [
-            self.docker_binary, "run", "--rm", "--pull=never",
+            self.docker_binary, "run", "--name", container_name, "--rm", "--pull=never",
             "--network=none", "--read-only", "--cap-drop=ALL",
             "--security-opt=no-new-privileges", "--pids-limit=64",
             "--memory=512m", "--cpus=1", "--user=65534:65534",
@@ -94,6 +96,21 @@ class DockerSandbox:
             try:
                 returncode = process.wait(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
+                # Killing the Docker CLI alone can leave the daemon-managed
+                # container running. Ask the daemon to stop the named container
+                # first, then terminate and reap the client process.
+                try:
+                    subprocess.run(
+                        [self.docker_binary, "kill", container_name],
+                        shell=False,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
                 process.kill()
                 process.wait()
                 for reader in readers:
