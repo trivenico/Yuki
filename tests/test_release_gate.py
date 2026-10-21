@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -52,6 +53,31 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIn("stale_pull_request_head", result.reasons)
         self.assertTrue(result.audit_persisted)
 
+    def test_mismatched_pr_number_blocks(self):
+        self.client.fetch_pull_request_evidence.return_value = PullRequestEvidence(
+            number=75, state="open", draft=False, head_sha=SHA, base_branch="main",
+            checks=(GitHubCheck("unit-tests", "completed", "success", SHA),),
+            required_checks=("unit-tests",),
+        )
+        result = self.call_gate()
+        self.assertFalse(result.allowed)
+        self.assertIn("pull_request_number_mismatch", result.reasons)
+
+    def test_corrupt_existing_audit_chain_blocks_before_network_call(self):
+        self.store.append(repository="trivenico/Yuki", pr_number=74, head_sha=SHA,
+                          payload={"prior": "record"})
+        db = sqlite3.connect(self.store.database_path)
+        try:
+            db.execute("DROP TRIGGER engineering_evidence_no_update")
+            db.execute("UPDATE engineering_evidence SET payload_json = ?", ('{"prior":"tampered"}',))
+            db.commit()
+        finally:
+            db.close()
+        result = self.call_gate()
+        self.assertFalse(result.allowed)
+        self.assertIn("audit_evidence_chain_invalid", result.reasons)
+        self.client.fetch_pull_request_evidence.assert_not_called()
+
     def test_missing_required_check_blocks_and_is_persisted(self):
         self.client.fetch_pull_request_evidence.return_value = PullRequestEvidence(
             number=74, state="open", draft=False, head_sha=SHA, base_branch="main",
@@ -70,11 +96,20 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_audit_store_failure_blocks_even_when_checks_pass(self):
         broken_store = Mock()
+        broken_store.verify_chain.return_value = True
         broken_store.append.side_effect = OSError("disk unavailable")
         result = self.call_gate(store=broken_store)
         self.assertFalse(result.allowed)
         self.assertIn("audit_evidence_persistence_failed", result.reasons)
         self.assertFalse(result.audit_persisted)
+
+    def test_corrupt_chain_blocks_even_when_checks_pass(self):
+        broken_store = Mock()
+        broken_store.verify_chain.return_value = False
+        result = self.call_gate(store=broken_store)
+        self.assertFalse(result.allowed)
+        self.assertIn("audit_evidence_chain_invalid", result.reasons)
+        self.client.fetch_pull_request_evidence.assert_not_called()
 
     def test_required_approval_needs_trusted_verifier(self):
         result = self.call_gate(require_human_approval=True)
