@@ -83,6 +83,20 @@ class SQLiteTaskLifecycleStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_task_lifecycle_state ON task_lifecycle(state, updated_at)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS task_lifecycle_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    from_state TEXT,
+                    to_state TEXT NOT NULL,
+                    error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_task_lifecycle_events_task ON task_lifecycle_events(task_id, event_id)")
 
     @contextmanager
     def _connect(self):
@@ -112,6 +126,74 @@ class SQLiteTaskLifecycleStore:
             error_code=row[6], created_at=row[7], updated_at=row[8], version=row[9],
         )
 
+    @staticmethod
+    def _append_event(db, *, task_id: str, event_type: str, from_state: str | None,
+                      to_state: str, error_code: str | None, created_at: str) -> None:
+        previous = db.execute(
+            "SELECT event_hash FROM task_lifecycle_events ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()
+        previous_hash = previous[0] if previous else "0" * 64
+        event = {
+            "task_id": task_id, "event_type": event_type, "from_state": from_state,
+            "to_state": to_state, "error_code": error_code, "created_at": created_at,
+            "previous_hash": previous_hash,
+        }
+        event_hash = hashlib.sha256(
+            json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        db.execute(
+            """INSERT INTO task_lifecycle_events
+               (task_id, event_type, from_state, to_state, error_code, created_at, previous_hash, event_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, event_type, from_state, to_state, error_code, created_at, previous_hash, event_hash),
+        )
+
+    def list_events(self, *, task_id: str | None = None, limit: int = 1000) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("limit must be between 1 and 10000.")
+        if task_id is not None and (not isinstance(task_id, str) or not task_id):
+            raise ValueError("task_id must be a non-empty string.")
+        sql = """SELECT event_id, task_id, event_type, from_state, to_state, error_code,
+                        created_at, previous_hash, event_hash
+                 FROM task_lifecycle_events"""
+        if task_id is not None:
+            sql += " WHERE task_id = ? ORDER BY event_id LIMIT ?"
+            params = (task_id, limit)
+        else:
+            sql += " ORDER BY event_id LIMIT ?"
+            params = (limit,)
+        with self._connect() as db:
+            rows = db.execute(sql, params).fetchall()
+        keys = ("event_id", "task_id", "event_type", "from_state", "to_state",
+                "error_code", "created_at", "previous_hash", "event_hash")
+        return [dict(zip(keys, row)) for row in rows]
+
+    def verify_audit_chain(self) -> bool:
+        """Verify the global append-order hash chain; this detects edits/deletions."""
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT task_id, event_type, from_state, to_state, error_code,
+                          created_at, previous_hash, event_hash
+                   FROM task_lifecycle_events ORDER BY event_id"""
+            ).fetchall()
+        previous_hash = "0" * 64
+        for row in rows:
+            task_id, event_type, from_state, to_state, error_code, created_at, stored_previous, stored_hash = row
+            if stored_previous != previous_hash:
+                return False
+            event = {
+                "task_id": task_id, "event_type": event_type, "from_state": from_state,
+                "to_state": to_state, "error_code": error_code, "created_at": created_at,
+                "previous_hash": stored_previous,
+            }
+            expected_hash = hashlib.sha256(
+                json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            if stored_hash != expected_hash:
+                return False
+            previous_hash = stored_hash
+        return True
+
     def create_task(self, *, idempotency_key: str, task_type: str,
                     payload: dict[str, Any]) -> TaskRecord:
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
@@ -140,6 +222,10 @@ class SQLiteTaskLifecycleStore:
                        (task_id, idempotency_key, task_type, payload_json, state, created_at, updated_at, version)
                        VALUES (?, ?, ?, ?, 'pending', ?, ?, 0)""",
                     (task_id, idempotency_key, task_type, payload_json, now, now),
+                )
+                self._append_event(
+                    db, task_id=task_id, event_type="created", from_state=None,
+                    to_state="pending", error_code=None, created_at=now,
                 )
                 row = db.execute(
                     "SELECT task_id, idempotency_key, task_type, payload_json, state, result_json, error_code, created_at, updated_at, version FROM task_lifecycle WHERE task_id = ?",
@@ -193,6 +279,11 @@ class SQLiteTaskLifecycleStore:
                        updated_at = ?, version = version + 1 WHERE task_id = ? AND state = ? AND version = ?""",
                     (new_state, result_json, error_code, now, task_id, expected_state, row[9]),
                 )
+                self._append_event(
+                    db, task_id=task_id, event_type="state_transition",
+                    from_state=expected_state, to_state=new_state,
+                    error_code=error_code, created_at=now,
+                )
                 updated = db.execute(
                     "SELECT task_id, idempotency_key, task_type, payload_json, state, result_json, error_code, created_at, updated_at, version FROM task_lifecycle WHERE task_id = ?",
                     (task_id,),
@@ -208,13 +299,29 @@ class SQLiteTaskLifecycleStore:
         """Mark tasks left running after a process restart; never auto-reexecute them."""
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
-            cursor = db.execute(
-                """UPDATE task_lifecycle SET state = 'recovery_required',
-                   error_code = 'interrupted_after_restart', updated_at = ?, version = version + 1
-                   WHERE state = 'running'""",
-                (now,),
-            )
-            return cursor.rowcount
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                running = db.execute(
+                    "SELECT task_id FROM task_lifecycle WHERE state = 'running'"
+                ).fetchall()
+                for (task_id,) in running:
+                    db.execute(
+                        """UPDATE task_lifecycle SET state = 'recovery_required',
+                           error_code = 'interrupted_after_restart', updated_at = ?, version = version + 1
+                           WHERE task_id = ? AND state = 'running'""",
+                        (now, task_id),
+                    )
+                    self._append_event(
+                        db, task_id=task_id, event_type="recovery_required",
+                        from_state="running", to_state="recovery_required",
+                        error_code="interrupted_after_restart", created_at=now,
+                    )
+                db.execute("COMMIT")
+                return len(running)
+            except Exception:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
 
     def list_tasks(self, *, states: tuple[str, ...] | None = None, limit: int = 100) -> list[TaskRecord]:
         if type(limit) is not int or not 1 <= limit <= 1000:
