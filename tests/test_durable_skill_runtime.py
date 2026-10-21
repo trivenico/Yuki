@@ -73,8 +73,11 @@ class DurableSkillRuntimeTests(unittest.TestCase):
         result = self.runtime.run_skill("notes.write", "hello")
         self.assertTrue(result.ok)
         import sqlite3
-        with sqlite3.connect(self.ledger.database_path) as db:
+        db = sqlite3.connect(self.ledger.database_path)
+        try:
             rows = db.execute("SELECT state FROM action_execution_ledger").fetchall()
+        finally:
+            db.close()
         self.assertEqual(rows, [("completed",)])
 
 
