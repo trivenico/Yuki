@@ -42,6 +42,36 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             session_id=session_id, confirm=confirm,
         )
 
+    def test_audit_failure_does_not_leave_pending_request_available(self):
+        class BrokenAudit:
+            def append(self, **_event):
+                raise OSError("audit unavailable")
+
+        coordinator = ApprovalCoordinator(audit_log=BrokenAudit())
+        with self.assertRaisesRegex(RuntimeError, "could not be audited"):
+            coordinator.record(
+                self.planner, action_result(), actor="owner", session_id="session-a"
+            )
+        self.assertEqual(coordinator._pending, {})
+        self.assertEqual(self.planner.executed, [])
+
+    def test_persistent_pending_request_is_removed_when_audit_fails(self):
+        class BrokenAudit:
+            def append(self, **_event):
+                raise OSError("audit unavailable")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=BrokenAudit())
+            with self.assertRaisesRegex(RuntimeError, "could not be audited"):
+                coordinator.record(
+                    self.planner, action_result(), actor="owner", session_id="session-a"
+                )
+            with store._connect() as db:
+                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
+            self.assertEqual(count, 0)
+            self.assertEqual(self.planner.executed, [])
+
     def test_record_requires_explicit_approval_before_execution(self):
         self.assertEqual(self.pending.status, "pending_approval")
         self.assertFalse(self.pending.ok)
