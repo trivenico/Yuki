@@ -191,8 +191,8 @@ class SQLiteExecutionLedger:
         try:
             rows = db.execute(
                 "SELECT idempotency_key, action_hash, state, result_json, created_at, updated_at "
-                "FROM action_execution_ledger WHERE state IN ('running', 'uncertain') "
-                "ORDER BY updated_at LIMIT ?",
+                "FROM action_execution_ledger WHERE state IN ('prepared', 'running', 'uncertain') "
+                "ORDER BY updated_at, idempotency_key LIMIT ?",
                 (limit,),
             ).fetchall()
             return [self._record(row) for row in rows]
