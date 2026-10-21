@@ -17,14 +17,24 @@ def create_provider(config=None, *, environ=None):
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "mock")).strip().lower()
+    environment = str(env.get("YUKI_ENVIRONMENT", cfg.get("environment", "development"))).strip().lower()
+    if environment not in {"development", "test", "staging", "production"}:
+        raise ValueError("environment must be development, test, staging, or production.")
+    selected = str(env.get("YUKI_PROVIDER", cfg.get("provider", "mock"))).strip().lower()
+    if selected not in {"mock", "ollama", "hybrid"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid.")
+    if environment == "production" and selected == "mock":
+        raise RuntimeError("Production requires a real provider; mock provider is disabled.")
+    model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
+    if environment in {"staging", "production"} and selected in {"ollama", "hybrid"} and not model:
+        raise RuntimeError("A model is required for staging/production Ollama providers.")
     if selected == "mock":
         return MockProvider()
     if selected not in {"ollama", "hybrid"}:
         raise ValueError("provider must be one of: mock, ollama, hybrid.")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
-        model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        model=model,
     )
     if selected == "ollama":
         return local
