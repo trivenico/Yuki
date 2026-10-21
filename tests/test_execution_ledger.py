@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -53,9 +54,16 @@ class SQLiteExecutionLedgerTests(unittest.TestCase):
         self.assertEqual([record.idempotency_key for record in records], ["request-prepared"])
         self.assertEqual(records[0].state, "prepared")
 
-    def test_reconciliation_results_are_deterministically_ordered(self):
+    def test_reconciliation_results_use_key_as_stable_tiebreaker(self):
         self.ledger.begin("request-z", self.action)
         self.ledger.begin("request-a", self.action)
+        # Force an identical timestamp so this test specifically verifies the
+        # documented secondary sort key, independent of machine clock resolution.
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE action_execution_ledger SET updated_at = ?",
+                ("2026-01-01T00:00:00+00:00",),
+            )
         records = self.ledger.list_reconciliation_required()
         self.assertEqual(
             [record.idempotency_key for record in records],
