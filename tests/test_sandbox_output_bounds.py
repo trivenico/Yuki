@@ -47,9 +47,11 @@ class SandboxOutputBoundsTests(unittest.TestCase):
         self.assertEqual(result["stdout"], "A" * 1024)
         self.assertEqual(result["stderr"], "B" * 1024)
         args, kwargs = popen.call_args
-        self.assertFalse(kwargs["shell"] if "shell" in kwargs else False)
+        self.assertIs(kwargs["shell"], False)
         self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
-        self.assertNotIn("sh", args[0][0].lower())
+        self.assertIn("--network=none", args[0])
+        self.assertIn(IMAGE, args[0])
+        self.assertEqual(args[0][-1], "worker")
 
     def test_approval_denial_prevents_process_creation(self):
         with tempfile.TemporaryDirectory() as directory:
