@@ -1,8 +1,7 @@
 """Enforce context-bound release-gate decisions before protected side effects.
 
 Callers must provide the exact repository, PR, and commit the operation will affect.
-This module cannot discover all protected call sites: applications must route each
-sensitive operation through this wrapper and remove alternate ungated paths.
+Every sensitive caller must use this wrapper and remove alternate ungated paths.
 """
 from __future__ import annotations
 
@@ -24,6 +23,36 @@ class ProtectedOperationResult:
     operation_result: Any = None
 
 
+def _valid_target(repository: object, pull_request: object, head_sha: object) -> bool:
+    return (
+        isinstance(repository, str)
+        and repository == repository.strip()
+        and repository.count("/") == 1
+        and all(part and part not in {".", ".."} and part == part.strip()
+                for part in repository.split("/"))
+        and type(pull_request) is int
+        and pull_request > 0
+        and isinstance(head_sha, str)
+        and _SHA_RE.fullmatch(head_sha) is not None
+    )
+
+
+def _valid_allow_decision(decision: ReleaseGateDecision) -> bool:
+    """Validate the full invariant, not just a derived boolean property."""
+    return (
+        decision.decision == "ready-for-required-checks"
+        and isinstance(decision.reasons, tuple)
+        and len(decision.reasons) == 0
+        and isinstance(decision.repository, str)
+        and _valid_target(
+            decision.repository, decision.pull_request, decision.expected_head_sha
+        )
+        and type(decision.evidence_id) is int
+        and decision.evidence_id > 0
+        and decision.audit_persisted is True
+    )
+
+
 def run_protected_operation(
     *,
     evaluate_gate: Callable[[], ReleaseGateDecision],
@@ -32,47 +61,35 @@ def run_protected_operation(
     target_pull_request: int,
     target_head_sha: str,
 ) -> ProtectedOperationResult:
-    """Run only if a persisted allow decision matches the exact target context.
+    """Run only when a valid persisted allow decision matches the exact target.
 
-    Fail closed on evaluation errors, malformed decisions, missing audit persistence,
-    or repository/PR/SHA mismatch. Exceptions from the protected operation itself are
-    propagated for the caller's recovery policy.
+    Invalid input, gate exceptions, malformed/inconsistent decisions, missing audit
+    persistence, and context mismatch all block before the operation callback. Errors
+    raised by the operation itself propagate to the caller's recovery policy.
     """
-    if (
-        not isinstance(target_repository, str)
-        or target_repository.count("/") != 1
-        or any(part in {"", ".", ".."} for part in target_repository.split("/"))
-        or type(target_pull_request) is not int
-        or target_pull_request < 1
-        or not isinstance(target_head_sha, str)
-        or not _SHA_RE.fullmatch(target_head_sha)
-    ):
+    if not callable(evaluate_gate) or not callable(operation):
         return ProtectedOperationResult(
-            allowed=False,
-            reason="protected_operation_target_invalid",
-            gate_decision=None,
+            allowed=False, reason="protected_operation_callback_invalid", gate_decision=None
+        )
+    if not _valid_target(target_repository, target_pull_request, target_head_sha):
+        return ProtectedOperationResult(
+            allowed=False, reason="protected_operation_target_invalid", gate_decision=None
         )
 
     try:
         decision = evaluate_gate()
     except Exception:
         return ProtectedOperationResult(
-            allowed=False,
-            reason="release_gate_evaluation_failed",
-            gate_decision=None,
+            allowed=False, reason="release_gate_evaluation_failed", gate_decision=None
         )
 
     if not isinstance(decision, ReleaseGateDecision):
         return ProtectedOperationResult(
-            allowed=False,
-            reason="release_gate_returned_invalid_decision",
-            gate_decision=None,
+            allowed=False, reason="release_gate_returned_invalid_decision", gate_decision=None
         )
-    if decision.allowed is not True or decision.audit_persisted is not True:
+    if not _valid_allow_decision(decision):
         return ProtectedOperationResult(
-            allowed=False,
-            reason="release_gate_blocked",
-            gate_decision=decision,
+            allowed=False, reason="release_gate_decision_inconsistent", gate_decision=decision
         )
 
     if (
@@ -81,15 +98,11 @@ def run_protected_operation(
         or decision.expected_head_sha.casefold() != target_head_sha.casefold()
     ):
         return ProtectedOperationResult(
-            allowed=False,
-            reason="release_gate_target_mismatch",
-            gate_decision=decision,
+            allowed=False, reason="release_gate_target_mismatch", gate_decision=decision
         )
 
     result = operation()
     return ProtectedOperationResult(
-        allowed=True,
-        reason="release_gate_allowed",
-        gate_decision=decision,
-        operation_result=result,
+        allowed=True, reason="release_gate_allowed",
+        gate_decision=decision, operation_result=result
     )
