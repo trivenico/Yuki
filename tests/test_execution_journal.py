@@ -113,17 +113,17 @@ class ExecutionJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionJournalError, "invalid transition"):
             self.journal.transition("exec-1", "running")
 
-    def test_interrupted_jobs_are_marked_for_reconciliation_not_replayed(self):
+    def test_recovery_only_discovers_explicit_cleanup_required_jobs(self):
         self.journal.create("exec-1", self.context)
         self.journal.create("exec-2", dict(self.context, proposal_sha256="c" * 64))
         self.journal.transition("exec-2", "running")
         self.journal.transition("exec-2", "cleanup_required")
         marked = self.journal.mark_interrupted_for_reconciliation()
-        self.assertEqual(set(marked), {"exec-1", "exec-2"})
-        self.assertEqual(self.journal.get("exec-1").state, "cleanup_required")
+        self.assertEqual(marked, ("exec-2",))
+        self.assertEqual(self.journal.get("exec-1").state, "created")
         self.assertEqual(self.journal.get("exec-2").state, "cleanup_required")
         # Pending cleanup remains discoverable so a restarted recovery worker can resume.
-        self.assertEqual(set(self.journal.mark_interrupted_for_reconciliation()), {"exec-1", "exec-2"})
+        self.assertEqual(self.journal.mark_interrupted_for_reconciliation(), ("exec-2",))
 
     def test_result_size_and_non_json_values_are_rejected(self):
         self.journal.create("exec-1", self.context)
