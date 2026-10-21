@@ -19,7 +19,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None) -> None
             yield Header()
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
-                yield Label("Performance: CPU · RAM · GPU · token usage (best-effort local telemetry)")
+                yield Label("Performance telemetry loading…", id="performance_status")
                 yield RichLog(id="log", wrap=True, markup=False)
                 yield Input(placeholder="Enter /help, /status, /skills, /performance, or /quit", id="command")
             yield Footer()
@@ -33,11 +33,8 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None) -> None
             try:
                 summary = token_usage.summary() if token_usage is not None else None
                 report = format_performance_report(collect_performance(token_summary=summary))
-                self.query_one("#performance", Label).update(report) if self.query("#performance") else None
-                # Keep a live, bounded status line rather than appending a log entry every tick.
-                label = self.query_one("#performance_status", Label) if self.query("#performance_status") else None
-                if label is not None:
-                    label.update(report.replace("\n", "  ·  "))
+                label = self.query_one("#performance_status", Label)
+                label.update(report.replace("\\n", "  ·  "))
             except Exception:
                 label = self.query_one("#performance_status", Label) if self.query("#performance_status") else None
                 if label is not None:
