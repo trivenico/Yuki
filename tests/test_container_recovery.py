@@ -75,6 +75,35 @@ class ContainerRecoveryTests(unittest.TestCase):
         run.assert_called_once()
 
     @patch("core.container_recovery.subprocess.run")
+    def test_malformed_inspect_metadata_refuses_cleanup(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, "not-enough-fields\n", "")
+        with self.assertRaisesRegex(ContainerRecoveryError, "malformed ownership metadata"):
+            reconcile_execution_container("run-1")
+        run.assert_called_once()
+
+    @patch("core.container_recovery.subprocess.run")
+    def test_invalid_container_id_refuses_cleanup(self, run):
+        name = container_name_for_execution("run-1")
+        run.return_value = subprocess.CompletedProcess([], 0, f"not-a-container-id\t/{name}\ttrue\trun-1\n", "")
+        with self.assertRaisesRegex(ContainerRecoveryError, "invalid immutable container ID"):
+            reconcile_execution_container("run-1")
+        run.assert_called_once()
+
+    @patch("core.container_recovery.subprocess.run")
+    def test_docker_remove_failure_is_not_reported_as_success(self, run):
+        name = container_name_for_execution("run-1")
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", ""),
+            subprocess.CompletedProcess([], 1, "", "permission denied"),
+        ]
+        with self.assertRaisesRegex(ContainerRecoveryError, "cleanup failed"):
+            reconcile_execution_container("run-1")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])
+        self.assertEqual(run.call_args.args[0][3], "a" * 64)
+
+
+    @patch("core.container_recovery.subprocess.run")
     def test_missing_container_is_idempotent(self, run):
         run.return_value = subprocess.CompletedProcess([], 1, "", "Error: No such container: missing")
         result = reconcile_execution_container("run-1")
