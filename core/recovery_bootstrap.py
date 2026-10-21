@@ -8,10 +8,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.execution_journal import SQLiteExecutionJournal
+from core.execution_journal_config import execution_journal_path
 from core.startup_recovery import StartupRecoveryReport, recover_interrupted_executions
-
-
-JOURNAL_FILENAME = "yuki_execution_journal.sqlite3"
 
 
 def recover_workspace_on_startup(workspace: str | Path) -> StartupRecoveryReport | None:
@@ -22,7 +20,7 @@ def recover_workspace_on_startup(workspace: str | Path) -> StartupRecoveryReport
     journal/database failures propagate and prevent unsafe normal startup.
     """
     root = Path(workspace).expanduser().resolve()
-    journal_path = root / JOURNAL_FILENAME
+    journal_path = execution_journal_path(root)
     if not journal_path.exists():
         return None
     if journal_path.is_symlink() or not journal_path.is_file():
