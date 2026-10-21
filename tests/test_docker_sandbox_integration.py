@@ -49,6 +49,26 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(SandboxError, "timed out"):
             self.sandbox.run(IMAGE, ["python", "-c", "import time; time.sleep(10)"], timeout=1)
 
+    def test_custom_seccomp_profile_is_enforced_by_docker(self):
+        # This profile denies every syscall, including execve. A valid runtime
+        # must therefore fail to start the requested process when this profile
+        # is actually applied, rather than silently ignoring the profile.
+        import json
+
+        profile_path = self.workspace / "deny-all-seccomp.json"
+        profile_path.write_text(json.dumps({"defaultAction": "SCMP_ACT_ERRNO", "syscalls": []}))
+        sandbox = DockerSandbox(
+            self.workspace,
+            allowed_images=[IMAGE],
+            enabled=True,
+            approver=lambda _reason: True,
+            seccomp_profile=profile_path,
+            apparmor_profile="docker-default",
+        )
+        result = sandbox.run(IMAGE, ["python", "-c", "print('should-not-run')"])
+        self.assertNotEqual(result["returncode"], 0)
+        self.assertNotIn("should-not-run", result["stdout"])
+
     def test_network_is_disabled(self):
         # Network isolation is checked at the container namespace level. A raw
         # socket connect to a public resolver must fail or time out quickly.
