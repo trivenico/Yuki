@@ -28,6 +28,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
+from core.recovery_bootstrap import recover_workspace_on_startup
 
 
 def _ask_approval(request):
@@ -102,6 +103,12 @@ def main():
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
+    try:
+        recovery = recover_workspace_on_startup(workspace)
+    except Exception as exc:
+        raise RuntimeError("Startup recovery failed; refusing normal runtime startup.") from exc
+    if recovery is not None and recovery.pending:
+        print(f"Yuki recovery: {recovery.cleaned} cleaned, {recovery.pending} still pending; uncertain jobs will not be replayed.")
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
