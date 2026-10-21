@@ -23,7 +23,7 @@ class SideEffectSurface:
 SIDE_EFFECT_SURFACES = (
     SideEffectSurface("/task", "model-guided registered skill execution", True, True),
     SideEffectSurface("/skill", "direct registered skill execution", True, True),
-    SideEffectSurface("/memory add|delete|clear", "local memory mutation", False, False),
+    SideEffectSurface("/memory add|delete|clear", "local memory mutation", True, True),
     SideEffectSurface("/knowledge index", "workspace file indexing", False, False),
     SideEffectSurface("/reminder add", "persistent reminder mutation", False, False),
     SideEffectSurface("/evolution run|review", "proposal execution or acceptance", False, False),
