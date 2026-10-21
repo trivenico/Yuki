@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,7 +22,7 @@ class JournalBackupTests(unittest.TestCase):
     def test_backup_contains_consistent_journal_state(self):
         result = backup_sqlite_database(self.source, self.destination)
         self.assertEqual(result, self.destination)
-        with sqlite3.connect(str(result)) as db:
+        with closing(sqlite3.connect(str(result))) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             row = db.execute(
                 "SELECT execution_id, state FROM sandbox_executions WHERE execution_id=?",
@@ -33,7 +34,7 @@ class JournalBackupTests(unittest.TestCase):
         self.destination.parent.mkdir(parents=True)
         self.destination.write_bytes(b"old backup")
         backup_sqlite_database(self.source, self.destination)
-        with sqlite3.connect(str(self.destination)) as db:
+        with closing(sqlite3.connect(str(self.destination))) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_backup_rejects_same_source_and_destination(self):
