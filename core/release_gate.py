@@ -5,7 +5,7 @@ unpersisted audit record, or an exception as a hard stop for protected operation
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import re
 from typing import Callable
 
@@ -99,6 +99,8 @@ def evaluate_release_gate(
             human_approval_required=False,
             human_approved=False,
         )
+        if evidence.number != pull_request:
+            reasons.append("pull_request_number_mismatch")
         gate = evaluate_pull_request_checks(evidence, expected_head_sha=expected_sha)
         reasons.extend(gate.reasons)
         snapshot["observed_head_sha"] = evidence.head_sha.lower()
@@ -142,12 +144,32 @@ def evaluate_release_gate(
 
     evidence_id: int | None = None
     try:
+        if store.verify_chain() is not True:
+            return ReleaseGateDecision(
+                decision="block",
+                reasons=tuple(dict.fromkeys(reasons + ["audit_evidence_chain_invalid"])),
+                repository=repository.lower(),
+                pull_request=pull_request,
+                expected_head_sha=expected_sha,
+                evidence_id=None,
+                audit_persisted=False,
+            )
         evidence_id = store.append(
             repository=repository,
             pr_number=pull_request,
             head_sha=expected_sha,
             payload=snapshot,
         )
+        if store.verify_chain() is not True:
+            return ReleaseGateDecision(
+                decision="block",
+                reasons=tuple(dict.fromkeys(reasons + ["audit_evidence_chain_invalid_after_append"])),
+                repository=repository.lower(),
+                pull_request=pull_request,
+                expected_head_sha=expected_sha,
+                evidence_id=evidence_id,
+                audit_persisted=False,
+            )
     except (EngineeringEvidenceError, OSError, TimeoutError, ValueError):
         return ReleaseGateDecision(
             decision="block",
