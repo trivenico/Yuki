@@ -143,7 +143,7 @@ class SQLiteExecutionJournal:
         result_json = None
         if result is not None:
             try:
-                result_json = json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                result_json = json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
             except (TypeError, ValueError) as exc:
                 raise ExecutionJournalError("result must be finite JSON data") from exc
             if len(result_json.encode("utf-8")) > 65536:
