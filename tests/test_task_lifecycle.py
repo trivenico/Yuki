@@ -76,6 +76,38 @@ class SQLiteTaskLifecycleStoreTests(unittest.TestCase):
         with self.assertRaises(InvalidTransition):
             self.store.transition(task.task_id, expected_state="cancelled", new_state="running")
 
+
+    def test_lifecycle_events_are_persisted_and_hash_chain_verifies(self):
+        task = self.create()
+        task = self.store.transition(task.task_id, expected_state="pending",
+                                     new_state="approved", expected_version=task.version)
+        task = self.store.transition(task.task_id, expected_state="approved",
+                                     new_state="running", expected_version=task.version)
+        events = self.store.list_events(task_id=task.task_id)
+        self.assertEqual([event["to_state"] for event in events],
+                         ["pending", "approved", "running"])
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_recovery_transition_is_audited(self):
+        task = self.create()
+        task = self.store.transition(task.task_id, expected_state="pending", new_state="approved")
+        task = self.store.transition(task.task_id, expected_state="approved", new_state="running")
+        self.store.mark_interrupted_tasks_for_recovery()
+        events = self.store.list_events(task_id=task.task_id)
+        self.assertEqual(events[-1]["event_type"], "recovery_required")
+        self.assertEqual(events[-1]["from_state"], "running")
+        self.assertEqual(events[-1]["to_state"], "recovery_required")
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_audit_chain_detects_event_tampering(self):
+        task = self.create()
+        self.store.transition(task.task_id, expected_state="pending", new_state="approved")
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE task_lifecycle_events SET to_state = 'completed' WHERE event_id = 1"
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
     def test_non_finite_and_oversized_payloads_are_rejected(self):
         with self.assertRaises(ValueError):
             self.create(payload={"number": float("nan")})
