@@ -1,0 +1,71 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.execution_journal import ExecutionJournalError, SQLiteExecutionJournal
+
+
+class ExecutionJournalTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.journal = SQLiteExecutionJournal(str(Path(self.temp.name) / "jobs.sqlite3"))
+        self.context = {
+            "proposal_sha256": "a" * 64,
+            "image_digest": "sha256:" + "b" * 64,
+            "policy": {"network_mode": "none", "capabilities": []},
+            "commands": [["pytest", "-q"]],
+        }
+
+    def test_create_is_idempotent_for_same_context(self):
+        first = self.journal.create("exec-1", self.context)
+        second = self.journal.create("exec-1", self.context)
+        self.assertEqual(first.context_sha256, second.context_sha256)
+        self.assertEqual(second.state, "created")
+
+    def test_idempotency_key_cannot_be_reused_for_different_context(self):
+        self.journal.create("exec-1", self.context)
+        changed = dict(self.context, proposal_sha256="c" * 64)
+        with self.assertRaisesRegex(ExecutionJournalError, "different context"):
+            self.journal.create("exec-1", changed)
+
+    def test_state_transitions_are_validated(self):
+        self.journal.create("exec-1", self.context)
+        self.journal.transition("exec-1", "running")
+        succeeded = self.journal.transition(
+            "exec-1", "succeeded", result={"returncode": 0}, cleanup_confirmed=True
+        )
+        self.assertEqual(succeeded.state, "succeeded")
+        self.assertTrue(succeeded.cleanup_confirmed)
+        with self.assertRaisesRegex(ExecutionJournalError, "invalid transition"):
+            self.journal.transition("exec-1", "running")
+
+    def test_interrupted_jobs_are_marked_for_reconciliation_not_replayed(self):
+        self.journal.create("exec-1", self.context)
+        self.journal.create("exec-2", dict(self.context, proposal_sha256="c" * 64))
+        self.journal.transition("exec-2", "running")
+        self.journal.transition("exec-2", "cleanup_required")
+        marked = self.journal.mark_interrupted_for_reconciliation()
+        self.assertEqual(set(marked), {"exec-1", "exec-2"})
+        self.assertEqual(self.journal.get("exec-1").state, "cleanup_required")
+        self.assertEqual(self.journal.get("exec-2").state, "cleanup_required")
+        self.assertEqual(self.journal.mark_interrupted_for_reconciliation(), ())
+
+    def test_result_size_and_non_json_values_are_rejected(self):
+        self.journal.create("exec-1", self.context)
+        self.journal.transition("exec-1", "running")
+        with self.assertRaises(ExecutionJournalError):
+            self.journal.transition("exec-1", "failed", result={"not_json": object()})
+        with self.assertRaisesRegex(ExecutionJournalError, "64 KiB"):
+            self.journal.transition("exec-1", "failed", result={"output": "x" * 70000})
+        self.assertEqual(self.journal.get("exec-1").state, "running")
+
+    def test_unknown_job_and_invalid_context_are_rejected(self):
+        with self.assertRaises(ExecutionJournalError):
+            self.journal.create("exec-1", {"bad": float("nan")})
+        with self.assertRaisesRegex(ExecutionJournalError, "not found"):
+            self.journal.get("missing")
+
+
+if __name__ == "__main__":
+    unittest.main()
