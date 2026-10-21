@@ -57,7 +57,7 @@ class JournalBackupTests(unittest.TestCase):
         self.assertTrue(self.journal.claim_recovery("backup-job", "backup-worker"))
         backup_sqlite_database(self.source, self.destination)
 
-        with sqlite3.connect(str(self.destination)) as db:
+        with closing(sqlite3.connect(str(self.destination))) as db:
             claim = db.execute(
                 "SELECT execution_id, worker_id FROM sandbox_recovery_claims WHERE execution_id=?",
                 ("backup-job",),
