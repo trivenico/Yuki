@@ -86,8 +86,13 @@ class SQLitePendingApprovalStore:
         return encoded
 
     @staticmethod
-    def _action_digest(action_json: str) -> str:
-        return hashlib.sha256(action_json.encode("utf-8")).hexdigest()
+    def _action_digest(skill_id: str, arguments_json: str, action_json: str) -> str:
+        """Hash every persisted field that can influence execution."""
+        payload = json.dumps(
+            {"skill_id": skill_id, "arguments": json.loads(arguments_json), "action": json.loads(action_json)},
+            ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def put(self, skill_id: str, arguments: dict[str, Any], action: dict[str, Any], *,
             actor: str, session_id: str) -> StoredPendingAction:
@@ -99,7 +104,7 @@ class SQLitePendingApprovalStore:
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
-        action_hash = self._action_digest(action_json)
+        action_hash = self._action_digest(skill_id, args_json, action_json)
         item = StoredPendingAction(secrets.token_urlsafe(24), skill_id, json.loads(args_json),
                                    json.loads(action_json), expires, actor_hash, session_hash, action_hash)
         with self._connect() as db:
@@ -132,7 +137,7 @@ class SQLitePendingApprovalStore:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             # Legacy or modified snapshots are rejected, never silently trusted.
-            if not row[4] or not row[5] or not row[6] or self._action_digest(row[2]) != row[6]:
+            if not row[4] or not row[5] or not row[6] or self._action_digest(row[0], row[1], row[2]) != row[6]:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
