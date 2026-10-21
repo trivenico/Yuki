@@ -14,6 +14,8 @@ class PluginLoader:
     def __init__(self, package_name="skills", *, trusted_modules=None, enabled=False):
         self.package_name = package_name
         self.trusted_modules = None if trusted_modules is None else frozenset(trusted_modules)
+        if self.trusted_modules is not None and "*" in self.trusted_modules:
+            raise ValueError("Wildcard plugin trust is prohibited; enumerate trusted modules explicitly.")
         self.enabled = bool(enabled)
         self.last_report = {"loaded": [], "skipped": [], "failed": []}
 
@@ -38,7 +40,7 @@ class PluginLoader:
             if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
+            if self.trusted_modules is None or name not in self.trusted_modules:
                 report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
                 continue
             try:
