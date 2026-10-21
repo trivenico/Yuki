@@ -47,6 +47,21 @@ class SQLiteExecutionLedgerTests(unittest.TestCase):
         self.assertEqual([item.idempotency_key for item in pending], ["request-1"])
         self.assertEqual(pending[0].state, "uncertain")
 
+    def test_prepared_records_are_visible_for_reconciliation(self):
+        self.ledger.begin("request-prepared", self.action)
+        records = self.ledger.list_reconciliation_required()
+        self.assertEqual([record.idempotency_key for record in records], ["request-prepared"])
+        self.assertEqual(records[0].state, "prepared")
+
+    def test_reconciliation_results_are_deterministically_ordered(self):
+        self.ledger.begin("request-z", self.action)
+        self.ledger.begin("request-a", self.action)
+        records = self.ledger.list_reconciliation_required()
+        self.assertEqual(
+            [record.idempotency_key for record in records],
+            ["request-a", "request-z"],
+        )
+
     def test_two_instances_cannot_create_duplicate_intent(self):
         second = SQLiteExecutionLedger(self.path)
         barrier = threading.Barrier(3)
