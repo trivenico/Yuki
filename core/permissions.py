@@ -19,7 +19,7 @@ class PermissionGate:
             return False
         if not isinstance(reason, str) or not reason.strip():
             return False
-        if risk not in {"low", "medium", "high"}:
+        if not isinstance(risk, str) or risk not in {"low", "medium", "high"}:
             return False
         if self._approver is None:
             return False
