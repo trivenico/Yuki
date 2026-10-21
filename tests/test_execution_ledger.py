@@ -59,11 +59,15 @@ class SQLiteExecutionLedgerTests(unittest.TestCase):
         self.ledger.begin("request-a", self.action)
         # Force an identical timestamp so this test specifically verifies the
         # documented secondary sort key, independent of machine clock resolution.
-        with sqlite3.connect(self.path) as db:
+        db = sqlite3.connect(self.path)
+        try:
             db.execute(
                 "UPDATE action_execution_ledger SET updated_at = ?",
                 ("2026-01-01T00:00:00+00:00",),
             )
+            db.commit()
+        finally:
+            db.close()
         records = self.ledger.list_reconciliation_required()
         self.assertEqual(
             [record.idempotency_key for record in records],
