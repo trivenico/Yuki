@@ -138,6 +138,24 @@ class DockerSandboxTests(unittest.TestCase):
                     with self.assertRaises(SandboxError):
                         sandbox.run(IMAGE, ["worker"])
                 popen.assert_not_called()
+    def test_seccomp_invalid_top_level_schema_fails_before_start(self):
+        invalid_profiles = [
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "unexpected": True},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "defaultErrnoRet": 0},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "defaultErrnoRet": True},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "architectures": "SCMP_ARCH_X86_64"},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "flags": ["UNKNOWN_FLAG"]},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [], "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86_64"]},
+        ]
+        for profile in invalid_profiles:
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
+                profile_path = Path(directory) / "seccomp.json"
+                profile_path.write_text(json.dumps(profile))
+                sandbox = self.sandbox(directory, seccomp_profile=profile_path)
+                with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
+                    with self.assertRaises(SandboxError):
+                        sandbox.run(IMAGE, ["worker"])
+                popen.assert_not_called()
     def test_missing_seccomp_profile_fails_closed_before_start(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.json"
