@@ -122,6 +122,18 @@ class ApprovalCoordinator:
                 )
             return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
 
+        # A returned result can represent an application-level failure without
+        # raising. Never emit "executed"/"completed" for an explicit ok=False.
+        if getattr(result, "ok", True) is False:
+            try:
+                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_result": result, "audit": "unavailable"},
+                )
+            return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=result)
+
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
         except Exception:
@@ -129,7 +141,7 @@ class ApprovalCoordinator:
                 False, "recovery_required", pending_id=pending_id,
                 result={"execution_result": result, "audit": "unavailable"},
             )
-        return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
+        return ApprovalOutcome(True, "completed", pending_id=pending_id, result=result)
 
     def _consume(self, pending_id, *, actor, session_id):
         item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
