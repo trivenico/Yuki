@@ -237,6 +237,36 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             record = ledger.get(pending.pending_id)
             self.assertEqual(record.state, "completed")
 
+    def test_existing_prepared_ledger_record_fails_closed_without_execution(self):
+        from core.execution_ledger import SQLiteExecutionLedger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = SQLiteExecutionLedger(str(Path(tmp) / "ledger.sqlite3"))
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = MemoryAudit()
+            planner = FakePlanner()
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=audit, execution_ledger=ledger
+            )
+            pending = coordinator.record(
+                planner, action_result("prepared-replay"),
+                actor="owner", session_id="session-a",
+            )
+            ledger.begin(pending.pending_id, pending.result)
+
+            outcome = coordinator.approve(
+                planner, pending.pending_id, actor="owner",
+                session_id="session-a", confirm=lambda _action: True,
+            )
+
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertEqual(outcome.result["execution_state"], "prepared")
+            self.assertEqual(planner.executed, [])
+            self.assertIn(
+                "execution_recovery_required",
+                [event["event_type"] for event in audit.events],
+            )
+
     def test_execution_ledger_marks_raised_execution_uncertain_and_does_not_retry(self):
         from core.execution_ledger import SQLiteExecutionLedger
 
