@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
-    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45):
+    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, usage_tracker=None):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("Ollama base URL is required.")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -36,6 +36,7 @@ class OllamaProvider:
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout = timeout
+        self.usage_tracker = usage_tracker
 
     def is_available(self):
         """Return true only when the local server responds and the model is installed."""
@@ -94,4 +95,19 @@ class OllamaProvider:
         text = body.get("response") if isinstance(body, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
+        if self.usage_tracker is not None and isinstance(body, dict):
+            prompt_tokens = body.get("prompt_eval_count")
+            output_tokens = body.get("eval_count")
+            if (type(prompt_tokens) is int and prompt_tokens >= 0
+                    and type(output_tokens) is int and output_tokens >= 0):
+                self.usage_tracker.record(
+                    provider="ollama", model=self.model, input_tokens=prompt_tokens,
+                    output_tokens=output_tokens, estimated=False,
+                )
+            else:
+                self.usage_tracker.record(
+                    provider="ollama", model=self.model,
+                    input_tokens=max(1, len(prompt.strip()) // 4),
+                    output_tokens=max(1, len(text) // 4), estimated=True,
+                )
         return text.strip()
