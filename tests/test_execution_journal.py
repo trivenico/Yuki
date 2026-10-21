@@ -146,7 +146,8 @@ class ExecutionJournalTests(unittest.TestCase):
 
     def test_failed_sqlite_transition_rolls_back_atomically(self):
         self.journal.create("atomic-job", self.context)
-        with sqlite3.connect(self.journal.database_path) as db:
+        db = sqlite3.connect(self.journal.database_path)
+        try:
             db.execute("""
                 CREATE TRIGGER fail_execution_update
                 BEFORE UPDATE ON sandbox_executions
@@ -154,6 +155,9 @@ class ExecutionJournalTests(unittest.TestCase):
                     SELECT RAISE(ABORT, 'injected storage failure');
                 END
             """)
+            db.commit()
+        finally:
+            db.close()
         with self.assertRaisesRegex(sqlite3.IntegrityError, "injected storage failure"):
             self.journal.transition("atomic-job", "running")
         reopened = SQLiteExecutionJournal(self.journal.database_path)
