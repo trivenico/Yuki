@@ -113,6 +113,31 @@ class DockerSandboxTests(unittest.TestCase):
             self.assertIn(f"--security-opt=seccomp={profile_path.resolve()}", command)
             self.assertIn("--security-opt=apparmor=docker-default", command)
 
+    def test_seccomp_default_allow_profile_fails_closed_before_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile_path = Path(directory) / "seccomp.json"
+            profile_path.write_text(json.dumps({"defaultAction": "SCMP_ACT_ALLOW", "syscalls": []}))
+            sandbox = self.sandbox(directory, seccomp_profile=profile_path)
+            with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(SandboxError, "fail-closed"):
+                    sandbox.run(IMAGE, ["worker"])
+            popen.assert_not_called()
+
+    def test_seccomp_malformed_syscall_rules_fail_closed_before_start(self):
+        invalid_profiles = [
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": ["read"]},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [{"action": "SCMP_ACT_ALLOW", "names": []}]},
+            {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [{"action": "SCMP_ACT_ALLOW", "names": ["read"], "args": "bad"}]},
+        ]
+        for profile in invalid_profiles:
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
+                profile_path = Path(directory) / "seccomp.json"
+                profile_path.write_text(json.dumps(profile))
+                sandbox = self.sandbox(directory, seccomp_profile=profile_path)
+                with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
+                    with self.assertRaises(SandboxError):
+                        sandbox.run(IMAGE, ["worker"])
+                popen.assert_not_called()
     def test_missing_seccomp_profile_fails_closed_before_start(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.json"
