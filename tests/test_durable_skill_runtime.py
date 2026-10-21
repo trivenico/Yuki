@@ -69,6 +69,22 @@ class DurableSkillRuntimeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(self.registry.skill.calls, [])
 
+    def test_non_boolean_skill_success_is_rejected(self):
+        self.registry.skill.execute = lambda _argument: {"ok": "false", "message": "untrusted status"}
+        result = self.runtime.run_skill("notes.write", "hello")
+        self.assertFalse(result.ok)
+        self.assertIn("invalid result contract", result.data["message"])
+        self.assertEqual(self.registry.skill.calls, [])
+
+    def test_missing_skill_success_flag_is_rejected(self):
+        self.registry.skill.execute = lambda _argument: {"message": "looks successful"}
+        result = self.runtime.run_skill("notes.write", "hello")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "execution_failed")
+        self.assertIsInstance(result.data, dict)
+        self.assertIn("invalid result contract", result.data["message"])
+        self.assertEqual(self.registry.skill.calls, [])
+
     def test_execution_ledger_records_completed(self):
         result = self.runtime.run_skill("notes.write", "hello")
         self.assertTrue(result.ok)

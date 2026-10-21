@@ -88,9 +88,25 @@ class DurableSkillRuntime:
             raise ValueError("Approved skill is no longer registered.")
         result = skill.execute(argument)
         if isinstance(result, dict):
+            # A missing or non-boolean status must never be interpreted as success.
+            # In particular, bool("false") is True in Python.
+            ok = result.get("ok")
+            if type(ok) is not bool:
+                return {
+                    "ok": False,
+                    "message": "Skill returned an invalid result contract; success must be an explicit boolean.",
+                    "error": "invalid_result_contract",
+                }
             return result
+        ok = getattr(result, "ok", None)
+        if type(ok) is not bool:
+            return {
+                "ok": False,
+                "message": "Skill returned an invalid result contract; success must be an explicit boolean.",
+                "error": "invalid_result_contract",
+            }
         return {
-            "ok": bool(getattr(result, "ok", False)),
-            "message": str(getattr(result, "message", "Skill returned an unsupported result.")),
+            "ok": ok,
+            "message": str(getattr(result, "message", "Skill completed." if ok else "Skill failed.")),
             "data": getattr(result, "data", None),
         }
