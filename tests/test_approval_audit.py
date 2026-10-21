@@ -41,8 +41,12 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             audit.append(event_type="approved", pending_id="pending-1", actor="owner-secret", skill_id="notes.write")
             self.assertTrue(audit.verify_chain())
             import sqlite3
-            with sqlite3.connect(path) as db:
+            db = sqlite3.connect(path)
+            try:
                 db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
+                db.commit()
+            finally:
+                db.close()
             self.assertFalse(audit.verify_chain())
 
     def test_actor_identifier_is_not_persisted_in_plaintext(self):
