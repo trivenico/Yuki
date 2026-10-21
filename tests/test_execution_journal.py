@@ -17,6 +17,19 @@ class ExecutionJournalTests(unittest.TestCase):
             "commands": [["pytest", "-q"]],
         }
 
+    def test_recovery_claim_excludes_competing_worker_and_releases_owner(self):
+        record = self.journal.create("claim-job", {"proposal": "x"})
+        self.journal.transition(record.execution_id, "running")
+        self.journal.transition(record.execution_id, "cleanup_required")
+        self.assertTrue(self.journal.claim_recovery("claim-job", "worker-a", 60))
+        self.assertFalse(self.journal.claim_recovery("claim-job", "worker-b", 60))
+        self.assertFalse(self.journal.release_recovery_claim("claim-job", "worker-b"))
+        self.assertTrue(self.journal.release_recovery_claim("claim-job", "worker-a"))
+        self.assertTrue(self.journal.claim_recovery("claim-job", "worker-b", 60))
+
+    def test_recovery_claim_rejects_invalid_lease(self):
+        with self.assertRaises(ExecutionJournalError):
+            self.journal.claim_recovery("missing", "worker-a", 0)
     def test_create_is_idempotent_for_same_context(self):
         first = self.journal.create("exec-1", self.context)
         second = self.journal.create("exec-1", self.context)
