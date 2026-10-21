@@ -38,11 +38,10 @@ class SandboxExecutorTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][:3], ["docker", "rm", "-f"])
         self.assertFalse(popen.call_args.kwargs["shell"])
 
-    @patch("core.sandbox_executor.os.killpg")
     @patch("core.sandbox_executor.build_docker_argv")
     @patch("core.sandbox_executor.subprocess.run")
     @patch("core.sandbox_executor.subprocess.Popen")
-    def test_timeout_terminates_process_and_cleans_container(self, popen, run, build, killpg):
+    def test_timeout_terminates_process_and_cleans_container(self, popen, run, build):
         build.return_value = list(self.argv)
         process = Mock()
         process.stdout = io.BytesIO(b"partial")
@@ -53,15 +52,21 @@ class SandboxExecutorTests(unittest.TestCase):
         popen.return_value = process
         run.return_value = Mock(returncode=0)
 
-        result = execute_docker_sandbox(
-            self.policy, image="python:3.12", workspace="/tmp", command=["python", "-c", "pass"]
-        )
+        if os.name == "posix":
+            with patch("core.sandbox_executor.os.killpg") as killpg:
+                result = execute_docker_sandbox(
+                    self.policy, image="python:3.12", workspace="/tmp",
+                    command=["python", "-c", "pass"]
+                )
+                killpg.assert_called_once()
+        else:
+            result = execute_docker_sandbox(
+                self.policy, image="python:3.12", workspace="C:/tmp",
+                command=["python", "-c", "pass"]
+            )
+            process.kill.assert_called_once()
 
         self.assertTrue(result.timed_out)
-        if os.name == "posix":
-            killpg.assert_called_once()
-        else:
-            process.kill.assert_called_once()
         self.assertTrue(result.container_cleanup_attempted)
 
     @patch("core.sandbox_executor.build_docker_argv")
