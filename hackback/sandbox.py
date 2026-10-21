@@ -5,7 +5,9 @@ patched and do not expose the Docker socket to skill code.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -59,6 +61,8 @@ class DockerSandbox:
         approver: Callable[[str], bool] | None = None,
         docker_binary: str = "docker",
         writable_workspace: bool = False,
+        seccomp_profile: str | Path | None = None,
+        apparmor_profile: str | None = None,
     ):
         self.workspace = Path(workspace).expanduser().resolve()
         if self.workspace == Path(self.workspace.anchor):
@@ -68,6 +72,12 @@ class DockerSandbox:
         self.approver = approver
         self.docker_binary = docker_binary
         self.writable_workspace = writable_workspace
+        self.seccomp_profile = (
+            Path(seccomp_profile).expanduser().resolve() if seccomp_profile is not None else None
+        )
+        if apparmor_profile is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", apparmor_profile):
+            raise ValueError("AppArmor profile name contains unsupported characters.")
+        self.apparmor_profile = apparmor_profile
 
     def run(self, image: str, argv: Sequence[str], *, timeout: int = 30) -> dict:
         if not self.enabled:
@@ -90,11 +100,25 @@ class DockerSandbox:
         ) is not True:
             raise SandboxError("Explicit approval was not granted.")
 
+        security_options = ["--security-opt=no-new-privileges:true"]
+        if self.seccomp_profile is not None:
+            if not self.seccomp_profile.is_file():
+                raise SandboxError("Configured seccomp profile does not exist.")
+            try:
+                profile = json.loads(self.seccomp_profile.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise SandboxError("Configured seccomp profile is not valid JSON.") from exc
+            if not isinstance(profile, dict) or not isinstance(profile.get("syscalls"), list):
+                raise SandboxError("Configured seccomp profile must define a syscalls list.")
+            security_options.append(f"--security-opt=seccomp={self.seccomp_profile}")
+        if self.apparmor_profile is not None:
+            security_options.append(f"--security-opt=apparmor={self.apparmor_profile}")
+
         mount_mode = "rw" if self.writable_workspace else "ro"
         command = [
             self.docker_binary, "run", "--rm", "--pull=never",
             "--network=none", "--read-only", "--cap-drop=ALL",
-            "--security-opt=no-new-privileges:true", "--pids-limit=64",
+            *security_options, "--pids-limit=64",
             "--memory=512m", "--memory-swap=512m", "--cpus=1",
             "--user=65534:65534", "--init",
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m",

@@ -24,6 +24,7 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
             allowed_images=[IMAGE],
             enabled=True,
             approver=lambda _reason: True,
+            apparmor_profile="docker-default",
         )
 
     def tearDown(self):

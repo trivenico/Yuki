@@ -1,8 +1,10 @@
 """Regression tests for Docker sandbox security controls."""
 import io
+import json
 import tempfile
 import unittest
 from unittest import mock
+from pathlib import Path
 
 from hackback.sandbox import DockerSandbox, SandboxError
 
@@ -95,6 +97,35 @@ class DockerSandboxTests(unittest.TestCase):
             with mock.patch("hackback.sandbox.subprocess.Popen", side_effect=OverflowProcess):
                 with self.assertRaisesRegex(SandboxError, "output exceeded"):
                     sandbox.run(IMAGE, ["worker"])
+
+    def test_configured_seccomp_and_apparmor_profiles_are_passed_to_docker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile_path = Path(directory) / "seccomp.json"
+            profile_path.write_text(json.dumps({"defaultAction": "SCMP_ACT_ERRNO", "syscalls": []}))
+            sandbox = self.sandbox(
+                directory,
+                seccomp_profile=profile_path,
+                apparmor_profile="docker-default",
+            )
+            with mock.patch("hackback.sandbox.subprocess.Popen", side_effect=FakeProcess) as popen:
+                sandbox.run(IMAGE, ["worker"])
+            command = popen.call_args.args[0]
+            self.assertIn(f"--security-opt=seccomp={profile_path.resolve()}", command)
+            self.assertIn("--security-opt=apparmor=docker-default", command)
+
+    def test_missing_seccomp_profile_fails_closed_before_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.json"
+            sandbox = self.sandbox(directory, seccomp_profile=missing)
+            with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(SandboxError, "does not exist"):
+                    sandbox.run(IMAGE, ["worker"])
+            popen.assert_not_called()
+
+    def test_invalid_apparmor_profile_name_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "unsupported characters"):
+                self.sandbox(directory, apparmor_profile="profile; --privileged")
 
     def test_explicit_approval_is_required(self):
         with tempfile.TemporaryDirectory() as directory:
