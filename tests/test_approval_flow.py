@@ -170,6 +170,26 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "execution_failed")
         self.assertEqual(outcome.result.error, "policy rejected")
 
+    def test_dict_failure_result_is_not_reported_as_completed(self):
+        class DictFailurePlanner:
+            def execute_approved_action(self, action):
+                return {"ok": False, "error": "adapter rejected"}
+
+        coordinator = ApprovalCoordinator(
+            pending_store=self.pending_store,
+            audit_log=MemoryAudit(),
+        )
+        pending = coordinator.record(
+            self.planner, action_result("dict-failure"), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            DictFailurePlanner(), pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertFalse(outcome.ok)
+        self.assertEqual(outcome.status, "execution_failed")
+        self.assertEqual(outcome.result["error"], "adapter rejected")
+
     def test_returned_failure_is_audited_as_execution_failed(self):
         class FailedPlanner:
             def execute_approved_action(self, action):

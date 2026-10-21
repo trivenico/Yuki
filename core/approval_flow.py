@@ -124,7 +124,11 @@ class ApprovalCoordinator:
 
         # A returned result can represent an application-level failure without
         # raising. Never emit "executed"/"completed" for an explicit ok=False.
-        if getattr(result, "ok", True) is False:
+        # Adapters may return either typed result objects or JSON-style dicts.
+        # Treat an explicit false value consistently; otherwise a dict such as
+        # {"ok": False} would be incorrectly reported as successful execution.
+        result_ok = result.get("ok", True) if isinstance(result, dict) else getattr(result, "ok", True)
+        if result_ok is False:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
             except Exception:
