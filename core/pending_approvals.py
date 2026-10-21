@@ -25,6 +25,7 @@ class StoredPendingAction:
     expires_at: str
     actor_hash: str
     session_hash: str
+    action_hash: str
 
 
 class SQLitePendingApprovalStore:
@@ -49,13 +50,16 @@ class SQLitePendingApprovalStore:
                 action_json TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 actor_hash TEXT,
-                session_hash TEXT
+                session_hash TEXT,
+                action_hash TEXT
             )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
             if "actor_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
             if "session_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
+            if "action_hash" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN action_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
     @contextmanager
@@ -81,18 +85,32 @@ class SQLitePendingApprovalStore:
             raise ValueError("Pending action exceeds 16 KiB.")
         return encoded
 
+    @staticmethod
+    def _action_digest(skill_id: str, arguments_json: str, action_json: str) -> str:
+        """Hash every persisted field that can influence execution."""
+        payload = json.dumps(
+            {"skill_id": skill_id, "arguments": json.loads(arguments_json), "action": json.loads(action_json)},
+            ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def put(self, skill_id: str, arguments: dict[str, Any], action: dict[str, Any], *,
             actor: str, session_id: str) -> StoredPendingAction:
         if not isinstance(skill_id, str) or not skill_id.strip() or len(skill_id) > 120:
             raise ValueError("skill_id is required and must be bounded.")
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("Trusted actor and session identity are required.")
+        if not isinstance(arguments, dict) or not isinstance(action, dict):
+            raise ValueError("Arguments and action must be JSON objects.")
+        if action.get("skill_id") != skill_id or action.get("arguments") != arguments:
+            raise ValueError("Action skill_id and arguments must match the separately stored approval fields.")
         args_json, action_json = self._encode(arguments), self._encode(action)
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        action_hash = self._action_digest(skill_id, args_json, action_json)
         item = StoredPendingAction(secrets.token_urlsafe(24), skill_id, json.loads(args_json),
-                                   json.loads(action_json), expires, actor_hash, session_hash)
+                                   json.loads(action_json), expires, actor_hash, session_hash, action_hash)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -101,9 +119,9 @@ class SQLitePendingApprovalStore:
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
-                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash))
+                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, action_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash, action_hash))
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
@@ -115,19 +133,19 @@ class SQLitePendingApprovalStore:
             return None
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
-            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, action_hash
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
             if row[3] <= now:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
-            # Old rows from before identity binding are rejected, not silently upgraded.
-            if not row[4] or not row[5]:
+            # Legacy or modified snapshots are rejected, never silently trusted.
+            if not row[4] or not row[5] or not row[6] or self._action_digest(row[0], row[1], row[2]) != row[6]:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                       row[3], row[4], row[5])
+                                       row[3], row[4], row[5], row[6])
 
     def consume(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
@@ -139,17 +157,21 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, action_hash
                     FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
                 if row is None or row[3] <= now or row[4] != actor_hash or row[5] != session_hash:
                     if row is not None and row[3] <= now:
                         db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                     db.execute("COMMIT")
                     return None
+                if not row[6] or self._action_digest(row[0], row[1], row[2]) != row[6]:
+                    db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
+                    db.execute("COMMIT")
+                    return None
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 db.execute("COMMIT")
                 return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                           row[3], row[4], row[5])
+                                           row[3], row[4], row[5], row[6])
             except Exception:
                 db.execute("ROLLBACK")
                 raise
