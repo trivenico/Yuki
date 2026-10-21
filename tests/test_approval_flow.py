@@ -23,6 +23,14 @@ class FakePlanner:
         return SimpleNamespace(ok=True, value="executed")
 
 
+class MemoryAudit:
+    def __init__(self):
+        self.events = []
+
+    def append(self, **event):
+        self.events.append(event)
+
+
 def action_result(text="safe note"):
     return {"action": {"skill_id": "notes.write", "arguments": {"text": text}}}
 
@@ -30,7 +38,7 @@ def action_result(text="safe note"):
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator()
+        self.coordinator = ApprovalCoordinator(audit_log=MemoryAudit())
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -41,6 +49,22 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.planner, pending_id or self.pending.pending_id, actor=actor,
             session_id=session_id, confirm=confirm,
         )
+
+    def test_missing_audit_sink_blocks_before_creating_pending_request(self):
+        coordinator = ApprovalCoordinator()
+        with self.assertRaisesRegex(RuntimeError, "audit sink is required"):
+            coordinator.record(self.planner, action_result(), actor="owner", session_id="session-a")
+        self.assertEqual(coordinator._pending, {})
+        self.assertEqual(self.planner.executed, [])
+
+    def test_missing_audit_sink_blocks_approval_execution(self):
+        coordinator = ApprovalCoordinator()
+        outcome = coordinator.approve(
+            self.planner, "unknown", actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "audit_unavailable")
+        self.assertEqual(self.planner.executed, [])
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
