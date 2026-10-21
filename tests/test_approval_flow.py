@@ -72,6 +72,40 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(count, 0)
             self.assertEqual(self.planner.executed, [])
 
+    def test_approval_audit_failure_prevents_execution(self):
+        class SelectiveAudit:
+            def append(self, *, event_type, **_event):
+                if event_type == "approved":
+                    raise OSError("audit unavailable")
+
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "audit_unavailable")
+        self.assertEqual(self.planner.executed, [])
+
+    def test_execution_audit_failure_returns_recovery_required_not_retryable_failure(self):
+        class SelectiveAudit:
+            def append(self, *, event_type, **_event):
+                if event_type == "executed":
+                    raise OSError("audit unavailable")
+
+        coordinator = ApprovalCoordinator(audit_log=SelectiveAudit())
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "recovery_required")
+        self.assertEqual(len(self.planner.executed), 1)
+
     def test_record_requires_explicit_approval_before_execution(self):
         self.assertEqual(self.pending.status, "pending_approval")
         self.assertFalse(self.pending.ok)
