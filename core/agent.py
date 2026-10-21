@@ -43,6 +43,18 @@ class YukiCoreAgent:
         return self.registry.describe()
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
+        # Keep the direct public entry point at least as strict as the model planner.
+        # Approval UI and execution must see the same bounded argument, not a truncated
+        # preview of an unbounded value.
+        if not isinstance(argument, str) or len(argument) > 500 or "\\x00" in argument:
+            return AgentResponse(
+                False,
+                "Blocked: skill argument must be a NUL-free string of at most 500 characters.",
+                name if isinstance(name, str) else None,
+                stage="invalid_input",
+            )
+        if not isinstance(name, str) or not name.strip():
+            return AgentResponse(False, "Blocked: skill name is invalid.", stage="invalid_input")
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
