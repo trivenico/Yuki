@@ -1,12 +1,10 @@
 import io
+import os
 import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from core.sandbox_executor import (
-    SandboxExecutionError,
-    execute_docker_sandbox,
-)
+from core.sandbox_executor import SandboxExecutionError, execute_docker_sandbox
 from core.sandbox_policy import SandboxPolicy
 
 
@@ -44,7 +42,7 @@ class SandboxExecutorTests(unittest.TestCase):
     @patch("core.sandbox_executor.build_docker_argv")
     @patch("core.sandbox_executor.subprocess.run")
     @patch("core.sandbox_executor.subprocess.Popen")
-    def test_timeout_kills_process_group_and_cleans_container(self, popen, run, build, killpg):
+    def test_timeout_terminates_process_and_cleans_container(self, popen, run, build, killpg):
         build.return_value = list(self.argv)
         process = Mock()
         process.stdout = io.BytesIO(b"partial")
@@ -60,7 +58,10 @@ class SandboxExecutorTests(unittest.TestCase):
         )
 
         self.assertTrue(result.timed_out)
-        killpg.assert_called_once()
+        if os.name == "posix":
+            killpg.assert_called_once()
+        else:
+            process.kill.assert_called_once()
         self.assertTrue(result.container_cleanup_attempted)
 
     @patch("core.sandbox_executor.build_docker_argv")
