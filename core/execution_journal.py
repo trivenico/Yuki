@@ -202,3 +202,15 @@ class SQLiteExecutionJournal:
                 if db.in_transaction:
                     db.execute("ROLLBACK")
                 raise
+    def list_recovery_candidates(self) -> tuple[ExecutionRecord, ...]:
+        """List interrupted or cleanup-pending executions in stable order."""
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT execution_id, context_sha256, state, created_at, updated_at,
+                          result_json, cleanup_confirmed
+                   FROM sandbox_executions
+                   WHERE state IN ('created','running','cleanup_required')
+                   ORDER BY created_at, execution_id"""
+            ).fetchall()
+        return tuple(self._record(row) for row in rows)
+
