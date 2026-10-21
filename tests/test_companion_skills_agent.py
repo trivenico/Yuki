@@ -34,6 +34,23 @@ class CompanionSkillAgentTests(unittest.TestCase):
         self.assertEqual(result.stage, "report")
         self.assertIsInstance(seen[0], ApprovalRequest)
 
+    def test_direct_skill_argument_is_bounded_before_approval(self):
+        seen = []
+        gate = PermissionGate(lambda request: seen.append(request) or True)
+        agent = YukiCoreAgent([TimeSkill()], gate)
+        oversized = agent.run_skill("time", "x" * 501)
+        nulled = agent.run_skill("time", "safe\x00unsafe")
+        self.assertEqual(oversized.stage, "invalid_input")
+        self.assertEqual(nulled.stage, "invalid_input")
+        self.assertEqual(seen, [])
+
+    def test_invalid_skill_name_is_rejected_without_approval(self):
+        seen = []
+        agent = YukiCoreAgent([TimeSkill()], PermissionGate(lambda request: seen.append(request) or True))
+        result = agent.run_skill("", "")
+        self.assertEqual(result.stage, "invalid_input")
+        self.assertEqual(seen, [])
+
     def test_unapproved_skill_does_not_run(self):
         agent = YukiCoreAgent([TimeSkill()])
         result = agent.run_skill("time")
