@@ -139,6 +139,8 @@ class DockerSandbox:
         for entry in syscalls:
             if not isinstance(entry, dict):
                 raise SandboxError("Each seccomp syscall rule must be an object.")
+            if set(entry) - {"action", "names", "args"}:
+                raise SandboxError("Seccomp syscall rule contains unsupported fields.")
             if not isinstance(entry.get("action"), str) or entry.get("action") not in valid_actions:
                 raise SandboxError("Seccomp syscall rule has an unsupported action.")
             names = entry.get("names")
@@ -148,11 +150,17 @@ class DockerSandbox:
             ):
                 raise SandboxError("Seccomp syscall rules must contain valid syscall names.")
             args = entry.get("args", [])
+            if len(set(names)) != len(names):
+                raise SandboxError("Seccomp syscall names must not contain duplicates.")
             if not isinstance(args, list):
                 raise SandboxError("Seccomp syscall rule args must be a list.")
             for condition in args:
                 if not isinstance(condition, dict):
                     raise SandboxError("Seccomp syscall argument conditions must be objects.")
+                if set(condition) - {"index", "op", "value", "valueTwo"}:
+                    raise SandboxError("Seccomp syscall argument condition contains unsupported fields.")
+                if "value" not in condition:
+                    raise SandboxError("Seccomp syscall argument condition must define value.")
                 index = condition.get("index")
                 if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 5:
                     raise SandboxError("Seccomp syscall argument index must be between 0 and 5.")
