@@ -37,6 +37,33 @@ class JournalBackupTests(unittest.TestCase):
         with closing(sqlite3.connect(str(self.destination))) as db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
+    def test_backup_restores_into_a_fresh_journal_with_state_intact(self):
+        backup_sqlite_database(self.source, self.destination)
+        restored_path = Path(self.temp.name) / "restored.sqlite3"
+        with closing(sqlite3.connect(str(self.destination))) as backup_db:
+            with closing(sqlite3.connect(str(restored_path))) as restored_db:
+                backup_db.backup(restored_db)
+                self.assertEqual(
+                    restored_db.execute("PRAGMA integrity_check").fetchone()[0], "ok"
+                )
+
+        restored = SQLiteExecutionJournal(str(restored_path))
+        record = restored.get("backup-job")
+        self.assertEqual(record.state, "running")
+        self.assertEqual(record.context_sha256, self.journal.get("backup-job").context_sha256)
+
+    def test_backup_preserves_recovery_claims(self):
+        self.journal.transition("backup-job", "cleanup_required")
+        self.assertTrue(self.journal.claim_recovery("backup-job", "backup-worker"))
+        backup_sqlite_database(self.source, self.destination)
+
+        with closing(sqlite3.connect(str(self.destination))) as db:
+            claim = db.execute(
+                "SELECT execution_id, worker_id FROM sandbox_recovery_claims WHERE execution_id=?",
+                ("backup-job",),
+            ).fetchone()
+        self.assertEqual(claim, ("backup-job", "backup-worker"))
+
     def test_backup_rejects_same_source_and_destination(self):
         with self.assertRaisesRegex(JournalBackupError, "must differ"):
             backup_sqlite_database(self.source, self.source)
