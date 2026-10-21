@@ -150,6 +150,15 @@ def main():
     )
     task_agent = ApprovedTaskAgent(ai.provider, durable_agent, max_steps=config["max_agent_steps"])
     token_usage = TokenUsageTracker(workspace / "token_usage.json", session_id="cli-session")
+    # Attach usage accounting to active provider adapters without changing routing.
+    def attach_usage_tracker(provider):
+        if provider is None:
+            return
+        if hasattr(provider, "usage_tracker"):
+            provider.usage_tracker = token_usage
+        attach_usage_tracker(getattr(provider, "local_provider", None))
+        attach_usage_tracker(getattr(provider, "cloud_provider", None))
+    attach_usage_tracker(ai.provider)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
