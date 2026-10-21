@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from pathlib import Path
@@ -59,6 +60,24 @@ class ExecutionJournalTests(unittest.TestCase):
     def test_recovery_claim_rejects_invalid_lease(self):
         with self.assertRaises(ExecutionJournalError):
             self.journal.claim_recovery("missing", "worker-a", 1)
+    def test_expired_recovery_claim_cannot_be_renewed_or_finalize_cleanup(self):
+        record = self.journal.create("expired-claim-job", {"proposal": "x"})
+        self.journal.transition(record.execution_id, "running")
+        self.journal.transition(record.execution_id, "cleanup_required")
+        self.assertTrue(self.journal.claim_recovery(record.execution_id, "worker-stale", 60))
+        with sqlite3.connect(self.journal.database_path) as db:
+            db.execute(
+                "UPDATE sandbox_recovery_claims SET lease_expires_at=? WHERE execution_id=?",
+                ("2000-01-01T00:00:00+00:00", record.execution_id),
+            )
+        self.assertFalse(self.journal.renew_recovery_claim(record.execution_id, "worker-stale", 60))
+        with self.assertRaisesRegex(ExecutionJournalError, "missing, expired, or owned"):
+            self.journal.transition(
+                record.execution_id, "cleaned", cleanup_confirmed=True,
+                recovery_worker_id="worker-stale",
+            )
+        self.assertEqual(self.journal.get(record.execution_id).state, "cleanup_required")
+
     def test_cleanup_finalization_requires_active_claim(self):
         record = self.journal.create("fenced-job", {"proposal": "x"})
         self.journal.transition(record.execution_id, "running")
