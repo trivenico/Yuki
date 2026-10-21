@@ -32,14 +32,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_invalid_environment_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("environment: productionish\\n", encoding="utf-8")
+            path.write_text("environment: productionish\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "environment must be"):
                 load_config(path)
 
     def test_production_rejects_mock_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("environment: production\\nprovider: mock\\n", encoding="utf-8")
+            path.write_text("environment: production\nprovider: mock\n", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "Production requires a real provider"):
                     load_config(path)
@@ -47,7 +47,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_production_ollama_requires_model(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("environment: production\\nprovider: ollama\\nollama_model: ''\\n", encoding="utf-8")
+            path.write_text("environment: production\nprovider: ollama\nollama_model: ''\n", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "OLLAMA_MODEL"):
                     load_config(path)
@@ -55,7 +55,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_invalid_provider_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
-            path.write_text("provider: mystery\\n", encoding="utf-8")
+            path.write_text("provider: mystery\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "provider must be one of"):
                 load_config(path)
 
