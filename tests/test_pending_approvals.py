@@ -79,6 +79,36 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             )
             self.assertIsNone(store.get(item.pending_id))
 
+    def test_modified_arguments_are_rejected_even_if_action_json_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "safe"},
+                {"skill_id": "notes.write", "arguments": {"text": "safe"}},
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET arguments_json = ? WHERE pending_id = ?",
+                    ('{"text":"tampered"}', item.pending_id),
+                )
+            self.assertIsNone(store.consume(item.pending_id, actor="owner", session_id="session-a"))
+
+    def test_modified_skill_id_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "safe"},
+                {"skill_id": "notes.write", "arguments": {"text": "safe"}},
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET skill_id = ? WHERE pending_id = ?",
+                    ("shell.exec", item.pending_id),
+                )
+            self.assertIsNone(store.consume(item.pending_id, actor="owner", session_id="session-a"))
+
     def test_legacy_snapshot_without_action_hash_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
