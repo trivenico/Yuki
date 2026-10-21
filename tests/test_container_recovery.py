@@ -52,7 +52,7 @@ class ContainerRecoveryTests(unittest.TestCase):
     @patch("core.container_recovery.subprocess.run")
     def test_claim_callback_exception_fails_closed(self, run):
         name = container_name_for_execution("run-1")
-        run.return_value = subprocess.CompletedProcess([], 0, f"/{name}\ttrue\trun-1\n", "")
+        run.return_value = subprocess.CompletedProcess([], 0, f"{'a' * 64}\t/{name}\ttrue\trun-1\n", "")
         def fail_claim():
             raise RuntimeError("journal unavailable")
         with self.assertRaisesRegex(ContainerRecoveryError, "could not be verified"):
