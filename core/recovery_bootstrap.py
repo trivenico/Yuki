@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.execution_journal import SQLiteExecutionJournal
-from core.execution_journal_config import execution_journal_path
+from core.execution_journal_config import execution_journal_path, open_execution_journal
 from core.startup_recovery import StartupRecoveryReport, recover_interrupted_executions
 
 
@@ -25,5 +24,5 @@ def recover_workspace_on_startup(workspace: str | Path) -> StartupRecoveryReport
         return None
     if journal_path.is_symlink() or not journal_path.is_file():
         raise RuntimeError("Execution journal must be a regular, non-symlink file.")
-    journal = SQLiteExecutionJournal(str(journal_path))
+    journal = open_execution_journal(root)
     return recover_interrupted_executions(journal)
