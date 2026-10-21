@@ -6,6 +6,14 @@ from unittest.mock import patch
 import main
 
 
+class FakeReadinessReport:
+    def __init__(self, value):
+        self.value = value
+
+    def to_dict(self):
+        return self.value
+
+
 class ReadinessCommandTests(unittest.TestCase):
     def _run_command(self, report_side_effect=None, report_value=None):
         config = defaultdict(
@@ -26,19 +34,19 @@ class ReadinessCommandTests(unittest.TestCase):
             "PacketSniffer", "ExploitRunner", "SpeakerVerifier",
         ):
             patches.append(patch.object(main, name))
-        readiness = patch(
-            "main.build_readiness_report",
-            side_effect=report_side_effect,
-        ) if report_side_effect is not None else patch("main.build_readiness_report")
+        if report_side_effect is not None:
+            readiness = patch("main.build_readiness_report", side_effect=report_side_effect)
+        else:
+            readiness = patch(
+                "main.build_readiness_report",
+                return_value=FakeReadinessReport(report_value),
+            )
         patches.append(readiness)
 
         started = []
         try:
             for item in patches:
                 started.append((item, item.start()))
-            if report_side_effect is None:
-                readiness_mock = started[-1][1]
-                readiness_mock.return_value.to_dict.return_value = report_value
             main.main()
             return output.getvalue()
         finally:

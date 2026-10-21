@@ -5,6 +5,7 @@ intentionally excluded. The log is append-only through this API.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -39,10 +40,15 @@ class SQLiteApprovalAuditLog:
                 "ON approval_audit_events(created_at, event_id)"
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
+        """Yield a SQLite connection and always close it (important on Windows)."""
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            yield db
+        finally:
+            db.close()
 
     def append(self, *, event_type: str, pending_id: str, actor: str, skill_id: str) -> int:
         if event_type not in self._EVENTS:

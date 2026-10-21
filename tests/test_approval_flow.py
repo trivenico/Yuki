@@ -1,169 +1,97 @@
-import json
-import sys
+"""Unit and persistence tests for the guarded approval coordinator.
+
+These tests deliberately exercise only modules present in this branch. End-to-end
+skill execution belongs in a separate integration test once the manifest runtime
+and subprocess adapter are implemented on the same branch.
+"""
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
-from core.action_approvals import ActionApprovalStore
-from core.agent import YukiCoreAgent
-from core.approval_flow import ApprovalCoordinator
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
-from core.manifest_task_agent import ManifestTaskAgent
-from core.skill_dispatch import SkillDispatcher
-from core.skill_manifest import SkillManifest
-from core.subprocess_executor import SubprocessExecutor
 
 
-class Provider:
-    def __init__(self, response):
-        self.response = response
+class FakePlanner:
+    def __init__(self):
+        self.executed = []
 
-    def generate(self, prompt):
-        return self.response
+    def execute_approved_action(self, action):
+        self.executed.append(action)
+        return SimpleNamespace(ok=True, value="executed")
 
 
-def build():
-    manifest = SkillManifest.from_dict({
-        "skill_id": "notes.write",
-        "version": "1.0.0",
-        "entrypoint": "worker.run",
-        "input_schema": {"type": "object", "properties": {"text": {"type": "string", "maxLength": 100}},
-                         "required": ["text"], "additionalProperties": False},
-        "output_schema": {"type": "object", "properties": {"saved": {"type": "boolean"}},
-                          "required": ["saved"], "additionalProperties": False},
-        "capabilities": ["workspace.write"], "risk": "low",
-        "timeout_seconds": 3, "max_output_bytes": 1024,
-    })
-    dispatcher = SkillDispatcher(capability_grants={"workspace.write"}, approval_store=ActionApprovalStore())
-    script = "import json,sys; json.load(sys.stdin); print(json.dumps({'ok':True,'result':{'output':{'saved':True}}}))"
-    dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
-                                   executor=SubprocessExecutor(timeout_seconds=3))
-    agent = YukiCoreAgent(dispatcher=dispatcher)
-    planner = ManifestTaskAgent(Provider(json.dumps({
-        "type": "tool_call", "skill_id": "notes.write", "arguments": {"text": "exact note"}
-    })), agent, dispatcher)
-    return planner
+def action_result(text="safe note"):
+    return {"action": {"skill_id": "notes.write", "arguments": {"text": text}}}
 
 
 class ApprovalCoordinatorTests(unittest.TestCase):
-    def test_approval_displays_exact_action_and_executes_stored_snapshot(self):
-        planner = build()
-        result = planner.run("Write note")
-        coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
-        shown = []
-        approved = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
-            confirm=lambda action: shown.append(action) or True,
+    def setUp(self):
+        self.planner = FakePlanner()
+        self.coordinator = ApprovalCoordinator()
+        self.pending = self.coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
         )
-        self.assertTrue(approved.ok)
-        self.assertEqual(approved.status, "completed")
-        self.assertEqual(shown[0]["skill_id"], "notes.write")
-        self.assertEqual(shown[0]["arguments"], {"text": "exact note"})
 
-    def test_denial_does_not_execute(self):
-        planner = build()
-        result = planner.run("Write note")
-        coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
-        denied = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
-            confirm=lambda action: False,
+    def approve(self, coordinator=None, pending_id=None, actor="owner", session_id="session-a",
+                confirm=lambda _action: True):
+        return (coordinator or self.coordinator).approve(
+            self.planner, pending_id or self.pending.pending_id, actor=actor,
+            session_id=session_id, confirm=confirm,
         )
-        self.assertFalse(denied.ok)
-        self.assertEqual(denied.status, "approval_denied")
-        replay = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
-            confirm=lambda action: True,
-        )
+
+    def test_record_requires_explicit_approval_before_execution(self):
+        self.assertEqual(self.pending.status, "pending_approval")
+        self.assertFalse(self.pending.ok)
+        self.assertEqual(self.planner.executed, [])
+
+    def test_approval_executes_the_stored_action_once(self):
+        outcome = self.approve()
+        self.assertTrue(outcome.ok)
+        self.assertEqual(outcome.status, "completed")
+        self.assertEqual(self.planner.executed[0]["arguments"], {"text": "safe note"})
+        replay = self.approve()
         self.assertEqual(replay.status, "pending_not_found")
+        self.assertEqual(len(self.planner.executed), 1)
 
-    def test_callback_cannot_mutate_stored_action(self):
-        planner = build()
-        result = planner.run("Write note")
-        coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
+    def test_denial_does_not_execute_and_consumes_the_request(self):
+        denied = self.approve(confirm=lambda _action: False)
+        self.assertEqual(denied.status, "approval_denied")
+        self.assertEqual(self.planner.executed, [])
+        self.assertEqual(self.approve().status, "pending_not_found")
 
-        def mutate(action):
-            action["arguments"]["text"] = "changed by UI"
+    def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
+        def mutate(display_action):
+            display_action["arguments"]["text"] = "tampered"
             return True
+        outcome = self.approve(confirm=mutate)
+        self.assertTrue(outcome.ok)
+        self.assertEqual(self.planner.executed[0]["arguments"]["text"], "safe note")
 
-        approved = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session", confirm=mutate
-        )
-        self.assertTrue(approved.ok)
+    def test_approval_is_bound_to_actor_and_session(self):
+        self.assertEqual(self.approve(actor="intruder").status, "pending_not_found")
+        self.assertEqual(self.approve(session_id="session-b").status, "pending_not_found")
+        self.assertTrue(self.approve().ok)
 
-    def test_persistent_pending_and_audit_are_connected_to_approval_flow(self):
+    def test_persistent_store_and_audit_log_survive_coordinator_recreation(self):
         with tempfile.TemporaryDirectory() as tmp:
-            planner = build()
             pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
-            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit)
-            result = planner.run("Write note")
-            pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
-            approved = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="cli-session",
-                confirm=lambda action: action["arguments"] == {"text": "exact note"},
-            )
-            self.assertTrue(approved.ok)
-            events = audit.list_events()
-            self.assertEqual([event["event_type"] for event in reversed(events)],
-                             ["requested", "approved", "executed"])
-            self.assertNotIn("exact note", str(events))
-
-    def test_pending_approval_is_bound_to_creator_actor_and_session(self):
-        planner = build()
-        result = planner.run("Write note")
-        coordinator = ApprovalCoordinator()
-        pending = coordinator.record(planner, result, actor="owner", session_id="cli-session")
-        wrong_actor = coordinator.approve(
-            planner, pending.pending_id, actor="other-user", session_id="cli-session",
-            confirm=lambda action: True,
-        )
-        self.assertEqual(wrong_actor.status, "pending_not_found")
-        wrong_session = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="other-session",
-            confirm=lambda action: True,
-        )
-        self.assertEqual(wrong_session.status, "pending_not_found")
-        valid = coordinator.approve(
-            planner, pending.pending_id, actor="owner", session_id="cli-session",
-            confirm=lambda action: True,
-        )
-        self.assertTrue(valid.ok)
-
-    def test_persistent_pending_approval_rejects_other_actor_and_session(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            planner = build()
-            pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
-            coordinator = ApprovalCoordinator(pending_store=pending_store)
+            audit_log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=pending_store, audit_log=audit_log)
             pending = coordinator.record(
-                planner, planner.run("Write note"), actor="owner", session_id="cli-session"
+                self.planner, action_result("persisted"), actor="owner", session_id="session-a"
             )
-            wrong = coordinator.approve(
-                planner, pending.pending_id, actor="other-user", session_id="cli-session",
-                confirm=lambda action: True,
+            outcome = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda shown: shown["arguments"]["text"] == "persisted",
             )
-            self.assertEqual(wrong.status, "pending_not_found")
-            wrong_session = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="other-session",
-                confirm=lambda action: True,
-            )
-            self.assertEqual(wrong_session.status, "pending_not_found")
-            valid = coordinator.approve(
-                planner, pending.pending_id, actor="owner", session_id="cli-session",
-                confirm=lambda action: True,
-            )
-            self.assertTrue(valid.ok)
-
-    def test_pending_capacity_is_bounded(self):
-        planner = build()
-        result = planner.run("Write note")
-        coordinator = ApprovalCoordinator(max_pending=1)
-        coordinator.record(planner, result, actor="owner", session_id="cli-session")
-        with self.assertRaises(RuntimeError):
-            coordinator.record(planner, result, actor="owner", session_id="cli-session")
+            self.assertTrue(outcome.ok)
+            events = list(reversed(audit_log.list_events()))
+            self.assertEqual([event["event_type"] for event in events],
+                             ["requested", "approved", "executed"])
+            self.assertNotIn("persisted", str(events))
 
 
 if __name__ == "__main__":

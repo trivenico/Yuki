@@ -5,6 +5,7 @@ hashed at rest and checked again at approval time; callers must provide trusted 
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -57,10 +58,15 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
+    @contextmanager
     def _connect(self):
+        """Yield a SQLite connection and always close it (important on Windows)."""
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identity_hash(value: str) -> str:
