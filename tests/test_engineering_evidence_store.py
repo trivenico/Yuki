@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -33,15 +34,16 @@ class EngineeringEvidenceStoreTests(unittest.TestCase):
     def test_chain_detects_payload_tampering(self):
         self.store.append(repository="trivenico/Yuki", pr_number=73, head_sha=SHA,
                           payload={"decision": "block"})
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             db.execute("DROP TRIGGER engineering_evidence_no_update")
             db.execute("UPDATE engineering_evidence SET payload_json = ?", ('{"decision":"allow"}',))
+            db.commit()
         self.assertFalse(self.store.verify_chain())
 
     def test_normal_api_rejects_update_and_delete(self):
         self.store.append(repository="trivenico/Yuki", pr_number=73, head_sha=SHA,
                           payload={"decision": "block"})
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("UPDATE engineering_evidence SET payload_json = ?", ('{"decision":"allow"}',))
             with self.assertRaises(sqlite3.IntegrityError):
