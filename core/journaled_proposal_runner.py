@@ -44,6 +44,7 @@ def _bounded_result(checks: Sequence[SandboxResult]) -> dict:
     return {"checks": summaries, "journal_output_truncated": remaining == 0}
 
 from core.execution_journal import ExecutionJournalError, ExecutionRecord, SQLiteExecutionJournal
+from core.execution_journal_config import open_execution_journal
 from core.proposal_test_runner import (
     ProposalTestRunError,
     _managed_workspace,
@@ -66,7 +67,7 @@ class JournaledProposalResult:
 
 def run_journaled_proposal_checks(
     *,
-    journal: SQLiteExecutionJournal,
+    journal: SQLiteExecutionJournal | None = None,
     execution_id: str,
     proposal_sha256: str,
     workspace: str | os.PathLike[str],
@@ -76,6 +77,11 @@ def run_journaled_proposal_checks(
     commands: Sequence[Sequence[str]],
 ) -> JournaledProposalResult:
     """Run once under a durable ID; duplicate/recovered IDs are never replayed."""
+    if journal is None:
+        try:
+            journal = open_execution_journal(parent_dir)
+        except (OSError, ValueError) as exc:
+            raise JournaledProposalRunError("Could not open the canonical execution journal.") from exc
     if not isinstance(proposal_sha256, str) or len(proposal_sha256) != 64:
         raise JournaledProposalRunError("A SHA-256 proposal digest is required.")
     try:
