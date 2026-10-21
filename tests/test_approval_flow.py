@@ -39,7 +39,9 @@ def build():
     script = "import json,sys; json.load(sys.stdin); print(json.dumps({'ok':True,'result':{'output':{'saved':True}}}))"
     dispatcher.register_subprocess(manifest, [sys.executable, "-c", script],
                                    executor=SubprocessExecutor(timeout_seconds=3))
-    agent = YukiCoreAgent(dispatcher=dispatcher)
+    # YukiCoreAgent owns the built-in skill registry; manifest dispatch is
+    # injected into ManifestTaskAgent, not the interactive agent constructor.
+    agent = YukiCoreAgent()
     planner = ManifestTaskAgent(Provider(json.dumps({
         "type": "tool_call", "skill_id": "notes.write", "arguments": {"text": "exact note"}
     })), agent, dispatcher)
