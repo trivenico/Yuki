@@ -1,10 +1,11 @@
 """Adversarial regression tests for bounded Docker sandbox output."""
 import io
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
-from hackback.sandbox import DockerSandbox
+from hackback.sandbox import DockerSandbox, SandboxError
 
 
 IMAGE = "example.invalid/yuki-worker@sha256:" + "a" * 64
@@ -47,7 +48,7 @@ class SandboxOutputBoundsTests(unittest.TestCase):
         self.assertEqual(result["stderr"], "B" * 1024)
         args, kwargs = popen.call_args
         self.assertFalse(kwargs["shell"] if "shell" in kwargs else False)
-        self.assertEqual(kwargs["stdin"], __import__("subprocess").DEVNULL)
+        self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
         self.assertNotIn("sh", args[0][0].lower())
 
     def test_approval_denial_prevents_process_creation(self):
@@ -59,7 +60,7 @@ class SandboxOutputBoundsTests(unittest.TestCase):
                 approver=lambda _reason: False,
             )
             with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
-                with self.assertRaisesRegex(Exception, "approval"):
+                with self.assertRaisesRegex(SandboxError, "approval"):
                     sandbox.run(IMAGE, ["worker"])
         popen.assert_not_called()
 
@@ -72,7 +73,7 @@ class SandboxOutputBoundsTests(unittest.TestCase):
                 approver=lambda _reason: True,
             )
             with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
-                with self.assertRaisesRegex(Exception, "security flags"):
+                with self.assertRaisesRegex(SandboxError, "security flags"):
                     sandbox.run(IMAGE, ["worker", "--network", "host"])
         popen.assert_not_called()
 
