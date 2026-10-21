@@ -1,4 +1,5 @@
 import io
+from collections import defaultdict
 import unittest
 from unittest.mock import patch
 
@@ -18,7 +19,7 @@ class ReadinessCommandTests(unittest.TestCase):
         }
         with patch("builtins.input", side_effect=["/readiness", "/quit"]), \
              patch("sys.stdout", new_callable=io.StringIO) as output, \
-             patch.object(main, "load_config", return_value={"workspace": "/tmp/yuki-readiness-command-test"}), \
+             patch.object(main, "load_config", return_value=defaultdict(lambda: False, {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3})), \
              patch.object(main, "build_agent"), patch.object(main, "create_provider"), \
              patch.object(main, "YukiAgent"), patch.object(main, "ApprovedTaskAgent"), \
              patch.object(main, "MemoryStore"), patch.object(main, "VectorMemory"), \
