@@ -24,7 +24,28 @@ class StartupRecoveryTests(unittest.TestCase):
         self.journal.create(execution_id, self.context | {"execution_marker": execution_id})
         if state == "running":
             self.journal.transition(execution_id, "running")
-        self.journal.mark_interrupted_for_reconciliation()
+            # Only the execution supervisor can assert that the process has
+            # stopped; startup recovery must not guess from a "running" row.
+            self.journal.transition(execution_id, "cleanup_required")
+
+    def test_startup_recovery_does_not_reclassify_live_running_execution(self):
+        self.journal.create("live-run", self.context | {"execution_marker": "live"})
+        self.journal.transition("live-run", "running")
+
+        discovered = self.journal.mark_interrupted_for_reconciliation()
+
+        self.assertEqual(discovered, ())
+        self.assertEqual(self.journal.get("live-run").state, "running")
+
+    def test_startup_recovery_resumes_explicit_cleanup_required_execution(self):
+        self.journal.create("pending-run", self.context | {"execution_marker": "pending"})
+        self.journal.transition("pending-run", "running")
+        self.journal.transition("pending-run", "cleanup_required")
+
+        discovered = self.journal.mark_interrupted_for_reconciliation()
+
+        self.assertEqual(discovered, ("pending-run",))
+        self.assertEqual(self.journal.get("pending-run").state, "cleanup_required")
 
     def test_live_claim_by_other_worker_skips_cleanup(self):
         self.create_pending("run-claimed")
