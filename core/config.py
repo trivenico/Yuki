@@ -71,8 +71,18 @@ def load_config(path=None):
             raise ValueError("unsafe URL")
     except ValueError as exc:
         raise RuntimeError("Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment.") from exc
+    environment = os.environ.get("YUKI_ENVIRONMENT", str(raw.get("environment", "development"))).strip().lower()
+    if environment not in {"development", "test", "staging", "production"}:
+        raise RuntimeError("environment must be development, test, staging, or production.")
+    provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower()
+    if provider not in {"mock", "ollama", "hybrid"}:
+        raise RuntimeError("provider must be one of: mock, ollama, hybrid.")
+    if environment == "production" and provider == "mock":
+        raise RuntimeError("Production requires a real provider; set YUKI_PROVIDER=ollama or hybrid.")
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    if environment in {"staging", "production"} and provider in {"ollama", "hybrid"} and not model:
+        raise RuntimeError("YUKI_OLLAMA_MODEL or ollama_model is required for staging/production Ollama providers.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -80,7 +90,7 @@ def load_config(path=None):
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
     return {
-        "name": "Yuki", "workspace": str(workspace.resolve()),
+        "name": "Yuki", "environment": environment, "workspace": str(workspace.resolve()),
         "language_behavior": language_behavior, "voice_style": voice_style,
         "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
@@ -95,7 +105,7 @@ def load_config(path=None):
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "provider": provider,
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
