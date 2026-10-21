@@ -60,7 +60,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
     """Remove a stopped/running container only after exact label verification."""
     name = container_name_for_execution(execution_id)
     inspected = _docker(
-        ["inspect", "--format", "{{.Name}}\t{{index .Config.Labels \"com.yuki.managed\"}}\t{{index .Config.Labels \"com.yuki.execution-id\"}}", name],
+        ["inspect", "--format", "{{.Id}}\\t{{.Name}}\\t{{index .Config.Labels \\"com.yuki.managed\\"}}\\t{{index .Config.Labels \\"com.yuki.execution-id\\"}}", name],
         timeout_seconds=5,
     )
     if inspected.returncode != 0:
@@ -70,10 +70,12 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
             return ContainerRecoveryResult(execution_id, inspected=False, removed=False, already_absent=True)
         raise ContainerRecoveryError("Docker inspect failed; ownership cannot be established.")
 
-    parts = inspected.stdout.rstrip("\r\n").split("\t")
-    if len(parts) != 3:
+    parts = inspected.stdout.rstrip("\\r\\n").split("\\t")
+    if len(parts) != 4:
         raise ContainerRecoveryError("Docker inspect returned malformed ownership metadata.")
-    actual_name, managed, actual_execution_id = parts
+    container_id, actual_name, managed, actual_execution_id = parts
+    if not re.fullmatch(r"[0-9a-f]{64}", container_id):
+        raise ContainerRecoveryError("Docker inspect returned an invalid immutable container ID.")
     if actual_name.lstrip("/") != name or managed != "true" or actual_execution_id != execution_id:
         raise ContainerRecoveryError("Container ownership labels do not match; refusing cleanup.")
 
@@ -84,7 +86,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
             raise ContainerRecoveryError("Recovery claim could not be verified before container removal.") from exc
         if authorized is not True:
             raise ContainerRecoveryError("Recovery claim expired or changed before container removal.")
-    removed = _docker(["rm", "-f", name], timeout_seconds=10)
+    # Remove by immutable ID so a container recreated under the same name cannot be targeted.\n    removed = _docker(["rm", "-f", container_id], timeout_seconds=10)
     if removed.returncode != 0:
         raise ContainerRecoveryError("Verified Yuki container cleanup failed.")
     return ContainerRecoveryResult(execution_id, inspected=True, removed=True, already_absent=False)
