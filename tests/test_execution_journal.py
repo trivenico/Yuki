@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 
 from core.execution_journal import ExecutionJournalError, SQLiteExecutionJournal
@@ -26,6 +28,23 @@ class ExecutionJournalTests(unittest.TestCase):
         self.assertFalse(self.journal.release_recovery_claim("claim-job", "worker-b"))
         self.assertTrue(self.journal.release_recovery_claim("claim-job", "worker-a"))
         self.assertTrue(self.journal.claim_recovery("claim-job", "worker-b", 60))
+
+    def test_concurrent_journal_instances_grant_only_one_recovery_claim(self):
+        record = self.journal.create("race-job", {"proposal": "x"})
+        self.journal.transition(record.execution_id, "running")
+        self.journal.transition(record.execution_id, "cleanup_required")
+        second_journal = SQLiteExecutionJournal(str(Path(self.temp.name) / "jobs.sqlite3"))
+        barrier = Barrier(2)
+        def claim(journal, worker):
+            barrier.wait(timeout=5)
+            return journal.claim_recovery(record.execution_id, worker, 60)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(claim, self.journal, "worker-a"),
+                pool.submit(claim, second_journal, "worker-b"),
+            ]
+            results = [future.result(timeout=10) for future in futures]
+        self.assertEqual(sorted(results), [False, True])
 
     def test_recovery_claim_renewal_requires_current_unexpired_owner(self):
         record = self.journal.create("renew-job", {"proposal": "x"})
