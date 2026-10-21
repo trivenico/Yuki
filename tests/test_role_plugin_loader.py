@@ -24,6 +24,10 @@ class RoleAndPluginTests(unittest.TestCase):
         self.assertEqual(skill.engine.current()["name"], "tutor")
         self.assertIn("permissions are unchanged", skill.run("developer").message)
 
+    def test_plugin_loader_rejects_wildcard_trust(self):
+        with self.assertRaisesRegex(ValueError, "Wildcard plugin trust is prohibited"):
+            PluginLoader(trusted_modules=["*"], enabled=True)
+
     def test_plugin_loader_is_disabled_by_default_and_fails_closed(self):
         loader = PluginLoader()
         result = loader.discover()
