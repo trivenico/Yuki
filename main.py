@@ -35,6 +35,8 @@ from core.approval_audit import SQLiteApprovalAuditLog
 from core.execution_ledger import SQLiteExecutionLedger
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
+from core.performance_monitor import collect_performance, format_performance_report
+from core.token_usage import TokenUsageTracker
 
 
 def _ask_approval(request):
@@ -69,6 +71,7 @@ def print_help():
   /help                          Show commands
   /status                        Show capability status
   /readiness                     Detect runtime and local model readiness
+  /performance                   Show CPU, RAM, GPU, and recorded token usage
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -146,6 +149,7 @@ def main():
         actor="local-owner", confirm=confirm_durable_skill,
     )
     task_agent = ApprovedTaskAgent(ai.provider, durable_agent, max_steps=config["max_agent_steps"])
+    token_usage = TokenUsageTracker(workspace / "token_usage.json", session_id="cli-session")
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -202,6 +206,11 @@ def main():
             except Exception as exc:
                 # Diagnostics must never prevent the guarded core from continuing.
                 print(f"Yuki > Readiness diagnostics unavailable ({type(exc).__name__}).")
+        elif command == "/performance":
+            try:
+                print(format_performance_report(collect_performance(token_summary=token_usage.summary())))
+            except Exception as exc:
+                print(f"Yuki > Performance diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
@@ -504,7 +513,7 @@ def main():
         elif command == "/dashboard":
             try:
                 from ui.dashboard import run_dashboard
-                run_dashboard(agent, command_handler=dashboard_command)
+                run_dashboard(agent, command_handler=dashboard_command, token_usage=token_usage)
             except RuntimeError as exc:
                 print(f"Yuki > Dashboard unavailable: {exc}")
         else:
