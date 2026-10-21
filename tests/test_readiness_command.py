@@ -29,7 +29,7 @@ class ReadinessCommandTests(unittest.TestCase):
              patch.object(main, "NmapRecon"), patch.object(main, "DockerSandbox"), \
              patch.object(main, "FirewallManager"), patch.object(main, "PortScanDetector"), \
              patch.object(main, "PacketSniffer"), patch.object(main, "ExploitRunner"), \
-             patch.object(main, "SpeakerVerifier"), patch.object(main, "create_provider"), \
+             patch.object(main, "SpeakerVerifier"), \
              patch.object(main, "build_readiness_report") as readiness:
             readiness.return_value.to_dict.return_value = fake
             main.main()
@@ -41,7 +41,7 @@ class ReadinessCommandTests(unittest.TestCase):
     def test_readiness_command_handles_diagnostic_failure(self):
         with patch("builtins.input", side_effect=["/readiness", "/quit"]), \
              patch("sys.stdout", new_callable=io.StringIO) as output, \
-             patch.object(main, "load_config", return_value={"workspace": "/tmp/yuki-readiness-command-test"}), \
+             patch.object(main, "load_config", return_value=defaultdict(lambda: False, {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3})), \
              patch.object(main, "build_agent"), patch.object(main, "create_provider"), \
              patch.object(main, "YukiAgent"), patch.object(main, "ApprovedTaskAgent"), \
              patch.object(main, "MemoryStore"), patch.object(main, "VectorMemory"), \
