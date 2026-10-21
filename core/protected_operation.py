@@ -1,17 +1,19 @@
-"""Enforce release-gate decisions before protected side effects.
+"""Enforce context-bound release-gate decisions before protected side effects.
 
-This module is intentionally small and dependency-injected. It does not choose which
-operations are protected; callers must route every sensitive operation through this
-wrapper and must not retain an alternate ungated path.
+Callers must provide the exact repository, PR, and commit the operation will affect.
+This module cannot discover all protected call sites: applications must route each
+sensitive operation through this wrapper and remove alternate ungated paths.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Callable, TypeVar
 
 from core.release_gate import ReleaseGateDecision
 
 T = TypeVar("T")
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 @dataclass(frozen=True)
@@ -26,13 +28,31 @@ def run_protected_operation(
     *,
     evaluate_gate: Callable[[], ReleaseGateDecision],
     operation: Callable[[], T],
+    target_repository: str,
+    target_pull_request: int,
+    target_head_sha: str,
 ) -> ProtectedOperationResult:
-    """Run an operation only after an explicit, persisted allow decision.
+    """Run only if a persisted allow decision matches the exact target context.
 
-    Fail closed on exceptions or malformed gate output. Exceptions from the protected
-    operation itself are not hidden; once an allowed gate has passed, operation failure
-    belongs to the operation's caller and recovery policy.
+    Fail closed on evaluation errors, malformed decisions, missing audit persistence,
+    or repository/PR/SHA mismatch. Exceptions from the protected operation itself are
+    propagated for the caller's recovery policy.
     """
+    if (
+        not isinstance(target_repository, str)
+        or target_repository.count("/") != 1
+        or any(part in {"", ".", ".."} for part in target_repository.split("/"))
+        or type(target_pull_request) is not int
+        or target_pull_request < 1
+        or not isinstance(target_head_sha, str)
+        or not _SHA_RE.fullmatch(target_head_sha)
+    ):
+        return ProtectedOperationResult(
+            allowed=False,
+            reason="protected_operation_target_invalid",
+            gate_decision=None,
+        )
+
     try:
         decision = evaluate_gate()
     except Exception:
@@ -52,6 +72,17 @@ def run_protected_operation(
         return ProtectedOperationResult(
             allowed=False,
             reason="release_gate_blocked",
+            gate_decision=decision,
+        )
+
+    if (
+        decision.repository.casefold() != target_repository.casefold()
+        or decision.pull_request != target_pull_request
+        or decision.expected_head_sha.casefold() != target_head_sha.casefold()
+    ):
+        return ProtectedOperationResult(
+            allowed=False,
+            reason="release_gate_target_mismatch",
             gate_decision=decision,
         )
 
