@@ -60,7 +60,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
     """Remove a stopped/running container only after exact label verification."""
     name = container_name_for_execution(execution_id)
     inspected = _docker(
-        ["inspect", "--format", "{{.Id}}\t{{.Name}}\t{{index .Config.Labels \"com.yuki.managed\"}}\t{{index .Config.Labels \"com.yuki.execution-id\"}}", name],
+        ["inspect", "--format", "{{.Id}}\\t{{.Name}}\\t{{.State.Running}}\\t{{index .Config.Labels \\"com.yuki.managed\\"}}\\t{{index .Config.Labels \\"com.yuki.execution-id\\"}}", name],
         timeout_seconds=5,
     )
     if inspected.returncode != 0:
@@ -71,11 +71,13 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
         raise ContainerRecoveryError("Docker inspect failed; ownership cannot be established.")
 
     parts = inspected.stdout.rstrip("\r\n").split("\t")
-    if len(parts) != 4:
+    if len(parts) != 5:
         raise ContainerRecoveryError("Docker inspect returned malformed ownership metadata.")
-    container_id, actual_name, managed, actual_execution_id = parts
+    container_id, actual_name, running, managed, actual_execution_id = parts
     if not re.fullmatch(r"[0-9a-f]{64}", container_id):
         raise ContainerRecoveryError("Docker inspect returned an invalid immutable container ID.")
+    if running != "false":
+        raise ContainerRecoveryError("Container is still running; refusing cleanup until execution is confirmed stopped.")
     if actual_name.lstrip("/") != name or managed != "true" or actual_execution_id != execution_id:
         raise ContainerRecoveryError("Container ownership labels do not match; refusing cleanup.")
 
