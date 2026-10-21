@@ -61,6 +61,39 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.put("skill", {"x": "a" * (17 * 1024)}, {}, actor="owner", session_id="s")
 
+    def test_modified_persisted_action_snapshot_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "safe"},
+                {"skill_id": "notes.write", "arguments": {"text": "safe"}},
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET action_json = ? WHERE pending_id = ?",
+                    ('{"skill_id":"notes.write","arguments":{"text":"tampered"}}', item.pending_id),
+                )
+            self.assertIsNone(
+                store.consume(item.pending_id, actor="owner", session_id="session-a")
+            )
+            self.assertIsNone(store.get(item.pending_id))
+
+    def test_legacy_snapshot_without_action_hash_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "safe"},
+                {"skill_id": "notes.write", "arguments": {"text": "safe"}},
+                actor="owner", session_id="session-a",
+            )
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET action_hash = NULL WHERE pending_id = ?",
+                    (item.pending_id,),
+                )
+            self.assertIsNone(store.consume(item.pending_id, actor="owner", session_id="session-a"))
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
