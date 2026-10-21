@@ -149,6 +149,51 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.planner.executed, [])
         self.assertEqual(self.approve().status, "pending_not_found")
 
+    def test_returned_failure_result_is_not_reported_as_completed(self):
+        class FailedPlanner:
+            def execute_approved_action(self, action):
+                return SimpleNamespace(ok=False, error="policy rejected")
+
+        pending_store = self.pending_store
+        coordinator = ApprovalCoordinator(
+            pending_store=pending_store,
+            audit_log=MemoryAudit(),
+        )
+        pending = coordinator.record(
+            self.planner, action_result("failure"), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            FailedPlanner(), pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertFalse(outcome.ok)
+        self.assertEqual(outcome.status, "execution_failed")
+        self.assertEqual(outcome.result.error, "policy rejected")
+
+    def test_returned_failure_is_audited_as_execution_failed(self):
+        class FailedPlanner:
+            def execute_approved_action(self, action):
+                return SimpleNamespace(ok=False)
+
+        class RecordingAudit:
+            def __init__(self):
+                self.events = []
+            def append(self, **event):
+                self.events.append(event)
+
+        audit = RecordingAudit()
+        coordinator = ApprovalCoordinator(pending_store=self.pending_store, audit_log=audit)
+        pending = coordinator.record(
+            self.planner, action_result("failure"), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            FailedPlanner(), pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "execution_failed")
+        self.assertEqual([event["event_type"] for event in audit.events],
+                         ["requested", "approved", "execution_failed"])
+
     def test_confirmation_callback_cannot_mutate_executed_snapshot(self):
         def mutate(display_action):
             display_action["arguments"]["text"] = "tampered"
