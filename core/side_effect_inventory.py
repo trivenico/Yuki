@@ -25,7 +25,7 @@ SIDE_EFFECT_SURFACES = (
     SideEffectSurface("/skill", "direct registered skill execution", True, True),
     SideEffectSurface("/memory add|delete|clear", "local memory mutation", True, True),
     SideEffectSurface("/knowledge index", "workspace file indexing", False, False),
-    SideEffectSurface("/reminder add", "persistent reminder mutation", False, False),
+    SideEffectSurface("/reminder add", "persistent reminder mutation", True, True),
     SideEffectSurface("/evolution run|review", "proposal execution or acceptance", False, False),
     SideEffectSurface("/voice record|speak|transcribe", "audio capture, synthesis, or file access", False, False),
     SideEffectSurface("/security recon", "network reconnaissance", False, False),
