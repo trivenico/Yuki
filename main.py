@@ -29,6 +29,7 @@ from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
 from core.recovery_bootstrap import recover_workspace_on_startup
+from core.production_guard import assert_production_runtime_supported
 
 
 def _ask_approval(request):
@@ -101,6 +102,7 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 def main():
     config = load_config()
+    assert_production_runtime_supported(config)
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     try:
