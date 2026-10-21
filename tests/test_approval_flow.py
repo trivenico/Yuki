@@ -52,19 +52,13 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         )
 
     def test_missing_audit_sink_blocks_before_creating_pending_request(self):
-        coordinator = ApprovalCoordinator(pending_store=self.pending_store)
-        with self.assertRaisesRegex(RuntimeError, "audit sink is required"):
-            coordinator.record(self.planner, action_result(), actor="owner", session_id="session-a")
-        self.assertEqual(coordinator._pending, {})
+        with self.assertRaisesRegex(ValueError, "durable pending-approval store is required"):
+            ApprovalCoordinator(audit_log=MemoryAudit())
         self.assertEqual(self.planner.executed, [])
 
     def test_missing_audit_sink_blocks_approval_execution(self):
-        coordinator = ApprovalCoordinator(pending_store=self.pending_store)
-        outcome = coordinator.approve(
-            self.planner, "unknown", actor="owner", session_id="session-a",
-            confirm=lambda _action: True,
-        )
-        self.assertEqual(outcome.status, "audit_unavailable")
+        with self.assertRaisesRegex(ValueError, "durable pending-approval store is required"):
+            ApprovalCoordinator()
         self.assertEqual(self.planner.executed, [])
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
@@ -77,7 +71,9 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="session-a"
             )
-        self.assertEqual(coordinator._pending, {})
+        with self.pending_store._connect() as db:
+            count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
+        self.assertEqual(count, 0)
         self.assertEqual(self.planner.executed, [])
 
     def test_persistent_pending_request_is_removed_when_audit_fails(self):
