@@ -190,8 +190,8 @@ class SQLiteExecutionJournal:
         """Atomically claim one cleanup-required execution until lease expiry."""
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 128 or chr(0) in worker_id:
             raise ExecutionJournalError("worker_id must be a non-empty bounded string")
-        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 1 <= lease_seconds <= 3600:
-            raise ExecutionJournalError("lease_seconds must be between 1 and 3600")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 30 <= lease_seconds <= 3600:
+            raise ExecutionJournalError("lease_seconds must be between 30 and 3600")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         expiry = datetime.fromtimestamp(now_dt.timestamp() + lease_seconds, timezone.utc).isoformat()
@@ -217,8 +217,8 @@ class SQLiteExecutionJournal:
         """Extend a live claim only while its current owner still holds it."""
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 128 or chr(0) in worker_id:
             raise ExecutionJournalError("worker_id must be a non-empty bounded string")
-        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 1 <= lease_seconds <= 3600:
-            raise ExecutionJournalError("lease_seconds must be between 1 and 3600")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 30 <= lease_seconds <= 3600:
+            raise ExecutionJournalError("lease_seconds must be between 30 and 3600")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         expiry = datetime.fromtimestamp(now_dt.timestamp() + lease_seconds, timezone.utc).isoformat()
