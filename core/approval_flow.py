@@ -1,8 +1,8 @@
 """Durable, one-time approval coordinator for guarded task execution.
 
-The coordinator delegates pending state and atomic consumption to the configured
-store. The confirm callback is only a presentation/confirmation hook; execution
-uses the stored action snapshot, never a callback-mutated object.
+Audit logging is mandatory: an approval request or execution without a durable audit
+sink must fail closed. The confirmation callback is presentation-only; execution uses
+the stored action snapshot, never a callback-mutated object.
 """
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ class ApprovalCoordinator:
         self.audit_log = audit_log
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
+
+    def _require_audit(self) -> None:
+        if self.audit_log is None or not callable(getattr(self.audit_log, "append", None)):
+            raise RuntimeError("Approval audit sink is required; operation blocked.")
 
     @staticmethod
     def _extract_action(planner, result) -> tuple[str, dict, dict]:
@@ -51,6 +55,9 @@ class ApprovalCoordinator:
         return skill_id, args_snapshot, snapshot
 
     def record(self, planner, result, *, actor: str, session_id: str):
+        self._require_audit()
+        if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("A trusted actor and session identity are required.")
         skill_id, arguments, action = self._extract_action(planner, result)
         if self.pending_store is not None:
             stored = self.pending_store.put(
@@ -69,12 +76,10 @@ class ApprovalCoordinator:
         try:
             self._audit("requested", pending_id, actor, skill_id)
         except Exception as exc:
-            # Never leave an un-audited approval request available for later execution.
             if self.pending_store is not None:
                 try:
                     self.pending_store.deny(pending_id)
                 except Exception:
-                    # The store may be unavailable; do not issue or return the token.
                     pass
             else:
                 self._pending.pop(pending_id, None)
@@ -85,15 +90,20 @@ class ApprovalCoordinator:
 
     def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        try:
+            self._require_audit()
+        except RuntimeError:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+        if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+            return ApprovalOutcome(False, "identity_invalid", pending_id=pending_id)
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id)
         action = pending["action"]
-        # The UI receives a copy. Mutating it cannot alter the stored execution snapshot.
         import json
         display_action = json.loads(json.dumps(action))
         try:
-            confirmed = confirm(display_action) is True
+            confirmed = callable(confirm) and confirm(display_action) is True
         except Exception:
             confirmed = False
         if not confirmed:
@@ -103,7 +113,6 @@ class ApprovalCoordinator:
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
-        # Approval must be durably recorded before any side effect is attempted.
         try:
             self._audit("approved", pending_id, actor, pending["skill_id"])
         except Exception:
@@ -125,8 +134,6 @@ class ApprovalCoordinator:
                 )
             return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
 
-        # The external side effect may already have happened. If its receipt cannot
-        # be persisted, never report an ordinary failure that could trigger replay.
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
         except Exception:
@@ -149,6 +156,5 @@ class ApprovalCoordinator:
         return self._pending.pop(pending_id)
 
     def _audit(self, event_type, pending_id, actor, skill_id):
-        if self.audit_log is not None:
-            self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                                  actor=actor, skill_id=skill_id)
+        self.audit_log.append(event_type=event_type, pending_id=pending_id,
+                              actor=actor, skill_id=skill_id)
