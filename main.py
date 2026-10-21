@@ -36,6 +36,7 @@ from core.execution_ledger import SQLiteExecutionLedger
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
 from core.durable_memory_runtime import DurableMemoryRuntime
+from core.durable_knowledge_runtime import DurableKnowledgeRuntime
 from core.durable_reminder_runtime import DurableReminderRuntime
 from core.performance_monitor import collect_performance, format_performance_report
 from core.token_usage import TokenUsageTracker
@@ -83,7 +84,7 @@ def print_help():
   /memory add TEXT               Save a local note (approval required)
   /memory list | /memory search QUERY
   /memory delete ID | /memory clear
-  /knowledge index RELATIVE_PATH Index a text file inside workspace (approval required)
+  /knowledge index RELATIVE_PATH Index a text file inside workspace (durable approval required)
   /reminder add ISO_DATETIME | TEXT (approval required)
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
@@ -197,6 +198,7 @@ def main():
     )
     searchable_memory = VectorMemory(memory_path)
     indexer = KnowledgeIndexer(searchable_memory)
+    durable_knowledge = DurableKnowledgeRuntime(indexer=indexer, workspace=workspace, coordinator=approval_coordinator, actor="local-owner", confirm=lambda action: _confirm("knowledge:index", "Read and index approved workspace file: " + str(action.get("arguments", {}))[:500], "medium"))
     planner = Planner(max_steps=config["max_agent_steps"])
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     durable_reminders = DurableReminderRuntime(
@@ -357,13 +359,10 @@ def main():
             print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
         elif command.startswith("/knowledge index "):
             relative_path = command[len("/knowledge index "):].strip()
-            if not _confirm("knowledge:index", f"Read and index {relative_path!r} inside the workspace."):
-                print("Yuki > Indexing cancelled.")
-                continue
-            try:
-                print(indexer.index_file(relative_path, workspace=workspace))
-            except (ValueError, OSError, RuntimeError) as exc:
-                print(f"Yuki > Indexing failed: {exc}")
+            result = durable_knowledge.index(relative_path)
+            print(f"Yuki > {result.get('message', result.get('status', 'Indexing finished'))}")
+            if result.get("ok") and result.get("data") is not None:
+                print(result["data"])
         elif command.startswith("/reminder add "):
             payload = command[len("/reminder add "):]
             if "|" not in payload:
