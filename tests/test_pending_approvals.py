@@ -61,6 +61,22 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.put("skill", {"x": "a" * (17 * 1024)}, {}, actor="owner", session_id="s")
 
+    def test_put_rejects_mismatch_between_action_and_stored_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            with self.assertRaisesRegex(ValueError, "must match"):
+                store.put(
+                    "notes.write", {"text": "safe"},
+                    {"skill_id": "shell.exec", "arguments": {"text": "tampered"}},
+                    actor="owner", session_id="session-a",
+                )
+            with self.assertRaisesRegex(ValueError, "must match"):
+                store.put(
+                    "notes.write", {"text": "safe"},
+                    {"skill_id": "notes.write", "arguments": {"text": "different"}},
+                    actor="owner", session_id="session-a",
+                )
+
     def test_modified_persisted_action_snapshot_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
