@@ -79,6 +79,52 @@ class DockerSandbox:
             raise ValueError("AppArmor profile name contains unsupported characters.")
         self.apparmor_profile = apparmor_profile
 
+    @staticmethod
+    def _validate_seccomp_profile(profile: object) -> None:
+        """Reject malformed or default-allow seccomp profiles before Docker starts."""
+        allowed_actions = {
+            "SCMP_ACT_ERRNO", "SCMP_ACT_TRAP", "SCMP_ACT_KILL",
+            "SCMP_ACT_KILL_PROCESS", "SCMP_ACT_KILL_THREAD",
+        }
+        if not isinstance(profile, dict):
+            raise SandboxError("Configured seccomp profile must be a JSON object.")
+        if profile.get("defaultAction") not in allowed_actions:
+            raise SandboxError("Configured seccomp profile must use a fail-closed defaultAction.")
+        syscalls = profile.get("syscalls")
+        if not isinstance(syscalls, list):
+            raise SandboxError("Configured seccomp profile must define a syscalls list.")
+        valid_actions = allowed_actions | {"SCMP_ACT_ALLOW", "SCMP_ACT_LOG", "SCMP_ACT_TRACE"}
+        valid_comparators = {
+            "SCMP_CMP_NE", "SCMP_CMP_LT", "SCMP_CMP_LE", "SCMP_CMP_EQ",
+            "SCMP_CMP_GE", "SCMP_CMP_GT", "SCMP_CMP_MASKED_EQ",
+        }
+        for entry in syscalls:
+            if not isinstance(entry, dict):
+                raise SandboxError("Each seccomp syscall rule must be an object.")
+            if entry.get("action") not in valid_actions:
+                raise SandboxError("Seccomp syscall rule has an unsupported action.")
+            names = entry.get("names")
+            if not isinstance(names, list) or not names or any(
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,128}", name)
+                for name in names
+            ):
+                raise SandboxError("Seccomp syscall rules must contain valid syscall names.")
+            args = entry.get("args", [])
+            if not isinstance(args, list):
+                raise SandboxError("Seccomp syscall rule args must be a list.")
+            for condition in args:
+                if not isinstance(condition, dict):
+                    raise SandboxError("Seccomp syscall argument conditions must be objects.")
+                index = condition.get("index")
+                if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= 5:
+                    raise SandboxError("Seccomp syscall argument index must be between 0 and 5.")
+                if condition.get("op") not in valid_comparators:
+                    raise SandboxError("Seccomp syscall argument comparator is unsupported.")
+                for key in ("value", "valueTwo"):
+                    value = condition.get(key, 0)
+                    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                        raise SandboxError("Seccomp syscall argument values must be non-negative integers.")
+
     def run(self, image: str, argv: Sequence[str], *, timeout: int = 30) -> dict:
         if not self.enabled:
             raise SandboxError("Sandbox execution is disabled by configuration.")
@@ -108,8 +154,7 @@ class DockerSandbox:
                 profile = json.loads(self.seccomp_profile.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise SandboxError("Configured seccomp profile is not valid JSON.") from exc
-            if not isinstance(profile, dict) or not isinstance(profile.get("syscalls"), list):
-                raise SandboxError("Configured seccomp profile must define a syscalls list.")
+            self._validate_seccomp_profile(profile)
             security_options.append(f"--security-opt=seccomp={self.seccomp_profile}")
         if self.apparmor_profile is not None:
             security_options.append(f"--security-opt=apparmor={self.apparmor_profile}")
