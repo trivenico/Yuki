@@ -48,6 +48,14 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         gate = PermissionGate(lambda _request: "yes")
         self.assertFalse(gate.request("delete", "delete file", risk="high"))
 
+    def test_unhashable_and_non_string_risk_values_fail_closed(self):
+        calls = []
+        gate = PermissionGate(lambda request: calls.append(request) or True)
+        for risk in ([], {}, set(), None, 1, True):
+            with self.subTest(risk=type(risk).__name__):
+                self.assertFalse(gate.request("publish", "publish release", risk=risk))
+        self.assertEqual(calls, [])
+
     def test_invalid_requests_fail_without_calling_approver(self):
         calls = []
         gate = PermissionGate(lambda request: calls.append(request) or True)
