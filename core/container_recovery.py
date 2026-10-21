@@ -57,7 +57,7 @@ def _docker(args: Sequence[str], *, timeout_seconds: int) -> subprocess.Complete
 
 
 def reconcile_execution_container(execution_id: str, *, before_remove: Callable[[], bool] | None = None) -> ContainerRecoveryResult:
-    """Remove a stopped/running container only after exact label verification."""
+    """Remove a verified stopped container without force-killing it."""
     name = container_name_for_execution(execution_id)
     inspected = _docker(
         ["inspect", "--format", "{{.Id}}\t{{.Name}}\t{{.State.Running}}\t{{index .Config.Labels \"com.yuki.managed\"}}\t{{index .Config.Labels \"com.yuki.execution-id\"}}", name],
@@ -89,7 +89,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
         if authorized is not True:
             raise ContainerRecoveryError("Recovery claim expired or changed before container removal.")
     # Remove by immutable ID so a container recreated under the same name cannot be targeted.
-    removed = _docker(["rm", "-f", container_id], timeout_seconds=10)
+    removed = _docker(["rm", container_id], timeout_seconds=10)
     if removed.returncode != 0:
         raise ContainerRecoveryError("Verified Yuki container cleanup failed.")
     return ContainerRecoveryResult(execution_id, inspected=True, removed=True, already_absent=False)
