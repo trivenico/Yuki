@@ -88,8 +88,46 @@ class DockerSandbox:
         }
         if not isinstance(profile, dict):
             raise SandboxError("Configured seccomp profile must be a JSON object.")
+        allowed_top_level = {
+            "defaultAction", "defaultErrnoRet", "architectures", "flags",
+            "syscalls", "listenerPath", "listenerMetadata",
+        }
+        unknown_keys = set(profile) - allowed_top_level
+        if unknown_keys:
+            raise SandboxError("Seccomp profile contains unsupported top-level fields.")
         if profile.get("defaultAction") not in allowed_actions:
             raise SandboxError("Configured seccomp profile must use a fail-closed defaultAction.")
+        errno_ret = profile.get("defaultErrnoRet")
+        if errno_ret is not None and (
+            isinstance(errno_ret, bool) or not isinstance(errno_ret, int) or not 1 <= errno_ret <= 4095
+        ):
+            raise SandboxError("Seccomp defaultErrnoRet must be an integer between 1 and 4095.")
+        architectures = profile.get("architectures", [])
+        if not isinstance(architectures, list) or any(
+            not isinstance(arch, str) or not re.fullmatch(r"SCMP_ARCH_[A-Z0-9_]{1,64}", arch)
+            for arch in architectures
+        ):
+            raise SandboxError("Seccomp architectures must be a list of architecture identifiers.")
+        if len(set(architectures)) != len(architectures):
+            raise SandboxError("Seccomp architectures must not contain duplicates.")
+        flags = profile.get("flags", [])
+        allowed_flags = {
+            "SECCOMP_FILTER_FLAG_LOG", "SECCOMP_FILTER_FLAG_SPEC_ALLOW",
+            "SECCOMP_FILTER_FLAG_WAIT_KILLABLE_RECV",
+        }
+        if not isinstance(flags, list) or any(flag not in allowed_flags for flag in flags):
+            raise SandboxError("Seccomp flags contain an unsupported value.")
+        if len(set(flags)) != len(flags):
+            raise SandboxError("Seccomp flags must not contain duplicates.")
+        listener_path = profile.get("listenerPath")
+        if listener_path is not None and (
+            not isinstance(listener_path, str) or not listener_path.startswith("/")
+            or "\\x00" in listener_path
+        ):
+            raise SandboxError("Seccomp listenerPath must be an absolute path.")
+        listener_metadata = profile.get("listenerMetadata")
+        if listener_metadata is not None and not isinstance(listener_metadata, str):
+            raise SandboxError("Seccomp listenerMetadata must be a string.")
         syscalls = profile.get("syscalls")
         if not isinstance(syscalls, list):
             raise SandboxError("Configured seccomp profile must define a syscalls list.")
