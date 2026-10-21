@@ -100,6 +100,10 @@ class SQLitePendingApprovalStore:
             raise ValueError("skill_id is required and must be bounded.")
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("Trusted actor and session identity are required.")
+        if not isinstance(arguments, dict) or not isinstance(action, dict):
+            raise ValueError("Arguments and action must be JSON objects.")
+        if action.get("skill_id") != skill_id or action.get("arguments") != arguments:
+            raise ValueError("Action skill_id and arguments must match the separately stored approval fields.")
         args_json, action_json = self._encode(arguments), self._encode(action)
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
