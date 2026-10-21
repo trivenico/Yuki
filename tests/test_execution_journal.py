@@ -144,6 +144,33 @@ class ExecutionJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionJournalError, "not found"):
             self.journal.get("missing")
 
+    def test_failed_sqlite_transition_rolls_back_atomically(self):
+        self.journal.create("atomic-job", self.context)
+        db = sqlite3.connect(self.journal.database_path)
+        try:
+            db.execute("""
+                CREATE TRIGGER fail_execution_update
+                BEFORE UPDATE ON sandbox_executions
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected storage failure');
+                END
+            """)
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "injected storage failure"):
+            self.journal.transition("atomic-job", "running")
+        reopened = SQLiteExecutionJournal(self.journal.database_path)
+        self.assertEqual(reopened.get("atomic-job").state, "created")
+
+    def test_corrupt_journal_fails_closed_instead_of_reinitializing(self):
+        database_path = Path(self.temp.name) / "corrupt.sqlite3"
+        sentinel = b"not a valid SQLite database"
+        database_path.write_bytes(sentinel)
+        with self.assertRaises(sqlite3.DatabaseError):
+            SQLiteExecutionJournal(str(database_path))
+        self.assertEqual(database_path.read_bytes(), sentinel)
+
 
 if __name__ == "__main__":
     unittest.main()
