@@ -145,7 +145,7 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             store = self.make_store(tmp, max_pending=1)
             store.put("skill", {}, {"skill_id": "skill", "arguments": {}}, actor="owner", session_id="s")
             with self.assertRaises(RuntimeError):
-                store.put("skill", {}, {}, actor="owner", session_id="s")
+                store.put("skill", {}, {"skill_id": "skill", "arguments": {}}, actor="owner", session_id="s")
 
 
 if __name__ == "__main__":
