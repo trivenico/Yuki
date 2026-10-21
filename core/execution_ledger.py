@@ -6,6 +6,7 @@ exactly-once; callers must reconcile running records after crashes before retryi
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -44,7 +45,7 @@ class SQLiteExecutionLedger:
         self.database_path = str(Path(database_path).expanduser())
         self.timeout_seconds = float(timeout_seconds)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS action_execution_ledger (
                     idempotency_key TEXT PRIMARY KEY,
