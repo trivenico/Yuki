@@ -38,7 +38,8 @@ class ContainerRecoveryTests(unittest.TestCase):
         self.assertTrue(result.removed)
         self.assertFalse(result.already_absent)
         self.assertEqual(run.call_count, 2)
-        self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])\n        self.assertEqual(run.call_args.args[0][3], "a" * 64)
+        self.assertEqual(run.call_args.args[0][1:3], ["rm", "-f"])
+        self.assertEqual(run.call_args.args[0][3], "a" * 64)
 
     @patch("core.container_recovery.subprocess.run")
     def test_claim_callback_rejection_prevents_docker_remove(self, run):
