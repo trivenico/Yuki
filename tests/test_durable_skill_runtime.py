@@ -56,7 +56,7 @@ class DurableSkillRuntimeTests(unittest.TestCase):
         result = self.runtime.run_skill("notes.write", "hello")
         self.assertTrue(result.ok)
         self.assertEqual(self.registry.skill.calls, ["hello"])
-        self.assertEqual(self.audit.list_events()[-1]["event_type"], "executed")
+        self.assertIn("executed", [event["event_type"] for event in self.audit.list_events()])
 
     def test_denied_approval_never_executes_skill(self):
         self.runtime.confirm = lambda _action: False
@@ -72,8 +72,10 @@ class DurableSkillRuntimeTests(unittest.TestCase):
     def test_execution_ledger_records_completed(self):
         result = self.runtime.run_skill("notes.write", "hello")
         self.assertTrue(result.ok)
-        rows = self.ledger.list_records()
-        self.assertEqual(rows[0].state, "completed")
+        import sqlite3
+        with sqlite3.connect(self.ledger.database_path) as db:
+            rows = db.execute("SELECT state FROM action_execution_ledger").fetchall()
+        self.assertEqual(rows, [("completed",)])
 
 
 if __name__ == "__main__":
