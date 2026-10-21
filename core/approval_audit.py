@@ -149,6 +149,39 @@ class SQLiteApprovalAuditLog:
                 "created_at", "previous_hash", "event_hash")
         return [dict(zip(keys, row)) for row in rows]
 
+    def find_incomplete_executions(self, *, limit: int = 1000) -> list[dict[str, Any]]:
+        """Return approved actions without a terminal receipt for manual reconciliation.
+
+        This is deliberately diagnostic only: it never replays an action. Callers must
+        reconcile external side effects before marking an item resolved. Identifiers
+        are represented by their stored hashes, not bearer tokens or raw actor IDs.
+        """
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("limit must be between 1 and 10000.")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT event_id, event_type, pending_id_hash, actor_hash, skill_id, created_at
+                   FROM approval_audit_events ORDER BY event_id ASC"""
+            ).fetchall()
+
+        states: dict[str, dict[str, Any]] = {}
+        for event_id, event_type, pending_hash, actor_hash, skill_id, created_at in rows:
+            if not isinstance(pending_hash, str) or not pending_hash:
+                continue
+            if event_type == "approved":
+                states[pending_hash] = {
+                    "pending_id_hash": pending_hash,
+                    "actor_hash": actor_hash,
+                    "skill_id": skill_id,
+                    "approved_event_id": event_id,
+                    "approved_at": created_at,
+                }
+            elif event_type in {"executed", "execution_failed", "denied"}:
+                states.pop(pending_hash, None)
+
+        incomplete = sorted(states.values(), key=lambda item: item["approved_event_id"])
+        return incomplete[-limit:]
+
     def verify_chain(self) -> bool:
         with self._connect() as db:
             rows = db.execute(
