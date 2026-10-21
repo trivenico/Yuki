@@ -9,7 +9,7 @@ class ExecutionJournalConfigTests(unittest.TestCase):
     def test_path_is_canonical_under_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            self.assertEqual(execution_journal_path(root), root / JOURNAL_FILENAME)
+            self.assertEqual(execution_journal_path(root), root.resolve() / JOURNAL_FILENAME)
 
     def test_non_directory_workspace_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -21,7 +21,7 @@ class ExecutionJournalConfigTests(unittest.TestCase):
     def test_factory_uses_canonical_path(self):
         with tempfile.TemporaryDirectory() as temp:
             journal = open_execution_journal(temp)
-            self.assertEqual(Path(journal.database_path), Path(temp) / JOURNAL_FILENAME)
+            self.assertEqual(Path(journal.database_path).resolve(), Path(temp).resolve() / JOURNAL_FILENAME)
             record = journal.create("factory-test", {"source": "test"})
             self.assertEqual(journal.get(record.execution_id).state, "created")
 
