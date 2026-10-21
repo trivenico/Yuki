@@ -24,6 +24,16 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_unknown_provider_is_rejected_before_local_provider_configuration(self):
+        with self.assertRaisesRegex(ValueError, "provider must be one of"):
+            create_provider({"provider": "automatic-cloud-fallback"}, environ={})
+
+    def test_non_string_provider_is_rejected(self):
+        for invalid in (None, [], {}, 1, True):
+            with self.subTest(invalid=repr(invalid)):
+                with self.assertRaisesRegex(ValueError, "provider must be one of"):
+                    create_provider({"provider": invalid}, environ={})
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
