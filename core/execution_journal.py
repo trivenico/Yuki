@@ -66,6 +66,8 @@ class SQLiteExecutionJournal:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_sandbox_execution_state ON sandbox_executions(state, updated_at)")
+            db.execute("""CREATE TABLE IF NOT EXISTS sandbox_recovery_claims (execution_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, lease_expires_at TEXT NOT NULL, FOREIGN KEY(execution_id) REFERENCES sandbox_executions(execution_id) ON DELETE CASCADE)""")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_recovery_claim_expiry ON sandbox_recovery_claims(lease_expires_at)")
 
     @contextmanager
     def _connect(self):
@@ -176,6 +178,46 @@ class SQLiteExecutionJournal:
                     db.execute("ROLLBACK")
                 raise
         return self.get(execution_id)
+
+    def claim_recovery(self, execution_id: str, worker_id: str, lease_seconds: int = 60) -> bool:
+        """Atomically claim one cleanup-required execution until lease expiry."""
+        if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 128 or chr(0) in worker_id:
+            raise ExecutionJournalError("worker_id must be a non-empty bounded string")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 1 <= lease_seconds <= 3600:
+            raise ExecutionJournalError("lease_seconds must be between 1 and 3600")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expiry = datetime.fromtimestamp(now_dt.timestamp() + lease_seconds, timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                state = db.execute("SELECT state FROM sandbox_executions WHERE execution_id=?", (execution_id,)).fetchone()
+                if state is None or state[0] != "cleanup_required":
+                    db.execute("COMMIT")
+                    return False
+                claim = db.execute("SELECT worker_id, lease_expires_at FROM sandbox_recovery_claims WHERE execution_id=?", (execution_id,)).fetchone()
+                if claim and claim[1] > now and claim[0] != worker_id:
+                    db.execute("COMMIT")
+                    return False
+                db.execute("INSERT INTO sandbox_recovery_claims(execution_id, worker_id, lease_expires_at) VALUES(?,?,?) ON CONFLICT(execution_id) DO UPDATE SET worker_id=excluded.worker_id, lease_expires_at=excluded.lease_expires_at", (execution_id, worker_id, expiry))
+                db.execute("COMMIT")
+                return True
+            except Exception:
+                if db.in_transaction: db.execute("ROLLBACK")
+                raise
+
+    def release_recovery_claim(self, execution_id: str, worker_id: str) -> bool:
+        """Release only the claim owned by this worker."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("DELETE FROM sandbox_recovery_claims WHERE execution_id=? AND worker_id=?", (execution_id, worker_id))
+                released = db.execute("SELECT changes()").fetchone()[0] == 1
+                db.execute("COMMIT")
+                return released
+            except Exception:
+                if db.in_transaction: db.execute("ROLLBACK")
+                raise
 
     def mark_interrupted_for_reconciliation(self) -> tuple[str, ...]:
         """Return jobs requiring cleanup, including previously interrupted recovery.
