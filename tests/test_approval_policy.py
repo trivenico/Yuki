@@ -37,5 +37,25 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         self.assertIn("argument=", requests[0].reason)
 
 
+    def test_approver_exception_fails_closed(self):
+        def broken_approver(_request):
+            raise RuntimeError("approval UI unavailable")
+
+        gate = PermissionGate(broken_approver)
+        self.assertFalse(gate.request("publish", "publish release", risk="high"))
+
+    def test_truthy_non_boolean_approval_is_rejected(self):
+        gate = PermissionGate(lambda _request: "yes")
+        self.assertFalse(gate.request("delete", "delete file", risk="high"))
+
+    def test_invalid_requests_fail_without_calling_approver(self):
+        calls = []
+        gate = PermissionGate(lambda request: calls.append(request) or True)
+        self.assertFalse(gate.request("", "reason"))
+        self.assertFalse(gate.request("action", ""))
+        self.assertFalse(gate.request("action", "reason", risk="critical"))
+        self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
