@@ -22,10 +22,11 @@ class ApprovalCoordinator:
     def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if pending_store is None or not callable(getattr(pending_store, "put", None)) or not callable(getattr(pending_store, "consume", None)) or not callable(getattr(pending_store, "deny", None)):
+            raise ValueError("A durable pending-approval store is required; in-memory fallback is disabled.")
         self.pending_store = pending_store
         self.audit_log = audit_log
         self.max_pending = max_pending
-        self._pending: dict[str, dict] = {}
 
     def _require_audit(self) -> None:
         if self.audit_log is None or not callable(getattr(self.audit_log, "append", None)):
@@ -59,30 +60,17 @@ class ApprovalCoordinator:
         if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("A trusted actor and session identity are required.")
         skill_id, arguments, action = self._extract_action(planner, result)
-        if self.pending_store is not None:
-            stored = self.pending_store.put(
-                skill_id, arguments, action, actor=actor, session_id=session_id
-            )
-            pending_id = stored.pending_id
-        else:
-            if len(self._pending) >= self.max_pending:
-                raise RuntimeError("Pending approval capacity reached.")
-            import secrets
-            pending_id = secrets.token_urlsafe(24)
-            self._pending[pending_id] = {
-                "skill_id": skill_id, "arguments": arguments, "action": action,
-                "actor": actor, "session_id": session_id,
-            }
+        stored = self.pending_store.put(
+            skill_id, arguments, action, actor=actor, session_id=session_id
+        )
+        pending_id = stored.pending_id
         try:
             self._audit("requested", pending_id, actor, skill_id)
         except Exception as exc:
-            if self.pending_store is not None:
-                try:
-                    self.pending_store.deny(pending_id)
-                except Exception:
-                    pass
-            else:
-                self._pending.pop(pending_id, None)
+            try:
+                self.pending_store.deny(pending_id)
+            except Exception:
+                pass
             raise RuntimeError(
                 "Approval request could not be audited; no approval was issued."
             ) from exc
@@ -144,16 +132,11 @@ class ApprovalCoordinator:
         return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
 
     def _consume(self, pending_id, *, actor, session_id):
-        if self.pending_store is not None:
-            item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
-            if item is None:
-                return None
-            return {"skill_id": item.skill_id, "arguments": item.arguments,
-                    "action": item.action, "actor": actor, "session_id": session_id}
-        item = self._pending.get(pending_id)
-        if item is None or item["actor"] != actor or item["session_id"] != session_id:
+        item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
+        if item is None:
             return None
-        return self._pending.pop(pending_id)
+        return {"skill_id": item.skill_id, "arguments": item.arguments,
+                "action": item.action, "actor": actor, "session_id": session_id}
 
     def _audit(self, event_type, pending_id, actor, skill_id):
         self.audit_log.append(event_type=event_type, pending_id=pending_id,
