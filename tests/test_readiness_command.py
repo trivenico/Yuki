@@ -1,12 +1,50 @@
 import io
-from collections import defaultdict
 import unittest
+from collections import defaultdict
 from unittest.mock import patch
 
 import main
 
 
 class ReadinessCommandTests(unittest.TestCase):
+    def _run_command(self, report_side_effect=None, report_value=None):
+        config = defaultdict(
+            lambda: False,
+            {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3},
+        )
+        patches = [
+            patch("builtins.input", side_effect=["/readiness", "/quit"]),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch.object(main, "load_config", return_value=config),
+        ]
+        # Keep setup maintainable and avoid Python's static nested-with limit.
+        for name in (
+            "build_agent", "create_provider", "YukiAgent", "ApprovedTaskAgent",
+            "MemoryStore", "VectorMemory", "KnowledgeIndexer", "Planner",
+            "ReminderQueue", "DailyEvolutionCycle", "LocalTTS", "FasterWhisperSTT",
+            "NmapRecon", "DockerSandbox", "FirewallManager", "PortScanDetector",
+            "PacketSniffer", "ExploitRunner", "SpeakerVerifier",
+        ):
+            patches.append(patch.object(main, name))
+        if report_side_effect is not None:
+            patches.append(patch("main.build_readiness_report", side_effect=report_side_effect))
+        else:
+            report = patch("main.build_readiness_report")
+            patches.append(report)
+        started = []
+        try:
+            for item in patches:
+                started.append(item)
+                item.start()
+            if report_side_effect is None:
+                readiness = patches[-1]
+                readiness.return_value.to_dict.return_value = report_value
+            main.main()
+            return patches[1].return_value.getvalue()
+        finally:
+            for item in reversed(started):
+                item.stop()
+
     def test_readiness_command_prints_platform_and_capabilities(self):
         fake = {
             "python": "3.11.9",
@@ -14,47 +52,20 @@ class ReadinessCommandTests(unittest.TestCase):
             "operating_system": "Linux",
             "architecture": "x86_64",
             "capabilities": {
-                "ollama_server": {"status": "verified", "detail": "tags endpoint responded; inference not tested"}
+                "ollama_server": {
+                    "status": "verified",
+                    "detail": "tags endpoint responded; inference not tested",
+                }
             },
         }
-        with patch("builtins.input", side_effect=["/readiness", "/quit"]), \
-             patch("sys.stdout", new_callable=io.StringIO) as output, \
-             patch.object(main, "load_config", return_value=defaultdict(lambda: False, {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3})), \
-             patch.object(main, "build_agent"), patch.object(main, "create_provider"), \
-             patch.object(main, "YukiAgent"), patch.object(main, "ApprovedTaskAgent"), \
-             patch.object(main, "MemoryStore"), patch.object(main, "VectorMemory"), \
-             patch.object(main, "KnowledgeIndexer"), patch.object(main, "Planner"), \
-             patch.object(main, "ReminderQueue"), patch.object(main, "DailyEvolutionCycle"), \
-             patch.object(main, "LocalTTS"), patch.object(main, "FasterWhisperSTT"), \
-             patch.object(main, "NmapRecon"), patch.object(main, "DockerSandbox"), \
-             patch.object(main, "FirewallManager"), patch.object(main, "PortScanDetector"), \
-             patch.object(main, "PacketSniffer"), patch.object(main, "ExploitRunner"), \
-             patch.object(main, "SpeakerVerifier"), \
-             patch.object(main, "build_readiness_report") as readiness:
-            readiness.return_value.to_dict.return_value = fake
-            main.main()
-        rendered = output.getvalue()
+        rendered = self._run_command(report_value=fake)
         self.assertIn("Yuki runtime: Python 3.11.9", rendered)
         self.assertIn("ollama_server: verified", rendered)
         self.assertIn("inference not tested", rendered)
 
     def test_readiness_command_handles_diagnostic_failure(self):
-        with patch("builtins.input", side_effect=["/readiness", "/quit"]), \
-             patch("sys.stdout", new_callable=io.StringIO) as output, \
-             patch.object(main, "load_config", return_value=defaultdict(lambda: False, {"workspace": "/tmp/yuki-readiness-command-test", "max_agent_steps": 3})), \
-             patch.object(main, "build_agent"), patch.object(main, "create_provider"), \
-             patch.object(main, "YukiAgent"), patch.object(main, "ApprovedTaskAgent"), \
-             patch.object(main, "MemoryStore"), patch.object(main, "VectorMemory"), \
-             patch.object(main, "KnowledgeIndexer"), patch.object(main, "Planner"), \
-             patch.object(main, "ReminderQueue"), patch.object(main, "DailyEvolutionCycle"), \
-             patch.object(main, "LocalTTS"), patch.object(main, "FasterWhisperSTT"), \
-             patch.object(main, "NmapRecon"), patch.object(main, "DockerSandbox"), \
-             patch.object(main, "FirewallManager"), patch.object(main, "PortScanDetector"), \
-             patch.object(main, "PacketSniffer"), patch.object(main, "ExploitRunner"), \
-             patch.object(main, "SpeakerVerifier"), \
-             patch("main.build_readiness_report", side_effect=RuntimeError("diagnostic failure")):
-            main.main()
-        self.assertIn("Readiness diagnostics unavailable (RuntimeError)", output.getvalue())
+        rendered = self._run_command(report_side_effect=RuntimeError("diagnostic failure"))
+        self.assertIn("Readiness diagnostics unavailable (RuntimeError)", rendered)
 
 
 if __name__ == "__main__":
