@@ -70,7 +70,7 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
             return ContainerRecoveryResult(execution_id, inspected=False, removed=False, already_absent=True)
         raise ContainerRecoveryError("Docker inspect failed; ownership cannot be established.")
 
-    parts = inspected.stdout.rstrip("\\r\\n").split("\\t")
+    parts = inspected.stdout.rstrip("\r\n").split("\t")
     if len(parts) != 4:
         raise ContainerRecoveryError("Docker inspect returned malformed ownership metadata.")
     container_id, actual_name, managed, actual_execution_id = parts
@@ -86,7 +86,8 @@ def reconcile_execution_container(execution_id: str, *, before_remove: Callable[
             raise ContainerRecoveryError("Recovery claim could not be verified before container removal.") from exc
         if authorized is not True:
             raise ContainerRecoveryError("Recovery claim expired or changed before container removal.")
-    # Remove by immutable ID so a container recreated under the same name cannot be targeted.\n    removed = _docker(["rm", "-f", container_id], timeout_seconds=10)
+    # Remove by immutable ID so a container recreated under the same name cannot be targeted.
+    removed = _docker(["rm", "-f", container_id], timeout_seconds=10)
     if removed.returncode != 0:
         raise ContainerRecoveryError("Verified Yuki container cleanup failed.")
     return ContainerRecoveryResult(execution_id, inspected=True, removed=True, already_absent=False)
