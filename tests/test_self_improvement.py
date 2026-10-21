@@ -28,7 +28,12 @@ class SelfImprovementProposalTests(unittest.TestCase):
         self.assertEqual(proposal.status, "awaiting_human_approval")
 
     def test_path_traversal_and_absolute_paths_are_rejected(self):
-        for path in ("../outside.py", "/tmp/outside.py", "C:/outside.py", "core/../secrets.py"):
+        for path in (
+            "../outside.py", "/tmp/outside.py", "C:/outside.py",
+            "core/../secrets.py", "docs//notes.md", "docs/./notes.md",
+            "docs/name./notes.md", "docs/name /notes.md", "NUL.txt",
+            "docs/report.txt:stream",
+        ):
             with self.subTest(path=path), self.assertRaises(ProposalRejected):
                 validate_change_proposal(
                     title="Invalid",
