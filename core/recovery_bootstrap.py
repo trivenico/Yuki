@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.execution_journal_config import execution_journal_path, open_execution_journal
+from core.execution_journal_config import JOURNAL_FILENAME, execution_journal_path, open_execution_journal
 from core.startup_recovery import StartupRecoveryReport, recover_interrupted_executions
 
 
