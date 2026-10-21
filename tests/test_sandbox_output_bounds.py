@@ -66,13 +66,18 @@ class SandboxOutputBoundsTests(unittest.TestCase):
                 enabled=True,
                 approver=lambda _reason: True,
             )
-            with mock.patch("hackback.sandbox.subprocess.Popen", return_value=process) as popen:
+            with mock.patch("hackback.sandbox.subprocess.Popen", return_value=process) as popen, \
+                 mock.patch("hackback.sandbox.subprocess.run") as docker_cleanup:
                 with self.assertRaisesRegex(SandboxError, "timed out"):
                     sandbox.run(IMAGE, ["worker"], timeout=1)
 
         self.assertTrue(process.killed)
         self.assertEqual(process.wait_calls, 2)
         popen.assert_called_once()
+        cleanup_args = docker_cleanup.call_args.args[0]
+        self.assertEqual(cleanup_args[0:2], ["docker", "kill"])
+        self.assertTrue(cleanup_args[2].startswith("yuki-sandbox-"))
+        self.assertIs(docker_cleanup.call_args.kwargs["shell"], False)
     
     def test_approval_denial_prevents_process_creation(self):
         with tempfile.TemporaryDirectory() as directory:
