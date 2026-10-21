@@ -174,8 +174,12 @@ class DockerSandbox:
     def run(self, image: str, argv: Sequence[str], *, timeout: int = 30) -> dict:
         if not self.enabled:
             raise SandboxError("Sandbox execution is disabled by configuration.")
-        if image not in self.allowed_images or not image or "@sha256:" not in image:
-            raise SandboxError("Image must be explicitly allow-listed and pinned by digest.")
+        if (
+            not isinstance(image, str)
+            or image not in self.allowed_images
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}", image) is None
+        ):
+            raise SandboxError("Image must be explicitly allow-listed and pinned by a valid SHA-256 digest.")
         if not isinstance(argv, (list, tuple)) or not argv or any(
             not isinstance(part, str) or not part or len(part) > 500 for part in argv
         ):

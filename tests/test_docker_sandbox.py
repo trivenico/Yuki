@@ -73,6 +73,20 @@ class DockerSandboxTests(unittest.TestCase):
             mount = popen.call_args.args[0][popen.call_args.args[0].index("--mount") + 1]
             self.assertTrue(mount.endswith(",rw"))
 
+    def test_malformed_digest_is_rejected_even_when_allow_listed(self):
+        malformed_image = "python@sha256:not-a-digest"
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = DockerSandbox(
+                directory,
+                allowed_images=[malformed_image],
+                enabled=True,
+                approver=lambda _reason: True,
+            )
+            with mock.patch("hackback.sandbox.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(SandboxError, "valid SHA-256 digest"):
+                    sandbox.run(malformed_image, ["worker"])
+            popen.assert_not_called()
+
     def test_unapproved_image_is_rejected_before_process_start(self):
         with tempfile.TemporaryDirectory() as directory:
             sandbox = self.sandbox(directory)
