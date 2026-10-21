@@ -251,8 +251,14 @@ class SQLiteTaskLifecycleStore:
     def transition(self, task_id: str, *, expected_state: str, new_state: str,
                    expected_version: int | None = None, result: Any = None,
                    error_code: str | None = None) -> TaskRecord:
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task_id must be a non-empty string.")
+        if not isinstance(expected_state, str) or not isinstance(new_state, str):
+            raise ValueError("Task states must be strings.")
         if expected_state not in TASK_STATES or new_state not in TASK_STATES:
             raise ValueError("Unknown task state.")
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
+            raise ValueError("expected_version must be a non-negative integer.")
         if new_state not in _ALLOWED_TRANSITIONS[expected_state]:
             raise InvalidTransition(f"Transition {expected_state!r} -> {new_state!r} is not allowed.")
         result_json = self._json(result, "result") if result is not None else None
