@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from collections import OrderedDict, deque
 from contextlib import closing
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,6 +31,8 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 MAX_RATE_LIMIT_BUCKETS = 4096
 MAX_BATCH_REQUESTS = 10
 REQUEST_READ_TIMEOUT_SECONDS = 10
+MAX_CONCURRENT_CHAT_REQUESTS = 4
+CHAT_ADMISSION_TIMEOUT_SECONDS = 0.25
 MAX_HISTORY_TURNS = 8
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 _RATE_EVENTS: OrderedDict[str, deque[float]] = OrderedDict()
@@ -185,7 +187,7 @@ def _tool_result(text: str, *, is_error: bool = False) -> dict[str, Any]:
     }
 
 
-def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, store: ConversationStore | None = None) -> dict[str, Any] | None:
+def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, store: ConversationStore | None = None, chat_slots=None) -> dict[str, Any] | None:
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
         return _jsonrpc_error(None, -32600, "Invalid JSON-RPC request.")
     method = message.get("method")
@@ -278,6 +280,9 @@ def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, stor
             session_id = arguments.get("session_id")
             if session_id is not None and not _valid_session_id(session_id):
                 return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result("session_id must be 8-80 letters, digits, underscores, or hyphens.", is_error=True)}
+            if chat_slots is not None and not chat_slots.acquire(timeout=CHAT_ADMISSION_TIMEOUT_SECONDS):
+                return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result(
+                    "Yuki is at capacity. Please retry shortly.", is_error=True)}
             try:
                 effective_prompt = prompt.strip()
                 if store is not None and session_id is not None:
@@ -287,6 +292,10 @@ def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, stor
                     store.append(session_id, prompt.strip(), response)
             except Exception:
                 response = "Yuki could not complete the request."
+                return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result(response, is_error=True)}
+            finally:
+                if chat_slots is not None:
+                    chat_slots.release()
             return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result(response)}
         return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result("Unknown tool.", is_error=True)}
     if method.startswith("notifications/"):
@@ -294,11 +303,14 @@ def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, stor
     return _jsonrpc_error(request_id, -32601, "Method not found.")
 
 
-def create_handler(agent=None, providers=None, *, token=None, store=None):
+def create_handler(agent=None, providers=None, *, token=None, store=None, max_concurrent_chats=MAX_CONCURRENT_CHAT_REQUESTS):
     """Create an isolated handler class for deterministic tests."""
     manager = providers or ProviderManager()
     selected_agent = agent or YukiAgent(provider=manager.create_selected_adapter())
     bearer_token = token if token is not None else os.environ.get("YUKI_MCP_BEARER_TOKEN", "")
+    if isinstance(max_concurrent_chats, bool) or not isinstance(max_concurrent_chats, int) or not 1 <= max_concurrent_chats <= 32:
+        raise ValueError("max_concurrent_chats must be an integer between 1 and 32.")
+    chat_slots = BoundedSemaphore(max_concurrent_chats)
 
     class MCPHandler(BaseHTTPRequestHandler):
         server_version = "YukiMCP/0.1"
@@ -365,7 +377,7 @@ def create_handler(agent=None, providers=None, *, token=None, store=None):
                 if not body or len(body) > MAX_BATCH_REQUESTS:
                     self._send_json(400, {"error": "batch must contain between 1 and 10 requests"})
                     return
-                responses = [_handle_rpc(item, selected_agent, manager, store) for item in body]
+                responses = [_handle_rpc(item, selected_agent, manager, store, chat_slots) for item in body]
                 responses = [item for item in responses if item is not None]
                 if not responses:
                     self.send_response(202)
@@ -374,7 +386,7 @@ def create_handler(agent=None, providers=None, *, token=None, store=None):
                     return
                 self._send_json(200, responses)
                 return
-            response = _handle_rpc(body, selected_agent, manager, store)
+            response = _handle_rpc(body, selected_agent, manager, store, chat_slots)
             if response is None:
                 self.send_response(202)
                 self.send_header("Content-Length", "0")

@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from integrations.chatgpt_mcp import BridgeConfigError, ConversationStore, _load_config, create_handler
+from integrations.chatgpt_mcp import BridgeConfigError, ConversationStore, _handle_rpc, _load_config, create_handler
 from providers.mock import MockProvider
 from yuki_agent import YukiAgent
 from yuki_providers import ProviderManager
@@ -129,6 +129,39 @@ class MCPBridgeTests(unittest.TestCase):
             result = json.loads(response.read())
         self.assertTrue(result["result"]["isError"])
         self.assertIn("memory is disabled", result["result"]["content"][0]["text"].lower())
+
+    def test_chat_capacity_returns_retryable_error(self):
+        from threading import BoundedSemaphore
+        slots = BoundedSemaphore(1)
+        self.assertTrue(slots.acquire())
+        payload = {
+            "jsonrpc": "2.0", "id": 17, "method": "tools/call",
+            "params": {"name": "yuki_chat", "arguments": {"message": "hello"}},
+        }
+        try:
+            response = _handle_rpc(payload, self.agent, self.providers, chat_slots=slots)
+            self.assertTrue(response["result"]["isError"])
+            self.assertIn("at capacity", response["result"]["content"][0]["text"].lower())
+            self.assertEqual(self.agent.prompts, [])
+        finally:
+            slots.release()
+
+    def test_chat_capacity_is_released_when_agent_raises(self):
+        from threading import BoundedSemaphore
+
+        class RaisingAgent(FakeAgent):
+            def ask(self, prompt):
+                raise RuntimeError("provider failure")
+
+        slots = BoundedSemaphore(1)
+        payload = {
+            "jsonrpc": "2.0", "id": 18, "method": "tools/call",
+            "params": {"name": "yuki_chat", "arguments": {"message": "hello"}},
+        }
+        response = _handle_rpc(payload, RaisingAgent(), self.providers, chat_slots=slots)
+        self.assertTrue(response["result"]["isError"])
+        self.assertTrue(slots.acquire(blocking=False))
+        slots.release()
 
     def test_invalid_remote_binding_configuration_fails_closed(self):
         with self.assertRaises(BridgeConfigError):

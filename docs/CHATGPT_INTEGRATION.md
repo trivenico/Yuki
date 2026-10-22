@@ -1,10 +1,11 @@
 # ChatGPT integration (MCP)
 
-Yuki includes a stateless, authenticated MCP-over-HTTP bridge exposing exactly two tools:
+Yuki includes an authenticated MCP-over-HTTP bridge exposing three tools:
 - `yuki_status`: reports the selected provider and readiness.
-- `yuki_chat`: sends a bounded text prompt to Yuki's configured provider.
+- `yuki_chat`: sends a bounded text prompt to Yuki's configured provider, with optional session context when memory is enabled.
+- `yuki_delete_session`: deletes stored turns for a supplied session ID when memory is enabled.
 
-It does not expose shell execution, skills, arbitrary filesystem access, or state-changing actions.
+It does not expose shell execution, skills, arbitrary filesystem access, or other state-changing actions.
 
 ## 1. Requirements
 
@@ -62,14 +63,14 @@ payload = {"jsonrpc":"2.0","id":1,"method":"tools/list"}
 request = Request(
     "http://127.0.0.1:8765/mcp",
     data=json.dumps(payload).encode(),
-    headers={"Content-Type":"application/json","Authorization":"Bearer "+token},
+    headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","Authorization":"Bearer "+token},
 )
 with urlopen(request, timeout=5) as response:
     print(response.read().decode())
 PY
 ```
 
-Run tests with `python -m unittest discover -s tests -v`. The bridge tests cover authentication, tool exposure, prompt bounds, and the chat request path.
+Run tests with `python -m unittest discover -s tests -v`. The bridge tests cover authentication, tool exposure, prompt bounds, chat admission control, session history limits, and deletion.
 
 ## 4. Connect it in ChatGPT
 
@@ -101,8 +102,8 @@ Pass the same opaque `session_id` on each `yuki_chat` call to reuse a session. U
 
 - Do not paste the bearer token into a prompt or commit it to the repository.
 - The bridge has no OAuth authorization server yet. Static bearer authentication is intentionally simple; use only if the ChatGPT connection method you choose supports it. MCP POST requests must send `Accept: application/json, text/event-stream`.
-- The bridge is stateless and has no conversation-history persistence, per-user authorization, or durable session store.
+- Conversation persistence is optional and disabled by default. If enabled, session IDs are not yet bound to authenticated user identities, so keep memory disabled for public multi-user deployments.
 - Chat messages are passed to Yuki's configured provider. With a cloud-enabled hybrid configuration, the provider's own task allow-list governs routing; keep private messages local unless you deliberately configure and approve disclosure.
-- The bridge applies a bounded per-peer request window, limits JSON-RPC batches to 10 items, and applies a request read timeout. A reverse proxy must additionally enforce HTTPS, connection limits, upstream timeouts, and access logging that does not record authorization headers or message bodies.
+- The bridge applies a bounded per-peer request window, limits JSON-RPC batches to 10 items, applies a request read timeout, and admits at most four concurrent chat generations by default. Excess chat requests receive a retryable capacity error; deployments should still configure upstream/provider timeouts. A reverse proxy must additionally enforce HTTPS, connection limits, upstream timeouts, and access logging that does not record authorization headers or message bodies.
 - Do not add write tools, shell, file read/write, device controls, or unrestricted skills until each has its own authorization, approval, audit, and tests.
 - A passing unit test is not a deployment or security certification. Validate the actual endpoint and account's MCP support before relying on it.
