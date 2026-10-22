@@ -3,6 +3,7 @@ import unittest
 from providers.capabilities import (
     CapabilityRegistry, ProviderCapabilities, registry_from_catalog,
 )
+from yuki_providers import ProviderManager
 
 
 def provider(name, *, caps=("text",), implemented=True, ready=True, privacy="local"):
@@ -71,6 +72,13 @@ class CapabilityRegistryTests(unittest.TestCase):
         items = registry.list()
         self.assertEqual([item["provider"] for item in items], ["mock", "ollama"])
         self.assertNotIn("secret", repr(items))
+
+    def test_provider_manager_exposes_registry_from_real_catalog(self):
+        manager = ProviderManager(environ={})
+        registry = manager.routing_registry()
+        self.assertEqual(registry.route(required=("text",)).provider, "mock")
+        self.assertIsNone(registry.get("openai").configured_model)
+        self.assertFalse(registry.get("openai").implemented)
 
 
 if __name__ == "__main__":
