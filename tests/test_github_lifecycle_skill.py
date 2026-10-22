@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from skills.github_lifecycle import GitHubLifecycleSkill
+from skills.base import Skill, SkillResult
 
 class GitHubLifecycleTests(unittest.TestCase):
     def setUp(self):
@@ -33,6 +34,10 @@ class GitHubLifecycleTests(unittest.TestCase):
                 "title":"title","base":"main","confirm":"yes"}))
         self.assertFalse(bad.ok)
         run.assert_not_called()
+
+    def test_lifecycle_skill_can_accept_bounded_long_pr_body(self):
+        self.assertEqual(self.skill.max_argument_length, 12000)
+        self.assertEqual(Skill.max_argument_length if hasattr(Skill, "max_argument_length") else 500, 500)
 
     def test_rejects_unconfigured_path(self):
         result = self.skill.run(json.dumps({"action":"list_issues","repo_path":"/tmp"}))
