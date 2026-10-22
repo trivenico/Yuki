@@ -31,7 +31,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 ## Connected capabilities in this revision
 
-- `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
+- `yuki.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
 - `skills/registry.py`: registers time/system/files, interview practice, allow-listed web fetch/deep-read, local knowledge graph, local health log, defensive remediation suggestions, optional Playwright browser reading, YouTube caption retrieval, and optional read-only Gmail search. Optional integrations fail safely when dependencies are missing.
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
@@ -66,7 +66,7 @@ Python 3.10+ and PyYAML:
 ```sh
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python main.py
+python yuki.py
 ```
 
 Optional dependencies are separate:
@@ -130,12 +130,12 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 - No hack-back, retaliation, unrestricted exploit execution, credential theft, or arbitrary host shell skill is supported.
 - Local memory, reminders, recordings, OAuth credentials, and tokens should never be committed to Git.
 
-See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
+See [installation](docs/INSTALLATION.md), [ChatGPT MCP integration](docs/CHATGPT_INTEGRATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
 
 Yuki is still under active engineering. Passing CI verifies tested code paths, not production readiness or optional local hardware/software.
 
 
-## Real provider and approved task-loop milestone
+## ChatGPT integration bridge (experimental)\n\n`integrations/chatgpt_mcp.py` exposes authenticated MCP-over-HTTP tools for status and text chat only. It binds to loopback by default and requires a strong `YUKI_MCP_BEARER_TOKEN`. For ChatGPT setup, supported authentication, Secure MCP Tunnel, deployment requirements, and limitations, read [docs/CHATGPT_INTEGRATION.md](docs/CHATGPT_INTEGRATION.md). This is bridge code, not a live connection: you must run the service and add its endpoint in a ChatGPT account/workspace that supports custom MCP servers.\n\n## Real provider and approved task-loop milestone
 
 The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. Provider selection is opt-in:
 
