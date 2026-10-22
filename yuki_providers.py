@@ -1,13 +1,12 @@
-"""Provider registry and adapter factory.
+"""Provider registry and adapter factory for Yuki's terminal runtime.
 
-Only the offline mock adapter is implemented. Registry metadata never implies
-that a provider is authenticated or ready.
+Only explicitly implemented adapters can be selected. Ollama and hybrid use the
+existing provider implementations; hybrid cloud routing remains task-allow-listed.
 """
-
 from dataclasses import dataclass
 from typing import Optional
 
-from providers import BaseProvider, MockProvider
+from providers import BaseProvider, MockProvider, create_provider
 
 
 @dataclass(frozen=True)
@@ -18,7 +17,7 @@ class ProviderInfo:
 
 
 class ProviderManager:
-    """Register provider metadata and create only implemented adapters."""
+    """Register provider metadata and create configured, validated adapters."""
 
     def __init__(self):
         self._providers: dict[str, ProviderInfo] = {}
@@ -26,11 +25,25 @@ class ProviderManager:
         self._selected: Optional[str] = None
 
         self.register(ProviderInfo("mock", ("none",), True))
-        self.register(ProviderInfo("openai", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("anthropic", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("gemini", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("local", ("local_runtime_planned",)))
+        self.register(ProviderInfo("ollama", ("local_ollama_model",), True),
+                      factory=lambda: self._configured_provider("ollama"))
+        self.register(ProviderInfo("hybrid", ("local_model; optional_task_allowlisted_cloud",), True),
+                      factory=lambda: self._configured_provider("hybrid"))
+        self.register(ProviderInfo("openai", ("hybrid_task_allowlist_required",)))
+        self.register(ProviderInfo("anthropic", ("not_configured",)))
+        self.register(ProviderInfo("gemini", ("not_configured",)))
+        self.register(ProviderInfo("local", ("use_ollama",)))
         self._selected = "mock"
+
+    @staticmethod
+    def _configured_provider(name: str) -> BaseProvider:
+        # Import configuration lazily so mock/offline startup does not need to
+        # load YAML or require a configured local model.
+        from core.config import load_config
+
+        config = load_config()
+        config["provider"] = name
+        return create_provider(config)
 
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
@@ -71,6 +84,14 @@ class ProviderManager:
             return f"Unknown provider: {key}"
         if not self._providers[key].implemented or key not in self._factories:
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
+        try:
+            # Validate required settings before changing the active provider.
+            self._factories[key]()
+        except (ValueError, RuntimeError, OSError) as exc:
+            message = str(exc)
+            if key in {"ollama", "hybrid"}:
+                return f"Could not select {key}: check config.yaml and local model setup. {message}"
+            return f"Could not select {key}; current provider remains active."
         self._selected = key
         return f"Selected provider: {key}"
 
@@ -82,8 +103,10 @@ class ProviderManager:
         if factory is None:
             return None
         adapter = factory()
-        if not isinstance(adapter, BaseProvider):
-            raise TypeError("Provider factory must return a BaseProvider.")
+        if not callable(getattr(adapter, "generate", None)) or not callable(
+            getattr(adapter, "is_available", None)
+        ):
+            raise TypeError("Provider factory must return a compatible adapter.")
         return adapter
 
     def current(self) -> Optional[ProviderInfo]:
