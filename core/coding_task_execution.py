@@ -54,8 +54,9 @@ class CodingTaskExecutionStore:
             db.commit()
 
     def get(self, run_id: str) -> CodingTaskExecutionEvidence:
-        with sqlite3.connect(self.database_path, timeout=5.0) as db:
+        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
             db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
             row = db.execute("SELECT * FROM coding_task_execution_evidence WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
             raise KeyError("Execution evidence not found")
