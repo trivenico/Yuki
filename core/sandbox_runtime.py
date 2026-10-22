@@ -38,7 +38,7 @@ def build_docker_argv(
     if (
         not isinstance(command, (list, tuple))
         or not command
-        or any(not isinstance(arg, str) or "\\x00" in arg for arg in command)
+        or any(not isinstance(arg, str) or "\x00" in arg for arg in command)
     ):
         raise SandboxRuntimeError("command must be a non-empty sequence of NUL-free strings")
     if not isinstance(workspace, str) or not os.path.isabs(workspace):
