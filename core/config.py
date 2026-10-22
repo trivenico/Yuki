@@ -75,14 +75,21 @@ def load_config(path=None):
     if environment not in {"development", "test", "staging", "production"}:
         raise RuntimeError("environment must be development, test, staging, or production.")
     provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower()
-    if provider not in {"mock", "ollama", "hybrid"}:
-        raise RuntimeError("provider must be one of: mock, ollama, hybrid.")
+    if provider not in {"mock", "ollama", "hybrid", "failover"}:
+        raise RuntimeError("provider must be one of: mock, ollama, hybrid, failover.")
     if environment == "production" and provider == "mock":
-        raise RuntimeError("Production requires a real provider; set YUKI_PROVIDER=ollama or hybrid.")
+        raise RuntimeError("Production requires a real provider; set YUKI_PROVIDER=ollama, hybrid, or failover.")
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     if environment in {"staging", "production"} and provider in {"ollama", "hybrid"} and not model:
         raise RuntimeError("YUKI_OLLAMA_MODEL or ollama_model is required for staging/production Ollama providers.")
+    failover_models = [item.strip() for item in os.environ.get("YUKI_FAILOVER_MODELS", "").split(",") if item.strip()]
+    if provider == "failover" and not failover_models:
+        configured_models = raw.get("failover_models", [])
+        if isinstance(configured_models, list) and all(isinstance(item, str) and item.strip() for item in configured_models):
+            failover_models = [item.strip() for item in configured_models]
+        if not failover_models:
+            raise RuntimeError("YUKI_FAILOVER_MODELS or failover_models must list at least one model.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -106,7 +113,7 @@ def load_config(path=None):
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": provider,
-        "ollama_base_url": base_url, "ollama_model": model,
+        "ollama_base_url": base_url, "ollama_model": model, "failover_models": failover_models,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),

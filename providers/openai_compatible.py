@@ -10,6 +10,10 @@ from urllib.parse import urlsplit
 from core.context_budget import context_budget
 
 
+class RetryableProviderError(RuntimeError):
+    """A provider failure that is safe to retry on another configured model."""
+
+
 class OpenAICompatibleProvider:
     """A small Chat Completions adapter. No API key is stored in source/config files."""
 
@@ -68,8 +72,12 @@ class OpenAICompatibleProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 or 500 <= exc.code <= 599:
+                raise RetryableProviderError(f"Provider returned retryable HTTP status {exc.code}.") from exc
+            raise RuntimeError(f"Provider rejected the request with HTTP status {exc.code}.") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError("Cloud provider request failed.") from exc
+            raise RetryableProviderError("Provider network request failed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
         try:

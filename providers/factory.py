@@ -7,6 +7,7 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
+from providers.failover import FailoverProvider
 
 
 def create_provider(config=None, *, environ=None):
@@ -21,8 +22,8 @@ def create_provider(config=None, *, environ=None):
     if environment not in {"development", "test", "staging", "production"}:
         raise ValueError("environment must be development, test, staging, or production.")
     selected = str(env.get("YUKI_PROVIDER", cfg.get("provider", "mock"))).strip().lower()
-    if selected not in {"mock", "ollama", "hybrid"}:
-        raise ValueError("provider must be one of: mock, ollama, hybrid.")
+    if selected not in {"mock", "ollama", "hybrid", "failover"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid, failover.")
     if environment == "production" and selected == "mock":
         raise RuntimeError("Production requires a real provider; mock provider is disabled.")
     model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
@@ -30,6 +31,18 @@ def create_provider(config=None, *, environ=None):
         raise RuntimeError("A model is required for staging/production Ollama providers.")
     if selected == "mock":
         return MockProvider()
+    if selected == "failover":
+        raw_models = str(env.get("YUKI_FAILOVER_MODELS", "")).strip()
+        models = [item.strip() for item in raw_models.split(",") if item.strip()]
+        if not models and isinstance(cfg.get("failover_models"), (list, tuple)):
+            models = list(cfg["failover_models"])
+        if not models:
+            raise RuntimeError("YUKI_FAILOVER_MODELS must list at least one OpenAI-compatible model.")
+        return FailoverProvider(
+            models,
+            api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENROUTER_API_KEY")),
+            base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://openrouter.ai/api/v1")),
+        )
     if selected not in {"ollama", "hybrid"}:
         raise ValueError("provider must be one of: mock, ollama, hybrid.")
     local = OllamaProvider(

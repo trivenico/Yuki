@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 from providers.hybrid import HybridProvider
 from providers.ollama import OllamaProvider
-from providers.openai_compatible import OpenAICompatibleProvider
+from providers.openai_compatible import OpenAICompatibleProvider, RetryableProviderError
+from providers.failover import FailoverProvider
 
 
 class FakeProvider:
@@ -34,6 +35,61 @@ class Response:
 
     def read(self, size=-1):
         return self.body[:size]
+
+
+class FailoverProviderTests(unittest.TestCase):
+    def test_uses_next_model_after_retryable_capacity_failure(self):
+        class Model:
+            def __init__(self, model, **kwargs):
+                self.model = model
+                self.calls = 0
+                self.last_context_budget = None
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                self.calls += 1
+                if self.model == "first":
+                    raise RetryableProviderError("rate limited")
+                return "completed by fallback"
+
+        made = []
+        def factory(model, **kwargs):
+            item = Model(model, **kwargs)
+            made.append(item)
+            return item
+        router = FailoverProvider(["first", "second"], provider_factory=factory)
+        self.assertEqual(router.generate("continue work"), "completed by fallback")
+        self.assertEqual([item.calls for item in made], [1, 1])
+        self.assertEqual(router.last_model, "second")
+        self.assertIsNone(router.last_error)
+
+    def test_does_not_fallback_on_non_retryable_auth_or_request_error(self):
+        class Model:
+            def __init__(self, model, **kwargs):
+                self.model = model
+                self.calls = 0
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                self.calls += 1
+                raise RuntimeError("invalid API key")
+        made = []
+        def factory(model, **kwargs):
+            item = Model(model, **kwargs)
+            made.append(item)
+            return item
+        router = FailoverProvider(["first", "second"], provider_factory=factory)
+        with self.assertRaisesRegex(RuntimeError, "invalid API key"):
+            router.generate("prompt")
+        self.assertEqual([item.calls for item in made], [1, 0])
+
+    def test_requires_nonempty_deduplicated_model_list(self):
+        with self.assertRaises(ValueError):
+            FailoverProvider([])
+        router = FailoverProvider(["a", "a", "b"], provider_factory=lambda model, **kw: type(
+            "Model", (), {"model": model, "is_available": lambda self: True, "generate": lambda self, p: "ok"}
+        )())
+        self.assertEqual(router.models, ("a", "b"))
 
 
 class HybridProviderTests(unittest.TestCase):
