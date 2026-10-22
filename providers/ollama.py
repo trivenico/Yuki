@@ -6,11 +6,13 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from core.context_budget import context_budget
+
 
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
-    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, usage_tracker=None):
+    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45, usage_tracker=None, context_limit_tokens=None):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("Ollama base URL is required.")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -37,6 +39,16 @@ class OllamaProvider:
         self.model = model.strip()
         self.timeout = timeout
         self.usage_tracker = usage_tracker
+        self.context_limit_tokens = self._validate_context_limit(context_limit_tokens)
+        self.last_context_budget = context_budget(limit_tokens=self.context_limit_tokens, used_tokens=None)
+
+    @staticmethod
+    def _validate_context_limit(value):
+        if value is None:
+            return None
+        if type(value) is not int or value <= 0:
+            raise ValueError("context_limit_tokens must be a positive integer or None.")
+        return value
 
     def is_available(self):
         """Return true only when the local server responds and the model is installed."""
@@ -95,19 +107,21 @@ class OllamaProvider:
         text = body.get("response") if isinstance(body, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
-        if self.usage_tracker is not None and isinstance(body, dict):
-            prompt_tokens = body.get("prompt_eval_count")
-            output_tokens = body.get("eval_count")
-            if (type(prompt_tokens) is int and prompt_tokens >= 0
-                    and type(output_tokens) is int and output_tokens >= 0):
-                self.usage_tracker.record(
-                    provider="ollama", model=self.model, input_tokens=prompt_tokens,
-                    output_tokens=output_tokens, estimated=False,
-                )
-            else:
-                self.usage_tracker.record(
-                    provider="ollama", model=self.model,
-                    input_tokens=max(1, len(prompt.strip()) // 4),
-                    output_tokens=max(1, len(text) // 4), estimated=True,
-                )
+        prompt_tokens = body.get("prompt_eval_count") if isinstance(body, dict) else None
+        output_tokens = body.get("eval_count") if isinstance(body, dict) else None
+        exact_usage = (type(prompt_tokens) is int and prompt_tokens >= 0
+                       and type(output_tokens) is int and output_tokens >= 0)
+        if not exact_usage:
+            prompt_tokens = max(1, len(prompt.strip()) // 4)
+            output_tokens = max(1, len(text) // 4)
+        self.last_context_budget = context_budget(
+            limit_tokens=self.context_limit_tokens,
+            used_tokens=prompt_tokens + output_tokens,
+            estimated=not exact_usage,
+        )
+        if self.usage_tracker is not None:
+            self.usage_tracker.record(
+                provider="ollama", model=self.model, input_tokens=prompt_tokens,
+                output_tokens=output_tokens, estimated=not exact_usage,
+            )
         return text.strip()
