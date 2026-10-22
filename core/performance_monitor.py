@@ -271,6 +271,10 @@ def format_performance_report(metrics: dict[str, Any]) -> str:
         f"RAM: {format_bytes(memory.get('used_bytes'))} used / {format_bytes(memory.get('total_bytes'))} total"
         + (f" ({memory['percent']:.1f}%)" if isinstance(memory.get("percent"), (int, float)) else ""),
     ]
+    if gpu.get("status"):
+        age = gpu.get("age_seconds")
+        freshness = f", age {age:.1f}s" if isinstance(age, (int, float)) else ""
+        lines.append(f"GPU telemetry: {gpu['status']}{freshness}")
     if gpu.get("available"):
         for index, device in enumerate(gpu["devices"], 1):
             lines.append(
