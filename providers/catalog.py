@@ -31,8 +31,10 @@ _CATALOG = (
      "capabilities":["multi_provider_routing"],"model_env":"YUKI_OPENROUTER_MODEL","key_env":"OPENROUTER_API_KEY"},
     {"name":"tokenrouter","label":"TokenRouter","auth":"api_key","privacy":"third_party_gateway","implemented":False,
      "capabilities":["multi_provider_routing"],"model_env":"YUKI_TOKENROUTER_MODEL","key_env":"TOKENROUTER_API_KEY"},
-    {"name":"huggingface","label":"Hugging Face Inference","auth":"optional_or_provider_dependent","privacy":"cloud_provider",
-     "implemented":False,"capabilities":["open_model_ecosystem","model_discovery"],"model_env":"YUKI_HF_MODEL","key_env":"HF_TOKEN"},
+    {"name":"huggingface","label":"Hugging Face Inference Router","auth":"HF_TOKEN","privacy":"cloud_provider",
+     "implemented":True,"capabilities":["open_model_ecosystem","openai_compatible_chat"],"model_env":"YUKI_HF_MODEL","key_env":"HF_TOKEN"},
+    {"name":"zai","label":"Z.ai / GLM API","auth":"ZAI_API_KEY","privacy":"cloud_provider",
+     "implemented":True,"capabilities":["text","openai_compatible_chat"],"model_env":"YUKI_ZAI_MODEL","key_env":"ZAI_API_KEY"},
 )
 
 def _model(value):
@@ -71,7 +73,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
                                   and str(env.get(key_name, "")).strip())
         status = manager.get(item["name"], {})
         implemented = bool(status.get("implemented", item["implemented"]))
-        if item["name"] in {"openai","anthropic","deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
+        if item["name"] == "anthropic":
             implemented = False
         if item["name"] == "mock":
             ready = True
@@ -85,6 +87,10 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         elif item["name"] == "hybrid":
             ready = bool(_model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))))
             reason = "local_model_configured_cloud_opt_in_required" if ready else "local_model_not_configured"
+        elif implemented:
+            ready = bool(model and configured_key)
+            reason = ("model_and_credential_configured" if ready else
+                      "model_not_configured" if not model else "credential_not_configured")
         else:
             ready = False
             reason = "adapter_not_implemented"
