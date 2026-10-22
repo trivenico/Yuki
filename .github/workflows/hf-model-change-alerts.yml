@@ -1,0 +1,103 @@
+name: Yuki Hugging Face model change alerts
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: yuki-hf-model-alerts
+  cancel-in-progress: false
+
+jobs:
+  scout-diff-alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test model scout and snapshot diff
+        run: |
+          python -m unittest discover -s tests -p 'test_hf_model_scout.py'
+          python -m unittest discover -s tests -p 'test_hf_model_diff.py'
+      - name: Scout public Hugging Face metadata
+        run: |
+          python yuki_hf_model_scout.py --limit-per-task 10 --output-dir artifacts/model-scout
+          cp "$(find artifacts/model-scout -maxdepth 1 -type f -name 'hf-model-scout-*.json' | sort | tail -n 1)" "$RUNNER_TEMP/current-snapshot.json"
+      - name: Compare against persistent baseline
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_ref="$(git ls-remote --heads origin yuki-model-scout-baseline)"
+          if [[ -n "$remote_ref" ]]; then
+            git fetch origin yuki-model-scout-baseline
+            git show origin/yuki-model-scout-baseline:baseline.json > "$RUNNER_TEMP/previous-snapshot.json"
+            python yuki_hf_model_diff.py \
+              --previous "$RUNNER_TEMP/previous-snapshot.json" \
+              --current "$RUNNER_TEMP/current-snapshot.json" \
+              --output-dir artifacts/model-scout-diffs
+            cp "$(find artifacts/model-scout-diffs -maxdepth 1 -type f -name 'hf-model-diff-*.json' | sort | tail -n 1)" "$RUNNER_TEMP/diff.json"
+            cp "$(find artifacts/model-scout-diffs -maxdepth 1 -type f -name 'hf-model-diff-*.md' | sort | tail -n 1)" "$RUNNER_TEMP/diff.md"
+            new_count="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["summary"]["new_count"])' "$RUNNER_TEMP/diff.json")"
+            changed_count="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["summary"]["changed_count"])' "$RUNNER_TEMP/diff.json")"
+            echo "baseline=existing" >> "$GITHUB_OUTPUT"
+            echo "new_count=$new_count" >> "$GITHUB_OUTPUT"
+            echo "changed_count=$changed_count" >> "$GITHUB_OUTPUT"
+            if (( new_count > 0 || changed_count > 0 )); then
+              if [[ -f "$RUNNER_TEMP/diff.md" ]]; then
+                issue_number="$(gh issue list --state open --search '"[Yuki Model Review]" in:title' --json number,title --jq '[.[] | select(.title == "[Yuki Model Review] Candidate updates detected")][0].number // empty')"
+                if [[ -n "$issue_number" ]]; then
+                  gh issue comment "$issue_number" --body-file "$RUNNER_TEMP/diff.md"
+                else
+                  gh issue create --title "[Yuki Model Review] Candidate updates detected" --body-file "$RUNNER_TEMP/diff.md"
+                fi
+              fi
+            fi
+          else
+            echo "No previous baseline exists; this run initializes it without issuing alerts."
+            echo "baseline=initialized" >> "$GITHUB_OUTPUT"
+            echo "new_count=0" >> "$GITHUB_OUTPUT"
+            echo "changed_count=0" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Update persistent baseline branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          worktree="$RUNNER_TEMP/baseline-worktree"
+          git worktree add --detach "$worktree" HEAD
+          if git ls-remote --heads origin yuki-model-scout-baseline | grep -q 'refs/heads/yuki-model-scout-baseline$'; then
+            git fetch origin yuki-model-scout-baseline
+            git -C "$worktree" checkout -B yuki-model-scout-baseline origin/yuki-model-scout-baseline
+          else
+            git -C "$worktree" switch --orphan yuki-model-scout-baseline
+            git -C "$worktree" rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp "$RUNNER_TEMP/current-snapshot.json" "$worktree/baseline.json"
+          git -C "$worktree" add baseline.json
+          git -C "$worktree" -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Update Yuki model discovery baseline"
+          git -C "$worktree" push origin HEAD:yuki-model-scout-baseline
+      - name: Upload scout and diff reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-hf-model-change-report-${{ github.run_id }}
+          path: |
+            artifacts/model-scout/*.json
+            artifacts/model-scout-diffs/*
+          if-no-files-found: warn
+          retention-days: 30

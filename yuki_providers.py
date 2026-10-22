@@ -98,3 +98,8 @@ class ProviderManager:
         return build_provider_catalog(
             config=self._config, environ=self._environ, provider_manager=self
         )
+
+    def routing_registry(self):
+        """Return a capability-filtered registry for explicit, policy-aware routing."""
+        from providers.capabilities import registry_from_catalog
+        return registry_from_catalog(self.catalog())
