@@ -44,6 +44,9 @@ class ProviderManager:
                     {**self._config, "provider": provider_name}, environ=self._environ
                 )
             self.register(item, factory=factory)
+        configured = str(self._config.get("provider", "mock")).strip().lower()
+        if configured in self._providers and self._providers[configured].implemented:
+            self._selected = configured
 
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
