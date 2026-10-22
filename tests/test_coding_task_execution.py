@@ -35,6 +35,8 @@ class CodingTaskExecutionTests(unittest.TestCase):
     def test_approval_binds_task_and_patch(self, run):
         run.return_value = SandboxExecutionResult(0,"ok",False,False,0.1); seen=[]
         self.call(approve=lambda tid,digest,req: seen.append((tid,digest,req)) or True)
+        request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
+        self.assertTrue(run.call_args.kwargs["approve"](request))
         self.assertEqual(seen[0][0],self.task.task_id); self.assertEqual(seen[0][1],self.task.patch_sha256)
         self.assertIsInstance(seen[0][2],SandboxExecutionRequest)
     @patch("core.coding_task_execution.run_sandboxed_task")
