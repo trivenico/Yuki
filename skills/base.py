@@ -25,7 +25,10 @@ class Skill(ABC):
         if not isinstance(argument, str):
             return SkillResult(False, "Argument must be text.")
         try:
-            result = self.run(argument[:500])
+            limit = getattr(self, "max_argument_length", 500)
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20000:
+                limit = 500
+            result = self.run(argument[:limit])
             return result if isinstance(result, SkillResult) else SkillResult(
                 False, "Skill returned an invalid result."
             )
