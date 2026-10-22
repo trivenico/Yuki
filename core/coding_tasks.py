@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -83,11 +84,25 @@ class CodingTaskStore:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_coding_tasks_state ON coding_tasks(state, updated_at)")
 
+    @contextmanager
     def _connect(self):
+        """Yield a bounded-wait SQLite connection and always close it.
+
+        sqlite3.Connection's context manager commits/rolls back but does not
+        close the connection. Explicit closure is important on Windows, where
+        leaked handles can lock the database file during cleanup or replacement.
+        """
         db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @staticmethod
     def _bounded_text(value: Any, name: str, limit: int = _MAX_TEXT) -> str:
