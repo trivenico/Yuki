@@ -71,6 +71,13 @@ def load_config(path=None):
             raise ValueError("unsafe URL")
     except ValueError as exc:
         raise RuntimeError("Ollama URL must be HTTPS or loopback HTTP, with no credentials, query, or fragment.") from exc
+    github_roots_raw = os.environ.get("YUKI_GITHUB_ALLOWED_ROOTS")
+    if github_roots_raw is not None:
+        github_roots = [item.strip() for item in github_roots_raw.split(os.pathsep) if item.strip()]
+        if len(github_roots) > 50:
+            raise RuntimeError("YUKI_GITHUB_ALLOWED_ROOTS may contain at most 50 paths.")
+    else:
+        github_roots = _string_list(raw, "github_allowed_roots")
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
@@ -92,6 +99,7 @@ def load_config(path=None):
         "wakeword_enabled": _bool_setting("YUKI_WAKEWORD_ENABLED", raw, "wakeword_enabled", False),
         "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
         "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
+        "github_allowed_roots": [str(Path(p).expanduser().resolve()) for p in github_roots],
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
