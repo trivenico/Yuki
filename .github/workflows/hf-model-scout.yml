@@ -1,0 +1,47 @@
+name: Yuki Hugging Face model scout
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit_per_task:
+        description: Maximum public models to inspect per task
+        required: false
+        default: "10"
+        type: string
+  schedule:
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-model-scout-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test scout without network access
+        run: python -m unittest discover -s tests -p 'test_hf_model_scout.py'
+      - name: Run read-only public model scout
+        env:
+          SCOUT_LIMIT: ${{ inputs.limit_per_task || '10' }}
+        run: |
+          python yuki_hf_model_scout.py \
+            --limit-per-task "$SCOUT_LIMIT" \
+            --output-dir artifacts/model-scout
+      - name: Upload timestamped discovery report
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-hf-model-scout-${{ github.run_id }}
+          path: artifacts/model-scout/*.json
+          if-no-files-found: error
+          retention-days: 30

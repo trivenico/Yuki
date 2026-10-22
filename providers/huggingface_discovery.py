@@ -26,6 +26,12 @@ class DiscoveryError(RuntimeError):
     """Raised when the Hub response is invalid or discovery cannot complete."""
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Keep optional bearer credentials and requests on the fixed Hub endpoint."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _bounded_int(value, default=0):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else default
 
@@ -80,7 +86,7 @@ class HuggingFaceDiscovery:
             raise ValueError("max_results must be between 1 and 100")
         self.timeout = timeout
         self.max_results = max_results
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or urllib.request.build_opener(_RejectRedirects())
 
     def discover(self, *, task="text-generation", sort="downloads", token=None):
         if task not in _ALLOWED_TASKS:
