@@ -66,7 +66,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertIn("--name", args[0])
         self.assertTrue(kwargs["env"])
-        self.assertIsInstance(build.call_args.kwargs.get("policy"), SandboxPolicy)
+        self.assertIsInstance(build.call_args.args[0], SandboxPolicy)
         _kill.assert_called_once()
 
     @patch("core.coding_task_runner._kill_container")
@@ -75,7 +75,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
     def test_normal_output_returns_result(self, build, popen, _kill):
         popen.return_value = FakeProcess(b"ok\n", 0)
         result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
-                                    command=["python", "-V"], approve=lambda: True)
+                                    command=["python", "-V"], approve=lambda request: True)
         self.assertEqual(result.output, "ok\n")
         self.assertEqual(result.returncode, 0)
         self.assertFalse(result.timed_out)
