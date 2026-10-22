@@ -34,6 +34,8 @@ def create_provider(config=None, *, environ=None):
     if selected == "failover":
         raw_models = str(env.get("YUKI_FAILOVER_MODELS", "")).strip()
         models = [item.strip() for item in raw_models.split(",") if item.strip()]
+        if not models and isinstance(cfg.get("failover_models"), (list, tuple)):
+            models = list(cfg["failover_models"])
         if not models:
             raise RuntimeError("YUKI_FAILOVER_MODELS must list at least one OpenAI-compatible model.")
         return FailoverProvider(
