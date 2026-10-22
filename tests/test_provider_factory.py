@@ -60,10 +60,12 @@ class ProviderFactoryTests(unittest.TestCase):
 
     def test_subscription_cli_providers_are_reported_as_not_integrated(self):
         providers = {item["name"]: item for item in ProviderManager().list_providers()}
-        for name in ("openai", "anthropic", "gemini", "deepseek", "zai"):
+        for name in ("openai", "anthropic", "deepseek", "zai"):
             with self.subTest(name=name):
                 self.assertIn(name, providers)
                 self.assertFalse(providers[name]["implemented"])
+        self.assertTrue(providers["gemini"]["implemented"])
+        self.assertIn("official_gemini_cli_account_sign_in", providers["gemini"]["auth_methods"])
 
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
