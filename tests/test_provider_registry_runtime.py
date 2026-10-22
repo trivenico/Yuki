@@ -11,7 +11,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["mock"]["implemented"])
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
-        self.assertFalse(entries["openai"]["implemented"])
+        self.assertTrue(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
