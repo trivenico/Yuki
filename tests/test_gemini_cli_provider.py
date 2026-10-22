@@ -51,13 +51,18 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process = MagicMock()
         fake_process.pid = 12345
         fake_process.wait.side_effect = [subprocess.TimeoutExpired("gemini", 1), 0]
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
-             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
-             patch("providers.gemini_cli.os.killpg") as killpg:
-            with self.assertRaisesRegex(TimeoutError, "deadline"):
-                provider.generate("secret prompt")
-        if os.name == "posix":
-            killpg.assert_called_once_with(12345, __import__("signal").SIGKILL)
+        with patch("providers.gemini_cli.shutil.which", return_value="gemini.exe" if os.name == "nt" else "/usr/bin/gemini"), \
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
+            if os.name == "posix":
+                with patch("providers.gemini_cli.os.killpg") as killpg:
+                    with self.assertRaisesRegex(TimeoutError, "deadline"):
+                        provider.generate("secret prompt")
+                killpg.assert_called_once_with(12345, __import__("signal").SIGKILL)
+            else:
+                with patch.object(fake_process, "kill") as kill:
+                    with self.assertRaisesRegex(TimeoutError, "deadline"):
+                        provider.generate("secret prompt")
+                kill.assert_called_once()
         fake_process.wait.assert_called()
 
     def test_nonzero_exit_does_not_disclose_stderr(self):
