@@ -8,15 +8,15 @@ import urllib.request
 from urllib.parse import urlsplit
 
 _DEFAULT_ALLOWED_HOSTS = frozenset({
-    "api.openai.com",
-    "openrouter.ai",
-    "api.deepseek.com",
-    "api.moonshot.ai",
-    "api.minimax.chat",
-    "api.minimax.io",
-    "api.z.ai",
-    "api.tokenrouter.io",
+    "api.openai.com", "openrouter.ai", "api.deepseek.com",
+    "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
+    "api.z.ai", "api.tokenrouter.io",
 })
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Cloud credentials and prompts must never follow redirects to another endpoint."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
@@ -72,7 +72,8 @@ class OpenAICompatibleProvider:
             raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
         payload = json.dumps({
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt.strip()[:20000]}],
+            "messages": [{"role": "user", "content": prompt.strip()[:20000]},
+            ],
             "stream": False,
         }).encode("utf-8")
         request = urllib.request.Request(
@@ -81,10 +82,13 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            # Deliberately disable automatic redirects: even a valid initial host must
+            # not redirect credentials/prompts to an unreviewed destination.
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError("Cloud provider request failed.") from exc
+            raise RuntimeError("Cloud provider request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
         try:
