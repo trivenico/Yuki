@@ -1,0 +1,25 @@
+name: Yuki provider capability registry tests
+
+on:
+  pull_request:
+    paths:
+      - "providers/capabilities.py"
+      - "yuki_providers.py"
+      - "tests/test_provider_capabilities.py"
+      - "docs/PHASE68_PROVIDER_CAPABILITY_REGISTRY.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run capability registry tests
+        run: python -m unittest discover -s tests -p 'test_provider_capabilities.py'
