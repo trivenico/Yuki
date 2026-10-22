@@ -36,6 +36,7 @@ from core.execution_ledger import SQLiteExecutionLedger
 from core.execution_reconciliation import SQLiteExecutionReconciliation
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
+from core.durable_operation_runtime import DurableOperationRuntime
 from core.durable_memory_runtime import DurableMemoryRuntime
 from core.durable_knowledge_runtime import DurableKnowledgeRuntime
 from core.durable_reminder_runtime import DurableReminderRuntime
@@ -222,14 +223,87 @@ def main():
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
     wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
+    # These high-risk operations are confirmed and audited by the durable coordinator
+    # below. Their inner callbacks are bypassed only to avoid duplicate prompts; callers
+    # must use DurableOperationRuntime and never invoke these handlers directly.
     recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
-                      approver=lambda reason: _confirm("security:recon", reason, "high"))
+                      approver=lambda reason: True)
     sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
-                            enabled=config["sandbox_enabled"],
-                            approver=lambda reason: _confirm("sandbox:run", reason, "high"))
+                            enabled=config["sandbox_enabled"], approver=lambda reason: True)
     firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
-                               approver=lambda reason: _confirm("defense:firewall", reason, "high"))
+                               approver=lambda reason: True)
     detector = PortScanDetector()
+
+    def operation_confirmation(action):
+        operation = action.get("operation", "unknown")
+        arguments = action.get("arguments", {})
+        risk = "critical" if operation.startswith("firewall_") else "high"
+        return _confirm(
+            f"operation:{operation}",
+            f"Durably approve operation {operation!r} with arguments {arguments!r}.",
+            risk,
+        )
+
+    def run_packet_capture(interface, packet_limit, timeout):
+        def alert_callback(alert):
+            print(f"Yuki alert: suspected port scan from {alert['source_ip']} across {alert['unique_ports']} ports.")
+            outcome = durable_operations.execute(
+                "firewall_block", {"ip": alert["source_ip"], "seconds": 300}
+            )
+            if outcome.ok:
+                print(outcome.result)
+            else:
+                print(f"Yuki > Automatic firewall response not applied: {outcome.status}")
+
+        return sniffer.sniff(
+            interface=interface, packet_limit=packet_limit, timeout=timeout,
+            on_alert=alert_callback,
+        )
+
+    def voice_record(seconds):
+        output = workspace / "audio" / f"recording-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
+        recorded = stt.record_wav(output, seconds=seconds)
+        return stt.transcribe_file(recorded)
+
+    def voice_transcribe(path):
+        return stt.transcribe_file(path)
+
+    def voice_speak(text):
+        tts.speak(text)
+        return {"spoken": True}
+
+    def voice_wakeword_listen(seconds):
+        if not wakeword:
+            raise WakeWordError("No wake-word model path is configured.")
+        wakeword.load()
+        detected = wakeword.listen_once(seconds=seconds)
+        if not detected["detected"]:
+            return {"detected": False, "scores": detected.get("scores", [])}
+        output = workspace / "audio" / f"wake-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
+        recorded = stt.record_wav(output, seconds=5)
+        transcript = stt.transcribe_file(recorded)
+        return {"detected": True, "scores": detected.get("scores", []), "transcript": transcript}
+
+    durable_operations = DurableOperationRuntime(
+        coordinator=approval_coordinator,
+        operations={
+            "recon_scan": lambda target: recon.scan_common_tcp(target),
+            "sandbox_run": lambda image, argv: sandbox.run(image, argv),
+            "firewall_block": lambda ip, seconds: firewall.block_temporary(ip, seconds=seconds),
+            "firewall_remove": lambda rule_id: firewall.remove(rule_id),
+            "packet_capture": run_packet_capture,
+            "voice_record": voice_record,
+            "voice_transcribe": voice_transcribe,
+            "voice_speak": voice_speak,
+            "voice_wakeword_listen": voice_wakeword_listen,
+            "evolution_record": lambda category, summary: evolution.record(category, summary),
+            "evolution_run": lambda: evolution.run_cycle(),
+            "evolution_review": lambda proposal_id, decision: evolution.review(proposal_id, decision),
+        },
+        actor="local-owner",
+        session_id="cli-session",
+        confirm=operation_confirmation,
+    )
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
@@ -436,16 +510,22 @@ def main():
                 continue
             category, summary = payload.split("|", 1)
             try:
-                item = evolution.record(category.strip(), summary.strip())
-                print(f"Yuki > Recorded local evolution observation {item['id']}; secret-like strings are redacted.")
+                outcome = durable_operations.execute(
+                    "evolution_record", {"category": category.strip(), "summary": summary.strip()}
+                )
+                if outcome.ok:
+                    print(f"Yuki > Recorded local evolution observation {outcome.result['id']}; secret-like strings are redacted.")
+                else:
+                    print(f"Yuki > Observation was not recorded: {outcome.status}")
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Observation was not recorded: {exc}")
         elif command == "/evolution run":
-            if not _confirm("evolution:run", "Analyze explicitly recorded local observations and create review proposals. No actions or code changes will run."):
-                print("Yuki > Evolution cycle cancelled.")
-                continue
             try:
-                report = evolution.run_cycle()
+                outcome = durable_operations.execute("evolution_run", {})
+                if not outcome.ok:
+                    print(f"Yuki > Evolution cycle blocked: {outcome.status}")
+                    continue
+                report = outcome.result
                 print(f"Yuki > Reviewed {report['observations_reviewed']} observations; {len(report['proposals'])} proposals await review.")
                 for proposal in report["proposals"]:
                     print(f"- {proposal['id']} [{proposal['kind']}] {proposal['title']}: {proposal['detail']}")
@@ -459,11 +539,14 @@ def main():
                 continue
             proposal_id, decision = parts[2], parts[3].strip()
             decision = "accepted_for_manual_followup" if decision == "accept" else "rejected"
-            if not _confirm("evolution:review", f"Record review decision {decision!r} for proposal {proposal_id}."):
-                print("Yuki > Proposal review cancelled.")
-                continue
             try:
-                print("Yuki > " + str(evolution.review(proposal_id, decision)))
+                outcome = durable_operations.execute(
+                    "evolution_review", {"proposal_id": proposal_id, "decision": decision}
+                )
+                if outcome.ok:
+                    print("Yuki > " + str(outcome.result))
+                else:
+                    print(f"Yuki > Proposal review blocked: {outcome.status}")
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Proposal was not changed: {exc}")
         elif command == "/voice status":
@@ -476,32 +559,35 @@ def main():
         elif command.startswith("/voice record "):
             try:
                 seconds = int(command[len("/voice record "):].strip())
-                if not _confirm("voice:record", f"Record up to {seconds} seconds from the microphone.", "medium"):
-                    print("Yuki > Recording cancelled.")
+                outcome = durable_operations.execute("voice_record", {"seconds": seconds})
+                if not outcome.ok:
+                    print(f"Yuki > Recording cancelled or blocked: {outcome.status}")
                     continue
-                output = workspace / "audio" / f"recording-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
-                recorded = stt.record_wav(output, seconds=seconds)
-                result = stt.transcribe_file(recorded)
+                result = outcome.result
                 print(f"Yuki transcript ({result['language']}): {result['text']}")
-            except (ValueError, STTError) as exc:
+            except (ValueError, STTError, RuntimeError) as exc:
                 print(f"Yuki > Recording/transcription unavailable: {exc}")
         elif command.startswith("/voice speak "):
             try:
-                if not _confirm("voice:speak", "Speak the supplied text using local TTS.", "low"):
-                    print("Yuki > Speech cancelled.")
-                    continue
-                tts.speak(command[len("/voice speak "):])
-                print("Yuki > Finished speaking.")
-            except (TTSError, ValueError) as exc:
+                outcome = durable_operations.execute(
+                    "voice_speak", {"text": command[len("/voice speak "):]}
+                )
+                if outcome.ok:
+                    print("Yuki > Finished speaking.")
+                else:
+                    print(f"Yuki > Speech cancelled or blocked: {outcome.status}")
+            except (TTSError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Speech unavailable: {exc}")
         elif command.startswith("/voice transcribe "):
             try:
-                if not _confirm("voice:transcribe", "Transcribe the selected local audio file.", "medium"):
-                    print("Yuki > Transcription cancelled.")
+                path = command[len("/voice transcribe "):].strip()
+                outcome = durable_operations.execute("voice_transcribe", {"path": path})
+                if not outcome.ok:
+                    print(f"Yuki > Transcription cancelled or blocked: {outcome.status}")
                     continue
-                result = stt.transcribe_file(command[len("/voice transcribe "):].strip())
+                result = outcome.result
                 print(f"Yuki transcript ({result['language']}): {result['text']}")
-            except (STTError, ValueError) as exc:
+            except (STTError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Transcription unavailable: {exc}")
         elif command == "/voice wakeword status":
             if not wakeword:
@@ -513,25 +599,22 @@ def main():
                 except WakeWordError as exc:
                     print(f"Yuki > Wake-word detector unavailable: {exc}")
         elif command.startswith("/voice wakeword listen "):
-            if not wakeword:
-                print("Yuki > No wake-word model path is configured.")
-                continue
             try:
                 seconds = int(command[len("/voice wakeword listen "):].strip())
-                if not _confirm("voice:wakeword", f"Listen to the microphone for up to {seconds} seconds for the configured wake phrase.", "medium"):
-                    print("Yuki > Listening cancelled.")
+                outcome = durable_operations.execute(
+                    "voice_wakeword_listen", {"seconds": seconds}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Wake-word listening cancelled or blocked: {outcome.status}")
                     continue
-                wakeword.load()
-                result = wakeword.listen_once(seconds=seconds)
+                result = outcome.result
                 if not result["detected"]:
                     print("Yuki > Wake phrase was not detected in this listening window.")
                 else:
-                    print(f"Yuki > Wake phrase detected: {result['scores']}. Starting a separate 5-second recording for transcription.")
-                    output = workspace / "audio" / f"wake-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
-                    recorded = stt.record_wav(output, seconds=5)
-                    transcript = stt.transcribe_file(recorded)
+                    transcript = result["transcript"]
+                    print(f"Yuki > Wake phrase detected: {result['scores']}.")
                     print(f"Yuki transcript ({transcript['language']}): {transcript['text']}")
-            except (ValueError, WakeWordError, STTError) as exc:
+            except (ValueError, WakeWordError, STTError, RuntimeError) as exc:
                 print(f"Yuki > Wake-word flow unavailable: {exc}")
         elif command.startswith("/voice speaker-check "):
             try:
@@ -541,12 +624,20 @@ def main():
         elif command == "/security status":
             print(f"Security lab: {config['security_lab_enabled']}; allowed private lab IPs: {len(config['recon_allowlisted_targets'])}")
         elif command.startswith("/security recon "):
+            target = command[len("/security recon "):].strip()
+            if not target:
+                print("Yuki > Reconnaissance target is required.")
+                continue
             try:
-                result = recon.scan_common_tcp(command[len("/security recon "):].strip())
+                outcome = durable_operations.execute("recon_scan", {"target": target})
+                if not outcome.ok:
+                    print(f"Yuki > Recon blocked: {outcome.status}")
+                    continue
+                result = outcome.result
                 print(f"Yuki > Scan finished for {result['target']} (exit {result['returncode']}).")
                 print(result["output"])
                 if result["errors"]: print(result["errors"])
-            except (ReconError, ValueError) as exc:
+            except (ReconError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Recon blocked/unavailable: {exc}")
         elif command == "/sandbox status":
             print(f"Sandbox enabled: {config['sandbox_enabled']}; allow-listed images: {len(config['sandbox_allowed_images'])}")
@@ -557,39 +648,56 @@ def main():
                 continue
             image, argv_text = payload.split("|", 1)
             try:
-                result = sandbox.run(image.strip(), shlex.split(argv_text))
+                argv = shlex.split(argv_text.strip())
+                if not image.strip() or not argv:
+                    print("Yuki > Sandbox image and program are required.")
+                    continue
+                outcome = durable_operations.execute(
+                    "sandbox_run", {"image": image.strip(), "argv": argv}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Sandbox blocked: {outcome.status}")
+                    continue
+                result = outcome.result
                 print(f"Yuki > Sandbox exit {result['returncode']}\n{result['stdout']}\n{result['stderr']}")
-            except (SandboxError, ValueError) as exc:
+            except (SandboxError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Sandbox blocked/unavailable: {exc}")
         elif command == "/defense status":
             print(f"Packet IDS enabled: {config['security_lab_enabled']}; firewall enabled: {config['firewall_enabled']}; dry-run: {config['firewall_dry_run']}")
             print("Packet IDS only raises alerts; it does not automatically block sources.")
         elif command == "/defense sniff":
-            def alert_callback(alert):
-                print(f"Yuki alert: suspected port scan from {alert['source_ip']} across {alert['unique_ports']} ports.")
-                if _confirm("defense:block", f"Block suspected source {alert['source_ip']}?", "high"):
-                    try:
-                        print(firewall.block_temporary(alert["source_ip"], seconds=300))
-                    except FirewallError as exc:
-                        print(f"Yuki > Block not applied: {exc}")
-            if not _confirm("defense:sniff", "Capture up to 500 packets for at most 30 seconds on the default interface.", "high"):
-                print("Yuki > Capture cancelled.")
-                continue
             try:
-                sniffer.sniff(packet_limit=500, timeout=30, on_alert=alert_callback)
-            except IDSError as exc:
+                outcome = durable_operations.execute(
+                    "packet_capture", {"interface": None, "packet_limit": 500, "timeout": 30}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Packet capture blocked: {outcome.status}")
+                    continue
+                alerts = outcome.result or []
+                print(f"Yuki > Packet capture finished; {len(alerts)} alert(s) recorded.")
+                for alert in alerts:
+                    print(f"- {alert['type']}: {alert['source_ip']} ({alert['unique_ports']} ports)")
+            except (IDSError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > IDS unavailable: {exc}")
         elif command.startswith("/defense block "):
             ip = command[len("/defense block "):].strip()
+            if not ip:
+                print("Yuki > Firewall address is required.")
+                continue
             try:
-                print(firewall.block_temporary(ip, seconds=300))
-            except FirewallError as exc:
+                outcome = durable_operations.execute("firewall_block", {"ip": ip, "seconds": 300})
+                print(outcome.result if outcome.ok else f"Yuki > Firewall action blocked: {outcome.status}")
+            except (FirewallError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Firewall action blocked/unavailable: {exc}")
         elif command.startswith("/defense remove "):
             rule_id = command[len("/defense remove "):].strip()
+            if not rule_id:
+                print("Yuki > Firewall rule ID is required.")
+                continue
             try:
-                print(firewall.remove(rule_id))
-            except FirewallError as exc:
+                outcome = durable_operations.execute("firewall_remove", {"rule_id": rule_id})
+                print(outcome.result if outcome.ok else f"Yuki > Firewall removal blocked: {outcome.status}")
+            except (FirewallError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Firewall removal blocked/unavailable: {exc}")
         elif command == "/metasploit status":
             print(exploit_runner.status()["message"])
