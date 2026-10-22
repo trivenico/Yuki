@@ -86,3 +86,26 @@ class PerformanceHistory:
 
 
 PERFORMANCE_HISTORY = PerformanceHistory()
+
+
+def format_performance_history(history: PerformanceHistory = PERFORMANCE_HISTORY,
+                              limit: int = 10) -> str:
+    """Render a compact trend view without implying unavailable readings are zero."""
+    samples = history.snapshot(limit=limit)
+    if not samples:
+        return "No performance history yet. Run /performance or leave the supervision dashboard open."
+    lines = [f"Yuki performance history (latest {len(samples)} of max {history.max_samples} samples)"]
+    for sample in samples:
+        timestamp = sample["timestamp"].replace("+00:00", "Z")
+        cpu = f"{sample['cpu_percent']:.1f}%" if sample["cpu_percent"] is not None else "Unknown"
+        ram = f"{sample['ram_percent']:.1f}%" if sample["ram_percent"] is not None else "Unknown"
+        tokens = sample["total_tokens"] if sample["total_tokens"] is not None else "Unknown"
+        context = (sample["remaining_context_tokens"]
+                   if sample["remaining_context_tokens"] is not None else "Unknown")
+        gpu = ", ".join(
+            f"{device['utilization_percent']}%"
+            if device["utilization_percent"] is not None else "Unknown"
+            for device in sample["gpu"]
+        ) or "Unavailable"
+        lines.append(f"{timestamp} | CPU {cpu} | RAM {ram} | GPU {gpu} | recorded tokens {tokens} | latest-request context remaining {context}")
+    return "\n".join(lines)
