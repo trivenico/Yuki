@@ -53,6 +53,7 @@ def build_agent(config):
         web_allowed_hosts=config["web_allowed_hosts"],
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
+        github_allowed_roots=config.get("github_allowed_roots", []),
     )
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
