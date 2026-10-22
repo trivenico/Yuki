@@ -46,6 +46,9 @@ from core.device_diagnostics import discover_devices, format_device_report
 from core.token_usage import TokenUsageTracker
 from core.self_evolution import SelfEvolutionInputError, load_and_validate_proposal, self_improvement_status
 from core.proposal_staging import ProposalStagingError, stage_change_proposal
+from core.proposal_test_runner import ProposalTestRunError, run_proposal_checks
+from core.proposal_test_evidence import ProposalTestEvidenceError, ProposalTestEvidenceStore
+from core.sandbox_policy import default_sandbox_policy
 
 
 def _ask_approval(request):
@@ -98,7 +101,7 @@ def print_help():
                                  Record an evidence-based decision; never retries
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
-  /self-improvement status | /self-improvement validate RELATIVE_JSON_PATH | /self-improvement stage RELATIVE_JSON_PATH
+  /self-improvement status | /self-improvement validate RELATIVE_JSON_PATH | /self-improvement stage RELATIVE_JSON_PATH | /self-improvement test STAGED_DIR | /self-improvement evidence
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -523,6 +526,64 @@ def main():
             print("Yuki self-improvement capability status:")
             for name, status in self_improvement_status().items():
                 print(f"- {name}: {status}")
+        elif command == "/self-improvement evidence":
+            try:
+                evidence_store = ProposalTestEvidenceStore(workspace / "proposal_test_evidence.sqlite3")
+                if not evidence_store.verify_chain():
+                    raise ProposalTestEvidenceError("evidence hash chain verification failed")
+                evidence = evidence_store.list_recent()
+                if not evidence:
+                    print("Yuki > No supervised proposal test evidence recorded.")
+                for record in evidence:
+                    checks = record["results"]
+                    passed = bool(checks) and all(item["returncode"] == 0 and not item["timed_out"] for item in checks)
+                    print(f"{record['run_id']} {'PASS' if passed else 'FAIL'} proposal={record['proposal_sha256']} checks={len(checks)} at={record['recorded_at']}")
+            except (ProposalTestEvidenceError, OSError) as exc:
+                print(f"Yuki > Test evidence unavailable: {exc}")
+        elif command.startswith("/self-improvement test "):
+            staged_name = command[len("/self-improvement test "):].strip()
+            try:
+                if not config.get("sandbox_enabled", False):
+                    raise ProposalTestRunError("Sandbox execution is disabled; enable it explicitly in configuration.")
+                allowed_images = config.get("sandbox_allowed_images", [])
+                if not isinstance(allowed_images, list) or not allowed_images:
+                    raise ProposalTestRunError("No sandbox images are allow-listed.")
+                image = allowed_images[0]
+                if not isinstance(image, str) or "@sha256:" not in image:
+                    raise ProposalTestRunError("The sandbox image must be pinned by an @sha256 digest.")
+                parent_dir = workspace / ".yuki-improvements"
+                if not staged_name or Path(staged_name).name != staged_name or not staged_name.startswith("yuki-improvement-"):
+                    raise ProposalTestRunError("Provide only a staged workspace directory name.")
+                staged_path = parent_dir / staged_name
+                if staged_path.is_symlink() or not staged_path.is_dir():
+                    raise ProposalTestRunError("Staged workspace was not found as a regular managed directory.")
+                metadata = (staged_path / "PROPOSAL.txt").read_text(encoding="utf-8")
+                digest_line = next((line for line in metadata.splitlines() if line.startswith("SHA-256: ")), "")
+                proposal_digest = digest_line.removeprefix("SHA-256: ").strip()
+                if len(proposal_digest) != 64 or any(char not in "0123456789abcdef" for char in proposal_digest.lower()):
+                    raise ProposalTestRunError("Staged proposal metadata has no valid SHA-256 digest.")
+                results = run_proposal_checks(
+                    workspace=staged_path, parent_dir=parent_dir,
+                    policy=default_sandbox_policy(), image=image,
+                    commands=[["python", "-m", "unittest", "discover", "-v"]],
+                )
+                evidence_results = [{
+                    "command": ["python", "-m", "unittest", "discover", "-v"],
+                    "returncode": result.returncode, "timed_out": result.timed_out,
+                    "output_truncated": result.output_truncated,
+                    "cleanup_attempted": result.container_cleanup_attempted,
+                    "stdout_sha256": __import__("hashlib").sha256(result.stdout.encode("utf-8")).hexdigest(),
+                    "stderr_sha256": __import__("hashlib").sha256(result.stderr.encode("utf-8")).hexdigest(),
+                } for result in results]
+                run_id = ProposalTestEvidenceStore(workspace / "proposal_test_evidence.sqlite3").append(
+                    proposal_sha256=proposal_digest, workspace_name=staged_path.name,
+                    results=evidence_results,
+                )
+                passed = bool(results) and all(result.returncode == 0 and not result.timed_out and result.container_cleanup_attempted for result in results)
+                print(f"Yuki > Supervised checks {'passed' if passed else 'failed'}; evidence run ID: {run_id}")
+                print("This does not apply the proposal or authorize a merge/deployment.")
+            except (ProposalTestRunError, ProposalTestEvidenceError, OSError, ValueError) as exc:
+                print(f"Yuki > Supervised test run refused or incomplete: {exc}")
         elif command.startswith("/self-improvement stage "):
             relative_path = command[len("/self-improvement stage "):].strip()
             try:
