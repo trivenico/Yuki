@@ -64,6 +64,45 @@ class ProviderRetryClassificationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTP status 401"):
                 provider.generate("hello")
 
+class FailoverDiagnosticsTests(unittest.TestCase):
+    def test_route_status_reports_fallback_without_prompt_or_secret(self):
+        class Model:
+            def __init__(self, model, **kwargs):
+                self.model = model
+                self.last_context_budget = None
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                if self.model == "primary":
+                    raise RetryableProviderError("rate limited")
+                return "answer"
+        router = FailoverProvider(["primary", "backup"], provider_factory=Model)
+        self.assertEqual(router.generate("private prompt content"), "answer")
+        status = router.route_status()
+        self.assertEqual(status["status"], "success")
+        self.assertEqual(status["selected_model"], "backup")
+        self.assertEqual([a["outcome"] for a in status["attempts"]],
+                         ["retryable_failure", "success"])
+        serialized = repr(status)
+        self.assertNotIn("private prompt content", serialized)
+        self.assertNotIn("OPENROUTER_API_KEY", serialized)
+
+    def test_route_status_marks_nonretryable_failure(self):
+        class Model:
+            def __init__(self, model, **kwargs):
+                self.model = model
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                raise RuntimeError("invalid key")
+        router = FailoverProvider(["primary", "backup"], provider_factory=Model)
+        with self.assertRaisesRegex(RuntimeError, "invalid key"):
+            router.generate("prompt")
+        status = router.route_status()
+        self.assertEqual(status["status"], "failed")
+        self.assertEqual(status["attempts"][0]["outcome"], "non_retryable_failure")
+        self.assertEqual(len(status["attempts"]), 1)
+
 class FailoverProviderTests(unittest.TestCase):
     def test_uses_next_model_after_retryable_capacity_failure(self):
         class Model:
