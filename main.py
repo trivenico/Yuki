@@ -244,6 +244,22 @@ def main():
             risk,
         )
 
+    def run_packet_capture(interface, packet_limit, timeout):
+        def alert_callback(alert):
+            print(f"Yuki alert: suspected port scan from {alert['source_ip']} across {alert['unique_ports']} ports.")
+            outcome = durable_operations.execute(
+                "firewall_block", {"ip": alert["source_ip"], "seconds": 300}
+            )
+            if outcome.ok:
+                print(outcome.result)
+            else:
+                print(f"Yuki > Automatic firewall response not applied: {outcome.status}")
+
+        return sniffer.sniff(
+            interface=interface, packet_limit=packet_limit, timeout=timeout,
+            on_alert=alert_callback,
+        )
+
     durable_operations = DurableOperationRuntime(
         coordinator=approval_coordinator,
         operations={
@@ -251,6 +267,7 @@ def main():
             "sandbox_run": lambda image, argv: sandbox.run(image, argv),
             "firewall_block": lambda ip, seconds: firewall.block_temporary(ip, seconds=seconds),
             "firewall_remove": lambda rule_id: firewall.remove(rule_id),
+            "packet_capture": run_packet_capture,
         },
         actor="local-owner",
         session_id="cli-session",
@@ -609,19 +626,18 @@ def main():
             print(f"Packet IDS enabled: {config['security_lab_enabled']}; firewall enabled: {config['firewall_enabled']}; dry-run: {config['firewall_dry_run']}")
             print("Packet IDS only raises alerts; it does not automatically block sources.")
         elif command == "/defense sniff":
-            def alert_callback(alert):
-                print(f"Yuki alert: suspected port scan from {alert['source_ip']} across {alert['unique_ports']} ports.")
-                if _confirm("defense:block", f"Block suspected source {alert['source_ip']}?", "high"):
-                    try:
-                        print(firewall.block_temporary(alert["source_ip"], seconds=300))
-                    except FirewallError as exc:
-                        print(f"Yuki > Block not applied: {exc}")
-            if not _confirm("defense:sniff", "Capture up to 500 packets for at most 30 seconds on the default interface.", "high"):
-                print("Yuki > Capture cancelled.")
-                continue
             try:
-                sniffer.sniff(packet_limit=500, timeout=30, on_alert=alert_callback)
-            except IDSError as exc:
+                outcome = durable_operations.execute(
+                    "packet_capture", {"interface": None, "packet_limit": 500, "timeout": 30}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Packet capture blocked: {outcome.status}")
+                    continue
+                alerts = outcome.result or []
+                print(f"Yuki > Packet capture finished; {len(alerts)} alert(s) recorded.")
+                for alert in alerts:
+                    print(f"- {alert['type']}: {alert['source_ip']} ({alert['unique_ports']} ports)")
+            except (IDSError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > IDS unavailable: {exc}")
         elif command.startswith("/defense block "):
             ip = command[len("/defense block "):].strip()
