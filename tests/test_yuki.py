@@ -90,6 +90,25 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIn("not implemented", result)
         self.assertIsInstance(agent.provider, MockProvider)
 
+
+    def test_ollama_can_be_selected_when_configuration_is_valid(self):
+        manager = ProviderManager()
+        with patch.object(manager, "_configured_provider", return_value=MockProvider()):
+            self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
+            self.assertEqual(manager.current().name, "ollama")
+
+    def test_invalid_local_provider_configuration_preserves_current_provider(self):
+        manager = ProviderManager()
+        with patch.object(manager, "_configured_provider", side_effect=ValueError("model missing")):
+            result = manager.select("ollama")
+        self.assertIn("Could not select ollama", result)
+        self.assertEqual(manager.current().name, "mock")
+
+    def test_hybrid_is_registered_but_direct_openai_selection_stays_blocked(self):
+        manager = ProviderManager()
+        self.assertEqual(manager.select("openai").split(" is registered")[0], "openai")
+        self.assertEqual(manager.current().name, "mock")
+
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
