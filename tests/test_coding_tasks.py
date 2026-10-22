@@ -23,6 +23,14 @@ class CodingTaskStoreTests(unittest.TestCase):
         self.assertEqual(first.state, "draft")
         self.assertEqual(first.version, 0)
 
+    def test_connections_are_closed_after_database_operations(self):
+        task = self.create()
+        # Windows refuses to remove a directory while SQLite handles are open.
+        self.store.get(task.task_id)
+        import os
+        os.remove(Path(self.tmp.name) / "coding.sqlite3")
+        self.assertFalse((Path(self.tmp.name) / "coding.sqlite3").exists())
+
     def test_idempotency_key_payload_mismatch_fails(self):
         self.create()
         with self.assertRaises(CodingTaskConflict):
