@@ -36,6 +36,7 @@ from core.execution_ledger import SQLiteExecutionLedger
 from core.execution_reconciliation import SQLiteExecutionReconciliation
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
+from core.durable_operation_runtime import DurableOperationRuntime
 from core.durable_memory_runtime import DurableMemoryRuntime
 from core.durable_knowledge_runtime import DurableKnowledgeRuntime
 from core.durable_reminder_runtime import DurableReminderRuntime
@@ -222,14 +223,39 @@ def main():
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
     wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
+    # These high-risk operations are confirmed and audited by the durable coordinator
+    # below. Their inner callbacks are bypassed only to avoid duplicate prompts; callers
+    # must use DurableOperationRuntime and never invoke these handlers directly.
     recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
-                      approver=lambda reason: _confirm("security:recon", reason, "high"))
+                      approver=lambda reason: True)
     sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
-                            enabled=config["sandbox_enabled"],
-                            approver=lambda reason: _confirm("sandbox:run", reason, "high"))
+                            enabled=config["sandbox_enabled"], approver=lambda reason: True)
     firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
-                               approver=lambda reason: _confirm("defense:firewall", reason, "high"))
+                               approver=lambda reason: True)
     detector = PortScanDetector()
+
+    def operation_confirmation(action):
+        operation = action.get("operation", "unknown")
+        arguments = action.get("arguments", {})
+        risk = "critical" if operation.startswith("firewall_") else "high"
+        return _confirm(
+            f"operation:{operation}",
+            f"Durably approve operation {operation!r} with arguments {arguments!r}.",
+            risk,
+        )
+
+    durable_operations = DurableOperationRuntime(
+        coordinator=approval_coordinator,
+        operations={
+            "recon_scan": lambda target: recon.scan_common_tcp(target),
+            "sandbox_run": lambda image, argv: sandbox.run(image, argv),
+            "firewall_block": lambda ip, seconds: firewall.block_temporary(ip, seconds=seconds),
+            "firewall_remove": lambda rule_id: firewall.remove(rule_id),
+        },
+        actor="local-owner",
+        session_id="cli-session",
+        confirm=operation_confirmation,
+    )
     sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
     exploit_runner = ExploitRunner()
     speaker_verifier = SpeakerVerifier(enabled=False)
@@ -542,19 +568,19 @@ def main():
             print(f"Security lab: {config['security_lab_enabled']}; allowed private lab IPs: {len(config['recon_allowlisted_targets'])}")
         elif command.startswith("/security recon "):
             target = command[len("/security recon "):].strip()
-            if not target or not _confirm(
-                "security:recon",
-                f"Run a bounded TCP reconnaissance scan against {target!r}. Confirm you are authorized to test this target.",
-                "high",
-            ):
-                print("Yuki > Reconnaissance cancelled or target missing.")
+            if not target:
+                print("Yuki > Reconnaissance target is required.")
                 continue
             try:
-                result = recon.scan_common_tcp(target)
+                outcome = durable_operations.execute("recon_scan", {"target": target})
+                if not outcome.ok:
+                    print(f"Yuki > Recon blocked: {outcome.status}")
+                    continue
+                result = outcome.result
                 print(f"Yuki > Scan finished for {result['target']} (exit {result['returncode']}).")
                 print(result["output"])
                 if result["errors"]: print(result["errors"])
-            except (ReconError, ValueError) as exc:
+            except (ReconError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Recon blocked/unavailable: {exc}")
         elif command == "/sandbox status":
             print(f"Sandbox enabled: {config['sandbox_enabled']}; allow-listed images: {len(config['sandbox_allowed_images'])}")
@@ -564,18 +590,20 @@ def main():
                 print("Yuki > Use /sandbox run IMAGE@sha256:DIGEST | program arg1 arg2")
                 continue
             image, argv_text = payload.split("|", 1)
-            image, argv_text = image.strip(), argv_text.strip()
-            if not image or not argv_text or not _confirm(
-                "sandbox:run",
-                f"Run program {argv_text!r} in allow-listed image {image!r}. Review the command before proceeding.",
-                "high",
-            ):
-                print("Yuki > Sandbox execution cancelled or required fields missing.")
-                continue
             try:
-                result = sandbox.run(image, shlex.split(argv_text))
+                argv = shlex.split(argv_text.strip())
+                if not image.strip() or not argv:
+                    print("Yuki > Sandbox image and program are required.")
+                    continue
+                outcome = durable_operations.execute(
+                    "sandbox_run", {"image": image.strip(), "argv": argv}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Sandbox blocked: {outcome.status}")
+                    continue
+                result = outcome.result
                 print(f"Yuki > Sandbox exit {result['returncode']}\n{result['stdout']}\n{result['stderr']}")
-            except (SandboxError, ValueError) as exc:
+            except (SandboxError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Sandbox blocked/unavailable: {exc}")
         elif command == "/defense status":
             print(f"Packet IDS enabled: {config['security_lab_enabled']}; firewall enabled: {config['firewall_enabled']}; dry-run: {config['firewall_dry_run']}")
@@ -597,29 +625,23 @@ def main():
                 print(f"Yuki > IDS unavailable: {exc}")
         elif command.startswith("/defense block "):
             ip = command[len("/defense block "):].strip()
-            if not ip or not _confirm(
-                "defense:block",
-                f"Add a temporary 300-second firewall block for {ip!r}. This can disrupt network access.",
-                "critical",
-            ):
-                print("Yuki > Firewall block cancelled or address missing.")
+            if not ip:
+                print("Yuki > Firewall address is required.")
                 continue
             try:
-                print(firewall.block_temporary(ip, seconds=300))
-            except FirewallError as exc:
+                outcome = durable_operations.execute("firewall_block", {"ip": ip, "seconds": 300})
+                print(outcome.result if outcome.ok else f"Yuki > Firewall action blocked: {outcome.status}")
+            except (FirewallError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Firewall action blocked/unavailable: {exc}")
         elif command.startswith("/defense remove "):
             rule_id = command[len("/defense remove "):].strip()
-            if not rule_id or not _confirm(
-                "defense:remove",
-                f"Remove firewall rule {rule_id!r}. This changes network protection.",
-                "critical",
-            ):
-                print("Yuki > Firewall rule removal cancelled or rule ID missing.")
+            if not rule_id:
+                print("Yuki > Firewall rule ID is required.")
                 continue
             try:
-                print(firewall.remove(rule_id))
-            except FirewallError as exc:
+                outcome = durable_operations.execute("firewall_remove", {"rule_id": rule_id})
+                print(outcome.result if outcome.ok else f"Yuki > Firewall removal blocked: {outcome.status}")
+            except (FirewallError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Firewall removal blocked/unavailable: {exc}")
         elif command == "/metasploit status":
             print(exploit_runner.status()["message"])
