@@ -49,6 +49,24 @@ class PerformanceMonitorTests(unittest.TestCase):
         self.assertIsInstance(metrics["tokens"], dict)
         self.assertIn("No valid token usage summary", metrics["tokens"]["detail"])
 
+    def test_provider_context_budget_is_used_and_estimate_is_preserved(self):
+        with patch("core.performance_monitor.shutil.which", return_value=None):
+            metrics = collect_performance(context_budget_data={
+                "limit_tokens": 8192, "used_tokens": 2048, "estimated": True,
+                "remaining_tokens": 6144,
+            })
+        self.assertEqual(metrics["context"]["remaining_tokens"], 6144)
+        self.assertTrue(metrics["context"]["estimated"])
+        self.assertIn("estimated", metrics["context"]["detail"].lower())
+
+    def test_malformed_provider_context_budget_remains_unknown(self):
+        with patch("core.performance_monitor.shutil.which", return_value=None):
+            metrics = collect_performance(context_budget_data={
+                "limit_tokens": 8192, "used_tokens": 100, "estimated": "false",
+            })
+        self.assertFalse(metrics["context"]["available"])
+        self.assertIsNone(metrics["context"]["remaining_tokens"])
+
 
 if __name__ == "__main__":
     unittest.main()
