@@ -1,11 +1,11 @@
-"""Static regression tests for explicit confirmation on high-risk CLI actions."""
+"""Regression tests ensuring high-risk CLI actions use durable approval."""
 import ast
 import unittest
 from pathlib import Path
 
 
 class HighRiskCLIConfirmationTests(unittest.TestCase):
-    def test_high_risk_handlers_confirm_before_side_effect(self):
+    def test_high_risk_handlers_use_durable_approval(self):
         path = Path(__file__).resolve().parents[1] / "main.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         main = next(
@@ -13,10 +13,11 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main"
         )
         expected = {
-            "/security recon ": "scan_common_tcp",
-            "/sandbox run ": "sandbox.run",
-            "/defense block ": "block_temporary",
-            "/defense remove ": "firewall.remove",
+            "/security recon ": "recon_scan",
+            "/sandbox run ": "sandbox_run",
+            "/defense block ": "firewall_block",
+            "/defense remove ": "firewall_remove",
+            "/defense sniff": "packet_capture",
         }
         found = {}
         for node in ast.walk(main):
@@ -46,20 +47,23 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
                 item for statement in body for item in ast.walk(statement)
                 if isinstance(item, ast.Call)
             ]
-            confirm_lines = [
-                item.lineno for item in calls
-                if isinstance(item.func, ast.Name) and item.func.id == "_confirm"
+            durable_calls = [
+                item for item in calls
+                if isinstance(item.func, ast.Attribute)
+                and item.func.attr == "execute"
+                and isinstance(item.func.value, ast.Name)
+                and item.func.value.id == "durable_operations"
             ]
-            target = expected[command].split(".")[-1]
-            effect_lines = [
-                item.lineno for item in calls
-                if isinstance(item.func, ast.Attribute) and item.func.attr == target
-            ]
-            self.assertTrue(confirm_lines, f"{command} lacks an explicit confirmation gate")
-            self.assertTrue(effect_lines, f"{command} side-effect call was not found")
-            self.assertLess(
-                min(confirm_lines), min(effect_lines),
-                f"{command} must confirm before invoking {target}",
+            self.assertTrue(
+                durable_calls,
+                f"{command} bypasses the durable approval/audit/execution coordinator",
+            )
+            self.assertTrue(
+                any(
+                    isinstance(arg, ast.Constant) and arg.value == expected[command]
+                    for call in durable_calls for arg in call.args
+                ),
+                f"{command} does not use the expected registered operation",
             )
 
 
