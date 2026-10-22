@@ -187,7 +187,7 @@ class TaskStore:
     def approve(self, task_id: str, *, approved_by: str) -> dict[str, Any]:
         if not isinstance(approved_by, str) or not approved_by.strip() or len(approved_by) > 200:
             raise ValueError("approved_by must be non-empty text of at most 200 characters")
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
@@ -205,7 +205,7 @@ class TaskStore:
         now = _now()
         now_text = _stamp(now)
         lease = _stamp(now + timedelta(seconds=lease_seconds))
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             # Reclaim expired leases. A task is requeued only if its retry budget remains.
             expired = db.execute(
@@ -254,7 +254,7 @@ class TaskStore:
             raise ValueError("worker_id must be non-empty text")
         now = _stamp()
         lease = _stamp(_now() + timedelta(seconds=lease_seconds))
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
@@ -288,7 +288,7 @@ class TaskStore:
         if not isinstance(worker_id, str) or not worker_id.strip():
             raise ValueError("worker_id must be non-empty text")
         now = _stamp()
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
@@ -314,7 +314,7 @@ class TaskStore:
         if not isinstance(requested_by, str) or not requested_by.strip():
             raise ValueError("requested_by must be non-empty text")
         now = _stamp()
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone()
             if row is None:
@@ -329,14 +329,14 @@ class TaskStore:
             return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
 
     def get(self, task_id: str) -> dict[str, Any] | None:
-        with self._connect() as db:
+        with self._session() as db:
             return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
 
     def list_tasks(self, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         limit = _positive_int(limit, "limit", maximum=1000)
         if status is not None and status not in STATUSES:
             raise ValueError("invalid task status")
-        with self._connect() as db:
+        with self._session() as db:
             if status:
                 rows = db.execute(
                     "SELECT * FROM agent_tasks WHERE status=? ORDER BY created_at DESC LIMIT ?",
@@ -349,7 +349,7 @@ class TaskStore:
             return [self._decode(row) for row in rows]
 
     def events(self, task_id: str) -> list[dict[str, Any]]:
-        with self._connect() as db:
+        with self._session() as db:
             rows = db.execute(
                 "SELECT sequence,task_id,at,event,details_json FROM agent_task_events WHERE task_id=? ORDER BY sequence",
                 (task_id,),
