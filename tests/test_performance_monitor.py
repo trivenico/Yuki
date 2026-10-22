@@ -1,10 +1,16 @@
 import unittest
 from unittest.mock import patch
 
-from core.performance_monitor import (collect_performance, format_bytes, format_performance_report,\n                                     _reset_gpu_metrics_cache_for_tests)
+from core.performance_monitor import (collect_performance, format_bytes, format_performance_report,
+                                     _reset_gpu_metrics_cache_for_tests,
+                                     _reset_gpu_metrics_async_for_tests)
 
 
 class PerformanceMonitorTests(unittest.TestCase):
+    def setUp(self):
+        _reset_gpu_metrics_cache_for_tests()
+        _reset_gpu_metrics_async_for_tests()
+
     def test_unknown_gpu_and_context_are_explicit(self):
         with patch("core.performance_monitor.shutil.which", return_value=None):
             metrics = collect_performance()
@@ -73,7 +79,7 @@ class PerformanceMonitorTests(unittest.TestCase):
 
         class Result:
             returncode = 0
-            stdout = "GPU A, 40, 100, 1000\\n"
+            stdout = "GPU A, 40, 100, 1000\n"
 
         with (
             patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
@@ -90,7 +96,7 @@ class PerformanceMonitorTests(unittest.TestCase):
 
         class Result:
             returncode = 0
-            stdout = "GPU A, 40, 100, 1000\\n"
+            stdout = "GPU A, 40, 100, 1000\n"
 
         with (
             patch("core.performance_monitor.time.monotonic", side_effect=[10.0, 10.1, 12.0, 16.0, 16.1]),
@@ -101,6 +107,45 @@ class PerformanceMonitorTests(unittest.TestCase):
             performance_monitor._gpu_metrics()
             performance_monitor._gpu_metrics()
         self.assertEqual(run.call_count, 2)
+
+    def test_nonblocking_gpu_probe_returns_pending_without_waiting(self):
+        from concurrent.futures import Future
+        from core import performance_monitor
+
+        pending = Future()
+        with patch.object(performance_monitor._GPU_EXECUTOR, "submit", return_value=pending) as submit:
+            first = performance_monitor._gpu_metrics_nonblocking()
+        self.assertEqual(first["status"], "pending")
+        self.assertFalse(first["available"])
+        submit.assert_called_once_with(performance_monitor._probe_gpu_metrics)
+
+    def test_nonblocking_gpu_probe_reports_completed_sample_and_freshness(self):
+        from concurrent.futures import Future
+        from core import performance_monitor
+
+        completed = Future()
+        completed.set_result({"available": True, "devices": [
+            {"name": "GPU", "utilization_percent": 50, "memory_used_mib": 100,
+             "memory_total_mib": 1000}
+        ]})
+        with patch.object(performance_monitor._GPU_EXECUTOR, "submit", return_value=completed):
+            first = performance_monitor._gpu_metrics_nonblocking()
+            second = performance_monitor._gpu_metrics_nonblocking()
+        self.assertEqual(first["status"], "pending")
+        self.assertEqual(second["status"], "fresh")
+        second["devices"][0]["name"] = "changed"
+        self.assertEqual(performance_monitor._gpu_metrics_nonblocking()["devices"][0]["name"], "GPU")
+
+    def test_performance_collection_uses_nonblocking_gpu_reader(self):
+        from core import performance_monitor
+
+        with patch.object(performance_monitor, "_gpu_metrics_nonblocking",
+                          return_value={"available": False, "status": "pending"}) as reader, \\
+             patch.object(performance_monitor, "_gpu_metrics",
+                          side_effect=AssertionError("synchronous GPU reader called")):
+            metrics = collect_performance()
+        reader.assert_called_once_with()
+        self.assertEqual(metrics["gpu"]["status"], "pending")
 
 
 if __name__ == "__main__":
