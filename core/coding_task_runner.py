@@ -24,6 +24,19 @@ class SandboxExecutionError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class SandboxExecutionRequest:
+    """Exact execution intent the trusted approval system must authorize."""
+
+    image: str
+    workspace: str
+    command: tuple[str, ...]
+    timeout_seconds: int
+    memory_mb: int
+    cpu_millis: int
+    max_output_bytes: int
+
+
+@dataclass(frozen=True)
 class SandboxExecutionResult:
     returncode: int
     output: str
@@ -65,13 +78,15 @@ def run_sandboxed_task(
     image: str,
     workspace: str,
     command: Sequence[str],
-    approve: Callable[[], bool],
+    approve: Callable[[SandboxExecutionRequest], bool],
 ) -> SandboxExecutionResult:
     """Run one approved command in a restrictive Docker container.
 
     The approval callback must adapt Yuki's trusted coordinator, not a
-    model-generated boolean or a skill-controlled flag. It is called for every
-    invocation. Commands are argv arrays (never shell strings); output is capped.
+    model-generated boolean or a skill-controlled flag. It receives the exact
+    image, resolved workspace, argv command, and resource bounds so it can bind
+    approval to the requested operation. It is called for every invocation.
+    Commands are argv arrays (never shell strings); output is capped.
     """
     if not callable(approve):
         raise SandboxExecutionError("a trusted per-run approval callback is required")
@@ -83,8 +98,17 @@ def run_sandboxed_task(
     except (SandboxPolicyError, SandboxRuntimeError, TypeError, ValueError) as exc:
         raise SandboxExecutionError("sandbox request rejected by policy") from exc
 
+    request = SandboxExecutionRequest(
+        image=image,
+        workspace=os.path.realpath(workspace),
+        command=tuple(command),
+        timeout_seconds=policy.timeout_seconds,
+        memory_mb=policy.memory_mb,
+        cpu_millis=policy.cpu_millis,
+        max_output_bytes=policy.max_output_bytes,
+    )
     try:
-        approved = approve()
+        approved = approve(request)
     except Exception as exc:
         raise SandboxExecutionError("approval failed; execution denied") from exc
     if approved is not True:
