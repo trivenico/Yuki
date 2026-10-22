@@ -93,7 +93,7 @@ class PerformanceMonitorTests(unittest.TestCase):
             stdout = "GPU A, 40, 100, 1000\\n"
 
         with (
-            patch("core.performance_monitor.time.monotonic", side_effect=[10.0, 10.1, 16.0, 16.1]),
+            patch("core.performance_monitor.time.monotonic", side_effect=[10.0, 10.1, 12.0, 16.0, 16.1]),
             patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
             patch("core.performance_monitor.subprocess.run", return_value=Result()) as run,
         ):
