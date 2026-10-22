@@ -44,6 +44,7 @@ from core.performance_monitor import collect_performance, format_performance_rep
 from core.performance_history import format_performance_history
 from core.device_diagnostics import discover_devices, format_device_report
 from core.token_usage import TokenUsageTracker
+from core.self_evolution import SelfEvolutionInputError, load_and_validate_proposal, self_improvement_status
 
 
 def _ask_approval(request):
@@ -96,6 +97,7 @@ def print_help():
                                  Record an evidence-based decision; never retries
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
+  /self-improvement status | /self-improvement validate RELATIVE_JSON_PATH
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -516,6 +518,25 @@ def main():
             due = reminders.due()
             if not due: print("Yuki > No reminders are due.")
             for item in due: print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
+        elif command == "/self-improvement status":
+            print("Yuki self-improvement capability status:")
+            for name, status in self_improvement_status().items():
+                print(f"- {name}: {status}")
+        elif command.startswith("/self-improvement validate "):
+            relative_path = command[len("/self-improvement validate "):].strip()
+            try:
+                proposal = load_and_validate_proposal(workspace, relative_path)
+                print("Yuki > Proposal validated; no files were changed and no code was executed.")
+                print(f"Title: {proposal.title}")
+                print(f"Files: {len(proposal.files)}")
+                print(f"SHA-256: {proposal.sha256}")
+                print(f"Status: {proposal.status}")
+                if proposal.requires_human_approval:
+                    print("Protected runtime files detected: explicit human approval is required.")
+                else:
+                    print("Review is still required before staging or applying any change.")
+            except (SelfEvolutionInputError, ValueError, OSError) as exc:
+                print(f"Yuki > Proposal rejected safely: {exc}")
         elif command == "/evolution status":
             print(evolution.status())
         elif command.startswith("/evolution record "):
