@@ -83,7 +83,9 @@ class ProviderManager:
         if not self._providers[key].implemented or key not in self._factories:
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
-            self._factories[key]()
+            adapter = self._factories[key]()
+            if key == "gemini" and not adapter.is_available():
+                return "Gemini CLI is not installed. Install the official Gemini CLI and authenticate it before selecting this provider."
         except (ValueError, RuntimeError, OSError) as exc:
             return f"Could not select {key}: check provider configuration. {type(exc).__name__}."
         self._selected = key
