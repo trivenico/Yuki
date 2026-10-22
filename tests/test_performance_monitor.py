@@ -40,15 +40,16 @@ class PerformanceMonitorTests(unittest.TestCase):
             returncode = 0
             stdout = "GPU A, -1, 100, 1000\nGPU B, 45, 200, 1000\nGPU C, 101, 10, 100\n"
 
+        from core import performance_monitor
         with (
             patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
             patch("core.performance_monitor.subprocess.run", return_value=Result()),
         ):
-            metrics = collect_performance()
-        self.assertTrue(metrics["gpu"]["available"])
-        self.assertEqual(len(metrics["gpu"]["devices"]), 1)
-        self.assertEqual(metrics["gpu"]["devices"][0]["name"], "GPU B")
-        self.assertEqual(metrics["gpu"]["devices"][0]["utilization_percent"], 45)
+            metrics = performance_monitor._probe_gpu_metrics()
+        self.assertTrue(metrics["available"])
+        self.assertEqual(len(metrics["devices"]), 1)
+        self.assertEqual(metrics["devices"][0]["name"], "GPU B")
+        self.assertEqual(metrics["devices"][0]["utilization_percent"], 45)
 
     def test_malformed_token_summary_falls_back_to_explicit_unknown_summary(self):
         with patch("core.performance_monitor.shutil.which", return_value=None):
