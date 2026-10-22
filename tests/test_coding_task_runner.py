@@ -100,9 +100,10 @@ class CodingTaskRunnerTests(unittest.TestCase):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
                                command=["python", "-V"], approve=None)
 
+    @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
     @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
-    def test_approval_receives_exact_execution_intent(self, build, popen):
+    def test_approval_receives_exact_execution_intent(self, build, popen, _kill):
         seen = []
         proc = FakeProcess(b"ok\n", 0)
         popen.return_value = proc
