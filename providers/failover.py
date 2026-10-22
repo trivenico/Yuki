@@ -40,6 +40,8 @@ class FailoverProvider:
         return budget if isinstance(budget, dict) else None
 
     def generate(self, prompt: str) -> str:
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
         failures = []
         for provider in self.providers:
             try:

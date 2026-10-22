@@ -73,8 +73,34 @@ class OpenAICompatibleProvider:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 or 500 <= exc.code <= 599:
-                raise RetryableProviderError(f"Provider returned retryable HTTP status {exc.code}.") from exc
+            # Some gateways report exhausted model quota or context overflow as
+            # HTTP 400/402/403. Inspect only a bounded error body and allowlist
+            # known recoverable codes; never fail over on generic auth/policy errors.
+            try:
+                error_raw = exc.read(65_537)
+            except OSError:
+                error_raw = b""
+            if len(error_raw) > 65_536:
+                error_raw = b""
+            try:
+                error_body = json.loads(error_raw.decode("utf-8")) if error_raw else {}
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                error_body = {}
+            error_obj = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+            if not isinstance(error_obj, dict):
+                error_obj = {}
+            code = str(error_obj.get("code", "")).strip().lower()
+            error_type = str(error_obj.get("type", "")).strip().lower()
+            recoverable_codes = {
+                "insufficient_quota", "billing_hard_limit_reached",
+                "rate_limit_exceeded", "context_length_exceeded",
+                "max_tokens_exceeded", "model_not_found",
+            }
+            if (exc.code == 429 or 500 <= exc.code <= 599
+                    or code in recoverable_codes or error_type in recoverable_codes):
+                raise RetryableProviderError(
+                    f"Provider returned a retryable response (HTTP {exc.code}, code={code or error_type or 'transient'})."
+                ) from exc
             raise RuntimeError(f"Provider rejected the request with HTTP status {exc.code}.") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RetryableProviderError("Provider network request failed.") from exc
