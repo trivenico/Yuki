@@ -62,5 +62,5 @@ COMMAND_DISPATCH_PATTERNS = frozenset({
     "/voice wakeword listen ", "/voice speaker-check ", "/security status",
     "/security recon ", "/sandbox status", "/sandbox run ", "/defense status",
     "/defense sniff", "/defense block ", "/defense remove ", "/metasploit status",
-    "/dashboard",
+    "/dashboard", "/self-improvement status", "/self-improvement validate ",
 })
