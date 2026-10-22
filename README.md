@@ -31,7 +31,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 ## Connected capabilities in this revision
 
-- `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
+- `yuki.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
 - `skills/registry.py`: registers time/system/files, interview practice, allow-listed web fetch/deep-read, local knowledge graph, local health log, defensive remediation suggestions, optional Playwright browser reading, YouTube caption retrieval, and optional read-only Gmail search. Optional integrations fail safely when dependencies are missing.
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
@@ -66,7 +66,7 @@ Python 3.10+ and PyYAML:
 ```sh
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python main.py
+python yuki.py
 ```
 
 Optional dependencies are separate:
