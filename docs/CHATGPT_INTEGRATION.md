@@ -86,9 +86,9 @@ Official instructions: [Connecting custom MCP servers in ChatGPT](https://help.o
 ## 5. Security and limitations
 
 - Do not paste the bearer token into a prompt or commit it to the repository.
-- The bridge has no OAuth authorization server yet. Static bearer authentication is intentionally simple; use only if the ChatGPT connection method you choose supports it.
+- The bridge has no OAuth authorization server yet. Static bearer authentication is intentionally simple; use only if the ChatGPT connection method you choose supports it. MCP POST requests must send `Accept: application/json, text/event-stream`.
 - The bridge is stateless and has no conversation-history persistence, per-user authorization, or durable session store.
 - Chat messages are passed to Yuki's configured provider. With a cloud-enabled hybrid configuration, the provider's own task allow-list governs routing; keep private messages local unless you deliberately configure and approve disclosure.
-- A reverse proxy must enforce HTTPS, request timeouts, connection limits, and appropriate access logging that does not record authorization headers or message bodies.
+- The bridge applies a bounded per-peer request window, limits JSON-RPC batches to 10 items, and applies a request read timeout. A reverse proxy must additionally enforce HTTPS, connection limits, upstream timeouts, and access logging that does not record authorization headers or message bodies.
 - Do not add write tools, shell, file read/write, device controls, or unrestricted skills until each has its own authorization, approval, audit, and tests.
 - A passing unit test is not a deployment or security certification. Validate the actual endpoint and account's MCP support before relying on it.
