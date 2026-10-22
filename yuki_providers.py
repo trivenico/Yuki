@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, MockProvider, create_provider
+from providers.gemini_cli import GeminiCLIProvider
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -17,15 +18,15 @@ class ProviderManager:
         self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
-        self._factories: dict[str, Callable] = {"mock": MockProvider}
+        self._factories: dict[str, Callable] = {"mock": MockProvider, "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ)}
         self._selected: Optional[str] = "mock"
         for item in (
             ProviderInfo("mock", ("none",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
+            ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
             ProviderInfo("openai", ("official_api_key_flow_planned",)),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
-            ProviderInfo("gemini", ("official_cli_adapter_not_integrated_on_main",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
             ProviderInfo("minimax", ("official_api_key_flow_planned",)),
@@ -89,4 +90,4 @@ class ProviderManager:
         return self._build_adapter(self._selected) if self._selected else None
 
     def current(self) -> Optional[ProviderInfo]:
-        return self._providers.get(self._selected) if self._selected else None
+        return self._providers.get(self._selected)
