@@ -365,6 +365,16 @@ def main():
                 )))
             except Exception as exc:
                 print(f"Yuki > Performance diagnostics unavailable ({type(exc).__name__}).")
+        elif command == "/routing":
+            route_status = getattr(ai.provider, "route_status", None)
+            if not callable(route_status):
+                print("Yuki > Routing diagnostics unavailable for the configured provider.")
+            else:
+                try:
+                    import json
+                    print(json.dumps(route_status(), indent=2, sort_keys=True))
+                except Exception as exc:
+                    print(f"Yuki > Routing diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/performance-history":
             print(format_performance_history())
         elif command == "/devices":
