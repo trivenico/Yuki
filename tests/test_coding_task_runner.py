@@ -90,7 +90,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         proc.wait = unittest.mock.Mock(side_effect=[subprocess.TimeoutExpired("docker", 2), -9])
         popen.return_value = proc
         result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
-                                    command=["python", "-V"], approve=lambda: True)
+                                    command=["python", "-V"], approve=lambda request: True)
         self.assertTrue(result.timed_out)
         self.assertEqual(result.returncode, -9)
         kill_container.assert_called_once()
