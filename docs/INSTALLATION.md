@@ -15,7 +15,7 @@ python main.py
 
 Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
 
-## Optional integrations
+## ChatGPT integration\n\nSee [ChatGPT MCP integration](CHATGPT_INTEGRATION.md) to run Yuki's authenticated, status-and-chat-only bridge and connect it using a supported ChatGPT custom MCP connection or Secure MCP Tunnel. The bridge is not enabled by default.\n\n## Optional integrations
 
 Install only what you intend to use:
 
