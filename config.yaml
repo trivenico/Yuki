@@ -30,3 +30,6 @@ trusted_plugin_modules: []
 # Additional local project roots eligible for the explicitly approved GitHub push skill.
 # Alternatively set YUKI_GITHUB_ALLOWED_ROOTS using the OS path-list separator.
 github_allowed_roots: []
+
+# Reviewed HTTPS MCP servers. Empty by default; every server requires explicit host and tool allow-lists.
+mcp_servers: []
