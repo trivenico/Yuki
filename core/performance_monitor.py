@@ -9,6 +9,8 @@ import os
 import platform
 import shutil
 import subprocess
+import threading
+import time
 from typing import Any
 
 from core.context_budget import context_budget
@@ -35,7 +37,7 @@ def _memory_from_proc() -> dict[str, Any] | None:
         return None
 
 
-def _gpu_metrics() -> dict[str, Any]:
+def _probe_gpu_metrics() -> dict[str, Any]:
     """Query NVIDIA telemetry if nvidia-smi is installed; never assume GPU availability."""
     executable = shutil.which("nvidia-smi")
     if not executable:
@@ -75,6 +77,48 @@ def _gpu_metrics() -> dict[str, Any]:
         return {"available": True, "devices": devices, "detail": "NVIDIA GPU telemetry"}
     except (OSError, subprocess.TimeoutExpired):
         return {"available": False, "detail": "GPU telemetry probe failed or timed out."}
+
+
+
+# GPU probes spawn an external process and can be slow on driver-stressed machines.
+# Cache the last result briefly so the 2-second dashboard refresh doesn't probe every tick.
+_GPU_CACHE_TTL_SECONDS = 5.0
+_GPU_CACHE_LOCK = threading.Lock()
+_GPU_CACHE_AT = 0.0
+_GPU_CACHE_VALUE: dict[str, Any] | None = None
+
+
+def _gpu_metrics() -> dict[str, Any]:
+    """Return a detached cached GPU reading; probe at most once per cache window."""
+    global _GPU_CACHE_AT, _GPU_CACHE_VALUE
+    now = time.monotonic()
+    with _GPU_CACHE_LOCK:
+        if _GPU_CACHE_VALUE is not None and now - _GPU_CACHE_AT < _GPU_CACHE_TTL_SECONDS:
+            return {
+                **_GPU_CACHE_VALUE,
+                **({"devices": [dict(device) for device in _GPU_CACHE_VALUE["devices"]]}
+                   if isinstance(_GPU_CACHE_VALUE.get("devices"), list) else {}),
+            }
+        value = _probe_gpu_metrics()
+        _GPU_CACHE_VALUE = {
+            **value,
+            **({"devices": [dict(device) for device in value["devices"]]}
+               if isinstance(value.get("devices"), list) else {}),
+        }
+        _GPU_CACHE_AT = time.monotonic()
+        return {
+            **_GPU_CACHE_VALUE,
+            **({"devices": [dict(device) for device in _GPU_CACHE_VALUE["devices"]]}
+               if isinstance(_GPU_CACHE_VALUE.get("devices"), list) else {}),
+        }
+
+
+def _reset_gpu_metrics_cache_for_tests() -> None:
+    """Reset process-local cache for deterministic tests."""
+    global _GPU_CACHE_AT, _GPU_CACHE_VALUE
+    with _GPU_CACHE_LOCK:
+        _GPU_CACHE_AT = 0.0
+        _GPU_CACHE_VALUE = None
 
 
 def collect_performance(*, token_summary: dict[str, Any] | None = None,
