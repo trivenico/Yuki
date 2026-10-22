@@ -41,6 +41,7 @@ from core.durable_memory_runtime import DurableMemoryRuntime
 from core.durable_knowledge_runtime import DurableKnowledgeRuntime
 from core.durable_reminder_runtime import DurableReminderRuntime
 from core.performance_monitor import collect_performance, format_performance_report
+from core.performance_history import format_performance_history
 from core.token_usage import TokenUsageTracker
 
 
@@ -352,6 +353,8 @@ def main():
                 )))
             except Exception as exc:
                 print(f"Yuki > Performance diagnostics unavailable ({type(exc).__name__}).")
+        elif command == "/performance-history":
+            print(format_performance_history())
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
