@@ -91,3 +91,10 @@ class ProviderManager:
 
     def current(self) -> Optional[ProviderInfo]:
         return self._providers.get(self._selected)
+
+    def catalog(self):
+        """Return sanitized provider/model metadata without making network calls."""
+        from providers.catalog import build_provider_catalog
+        return build_provider_catalog(
+            config=self._config, environ=self._environ, provider_manager=self
+        )
