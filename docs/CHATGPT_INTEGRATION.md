@@ -98,7 +98,32 @@ The retention value must be between 1 and 90 days. The SQLite store retains at m
 
 Pass the same opaque `session_id` on each `yuki_chat` call to reuse a session. Use a random, unguessable ID per user/conversation and never reuse one across different users. This bridge does not yet authenticate a user identity or bind session IDs to ChatGPT accounts; therefore memory should remain disabled for multi-user public deployments until identity-bound session authorization is implemented. SQLite file permissions and encrypted storage/backups remain deployment responsibilities. Deleting a session deletes the rows from the active database, not copies in backups.
 
-## 6. Security and limitations
+## 6. Provider sign-in mode versus API mode
+
+Yuki's built-in provider adapters currently support mock, local Ollama, and an explicitly configured OpenAI-compatible API route. A browser login to a consumer AI website does **not** automatically authorize Yuki to call that website as a model backend.
+
+Use official, provider-supported sign-in clients where their license and terms allow your intended use. These clients are separate processes and are not currently wired into Yuki's `ProviderManager` as native provider adapters:
+
+- **OpenAI / ChatGPT:** OpenAI Codex supports signing in with a ChatGPT account for supported coding workflows. Its authorization, plan limits and any generated credentials are managed by the official Codex client; this is not a generic ChatGPT web-session API. [Codex with your ChatGPT plan](https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan).
+- **Anthropic / Claude:** Claude Code supports login with a Claude Pro/Max account for eligible users, as well as Anthropic Console authentication. It is an official coding client, not a generic Claude chat endpoint for arbitrary applications. [Claude Code setup](https://docs.anthropic.com/en/docs/claude-code/getting-started).
+- **Google / Gemini:** Gemini CLI supports Google account sign-in and has account-specific usage quotas; API-key and Vertex AI routes are separate options. [Gemini CLI authentication](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.mdx) and [quota guidance](https://github.com/google-gemini/gemini-cli/blob/main/docs/resources/quota-and-pricing.md).
+- **DeepSeek and Z.ai:** Yuki has no verified official subscription-login adapter for these services yet. Do not assume a consumer website login can be reused. Use their supported API route when needed, or wait until an official permitted CLI/auth integration is implemented and tested.
+
+A safe sign-in-mode design is to add dedicated adapters for official CLIs only where the provider explicitly supports the intended usage. Each adapter must use documented login flows, detect whether the CLI is installed and authenticated, enforce timeouts and output limits, avoid scraping browser cookies or session databases, and clearly disclose plan quotas. If a provider CLI does not provide a supported non-interactive invocation for this use, Yuki should report it as unavailable rather than automate the website.
+
+API mode remains optional: store keys in environment variables or a secret manager, never in source code or plain configuration files. ChatGPT subscriptions and OpenAI API billing are separate unless a specific official product flow says otherwise; check the [OpenAI billing explanation](https://help.openai.com/en/articles/9039756-managing-billing-settings-on-the-chatgpt-web-and-api-platform).
+
+## 7. Provider deadlines
+
+Yuki's local Ollama and configured OpenAI-compatible providers accept a bounded request timeout. Set `YUKI_PROVIDER_TIMEOUT_SECONDS` to an integer or decimal from 1 through 120; the default is 45 seconds. Example:
+
+```sh
+export YUKI_PROVIDER_TIMEOUT_SECONDS=45
+```
+
+This is a network-call timeout, not full cancellation of arbitrary provider work. The MCP admission limit prevents unbounded simultaneous generations but cannot guarantee that a hung native CLI or model server has stopped. Future CLI adapters must terminate timed-out subprocesses and their child processes.
+
+## 8. Security and limitations
 
 - Do not paste the bearer token into a prompt or commit it to the repository.
 - The bridge has no OAuth authorization server yet. Static bearer authentication is intentionally simple; use only if the ChatGPT connection method you choose supports it. MCP POST requests must send `Accept: application/json, text/event-stream`.
