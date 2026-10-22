@@ -48,6 +48,7 @@ from .tiered_autonomy_skill import TieredAutonomySkill
 from companion.identity_manager import IdentityManager
 from skills.role_skill import RoleSkill
 from skills.github_push import GitHubPushSkill
+from skills.mcp_plugin import MCPPluginSkill
 from core.plugin_loader import PluginLoader
 
 
@@ -82,7 +83,7 @@ class SkillRegistry:
 
     @classmethod
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None, github_allowed_roots=None):
+                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None, github_allowed_roots=None, mcp_servers=()):
         root = Path(workspace).expanduser().resolve()
         configured_github_roots = [root]
         if github_allowed_roots:
@@ -101,7 +102,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots),
+            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers),
         ))
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)

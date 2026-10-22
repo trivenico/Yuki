@@ -1,6 +1,7 @@
 """Small YAML configuration loader with safe environment overrides."""
 import ipaddress
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 import yaml
@@ -35,6 +36,33 @@ def _string_list(raw, key):
         raise RuntimeError(f"{key} must be a list of non-empty strings.")
     if len(value) > 100: raise RuntimeError(f"{key} may contain at most 100 entries.")
     return list(dict.fromkeys(x.strip() for x in value))
+
+
+def _mcp_servers(raw):
+    value = raw.get("mcp_servers", [])
+    if not isinstance(value, list) or len(value) > 20:
+        raise RuntimeError("mcp_servers must be a list with at most 20 entries.")
+    result = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) - {"name", "endpoint", "allowed_hosts", "allowed_tools"}:
+            raise RuntimeError("Each MCP server must contain only name, endpoint, allowed_hosts, and allowed_tools.")
+        name, endpoint = item.get("name"), item.get("endpoint")
+        hosts, tools = item.get("allowed_hosts"), item.get("allowed_tools")
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name) or name in seen:
+            raise RuntimeError("MCP server names must be unique simple identifiers.")
+        if not isinstance(endpoint, str) or not endpoint.startswith("https://") or len(endpoint) > 2048:
+            raise RuntimeError("MCP endpoint must be a bounded HTTPS URL.")
+        if (not isinstance(hosts, list) or not hosts or len(hosts) > 20
+                or any(not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", h) for h in hosts)):
+            raise RuntimeError("MCP allowed_hosts must be a non-empty list of hostnames.")
+        if (not isinstance(tools, list) or len(tools) > 100
+                or any(not isinstance(t, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", t) for t in tools)):
+            raise RuntimeError("MCP allowed_tools must be a list of simple tool names.")
+        result.append({"name": name, "endpoint": endpoint, "allowed_hosts": list(dict.fromkeys(hosts)),
+                       "allowed_tools": list(dict.fromkeys(tools))})
+        seen.add(name)
+    return result
 
 
 def load_config(path=None):
@@ -100,6 +128,7 @@ def load_config(path=None):
         "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
         "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
         "github_allowed_roots": [str(Path(p).expanduser().resolve()) for p in github_roots],
+        "mcp_servers": _mcp_servers(raw),
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
