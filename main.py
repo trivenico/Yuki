@@ -528,7 +528,10 @@ def main():
                 print(f"- {name}: {status}")
         elif command == "/self-improvement evidence":
             try:
-                evidence = ProposalTestEvidenceStore(workspace / "proposal_test_evidence.sqlite3").list_recent()
+                evidence_store = ProposalTestEvidenceStore(workspace / "proposal_test_evidence.sqlite3")
+                if not evidence_store.verify_chain():
+                    raise ProposalTestEvidenceError("evidence hash chain verification failed")
+                evidence = evidence_store.list_recent()
                 if not evidence:
                     print("Yuki > No supervised proposal test evidence recorded.")
                 for record in evidence:
