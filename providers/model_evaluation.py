@@ -24,6 +24,12 @@ class EvaluationError(RuntimeError):
     """A safe, user-facing evaluation error without upstream response details."""
 
 
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Never forward a bearer token or benchmark prompt to a redirected host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def validate_cases(cases, *, max_cases=5):
     if not isinstance(cases, list) or not cases:
         raise ValueError("benchmark must contain a non-empty cases list")
@@ -76,7 +82,7 @@ class HuggingFaceChatClient:
             raise ValueError("timeout must be between 1 and 30 seconds")
         self._token = token.strip()
         self.timeout = timeout
-        self._opener = opener or urllib.request.build_opener()
+        self._opener = opener or urllib.request.build_opener(_RejectRedirects())
 
     def generate(self, model_id, prompt):
         if not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id):
