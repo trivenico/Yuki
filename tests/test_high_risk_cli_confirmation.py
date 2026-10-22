@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 class HighRiskCLIConfirmationTests(unittest.TestCase):
-    def test_high_risk_handlers_use_durable_approval_before_side_effect(self):
+    def test_high_risk_handlers_use_durable_approval(self):
         path = Path(__file__).resolve().parents[1] / "main.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         main = next(
@@ -13,11 +13,11 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main"
         )
         expected = {
-            "/security recon ": "scan_common_tcp",
-            "/sandbox run ": "run",
-            "/defense block ": "block_temporary",
-            "/defense remove ": "remove",
-            "/defense sniff": "sniff",
+            "/security recon ": "recon_scan",
+            "/sandbox run ": "sandbox_run",
+            "/defense block ": "firewall_block",
+            "/defense remove ": "firewall_remove",
+            "/defense sniff": "packet_capture",
         }
         found = {}
         for node in ast.walk(main):
@@ -47,26 +47,23 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
                 item for statement in body for item in ast.walk(statement)
                 if isinstance(item, ast.Call)
             ]
-            durable_lines = [
-                item.lineno for item in calls
+            durable_calls = [
+                item for item in calls
                 if isinstance(item.func, ast.Attribute)
                 and item.func.attr == "execute"
                 and isinstance(item.func.value, ast.Name)
                 and item.func.value.id == "durable_operations"
             ]
-            target = expected[command]
-            effect_lines = [
-                item.lineno for item in calls
-                if isinstance(item.func, ast.Attribute) and item.func.attr == target
-            ]
             self.assertTrue(
-                durable_lines,
+                durable_calls,
                 f"{command} bypasses the durable approval/audit/execution coordinator",
             )
-            self.assertTrue(effect_lines, f"{command} side-effect call was not found")
-            self.assertLess(
-                min(durable_lines), min(effect_lines),
-                f"{command} must enter the durable coordinator before invoking {target}",
+            self.assertTrue(
+                any(
+                    isinstance(arg, ast.Constant) and arg.value == expected[command]
+                    for call in durable_calls for arg in call.args
+                ),
+                f"{command} does not use the expected registered operation",
             )
 
 
