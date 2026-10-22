@@ -46,7 +46,7 @@ class YukiCoreAgent:
         # Keep the direct public entry point at least as strict as the model planner.
         # Approval UI and execution must see the same bounded argument, not a truncated
         # preview of an unbounded value.
-        if not isinstance(argument, str) or len(argument) > 500 or "\\x00" in argument:
+        if not isinstance(argument, str) or len(argument) > 500 or "\x00" in argument:
             return AgentResponse(
                 False,
                 "Blocked: skill argument must be a NUL-free string of at most 500 characters.",
@@ -70,12 +70,28 @@ class YukiCoreAgent:
         try:
             result = skill.execute(argument)
             if isinstance(result, dict):
-                ok = bool(result.get("ok", True))
+                ok = result.get("ok")
+                if type(ok) is not bool:
+                    return AgentResponse(
+                        False,
+                        "Skill returned an invalid result contract; success must be an explicit boolean.",
+                        name,
+                        {"error": "invalid_result_contract"},
+                        stage="observe",
+                    )
                 message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
                 data = {key: value for key, value in result.items() if key not in {"ok", "message"}}
             else:
-                ok = bool(getattr(result, "ok", False))
-                message = str(getattr(result, "message", "Skill returned an unsupported result."))
+                ok = getattr(result, "ok", None)
+                if type(ok) is not bool:
+                    return AgentResponse(
+                        False,
+                        "Skill returned an invalid result contract; success must be an explicit boolean.",
+                        name,
+                        {"error": "invalid_result_contract"},
+                        stage="observe",
+                    )
+                message = str(getattr(result, "message", "Skill completed." if ok else "Skill failed."))
                 data = getattr(result, "data", None)
             return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
         except Exception:
