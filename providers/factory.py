@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from providers.hybrid import HybridProvider
+from providers.gemini_cli import GeminiCLIProvider\nfrom providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
@@ -32,8 +32,8 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "mock")).strip().lower()
     if selected == "mock":
         return MockProvider()
-    if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: mock, ollama, hybrid.")
+    if selected == "gemini_cli":\n        return GeminiCLIProvider(timeout=_provider_timeout(env))\n    if selected not in {"ollama", "hybrid"}:
+        raise ValueError("provider must be one of: mock, ollama, hybrid, gemini_cli.")
     timeout = _provider_timeout(env)
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
