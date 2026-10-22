@@ -98,6 +98,29 @@ class ProposalTestEvidenceStore:
                 db.close()
         return run_id
 
+    def verify_chain(self) -> bool:
+        """Verify every payload digest, event hash, and previous-link in order."""
+        with self._connect() as db:
+            rows = db.execute("""SELECT run_id, recorded_at, proposal_sha256,
+                workspace_name, result_json, payload_sha256, previous_hash, event_hash
+                FROM proposal_test_evidence ORDER BY id ASC""").fetchall()
+        previous = "0" * 64
+        for row in rows:
+            run_id, recorded_at, proposal_sha, workspace, result_json, payload_sha, previous_hash, event_hash = row
+            if previous_hash != previous:
+                return False
+            if hashlib.sha256(result_json.encode("utf-8")).hexdigest() != payload_sha:
+                return False
+            event_payload = json.dumps({
+                "run_id": run_id, "recorded_at": recorded_at,
+                "proposal_sha256": proposal_sha, "workspace_name": workspace,
+                "payload_sha256": payload_sha, "previous_hash": previous_hash,
+            }, sort_keys=True, separators=(",", ":"))
+            if hashlib.sha256(event_payload.encode("utf-8")).hexdigest() != event_hash:
+                return False
+            previous = event_hash
+        return True
+
     def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ProposalTestEvidenceError("limit must be between 1 and 100")
