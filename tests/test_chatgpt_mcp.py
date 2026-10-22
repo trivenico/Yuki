@@ -44,7 +44,7 @@ class MCPBridgeTests(unittest.TestCase):
 
     def request(self, path, payload=None, token=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         if token is not None:
             headers["Authorization"] = "Bearer " + token
         req = Request(self.base_url + path, data=data, headers=headers)
@@ -90,6 +90,22 @@ class MCPBridgeTests(unittest.TestCase):
             result = json.loads(response.read())
         self.assertTrue(result["result"]["isError"])
         self.assertEqual(self.agent.prompts, [])
+
+    def test_missing_mcp_accept_headers_is_rejected(self):
+        req = Request(
+            self.base_url + "/mcp",
+            data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode(),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + self.token},
+        )
+        with self.assertRaises(HTTPError) as error:
+            urlopen(req, timeout=3)
+        self.assertEqual(error.exception.code, 406)
+
+    def test_oversized_batch_is_rejected(self):
+        payload = [{"jsonrpc": "2.0", "id": i, "method": "ping"} for i in range(11)]
+        with self.assertRaises(HTTPError) as error:
+            self.request("/mcp", payload, self.token)
+        self.assertEqual(error.exception.code, 400)
 
     def test_invalid_remote_binding_configuration_fails_closed(self):
         with self.assertRaises(BridgeConfigError):
