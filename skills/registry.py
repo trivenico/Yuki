@@ -49,6 +49,7 @@ from companion.identity_manager import IdentityManager
 from skills.role_skill import RoleSkill
 from skills.github_push import GitHubPushSkill
 from skills.mcp_plugin import MCPPluginSkill
+from skills.github_lifecycle import GitHubLifecycleSkill
 from core.plugin_loader import PluginLoader
 
 
@@ -102,7 +103,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers),
+            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), GitHubLifecycleSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers),
         ))
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
