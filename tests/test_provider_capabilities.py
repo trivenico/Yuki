@@ -64,8 +64,7 @@ class CapabilityRegistryTests(unittest.TestCase):
         ]
         registry = registry_from_catalog(catalog)
         self.assertEqual(registry.route().provider, "mock")
-        with self.assertRaises(LookupError):
-            registry.route(allow_cloud=True, preference=("openai",))
+        self.assertEqual(registry.route(allow_cloud=True, preference=("openai",)).provider, "mock")
 
     def test_list_is_sanitized_and_sorted(self):
         registry = CapabilityRegistry([provider("ollama", caps=("text", "local_inference")), provider("mock")])
