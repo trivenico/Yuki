@@ -34,6 +34,18 @@ class ProviderManager:
         self.register(ProviderInfo("gemini", ("not_configured",)))
         self.register(ProviderInfo("local", ("use_ollama",)))
         self._selected = "mock"
+        # Honor explicit runtime/config selection, but preserve offline mock mode
+        # if configuration is missing or the requested provider is not ready.
+        import os
+        configured = os.environ.get("YUKI_PROVIDER", "").strip().lower()
+        if not configured:
+            try:
+                from core.config import load_config
+                configured = str(load_config().get("provider", "mock")).strip().lower()
+            except (ImportError, OSError, RuntimeError, ValueError):
+                configured = "mock"
+        if configured and configured != "mock":
+            self.select(configured)
 
     @staticmethod
     def _configured_provider(name: str) -> BaseProvider:
