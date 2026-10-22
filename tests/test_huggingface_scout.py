@@ -19,7 +19,7 @@ class HuggingFaceScoutTests(unittest.TestCase):
         self.assertEqual(result["result_count"], 1)
         item = result["results"][0]
         self.assertEqual(item["repo_id"], "org/yuki-agent")
-        self.assertIn("license_and_security_review", item["review_status"])
+        self.assertEqual(item["review_status"], "needs_security_and_compatibility_review")
         self.assertFalse(result["automatic_installation"])
         self.assertFalse(result["automatic_execution"])
         self.assertEqual(mocked.call_count, 2)
