@@ -17,6 +17,7 @@ def context_budget(*, limit_tokens: int | None, used_tokens: int | None,
         "remaining_tokens": None,
         "estimated": bool(estimated),
         "available": False,
+        "scope": "latest_request",
         "detail": "Model context limit or usage is unknown; configure explicit metadata.",
     }
     if not isinstance(estimated, bool):
@@ -31,6 +32,7 @@ def context_budget(*, limit_tokens: int | None, used_tokens: int | None,
         "remaining_tokens": limit_tokens - used_tokens,
         "estimated": estimated,
         "available": True,
+        "scope": "latest_request",
         "detail": (
             "Context usage is estimated from token counts."
             if estimated else
