@@ -28,6 +28,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.task_checkpoint_store import SQLiteTaskCheckpointStore
+from core.task_startup_recovery import recover_task_checkpoints
 from core.checkpointed_task_service import CheckpointedTaskService
 from core.readiness import build_readiness_report
 from core.recovery_bootstrap import recover_workspace_on_startup
@@ -177,6 +178,19 @@ def main():
     checkpointed_tasks = CheckpointedTaskService(
         SQLiteTaskCheckpointStore(str(workspace / "task_checkpoints.sqlite3")), task_agent
     )
+    try:
+        task_recovery = recover_task_checkpoints(workspace)
+    except Exception as exc:
+        raise RuntimeError("Task checkpoint recovery failed; refusing normal runtime startup.") from exc
+    if task_recovery.total_incomplete:
+        print(
+            "Yuki task recovery: "
+            f"{task_recovery.total_incomplete} incomplete, "
+            f"{len(task_recovery.needs_reconciliation)} need reconciliation, "
+            f"{len(task_recovery.paused)} paused, {len(task_recovery.pending)} pending."
+        )
+        if task_recovery.truncated:
+            print("Yuki task recovery: report truncated at 1000 tasks; inspect /tasks.")
     token_usage = TokenUsageTracker(workspace / "token_usage.json", session_id="cli-session")
     # Attach usage accounting to active provider adapters without changing routing.
     def attach_usage_tracker(provider, visited=None):
