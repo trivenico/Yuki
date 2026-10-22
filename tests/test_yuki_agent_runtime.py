@@ -90,6 +90,10 @@ class TaskStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "budget_tokens"):
             self.store.submit("test", {}, budget_tokens=-1)
 
+    def test_rejects_non_persistent_memory_database(self):
+        with self.assertRaisesRegex(ValueError, "persistent database path"):
+            TaskStore(":memory:")
+
     def test_reopens_database_and_lists_by_status(self):
         task = self.store.submit("test", {"x": 1}, approval_required=False)
         reopened = TaskStore(Path(self.temp.name) / "tasks.sqlite3")
