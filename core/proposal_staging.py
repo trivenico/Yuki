@@ -77,14 +77,14 @@ def stage_change_proposal(*, proposal: ChangeProposal, workspace: str | os.PathL
             raw = item.content.encode("utf-8")
             manifest_files.append({"path": item.path, "sha256": hashlib.sha256(raw).hexdigest(), "size_bytes": len(raw)})
             digest.update(item.path.encode("utf-8"))
-            digest.update(b"\\0")
+            digest.update(b"\0")
             digest.update(raw)
-            digest.update(b"\\0")
+            digest.update(b"\0")
         if digest.hexdigest() != proposal.sha256:
             raise ProposalStagingError("Validated proposal digest changed before staging.")
         manifest_path = target / "MANIFEST.json"
         manifest_data = json.dumps({"schema_version": 1, "proposal_sha256": proposal.sha256,
-                                    "files": manifest_files}, sort_keys=True, indent=2) + "\\n"
+                                    "files": manifest_files}, sort_keys=True, indent=2) + "\n"
         with manifest_path.open("x", encoding="utf-8", newline="") as stream:
             stream.write(manifest_data)
             stream.flush()
