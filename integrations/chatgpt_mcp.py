@@ -125,7 +125,7 @@ class ConversationStore:
 
     def history(self, session_id: str) -> list[tuple[str, str]]:
         now = int(time.time())
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db, db:
             self._prune(db, now)
             rows = db.execute(
                 "SELECT user_text, assistant_text FROM yuki_conversation_turns "
@@ -136,7 +136,7 @@ class ConversationStore:
 
     def append(self, session_id: str, user_text: str, assistant_text: str) -> None:
         now = int(time.time())
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db, db:
             self._prune(db, now)
             latest = db.execute(
                 "SELECT COALESCE(MAX(turn_index), 0) FROM yuki_conversation_turns WHERE session_id=?",
@@ -155,7 +155,7 @@ class ConversationStore:
             self._prune(db, now)
 
     def delete(self, session_id: str) -> None:
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db, db:
             db.execute("DELETE FROM yuki_conversation_turns WHERE session_id=?", (session_id,))
 
 
