@@ -24,9 +24,11 @@ class ProviderManager:
                       factory=lambda: self._configured_provider("ollama"))
         self.register(ProviderInfo("hybrid", ("local_model; optional_task_allowlisted_cloud",), True),
                       factory=lambda: self._configured_provider("hybrid"))
-        self.register(ProviderInfo("openai", ("hybrid_task_allowlist_required",)))
-        self.register(ProviderInfo("anthropic", ("not_configured",)))
-        self.register(ProviderInfo("gemini", ("not_configured",)))
+        self.register(ProviderInfo("openai", ("api_key_via_hybrid", "official_codex_cli_sign_in_not_integrated")))
+        self.register(ProviderInfo("anthropic", ("official_claude_code_sign_in_not_integrated", "api_adapter_not_configured")))
+        self.register(ProviderInfo("gemini", ("official_gemini_cli_sign_in_not_integrated", "api_adapter_not_configured")))
+        self.register(ProviderInfo("deepseek", ("official_sign_in_adapter_not_verified", "api_adapter_not_configured")))
+        self.register(ProviderInfo("zai", ("official_sign_in_adapter_not_verified", "api_adapter_not_configured")))
         self.register(ProviderInfo("local", ("use_ollama",)))
         self._selected = "mock"
 
