@@ -68,7 +68,9 @@ class TaskStore:
 
     def _initialize(self):
         with self._session() as db:
-            db.execute("PRAGMA journal_mode = WAL")
+            # Rollback journal is more portable for a single-host SQLite queue,
+            # especially on Windows where WAL sidecar handles can impede temp cleanup.
+            db.execute("PRAGMA journal_mode = DELETE")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS agent_tasks (
                     id TEXT PRIMARY KEY,
