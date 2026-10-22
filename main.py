@@ -541,8 +541,16 @@ def main():
         elif command == "/security status":
             print(f"Security lab: {config['security_lab_enabled']}; allowed private lab IPs: {len(config['recon_allowlisted_targets'])}")
         elif command.startswith("/security recon "):
+            target = command[len("/security recon "):].strip()
+            if not target or not _confirm(
+                "security:recon",
+                f"Run a bounded TCP reconnaissance scan against {target!r}. Confirm you are authorized to test this target.",
+                "high",
+            ):
+                print("Yuki > Reconnaissance cancelled or target missing.")
+                continue
             try:
-                result = recon.scan_common_tcp(command[len("/security recon "):].strip())
+                result = recon.scan_common_tcp(target)
                 print(f"Yuki > Scan finished for {result['target']} (exit {result['returncode']}).")
                 print(result["output"])
                 if result["errors"]: print(result["errors"])
@@ -556,8 +564,16 @@ def main():
                 print("Yuki > Use /sandbox run IMAGE@sha256:DIGEST | program arg1 arg2")
                 continue
             image, argv_text = payload.split("|", 1)
+            image, argv_text = image.strip(), argv_text.strip()
+            if not image or not argv_text or not _confirm(
+                "sandbox:run",
+                f"Run program {argv_text!r} in allow-listed image {image!r}. Review the command before proceeding.",
+                "high",
+            ):
+                print("Yuki > Sandbox execution cancelled or required fields missing.")
+                continue
             try:
-                result = sandbox.run(image.strip(), shlex.split(argv_text))
+                result = sandbox.run(image, shlex.split(argv_text))
                 print(f"Yuki > Sandbox exit {result['returncode']}\n{result['stdout']}\n{result['stderr']}")
             except (SandboxError, ValueError) as exc:
                 print(f"Yuki > Sandbox blocked/unavailable: {exc}")
@@ -581,12 +597,26 @@ def main():
                 print(f"Yuki > IDS unavailable: {exc}")
         elif command.startswith("/defense block "):
             ip = command[len("/defense block "):].strip()
+            if not ip or not _confirm(
+                "defense:block",
+                f"Add a temporary 300-second firewall block for {ip!r}. This can disrupt network access.",
+                "critical",
+            ):
+                print("Yuki > Firewall block cancelled or address missing.")
+                continue
             try:
                 print(firewall.block_temporary(ip, seconds=300))
             except FirewallError as exc:
                 print(f"Yuki > Firewall action blocked/unavailable: {exc}")
         elif command.startswith("/defense remove "):
             rule_id = command[len("/defense remove "):].strip()
+            if not rule_id or not _confirm(
+                "defense:remove",
+                f"Remove firewall rule {rule_id!r}. This changes network protection.",
+                "critical",
+            ):
+                print("Yuki > Firewall rule removal cancelled or rule ID missing.")
+                continue
             try:
                 print(firewall.remove(rule_id))
             except FirewallError as exc:
