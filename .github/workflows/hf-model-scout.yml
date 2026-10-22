@@ -29,6 +29,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Test scout without network access
+        run: python -m unittest discover -s tests -p 'test_hf_model_scout.py'
       - name: Run read-only public model scout
         env:
           SCOUT_LIMIT: ${{ inputs.limit_per_task || '10' }}
