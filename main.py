@@ -45,6 +45,7 @@ from core.performance_history import format_performance_history
 from core.device_diagnostics import discover_devices, format_device_report
 from core.token_usage import TokenUsageTracker
 from core.self_evolution import SelfEvolutionInputError, load_and_validate_proposal, self_improvement_status
+from core.proposal_staging import ProposalStagingError, stage_change_proposal
 
 
 def _ask_approval(request):
@@ -97,7 +98,7 @@ def print_help():
                                  Record an evidence-based decision; never retries
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
-  /self-improvement status | /self-improvement validate RELATIVE_JSON_PATH
+  /self-improvement status | /self-improvement validate RELATIVE_JSON_PATH | /self-improvement stage RELATIVE_JSON_PATH
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -522,6 +523,19 @@ def main():
             print("Yuki self-improvement capability status:")
             for name, status in self_improvement_status().items():
                 print(f"- {name}: {status}")
+        elif command.startswith("/self-improvement stage "):
+            relative_path = command[len("/self-improvement stage "):].strip()
+            try:
+                proposal = load_and_validate_proposal(workspace, relative_path)
+                staged_path = stage_change_proposal(proposal=proposal, workspace=workspace)
+                print("Yuki > Proposal staged for review; active source files were not changed.")
+                print(f"Staged workspace: {staged_path}")
+                print(f"SHA-256: {proposal.sha256}")
+                print("No code was executed. Run supervised tests only after reviewing the staged files.")
+                if proposal.requires_human_approval:
+                    print("Protected runtime files detected: explicit human approval is required.")
+            except (SelfEvolutionInputError, ProposalStagingError, ValueError, OSError) as exc:
+                print(f"Yuki > Proposal staging rejected safely: {exc}")
         elif command.startswith("/self-improvement validate "):
             relative_path = command[len("/self-improvement validate "):].strip()
             try:
