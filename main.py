@@ -596,7 +596,7 @@ def main():
         elif command == "/dashboard":
             try:
                 from ui.dashboard import run_dashboard
-                run_dashboard(agent, command_handler=dashboard_command, token_usage=token_usage)
+                run_dashboard(agent, command_handler=dashboard_command, token_usage=token_usage, reconciliation=reconciliation, operator="local-owner")
             except RuntimeError as exc:
                 print(f"Yuki > Dashboard unavailable: {exc}")
         else:
