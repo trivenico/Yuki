@@ -4,6 +4,7 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
+from yuki_providers import ProviderManager
 
 
 class ProviderFactoryTests(unittest.TestCase):
@@ -56,6 +57,13 @@ class ProviderFactoryTests(unittest.TestCase):
             )
         self.assertEqual(provider.local_provider.timeout, 22.0)
         self.assertEqual(provider.cloud_provider.timeout, 22.0)
+
+    def test_subscription_cli_providers_are_reported_as_not_integrated(self):
+        providers = {item["name"]: item for item in ProviderManager().list_providers()}
+        for name in ("openai", "anthropic", "gemini", "deepseek", "zai"):
+            with self.subTest(name=name):
+                self.assertIn(name, providers)
+                self.assertFalse(providers[name]["implemented"])
 
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
