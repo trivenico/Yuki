@@ -17,9 +17,9 @@ class StagedIntegrityTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
             digest = hashlib.sha256()
             digest.update(b"tests/test_candidate.py")
-            digest.update(b"\\0")
+            digest.update(b"\0")
             digest.update(content.encode())
-            digest.update(b"\\0")
+            digest.update(b"\0")
             proposal_sha = digest.hexdigest()
             (root / "MANIFEST.json").write_text(json.dumps({
                 "schema_version": 1, "proposal_sha256": proposal_sha,
