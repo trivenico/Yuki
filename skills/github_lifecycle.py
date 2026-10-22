@@ -18,6 +18,7 @@ _TITLE = re.compile(r"^[^\\r\\n]{1,200}$")
 
 class GitHubLifecycleSkill(Skill):
     name = "github_lifecycle"
+    max_argument_length = 12000
     description = "Inspect GitHub auth, issues and CI; create repositories or pull requests with explicit confirmation using the official gh CLI."
     risk = "high"
     requires_approval = True
@@ -119,9 +120,9 @@ class GitHubLifecycleSkill(Skill):
                 path = self._repo(payload.get("repo_path"))
                 slug = self._slug_from_repo(path)
                 title, body, base = payload.get("title"), payload.get("body", ""), payload.get("base", "main")
-                if not isinstance(title, str) or not title.strip() or len(title.strip()) > 200 or "\\n" in title or "\\r" in title:
+                if not isinstance(title, str) or not title.strip() or len(title.strip()) > 200 or "\n" in title or "\r" in title:
                     raise ValueError("title must be a single line of 1-200 characters.")
-                if not isinstance(body, str) or len(body) > 8000 or "\\x00" in body:
+                if not isinstance(body, str) or len(body) > 8000 or "\x00" in body:
                     raise ValueError("body must be text of at most 8000 characters.")
                 if not isinstance(base, str) or not _BRANCH.fullmatch(base) or base.startswith("-") or ".." in base:
                     raise ValueError("base must be a valid branch name.")
