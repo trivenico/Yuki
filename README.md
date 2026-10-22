@@ -31,7 +31,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 ## Connected capabilities in this revision
 
-- `main.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
+- `yuki.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
 - `skills/registry.py`: registers time/system/files, interview practice, allow-listed web fetch/deep-read, local knowledge graph, local health log, defensive remediation suggestions, optional Playwright browser reading, YouTube caption retrieval, and optional read-only Gmail search. Optional integrations fail safely when dependencies are missing.
 - `core/planner.py`: creates a bounded inspectable proposal. It does not execute the plan.
 - `core/vector_memory.py`: persistent local lexical search over user-approved notes. It is not an embedding/vector database.
@@ -47,7 +47,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 - `skills/webcam_skill.py`: optional one-frame webcam capture and remote vision analysis; requires an approved skill call, camera access, and an API key. No background camera listener is started; the captured frame is sent to the remote provider and is not saved by Yuki.
 - `voice/stt.py`: opt-in finite recording and faster-whisper transcription; language defaults to automatic detection, and detected language/probability are returned by STT. Recording is only initiated by an explicit command and approval.
 - `voice/language.py`: tested language-tag normalization, same-language reply instruction helper, and spoken-reply policy gate. These helpers do not supply an LLM or guarantee detection accuracy.
-- Multilingual voice preference defaults: `language_behavior: auto_detect`, `voice_style: natural_realistic_female`, and `spoken_reply_policy: every_reply_when_voice_mode_active`. The current runtime has no conversational LLM response loop, so automatic same-language answers and speaking every generated answer are not yet end-to-end wired. A natural female voice depends on selecting and testing a compatible local voice model; the project does not bundle or claim one.
+- Multilingual voice preference defaults: `language_behavior: auto_detect`, `voice_style: natural_realistic_female`, and `spoken_reply_policy: every_reply_when_voice_mode_active`. Voice output is not yet end-to-end wired into every text response; automatic same-language spoken replies are not guaranteed. A natural female voice depends on selecting and testing a compatible local voice model; the project does not bundle or claim one.
 - `voice/wakeword.py`: optional openWakeWord adapter for a locally supplied model; finite listening is explicit. It does not train a custom model.
 - `voice/tts.py`: optional Piper local speech generation/playback, or the pyttsx3 backend. Chunked `speak_stream()` and best-effort `stop()` support interruption of active playback. This is not yet full real-time barge-in: microphone voice activity detection is not wired to stop playback automatically, and no end-to-end latency test has been run. Piper executable and compatible model must be installed separately.
 - `voice/speaker_verification.py`: fail-closed placeholder; no real speaker model is claimed.
@@ -66,7 +66,7 @@ Python 3.10+ and PyYAML:
 ```sh
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python main.py
+python yuki.py
 ```
 
 Optional dependencies are separate:
@@ -137,7 +137,7 @@ Yuki is still under active engineering. Passing CI verifies tested code paths, n
 
 ## Real provider and approved task-loop milestone
 
-The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. Provider selection is opt-in:
+The provider package includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. The terminal `yuki.py` runtime now exposes mock, Ollama, and hybrid selection through `ProviderManager`; direct OpenAI selection remains disabled, and hybrid cloud use requires its explicit task allow-list. Provider selection is opt-in:
 
 - Keep `provider: mock` for offline tests.
 - Set `provider: ollama` and configure `ollama_model` (or `YUKI_OLLAMA_MODEL`) to use a locally running Ollama instance.
