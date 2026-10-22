@@ -97,7 +97,7 @@ class HuggingFaceScout:
         if not license_name:
             license_name = next((tag[8:] for tag in tags if tag.startswith("license:")), None)
         pipeline = item.get("pipeline_tag")
-        text = " ".join([repo_id, query, str(pipeline or ""), " ".join(tags)]).lower()
+        text = " ".join([repo_id, str(pipeline or ""), " ".join(tags)]).lower()
         score = sum(weight for keyword, weight in _RELEVANCE.items() if keyword in text)
         downloads = item.get("downloads", 0)
         likes = item.get("likes", 0)
