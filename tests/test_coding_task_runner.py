@@ -1,10 +1,11 @@
 import io
 import subprocess
 import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from core.coding_task_runner import SandboxExecutionError, run_sandboxed_task
+from core.coding_task_runner import SandboxExecutionError, SandboxExecutionRequest, run_sandboxed_task
 from core.sandbox_policy import SandboxPolicy
 
 
@@ -35,14 +36,14 @@ class CodingTaskRunnerTests(unittest.TestCase):
     def test_requires_approval_before_launch(self, build, popen, _kill):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
-                               command=["python", "-V"], approve=lambda: False)
+                               command=["python", "-V"], approve=lambda request: False)
         popen.assert_not_called()
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
     @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
     def test_approval_callback_exception_fails_closed(self, build, popen, _kill):
-        def broken():
+        def broken(request):
             raise RuntimeError("approval service unavailable")
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
@@ -56,7 +57,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         proc = FakeProcess(b"123456789012")
         popen.return_value = proc
         result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
-                                    command=["python", "-V"], approve=lambda: True)
+                                    command=["python", "-V"], approve=lambda request: True)
         self.assertEqual(len(result.output.encode("utf-8")), 8)
         self.assertTrue(result.output_truncated)
         self.assertIn(result.returncode, (-9, 0))  # output reader and process exit may race
@@ -65,6 +66,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertIn("--name", args[0])
         self.assertTrue(kwargs["env"])
+        self.assertIsInstance(build.call_args.kwargs.get("policy"), SandboxPolicy)
         _kill.assert_called_once()
 
     @patch("core.coding_task_runner._kill_container")
@@ -97,6 +99,23 @@ class CodingTaskRunnerTests(unittest.TestCase):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
                                command=["python", "-V"], approve=None)
+
+    @patch("core.coding_task_runner.subprocess.Popen")
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    def test_approval_receives_exact_execution_intent(self, build, popen):
+        seen = []
+        proc = FakeProcess(b"ok\n", 0)
+        popen.return_value = proc
+        result = run_sandboxed_task(
+            self.policy, image="python:3.12", workspace=self.tmp.name,
+            command=["python", "-V"], approve=lambda request: seen.append(request) or True,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0], SandboxExecutionRequest)
+        self.assertEqual(seen[0].command, ("python", "-V"))
+        self.assertEqual(seen[0].workspace, str(Path(self.tmp.name).resolve()))
+        self.assertEqual(seen[0].timeout_seconds, self.policy.timeout_seconds)
 
 
 if __name__ == "__main__":
