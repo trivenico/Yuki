@@ -80,7 +80,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertFalse(result.timed_out)
         self.assertFalse(result.output_truncated)
-        _kill.assert_not_called()
+        _kill.assert_called_once()
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
