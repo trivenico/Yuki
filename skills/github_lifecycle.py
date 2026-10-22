@@ -107,6 +107,8 @@ class GitHubLifecycleSkill(Skill):
                     raise ValueError(f"Exact confirmation required: CREATE {repo} {visibility}")
                 if self._git(path, "status", "--porcelain"):
                     raise ValueError("Working tree must be clean before publishing.")
+                if "origin" in self._git(path, "remote").splitlines():
+                    raise ValueError("Repository already has an origin remote. Review it and configure the destination explicitly before creating a new remote repository.")
                 branch = self._git(path, "branch", "--show-current")
                 if not branch or not _BRANCH.fullmatch(branch) or branch.startswith("-") or ".." in branch:
                     raise ValueError("Repository needs a safe named current branch.")
