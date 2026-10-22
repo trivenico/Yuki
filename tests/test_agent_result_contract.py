@@ -13,6 +13,10 @@ class ContractSkill(Skill):
         self.result = result
         self.calls = 0
 
+    def run(self, argument=""):
+        self.calls += 1
+        return self.result
+
     def execute(self, argument=""):
         self.calls += 1
         return self.result
