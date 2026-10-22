@@ -53,7 +53,7 @@ def production_inventory_report() -> dict:
 # entry fails CI. Prefix entries correspond to str.startswith() predicates.
 COMMAND_DISPATCH_PATTERNS = frozenset({
     "/status", "/skills", "/quit", "/exit", "/help", "/readiness", "/capabilities", "/performance", "/performance-history", "/routing", "/tasks", "/devices",
-    "/task ", "/ask ", "/ask-cloud ", "/skill ", "/plan ", "/memory add ",
+    "/task ", "/task-reconcile ", "/ask ", "/ask-cloud ", "/skill ", "/plan ", "/memory add ",
     "/memory list", "/memory search ", "/memory delete ", "/memory clear",
     "/knowledge index ", "/reminder add ", "/reconcile list", "/reconcile resolve ",
     "/reminders", "/reminders due", "/evolution status", "/evolution record ",
