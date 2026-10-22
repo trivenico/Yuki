@@ -1,14 +1,9 @@
-"""Provider registry and adapter factory.
-
-Only the offline mock adapter is implemented. Registry metadata never implies
-that a provider is authenticated or ready.
-"""
-
+"""Provider registry backed by the same factory used by the application runtime."""
+from __future__ import annotations
+import os
 from dataclasses import dataclass
-from typing import Optional
-
-from providers import BaseProvider, MockProvider
-
+from typing import Callable, Optional
+from providers import BaseProvider, MockProvider, create_provider
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -16,21 +11,26 @@ class ProviderInfo:
     auth_methods: tuple[str, ...]
     implemented: bool = False
 
-
 class ProviderManager:
-    """Register provider metadata and create only implemented adapters."""
-
-    def __init__(self):
+    """Provider capability registry; availability is checked separately from construction."""
+    def __init__(self, config=None, *, environ=None):
+        self._config = dict(config or {})
+        self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
-        self._factories = {"mock": MockProvider}
-        self._selected: Optional[str] = None
-
-        self.register(ProviderInfo("mock", ("none",), True))
-        self.register(ProviderInfo("openai", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("anthropic", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("gemini", ("official_api_key_flow_planned",)))
-        self.register(ProviderInfo("local", ("local_runtime_planned",)))
-        self._selected = "mock"
+        self._factories: dict[str, Callable] = {"mock": MockProvider}
+        self._selected: Optional[str] = "mock"
+        for item in (
+            ProviderInfo("mock", ("none",), True),
+            ProviderInfo("ollama", ("local_ollama_runtime",), True),
+            ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
+            ProviderInfo("openai", ("official_api_key_flow_planned",)),
+            ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
+            ProviderInfo("gemini", ("official_cli_adapter_not_integrated_on_main",)),
+            ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
+            ProviderInfo("kimi", ("official_api_key_flow_planned",)),
+            ProviderInfo("minimax", ("official_api_key_flow_planned",)),
+        ):
+            self.register(item)
 
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
@@ -41,50 +41,52 @@ class ProviderManager:
         if not isinstance(provider.auth_methods, tuple):
             raise TypeError("auth_methods must be a tuple.")
         if factory is not None:
+            if not callable(factory):
+                raise TypeError("factory must be callable.")
             self._factories[key] = factory
         elif not provider.implemented:
             self._factories.pop(key, None)
-        elif key not in self._factories:
+        elif key not in self._factories and key not in {"ollama", "hybrid"}:
             raise ValueError("An implemented provider must have an adapter factory.")
-        self._providers[key] = ProviderInfo(
-            name=key,
-            auth_methods=provider.auth_methods,
-            implemented=bool(provider.implemented),
-        )
+        self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
 
     def list_providers(self):
-        return [
-            {
-                "name": provider.name,
-                "auth_methods": list(provider.auth_methods),
-                "implemented": provider.implemented,
-                "selected": name == self._selected,
-            }
-            for name, provider in sorted(self._providers.items())
-        ]
+        return [{
+            "name": p.name, "auth_methods": list(p.auth_methods),
+            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid"}),
+            "selected": name == self._selected,
+        } for name, p in sorted(self._providers.items())]
+
+    def _build_adapter(self, name: str):
+        if name in {"mock", "ollama", "hybrid"}:
+            adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
+        else:
+            factory = self._factories.get(name)
+            if factory is None:
+                raise ValueError("Provider is not implemented.")
+            adapter = factory()
+        if not callable(getattr(adapter, "generate", None)) or not callable(getattr(adapter, "is_available", None)):
+            raise TypeError("Provider factory must return an adapter with generate() and is_available().")
+        return adapter
 
     def select(self, name: str) -> str:
         if not isinstance(name, str) or not name.strip():
             return "Provide a provider name."
         key = name.strip().lower()
-        if key not in self._providers:
+        info = self._providers.get(key)
+        if info is None:
             return f"Unknown provider: {key}"
-        if not self._providers[key].implemented or key not in self._factories:
+        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
+        try:
+            self._build_adapter(key)
+        except Exception as exc:
+            return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
         self._selected = key
         return f"Selected provider: {key}"
 
     def create_selected_adapter(self) -> Optional[BaseProvider]:
-        """Return a fresh adapter for the selected provider, or None if unavailable."""
-        if self._selected is None:
-            return None
-        factory = self._factories.get(self._selected)
-        if factory is None:
-            return None
-        adapter = factory()
-        if not isinstance(adapter, BaseProvider):
-            raise TypeError("Provider factory must return a BaseProvider.")
-        return adapter
+        return self._build_adapter(self._selected) if self._selected else None
 
     def current(self) -> Optional[ProviderInfo]:
         return self._providers.get(self._selected) if self._selected else None
