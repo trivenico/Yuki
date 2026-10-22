@@ -260,6 +260,30 @@ def main():
             on_alert=alert_callback,
         )
 
+    def voice_record(seconds):
+        output = workspace / "audio" / f"recording-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
+        recorded = stt.record_wav(output, seconds=seconds)
+        return stt.transcribe_file(recorded)
+
+    def voice_transcribe(path):
+        return stt.transcribe_file(path)
+
+    def voice_speak(text):
+        tts.speak(text)
+        return {"spoken": True}
+
+    def voice_wakeword_listen(seconds):
+        if not wakeword:
+            raise WakeWordError("No wake-word model path is configured.")
+        wakeword.load()
+        detected = wakeword.listen_once(seconds=seconds)
+        if not detected["detected"]:
+            return {"detected": False, "scores": detected.get("scores", [])}
+        output = workspace / "audio" / f"wake-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
+        recorded = stt.record_wav(output, seconds=5)
+        transcript = stt.transcribe_file(recorded)
+        return {"detected": True, "scores": detected.get("scores", []), "transcript": transcript}
+
     durable_operations = DurableOperationRuntime(
         coordinator=approval_coordinator,
         operations={
@@ -268,6 +292,10 @@ def main():
             "firewall_block": lambda ip, seconds: firewall.block_temporary(ip, seconds=seconds),
             "firewall_remove": lambda rule_id: firewall.remove(rule_id),
             "packet_capture": run_packet_capture,
+            "voice_record": voice_record,
+            "voice_transcribe": voice_transcribe,
+            "voice_speak": voice_speak,
+            "voice_wakeword_listen": voice_wakeword_listen,
             "evolution_record": lambda category, summary: evolution.record(category, summary),
             "evolution_run": lambda: evolution.run_cycle(),
             "evolution_review": lambda proposal_id, decision: evolution.review(proposal_id, decision),
@@ -531,32 +559,35 @@ def main():
         elif command.startswith("/voice record "):
             try:
                 seconds = int(command[len("/voice record "):].strip())
-                if not _confirm("voice:record", f"Record up to {seconds} seconds from the microphone.", "medium"):
-                    print("Yuki > Recording cancelled.")
+                outcome = durable_operations.execute("voice_record", {"seconds": seconds})
+                if not outcome.ok:
+                    print(f"Yuki > Recording cancelled or blocked: {outcome.status}")
                     continue
-                output = workspace / "audio" / f"recording-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
-                recorded = stt.record_wav(output, seconds=seconds)
-                result = stt.transcribe_file(recorded)
+                result = outcome.result
                 print(f"Yuki transcript ({result['language']}): {result['text']}")
-            except (ValueError, STTError) as exc:
+            except (ValueError, STTError, RuntimeError) as exc:
                 print(f"Yuki > Recording/transcription unavailable: {exc}")
         elif command.startswith("/voice speak "):
             try:
-                if not _confirm("voice:speak", "Speak the supplied text using local TTS.", "low"):
-                    print("Yuki > Speech cancelled.")
-                    continue
-                tts.speak(command[len("/voice speak "):])
-                print("Yuki > Finished speaking.")
-            except (TTSError, ValueError) as exc:
+                outcome = durable_operations.execute(
+                    "voice_speak", {"text": command[len("/voice speak "):]}
+                )
+                if outcome.ok:
+                    print("Yuki > Finished speaking.")
+                else:
+                    print(f"Yuki > Speech cancelled or blocked: {outcome.status}")
+            except (TTSError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Speech unavailable: {exc}")
         elif command.startswith("/voice transcribe "):
             try:
-                if not _confirm("voice:transcribe", "Transcribe the selected local audio file.", "medium"):
-                    print("Yuki > Transcription cancelled.")
+                path = command[len("/voice transcribe "):].strip()
+                outcome = durable_operations.execute("voice_transcribe", {"path": path})
+                if not outcome.ok:
+                    print(f"Yuki > Transcription cancelled or blocked: {outcome.status}")
                     continue
-                result = stt.transcribe_file(command[len("/voice transcribe "):].strip())
+                result = outcome.result
                 print(f"Yuki transcript ({result['language']}): {result['text']}")
-            except (STTError, ValueError) as exc:
+            except (STTError, ValueError, RuntimeError) as exc:
                 print(f"Yuki > Transcription unavailable: {exc}")
         elif command == "/voice wakeword status":
             if not wakeword:
@@ -568,25 +599,22 @@ def main():
                 except WakeWordError as exc:
                     print(f"Yuki > Wake-word detector unavailable: {exc}")
         elif command.startswith("/voice wakeword listen "):
-            if not wakeword:
-                print("Yuki > No wake-word model path is configured.")
-                continue
             try:
                 seconds = int(command[len("/voice wakeword listen "):].strip())
-                if not _confirm("voice:wakeword", f"Listen to the microphone for up to {seconds} seconds for the configured wake phrase.", "medium"):
-                    print("Yuki > Listening cancelled.")
+                outcome = durable_operations.execute(
+                    "voice_wakeword_listen", {"seconds": seconds}
+                )
+                if not outcome.ok:
+                    print(f"Yuki > Wake-word listening cancelled or blocked: {outcome.status}")
                     continue
-                wakeword.load()
-                result = wakeword.listen_once(seconds=seconds)
+                result = outcome.result
                 if not result["detected"]:
                     print("Yuki > Wake phrase was not detected in this listening window.")
                 else:
-                    print(f"Yuki > Wake phrase detected: {result['scores']}. Starting a separate 5-second recording for transcription.")
-                    output = workspace / "audio" / f"wake-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.wav"
-                    recorded = stt.record_wav(output, seconds=5)
-                    transcript = stt.transcribe_file(recorded)
+                    transcript = result["transcript"]
+                    print(f"Yuki > Wake phrase detected: {result['scores']}.")
                     print(f"Yuki transcript ({transcript['language']}): {transcript['text']}")
-            except (ValueError, WakeWordError, STTError) as exc:
+            except (ValueError, WakeWordError, STTError, RuntimeError) as exc:
                 print(f"Yuki > Wake-word flow unavailable: {exc}")
         elif command.startswith("/voice speaker-check "):
             try:
