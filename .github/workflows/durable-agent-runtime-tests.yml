@@ -1,0 +1,24 @@
+name: Yuki durable agent runtime tests
+
+on:
+  pull_request:
+    paths:
+      - "yuki_agent_runtime.py"
+      - "tests/test_yuki_agent_runtime.py"
+      - "docs/PHASE69_DURABLE_AGENT_RUNTIME.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run durable runtime tests
+        run: python -m unittest discover -s tests -p 'test_yuki_agent_runtime.py'
