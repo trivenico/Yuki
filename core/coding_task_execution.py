@@ -51,6 +51,7 @@ class CodingTaskExecutionStore:
             db.execute("INSERT INTO coding_task_execution_evidence VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (e.run_id,e.task_id,e.patch_sha256,e.command_sha256,e.output_sha256,e.output_bytes,
                  e.returncode,int(e.timed_out),int(e.output_truncated),e.duration_seconds,e.created_at))
+            db.commit()
 
     def get(self, run_id: str) -> CodingTaskExecutionEvidence:
         with sqlite3.connect(self.database_path, timeout=5.0) as db:
