@@ -26,3 +26,7 @@ web_allowed_hosts: []
 # Python plugins execute with Yuki's permissions. Keep disabled unless you trust the code.
 plugin_discovery_enabled: false
 trusted_plugin_modules: []
+
+# Additional local project roots eligible for the explicitly approved GitHub push skill.
+# Alternatively set YUKI_GITHUB_ALLOWED_ROOTS using the OS path-list separator.
+github_allowed_roots: []
