@@ -292,6 +292,7 @@ def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager, stor
                     store.append(session_id, prompt.strip(), response)
             except Exception:
                 response = "Yuki could not complete the request."
+                return {"jsonrpc": "2.0", "id": request_id, "result": _tool_result(response, is_error=True)}
             finally:
                 if chat_slots is not None:
                     chat_slots.release()
