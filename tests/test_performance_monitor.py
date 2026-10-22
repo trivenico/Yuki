@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from core.performance_monitor import collect_performance, format_bytes, format_performance_report
+from core.performance_monitor import (collect_performance, format_bytes, format_performance_report,\n                                     _reset_gpu_metrics_cache_for_tests)
 
 
 class PerformanceMonitorTests(unittest.TestCase):
@@ -67,6 +67,40 @@ class PerformanceMonitorTests(unittest.TestCase):
             })
         self.assertFalse(metrics["context"]["available"])
         self.assertIsNone(metrics["context"]["remaining_tokens"])
+
+    def test_gpu_probe_is_cached_and_returns_detached_results(self):
+        from core import performance_monitor
+
+        class Result:
+            returncode = 0
+            stdout = "GPU A, 40, 100, 1000\\n"
+
+        with (
+            patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("core.performance_monitor.subprocess.run", return_value=Result()) as run,
+        ):
+            first = performance_monitor._gpu_metrics()
+            first["devices"][0]["name"] = "mutated"
+            second = performance_monitor._gpu_metrics()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(second["devices"][0]["name"], "GPU A")
+
+    def test_gpu_probe_cache_expires(self):
+        from core import performance_monitor
+
+        class Result:
+            returncode = 0
+            stdout = "GPU A, 40, 100, 1000\\n"
+
+        with (
+            patch("core.performance_monitor.time.monotonic", side_effect=[10.0, 10.1, 16.0, 16.1]),
+            patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("core.performance_monitor.subprocess.run", return_value=Result()) as run,
+        ):
+            performance_monitor._gpu_metrics()
+            performance_monitor._gpu_metrics()
+            performance_monitor._gpu_metrics()
+        self.assertEqual(run.call_count, 2)
 
 
 if __name__ == "__main__":
