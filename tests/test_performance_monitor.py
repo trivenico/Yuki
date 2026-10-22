@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch
 
-from core.performance_monitor import (collect_performance, format_bytes, format_performance_report,\n                                     _reset_gpu_metrics_cache_for_tests)
+from core.performance_monitor import (
+    collect_performance, format_bytes, format_performance_report,
+    _reset_gpu_metrics_cache_for_tests,
+)
 
 
 class PerformanceMonitorTests(unittest.TestCase):
