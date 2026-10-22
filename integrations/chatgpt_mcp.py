@@ -14,6 +14,7 @@ import secrets
 import time
 from pathlib import Path
 from collections import OrderedDict, deque
+from contextlib import closing
 from threading import Lock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -94,7 +95,7 @@ class ConversationStore:
         self.max_turns = max_turns
         self._lock = Lock()
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS yuki_conversation_turns (
                 session_id TEXT NOT NULL,
                 turn_index INTEGER NOT NULL,
