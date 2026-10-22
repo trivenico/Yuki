@@ -349,7 +349,7 @@ def main():
                     context_data = ai.provider.last_context_budget
                 print(format_performance_report(collect_performance(
                     token_summary=token_usage.summary(), context_budget_data=context_data
-                ))
+                )))
             except Exception as exc:
                 print(f"Yuki > Performance diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/status":
