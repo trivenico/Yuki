@@ -182,7 +182,6 @@ def run_sandboxed_task(
         try:
             returncode = process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
-            _kill_container(container_name)
             raise SandboxExecutionError("sandbox runtime did not stop after timeout") from exc
     finally:
         reader.join(timeout=2)
@@ -192,10 +191,9 @@ def run_sandboxed_task(
             except OSError:
                 pass
             reader.join(timeout=1)
-
-    # Remove containers after successful, timed-out, and output-limited runs;
-    # otherwise exited containers accumulate on the Docker host.
-    _kill_container(container_name)
+        # Cleanup must run even if wait/output collection raises unexpectedly.
+        # docker rm --force also stops a container if its CLI was interrupted.
+        _kill_container(container_name)
     if reader_errors:
         raise SandboxExecutionError("failed while collecting bounded sandbox output") from reader_errors[0]
 
