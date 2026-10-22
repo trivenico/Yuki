@@ -111,7 +111,7 @@ class GitHubLifecycleSkill(Skill):
                     raise ValueError("Repository needs a safe named current branch.")
                 flag = "--private" if visibility == "private" else "--public"
                 self._run(["repo", "create", repo, flag, "--source", str(path),
-                           "--remote", "origin", "--push", "--confirm"], cwd=path)
+                           "--remote", "origin", "--push"], cwd=path)
                 return SkillResult(True, "GitHub repository created and committed current branch published.",
                                    {"repository": repo, "visibility": visibility, "branch": branch, "published": True})
 
