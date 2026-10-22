@@ -1,11 +1,11 @@
-"""Static regression tests for explicit confirmation on high-risk CLI actions."""
+"""Regression tests ensuring high-risk CLI actions use durable approval."""
 import ast
 import unittest
 from pathlib import Path
 
 
 class HighRiskCLIConfirmationTests(unittest.TestCase):
-    def test_high_risk_handlers_confirm_before_side_effect(self):
+    def test_high_risk_handlers_use_durable_approval_before_side_effect(self):
         path = Path(__file__).resolve().parents[1] / "main.py"
         tree = ast.parse(path.read_text(encoding="utf-8"))
         main = next(
@@ -14,9 +14,10 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
         )
         expected = {
             "/security recon ": "scan_common_tcp",
-            "/sandbox run ": "sandbox.run",
+            "/sandbox run ": "run",
             "/defense block ": "block_temporary",
-            "/defense remove ": "firewall.remove",
+            "/defense remove ": "remove",
+            "/defense sniff": "sniff",
         }
         found = {}
         for node in ast.walk(main):
@@ -46,20 +47,26 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
                 item for statement in body for item in ast.walk(statement)
                 if isinstance(item, ast.Call)
             ]
-            confirm_lines = [
+            durable_lines = [
                 item.lineno for item in calls
-                if isinstance(item.func, ast.Name) and item.func.id == "_confirm"
+                if isinstance(item.func, ast.Attribute)
+                and item.func.attr == "execute"
+                and isinstance(item.func.value, ast.Name)
+                and item.func.value.id == "durable_operations"
             ]
-            target = expected[command].split(".")[-1]
+            target = expected[command]
             effect_lines = [
                 item.lineno for item in calls
                 if isinstance(item.func, ast.Attribute) and item.func.attr == target
             ]
-            self.assertTrue(confirm_lines, f"{command} lacks an explicit confirmation gate")
+            self.assertTrue(
+                durable_lines,
+                f"{command} bypasses the durable approval/audit/execution coordinator",
+            )
             self.assertTrue(effect_lines, f"{command} side-effect call was not found")
             self.assertLess(
-                min(confirm_lines), min(effect_lines),
-                f"{command} must confirm before invoking {target}",
+                min(durable_lines), min(effect_lines),
+                f"{command} must enter the durable coordinator before invoking {target}",
             )
 
 
