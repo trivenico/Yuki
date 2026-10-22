@@ -46,7 +46,7 @@ class YukiCoreAgent:
         # Keep the direct public entry point at least as strict as the model planner.
         # Approval UI and execution must see the same bounded argument, not a truncated
         # preview of an unbounded value.
-        if not isinstance(argument, str) or len(argument) > 500 or "\x00" in argument:
+        if not isinstance(argument, str) or len(argument) > 500 or "\x00" in argument or "\\x00" in argument:
             return AgentResponse(
                 False,
                 "Blocked: skill argument must be a NUL-free string of at most 500 characters.",
