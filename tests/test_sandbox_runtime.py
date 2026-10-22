@@ -61,7 +61,7 @@ class DockerSandboxArgvTests(unittest.TestCase):
                 workspace=self.tmp.name, command="python --version")
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
-                workspace=self.tmp.name, command=["python", "bad\\x00arg"])
+                workspace=self.tmp.name, command=["python", "bad\x00arg"])
 
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
