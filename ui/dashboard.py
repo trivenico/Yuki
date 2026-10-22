@@ -12,6 +12,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
 
     from core.performance_monitor import collect_performance, format_performance_report
     from core.performance_history import format_performance_history
+    from core.device_diagnostics import discover_devices, format_device_report
 
     class YukiDashboard(App):
         TITLE = "Yuki — Supervision"
@@ -22,7 +23,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield Label("Performance telemetry loading…", id="performance_status")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/help /status /skills /performance /performance-history /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
+                yield Input(placeholder="/help /status /skills /performance /performance-history /devices /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
             yield Footer()
 
         def on_mount(self):
@@ -124,6 +125,11 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
                     log.write("Performance diagnostics unavailable; unsupported metrics remain unknown.")
             elif command == "/performance-history":
                 log.write(format_performance_history())
+            elif command == "/devices":
+                try:
+                    log.write(format_device_report(discover_devices()))
+                except Exception as exc:
+                    log.write(f"Device diagnostics unavailable ({type(exc).__name__}).")
             elif command in {"/help", "/status", "/skills"} and command_handler:
                 try:
                     log.write(str(command_handler(command))[:12000])
