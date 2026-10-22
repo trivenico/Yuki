@@ -39,6 +39,11 @@ class SideEffectInventoryTests(unittest.TestCase):
                 for comparator in node.comparators:
                     if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
                         discovered.add(comparator.value)
+                    elif isinstance(comparator, (ast.Set, ast.List, ast.Tuple)):
+                        discovered.update(
+                            item.value for item in comparator.elts
+                            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+                        )
             if (
                 isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "startswith" and isinstance(node.func.value, ast.Name)
