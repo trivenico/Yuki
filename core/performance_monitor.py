@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from typing import Any
 
+from core.context_budget import context_budget
+
 
 def _memory_from_proc() -> dict[str, Any] | None:
     """Read Linux memory counters without dependencies."""
@@ -92,13 +94,7 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
     except (ImportError, OSError, RuntimeError):
         pass
 
-    context = {"limit_tokens": None, "used_tokens": None, "remaining_tokens": None,
-               "detail": "Model context limit or current context usage is not known."}
-    if (type(context_limit) is int and context_limit > 0
-            and type(context_used) is int and 0 <= context_used <= context_limit):
-        context = {"limit_tokens": context_limit, "used_tokens": context_used,
-                   "remaining_tokens": context_limit - context_used,
-                   "detail": "Derived from explicitly supplied model context metadata."}
+    context = context_budget(limit_tokens=context_limit, used_tokens=context_used)
 
     safe_token_summary = token_summary if isinstance(token_summary, dict) else {
         "calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
