@@ -56,10 +56,10 @@ def _docker_environment() -> dict[str, str]:
 
 
 def _kill_container(container_name: str) -> None:
-    """Best-effort bounded cleanup if the Docker client is killed while a task runs."""
+    """Best-effort bounded removal of the named container after every run."""
     try:
         subprocess.run(
-            ["docker", "kill", container_name],
+            ["docker", "rm", "--force", container_name],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -193,8 +193,9 @@ def run_sandboxed_task(
                 pass
             reader.join(timeout=1)
 
-    if timed_out or output_truncated.is_set():
-        _kill_container(container_name)
+    # Remove containers after successful, timed-out, and output-limited runs;
+    # otherwise exited containers accumulate on the Docker host.
+    _kill_container(container_name)
     if reader_errors:
         raise SandboxExecutionError("failed while collecting bounded sandbox output") from reader_errors[0]
 
