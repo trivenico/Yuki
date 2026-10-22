@@ -35,10 +35,10 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
-    def test_unimplemented_provider_does_not_change_selection(self):
+    def test_unconfigured_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
         message = manager.select("openai")
-        self.assertIn("not implemented", message)
+        self.assertIn("Cannot select openai", message)
         self.assertEqual(manager.current().name, "mock")
 
     def test_custom_factory_must_return_provider_contract(self):
