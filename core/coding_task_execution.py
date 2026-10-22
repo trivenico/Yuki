@@ -46,7 +46,7 @@ class CodingTaskExecutionStore:
                 duration_seconds REAL NOT NULL, created_at TEXT NOT NULL)""")
 
     def record(self, e: CodingTaskExecutionEvidence) -> None:
-        with sqlite3.connect(self.database_path, timeout=5.0) as db:
+        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
             db.execute("PRAGMA busy_timeout=5000")
             db.execute("INSERT INTO coding_task_execution_evidence VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (e.run_id,e.task_id,e.patch_sha256,e.command_sha256,e.output_sha256,e.output_bytes,
