@@ -11,7 +11,8 @@ class PerformanceMonitorTests(unittest.TestCase):
         self.assertFalse(metrics["gpu"]["available"])
         self.assertIsNone(metrics["context"]["remaining_tokens"])
         rendered = format_performance_report(metrics)
-        self.assertIn("Remaining model context: Unknown", rendered)
+        self.assertIn("Remaining model context (latest request): Unknown", rendered)
+        self.assertIn("Context scope: latest_request", rendered)
         self.assertIn("Tokens recorded: 0 total", rendered)
 
     def test_context_remaining_requires_known_valid_limit_and_usage(self):
