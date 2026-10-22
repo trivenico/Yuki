@@ -104,6 +104,10 @@ class ConversationStore:
                 PRIMARY KEY (session_id, turn_index)
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_yuki_turns_updated ON yuki_conversation_turns(updated_at)")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError as exc:
+            raise RuntimeError("Cannot restrict permissions on the conversation database.") from exc
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=3)
@@ -166,7 +170,7 @@ def _with_history(message: str, history: list[tuple[str, str]]) -> str:
         lines.append("User: " + user_text)
         lines.append("Yuki: " + assistant_text)
     lines.append("Current user message: " + message)
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def _jsonrpc_error(request_id, code: int, message: str) -> dict[str, Any]:
