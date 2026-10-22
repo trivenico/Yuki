@@ -22,6 +22,7 @@ class ProposalStagingTests(unittest.TestCase):
                              "def test_example(): pass\n")
             self.assertEqual(active.read_text(encoding="utf-8"), "print('live')\n")
             self.assertTrue((staged / "PROPOSAL.txt").is_file())
+            self.assertTrue((staged / "MANIFEST.json").is_file())
 
     def test_rejects_missing_workspace(self):
         with tempfile.TemporaryDirectory() as directory:

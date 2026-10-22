@@ -46,6 +46,7 @@ from core.device_diagnostics import discover_devices, format_device_report
 from core.token_usage import TokenUsageTracker
 from core.self_evolution import SelfEvolutionInputError, load_and_validate_proposal, self_improvement_status
 from core.proposal_staging import ProposalStagingError, stage_change_proposal
+from core.staged_integrity import StagedIntegrityError, verify_staged_workspace
 from core.proposal_test_runner import ProposalTestRunError, run_proposal_checks
 from core.proposal_test_evidence import ProposalTestEvidenceError, ProposalTestEvidenceStore
 from core.sandbox_policy import default_sandbox_policy
@@ -557,9 +558,12 @@ def main():
                 staged_path = parent_dir / staged_name
                 if staged_path.is_symlink() or not staged_path.is_dir():
                     raise ProposalTestRunError("Staged workspace was not found as a regular managed directory.")
+                verified_digest = verify_staged_workspace(staged_path)
                 metadata = (staged_path / "PROPOSAL.txt").read_text(encoding="utf-8")
                 digest_line = next((line for line in metadata.splitlines() if line.startswith("SHA-256: ")), "")
                 proposal_digest = digest_line.removeprefix("SHA-256: ").strip()
+                if proposal_digest != verified_digest:
+                    raise ProposalTestRunError("Proposal metadata digest does not match staged file contents.")
                 if len(proposal_digest) != 64 or any(char not in "0123456789abcdef" for char in proposal_digest.lower()):
                     raise ProposalTestRunError("Staged proposal metadata has no valid SHA-256 digest.")
                 results = run_proposal_checks(
@@ -582,7 +586,7 @@ def main():
                 passed = bool(results) and all(result.returncode == 0 and not result.timed_out and result.container_cleanup_attempted for result in results)
                 print(f"Yuki > Supervised checks {'passed' if passed else 'failed'}; evidence run ID: {run_id}")
                 print("This does not apply the proposal or authorize a merge/deployment.")
-            except (ProposalTestRunError, ProposalTestEvidenceError, OSError, ValueError) as exc:
+            except (ProposalTestRunError, ProposalTestEvidenceError, StagedIntegrityError, OSError, ValueError) as exc:
                 print(f"Yuki > Supervised test run refused or incomplete: {exc}")
         elif command.startswith("/self-improvement stage "):
             relative_path = command[len("/self-improvement stage "):].strip()
