@@ -64,9 +64,9 @@ def verify_staged_workspace(workspace: str | Path) -> str:
         raise StagedIntegrityError("Candidate has unexpected or missing files.")
     for item in sorted(files, key=lambda value: value["path"].casefold()):
         proposal_digest.update(item["path"].encode("utf-8"))
-        proposal_digest.update(b"\\0")
+        proposal_digest.update(b"\0")
         proposal_digest.update((root / item["path"]).read_bytes())
-        proposal_digest.update(b"\\0")
+        proposal_digest.update(b"\0")
     if proposal_digest.hexdigest() != proposal_sha.lower():
         raise StagedIntegrityError("Candidate proposal digest does not match.")
     return proposal_sha.lower()
