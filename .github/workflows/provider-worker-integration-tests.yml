@@ -1,0 +1,30 @@
+name: Yuki provider worker integration tests
+
+on:
+  pull_request:
+    paths:
+      - "yuki_agent_runtime.py"
+      - "yuki_agent_worker.py"
+      - "yuki_provider_worker.py"
+      - "yuki_providers.py"
+      - "providers/**"
+      - "tests/test_yuki_provider_worker.py"
+      - "tests/test_yuki_agent_worker.py"
+      - "tests/test_yuki_agent_runtime.py"
+      - "docs/PHASE71_PROVIDER_WORKER_INTEGRATION.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run provider-worker integration tests
+        run: python -m unittest discover -s tests -p 'test_yuki_provider_worker.py'
