@@ -73,7 +73,6 @@ class HybridProviderTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
         self.assertEqual(json.loads(request.data)["prompt"], "hi")
 
-
     def test_ollama_availability_requires_installed_model(self):
         provider = OllamaProvider(model="local-model")
         with patch("urllib.request.urlopen", return_value=Response(
@@ -90,12 +89,15 @@ class HybridProviderTests(unittest.TestCase):
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model")
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("urllib.request.urlopen", return_value=Response(
-                json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-            )) as mocked:
+            with patch("urllib.request.build_opener") as mocked_builder:
+                mocked_builder.return_value.open.return_value = Response(
+                    json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
+                )
                 self.assertTrue(provider.is_available())
                 self.assertEqual(provider.generate("question"), "answer")
-        self.assertIn("Bearer test-secret", mocked.call_args.args[0].get_header("Authorization"))
+        request = mocked_builder.return_value.open.call_args.args[0]
+        self.assertIn("Bearer test-secret", request.get_header("Authorization"))
+        self.assertEqual(mocked_builder.return_value.open.call_args.kwargs["timeout"], provider.timeout)
 
     def test_cloud_provider_missing_key_fails_closed(self):
         provider = OpenAICompatibleProvider("cloud-model", api_key_env="YUKI_TEST_MISSING_KEY")
