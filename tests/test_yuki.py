@@ -108,7 +108,8 @@ class ProviderManagerTests(unittest.TestCase):
         manager = ProviderManager()
         self.assertEqual(manager.select("openai").split(" is registered")[0], "openai")
         self.assertEqual(manager.current().name, "mock")
-\n    def test_dashboard_reports_core_status(self):
+
+    def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
