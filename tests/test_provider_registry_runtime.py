@@ -13,7 +13,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertFalse(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
-        self.assertFalse(entries["gemini"]["implemented"])
+        self.assertTrue(entries["gemini"]["implemented"])
 
     def test_default_mock_adapter_is_constructible(self):
         self.assertIsInstance(ProviderManager(environ={}).create_selected_adapter(), MockProvider)
