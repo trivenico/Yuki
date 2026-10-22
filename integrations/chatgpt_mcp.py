@@ -10,7 +10,8 @@ import json
 import os
 import secrets
 import time
-from collections import deque
+from collections import OrderedDict, deque
+from threading import Lock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
@@ -23,7 +24,31 @@ MAX_BODY_BYTES = 64 * 1024
 MAX_PROMPT_CHARS = 12_000
 RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
-_RATE_EVENTS: dict[str, deque[float]] = {}
+MAX_RATE_LIMIT_BUCKETS = 4096
+MAX_BATCH_REQUESTS = 10
+REQUEST_READ_TIMEOUT_SECONDS = 10
+_RATE_EVENTS: OrderedDict[str, deque[float]] = OrderedDict()
+_RATE_LOCK = Lock()
+
+
+def _rate_limit_exceeded(peer: str, now: float | None = None) -> bool:
+    """Thread-safe bounded per-peer rate limiter; evicts stale and oldest buckets."""
+    current = time.monotonic() if now is None else now
+    with _RATE_LOCK:
+        events = _RATE_EVENTS.get(peer)
+        if events is None:
+            events = deque()
+            _RATE_EVENTS[peer] = events
+        else:
+            _RATE_EVENTS.move_to_end(peer)
+        while events and current - events[0] >= RATE_LIMIT_WINDOW_SECONDS:
+            events.popleft()
+        if len(events) >= RATE_LIMIT_REQUESTS:
+            return True
+        events.append(current)
+        while len(_RATE_EVENTS) > MAX_RATE_LIMIT_BUCKETS:
+            _RATE_EVENTS.popitem(last=False)
+        return False
 
 
 class BridgeConfigError(RuntimeError):
@@ -65,8 +90,14 @@ def _handle_rpc(message: Any, agent: YukiAgent, providers: ProviderManager) -> d
         return _jsonrpc_error(None, -32600, "Invalid JSON-RPC request.")
     method = message.get("method")
     request_id = message.get("id")
-    if not isinstance(method, str):
+    if not isinstance(method, str) or not method:
         return _jsonrpc_error(request_id, -32600, "Method is required.")
+    if "id" in message and not (
+        request_id is None
+        or (isinstance(request_id, str) and len(request_id) <= 128)
+        or (isinstance(request_id, int) and not isinstance(request_id, bool))
+    ):
+        return _jsonrpc_error(None, -32600, "Invalid JSON-RPC request id.")
     if method == "notifications/initialized":
         return None
     if method == "initialize":
@@ -174,6 +205,7 @@ def create_handler(agent=None, providers=None, *, token=None):
                 self._send_json(404, {"error": "not found"})
 
         def do_POST(self):
+            self.connection.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
             if urlsplit(self.path).path != "/mcp":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -186,15 +218,15 @@ def create_handler(agent=None, providers=None, *, token=None):
             if content_type != "application/json":
                 self._send_json(415, {"error": "content type must be application/json"})
                 return
+            accept = self.headers.get("Accept", "")
+            accepted_types = {item.split(";", 1)[0].strip().lower() for item in accept.split(",")}
+            if not {"application/json", "text/event-stream"}.issubset(accepted_types):
+                self._send_json(406, {"error": "Accept must include application/json and text/event-stream"})
+                return
             peer = self.client_address[0]
-            now = time.monotonic()
-            events = _RATE_EVENTS.setdefault(peer, deque())
-            while events and now - events[0] > RATE_LIMIT_WINDOW_SECONDS:
-                events.popleft()
-            if len(events) >= RATE_LIMIT_REQUESTS:
+            if _rate_limit_exceeded(peer):
                 self._send_json(429, {"error": "rate limit exceeded"})
                 return
-            events.append(now)
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -209,6 +241,9 @@ def create_handler(agent=None, providers=None, *, token=None):
                 self._send_json(400, {"error": "invalid JSON"})
                 return
             if isinstance(body, list):
+                if not body or len(body) > MAX_BATCH_REQUESTS:
+                    self._send_json(400, {"error": "batch must contain between 1 and 10 requests"})
+                    return
                 responses = [_handle_rpc(item, selected_agent, manager) for item in body]
                 responses = [item for item in responses if item is not None]
                 if not responses:
