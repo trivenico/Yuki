@@ -73,7 +73,7 @@ class ProviderManagerTests(unittest.TestCase):
     def test_only_implemented_provider_can_be_selected(self):
         manager = ProviderManager()
         self.assertEqual(manager.select("mock"), "Selected provider: mock")
-        result = manager.select("openai")
+        result = manager.select("anthropic")
         self.assertIn("not implemented", result)
         self.assertEqual(manager.current().name, "mock")
 
@@ -85,7 +85,7 @@ class ProviderManagerTests(unittest.TestCase):
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
-        result = handle_command("/provider select openai", [], [], agent, manager,
+        result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
         self.assertIsInstance(agent.provider, MockProvider)
