@@ -83,7 +83,21 @@ ChatGPT custom MCP availability and authentication options depend on your accoun
 
 Official instructions: [Connecting custom MCP servers in ChatGPT](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt).
 
-## 5. Security and limitations
+## 5. Optional conversation memory
+
+Conversation memory is disabled by default. To enable bounded session history, configure the following environment variables before starting the bridge:
+
+```sh
+export YUKI_MCP_MEMORY_ENABLED=true
+export YUKI_MCP_MEMORY_DB=./yuki_workspace/chat_history.sqlite3
+export YUKI_MCP_MEMORY_RETENTION_DAYS=7
+```
+
+The retention value must be between 1 and 90 days. The SQLite store retains at most 8 turns per session and 1,000 sessions by default, prunes expired sessions, and offers the `yuki_delete_session` tool. When memory is disabled, the bridge does not create a database and does not retain conversation history.
+
+Pass the same opaque `session_id` on each `yuki_chat` call to reuse a session. Use a random, unguessable ID per user/conversation and never reuse one across different users. This bridge does not yet authenticate a user identity or bind session IDs to ChatGPT accounts; therefore memory should remain disabled for multi-user public deployments until identity-bound session authorization is implemented. SQLite file permissions and encrypted storage/backups remain deployment responsibilities. Deleting a session deletes the rows from the active database, not copies in backups.
+
+## 6. Security and limitations
 
 - Do not paste the bearer token into a prompt or commit it to the repository.
 - The bridge has no OAuth authorization server yet. Static bearer authentication is intentionally simple; use only if the ChatGPT connection method you choose supports it. MCP POST requests must send `Accept: application/json, text/event-stream`.

@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from integrations.chatgpt_mcp import BridgeConfigError, _load_config, create_handler
+from integrations.chatgpt_mcp import BridgeConfigError, ConversationStore, _load_config, create_handler
 from providers.mock import MockProvider
 from yuki_agent import YukiAgent
 from yuki_providers import ProviderManager
@@ -79,7 +79,7 @@ class MCPBridgeTests(unittest.TestCase):
         with self.request("/mcp", payload, self.token) as response:
             result = json.loads(response.read())
         self.assertEqual({item["name"] for item in result["result"]["tools"]},
-                         {"yuki_chat", "yuki_status"})
+                         {"yuki_chat", "yuki_status", "yuki_delete_session"})
 
     def test_prompt_length_is_bounded(self):
         payload = {
@@ -106,6 +106,29 @@ class MCPBridgeTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             self.request("/mcp", payload, self.token)
         self.assertEqual(error.exception.code, 400)
+
+    def test_conversation_store_is_bounded_and_deletable(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ConversationStore(os.path.join(temp_dir, "history.sqlite3"),
+                                      retention_seconds=3600, max_sessions=3, max_turns=2)
+            store.append("session_123", "first", "one")
+            store.append("session_123", "second", "two")
+            store.append("session_123", "third", "three")
+            self.assertEqual(store.history("session_123"), [("second", "two"), ("third", "three")])
+            store.delete("session_123")
+            self.assertEqual(store.history("session_123"), [])
+
+    def test_memory_disabled_delete_tool_does_not_claim_data_was_deleted(self):
+        payload = {
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "yuki_delete_session", "arguments": {"session_id": "session_123"}},
+        }
+        with self.request("/mcp", payload, self.token) as response:
+            result = json.loads(response.read())
+        self.assertTrue(result["result"]["isError"])
+        self.assertIn("memory is disabled", result["result"]["content"][0]["text"].lower())
 
     def test_invalid_remote_binding_configuration_fails_closed(self):
         with self.assertRaises(BridgeConfigError):
