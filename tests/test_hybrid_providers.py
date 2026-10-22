@@ -104,6 +104,23 @@ class HybridProviderTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not configured"):
                 provider.generate("question")
 
+    def test_context_budget_tracks_the_provider_used_for_latest_request(self):
+        local, cloud = FakeProvider("local"), FakeProvider("cloud")
+        local.last_context_budget = {
+            "limit_tokens": 8192, "used_tokens": 100, "remaining_tokens": 8092,
+            "estimated": False, "available": True,
+        }
+        cloud.last_context_budget = {
+            "limit_tokens": 16384, "used_tokens": 200, "remaining_tokens": 16184,
+            "estimated": True, "available": True,
+        }
+        router = HybridProvider(local, cloud, cloud_tasks={"public_task"})
+        router.generate("private")
+        self.assertEqual(router.last_context_budget["limit_tokens"], 8192)
+        router.generate_for("public_task", "public")
+        self.assertEqual(router.last_context_budget["limit_tokens"], 16384)
+        self.assertTrue(router.last_context_budget["estimated"])
+
 
 if __name__ == "__main__":
     unittest.main()

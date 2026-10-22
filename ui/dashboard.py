@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-def run_dashboard(agent=None, *, command_handler=None, token_usage=None, reconciliation=None, operator="local-owner") -> None:
+def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provider=None, reconciliation=None, operator="local-owner") -> None:
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Vertical
@@ -33,7 +33,13 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, reconci
         def _refresh_performance(self):
             try:
                 summary = token_usage.summary() if token_usage is not None else None
-                report = format_performance_report(collect_performance(token_summary=summary))
+                provider_state = vars(provider) if provider is not None else {}
+                context_data = provider_state.get("last_context_budget")
+                if provider is not None and isinstance(getattr(type(provider), "last_context_budget", None), property):
+                    context_data = provider.last_context_budget
+                report = format_performance_report(collect_performance(
+                    token_summary=summary, context_budget_data=context_data
+                ))
                 label = self.query_one("#performance_status", Label)
                 label.update(report.replace("\\n", "  ·  "))
             except Exception:

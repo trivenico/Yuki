@@ -29,6 +29,17 @@ class HybridProvider:
         self.local_provider = local_provider
         self.cloud_provider = cloud_provider
         self.cloud_tasks = frozenset(normalized)
+        self._last_provider = local_provider
+
+    @property
+    def last_context_budget(self):
+        """Expose the most recently selected provider's context budget, if available."""
+        try:
+            provider_state = vars(self._last_provider)
+        except TypeError:
+            return None
+        budget = provider_state.get("last_context_budget")
+        return budget if isinstance(budget, dict) else None
 
     def is_available(self):
         try:
@@ -52,10 +63,12 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
+            self._last_provider = self.cloud_provider
             return self.cloud_provider.generate(prompt)
         try:
             if self.local_provider.is_available() is not True:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
+        self._last_provider = self.local_provider
         return self.local_provider.generate(prompt)
