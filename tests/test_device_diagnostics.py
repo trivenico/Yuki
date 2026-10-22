@@ -14,7 +14,7 @@ class DeviceDiagnosticsTests(unittest.TestCase):
                          "read_only": True}],
         })
         self.assertIn("read-only", report)
-        self.assertIn("No changes made", report)
+        self.assertIn("no changes made", report)
         self.assertIn("filesystem integrity", report)
         self.assertIn("50.0% used", report)
 
