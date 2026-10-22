@@ -11,6 +11,10 @@ class TaskStoreTests(unittest.TestCase):
         self.store = TaskStore(Path(self.temp.name) / "tasks.sqlite3")
 
     def tearDown(self):
+        # Close every connection before deleting the temporary directory; Windows
+        # does not permit removal of an open SQLite database file.
+        with self.store._session():
+            pass
         self.temp.cleanup()
 
     def test_approval_is_required_by_default(self):
