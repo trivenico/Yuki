@@ -168,7 +168,8 @@ def format_performance_report(metrics: dict[str, Any]) -> str:
         f"({tokens.get('input_tokens', 0)} input / {tokens.get('output_tokens', 0)} output)",
         f"Token events: {tokens.get('exact_events', 0)} exact, "
         f"{tokens.get('estimated_events', 0)} estimated",
-        f"Remaining model context: {context.get('remaining_tokens') if context.get('remaining_tokens') is not None else 'Unknown'}",
+        f"Remaining model context (latest request): {context.get('remaining_tokens') if context.get('remaining_tokens') is not None else 'Unknown'}",
+        f"Context scope: {context.get('scope', 'unknown')}",
         f"Context: {context.get('detail', 'Unknown')}",
         "Note: token totals include only events recorded by Yuki; they are not a provider-wide quota.",
     ])

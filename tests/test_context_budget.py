@@ -29,6 +29,12 @@ class ContextBudgetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             context_budget(limit_tokens=10, used_tokens=5, estimated="false")
 
+    def test_budget_explicitly_identifies_latest_request_scope(self):
+        known = context_budget(limit_tokens=8192, used_tokens=100)
+        unknown = context_budget(limit_tokens=None, used_tokens=None)
+        self.assertEqual(known["scope"], "latest_request")
+        self.assertEqual(unknown["scope"], "latest_request")
+
 
 if __name__ == "__main__":
     unittest.main()
