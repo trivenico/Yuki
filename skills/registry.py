@@ -47,6 +47,7 @@ from .messaging_expanded import MessagingExpandedSkill
 from .tiered_autonomy_skill import TieredAutonomySkill
 from companion.identity_manager import IdentityManager
 from skills.role_skill import RoleSkill
+from skills.github_push import GitHubPushSkill
 from core.plugin_loader import PluginLoader
 
 
@@ -81,8 +82,11 @@ class SkillRegistry:
 
     @classmethod
     def defaults(cls, workspace, *, gmail_enabled=False, gmail_credentials="credentials.json",
-                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None):
+                 gmail_token="token.json", web_allowed_hosts=(), plugin_discovery_enabled=False, trusted_plugin_modules=None, github_allowed_roots=None):
         root = Path(workspace).expanduser().resolve()
+        configured_github_roots = [root]
+        if github_allowed_roots:
+            configured_github_roots.extend(Path(item).expanduser().resolve() for item in github_allowed_roots)
         registry = cls((
             TimeSkill(), SystemSkill(), FileSkill(root), InterviewSkill(), CourseCoachSkill(), WebSkill(allowed_hosts=web_allowed_hosts),
             GmailReadSkill(enabled=gmail_enabled, credentials_path=gmail_credentials, token_path=gmail_token),
@@ -97,7 +101,7 @@ class SkillRegistry:
             SmartHomeFullSkill(), DeviceScannerSkill(), CarIntegrationSkill(), CanvasWorkspaceSkill(root),
             FinancialManagerSkill(root), HealthAgentSkill(root), HomeSecuritySkill(root),
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
-            RoleSkill(),
+            RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots),
         ))
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
