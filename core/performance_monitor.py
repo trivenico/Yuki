@@ -51,14 +51,22 @@ def _gpu_metrics() -> dict[str, Any]:
             if len(parts) != 4:
                 continue
             try:
-                devices.append({
-                    "name": parts[0][:120],
-                    "utilization_percent": int(parts[1]),
-                    "memory_used_mib": int(parts[2]),
-                    "memory_total_mib": int(parts[3]),
-                })
+                utilization = int(parts[1])
+                memory_used = int(parts[2])
+                memory_total = int(parts[3])
             except ValueError:
+                # nvidia-smi emits values such as [N/A] when a metric is unavailable.
                 continue
+            # Driver sentinel values must never be presented as real measurements.
+            if not (0 <= utilization <= 100 and memory_used >= 0 and memory_total > 0
+                    and memory_used <= memory_total):
+                continue
+            devices.append({
+                "name": parts[0][:120] or "Unknown NVIDIA GPU",
+                "utilization_percent": utilization,
+                "memory_used_mib": memory_used,
+                "memory_total_mib": memory_total,
+            })
         if not devices:
             return {"available": False, "detail": "No valid NVIDIA telemetry was returned."}
         return {"available": True, "devices": devices, "detail": "NVIDIA GPU telemetry"}
@@ -92,17 +100,18 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
                    "remaining_tokens": context_limit - context_used,
                    "detail": "Derived from explicitly supplied model context metadata."}
 
+    safe_token_summary = token_summary if isinstance(token_summary, dict) else {
+        "calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        "exact_events": 0, "estimated_events": 0, "alerts": [],
+        "detail": "No valid token usage summary is available."
+    }
     return {
         "platform": platform.system(),
         "cpu": cpu,
         "memory": memory or {"total_bytes": None, "used_bytes": None,
                              "available_bytes": None, "percent": None, "source": "unavailable"},
         "gpu": _gpu_metrics(),
-        "tokens": token_summary or {
-            "calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
-            "exact_events": 0, "estimated_events": 0, "alerts": [],
-            "detail": "No token usage has been recorded for this session yet."
-        },
+        "tokens": safe_token_summary,
         "context": context,
     }
 
