@@ -391,7 +391,7 @@ def main():
                 if not items:
                     print("Yuki > No executions currently require reconciliation.")
                 for item in items:
-                    print(f"KEY={item.idempotency_key} STATE={item.state} ACTION={item.action}")
+                    print(f"KEY={item.idempotency_key} STATE={item.state} ACTION_SHA256={item.action_hash} UPDATED={item.updated_at}")
             except Exception as exc:
                 print(f"Yuki > Reconciliation listing unavailable: {type(exc).__name__}")
         elif command.startswith("/reconcile resolve "):
