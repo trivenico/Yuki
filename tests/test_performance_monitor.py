@@ -28,6 +28,27 @@ class PerformanceMonitorTests(unittest.TestCase):
         self.assertEqual(format_bytes(None), "Unknown")
         self.assertEqual(format_bytes(1024), "1.0 KiB")
 
+    def test_invalid_nvidia_sentinel_metrics_are_not_reported_as_real_gpu_data(self):
+        class Result:
+            returncode = 0
+            stdout = "GPU A, -1, 100, 1000\nGPU B, 45, 200, 1000\nGPU C, 101, 10, 100\n"
+
+        with (
+            patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("core.performance_monitor.subprocess.run", return_value=Result()),
+        ):
+            metrics = collect_performance()
+        self.assertTrue(metrics["gpu"]["available"])
+        self.assertEqual(len(metrics["gpu"]["devices"]), 1)
+        self.assertEqual(metrics["gpu"]["devices"][0]["name"], "GPU B")
+        self.assertEqual(metrics["gpu"]["devices"][0]["utilization_percent"], 45)
+
+    def test_malformed_token_summary_falls_back_to_explicit_unknown_summary(self):
+        with patch("core.performance_monitor.shutil.which", return_value=None):
+            metrics = collect_performance(token_summary="not-a-summary")
+        self.assertIsInstance(metrics["tokens"], dict)
+        self.assertIn("No valid token usage summary", metrics["tokens"]["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
