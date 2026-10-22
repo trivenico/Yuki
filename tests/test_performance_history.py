@@ -1,6 +1,6 @@
 import unittest
 
-from core.performance_history import PerformanceHistory
+from core.performance_history import PerformanceHistory, format_performance_history
 
 
 class PerformanceHistoryTests(unittest.TestCase):
@@ -63,6 +63,17 @@ class PerformanceHistoryTests(unittest.TestCase):
         self.assertIsNone(sample["cpu_percent"])
         self.assertIsNone(sample["ram_percent"])
         self.assertIsNone(sample["remaining_context_tokens"])
+
+    def test_history_report_renders_unknown_metrics_without_zero_fallback(self):
+        self.history.record({"cpu": {}, "memory": {}, "gpu": {}, "tokens": {}, "context": {}})
+        report = format_performance_history(self.history)
+        self.assertIn("CPU Unknown", report)
+        self.assertIn("RAM Unknown", report)
+        self.assertIn("GPU Unavailable", report)
+        self.assertIn("latest-request context remaining Unknown", report)
+
+    def test_history_report_handles_empty_buffer(self):
+        self.assertIn("No performance history yet", format_performance_history(self.history))
 
 
 if __name__ == "__main__":
