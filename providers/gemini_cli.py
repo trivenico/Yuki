@@ -15,7 +15,25 @@ from providers.base import BaseProvider
 
 
 class GeminiCLIProvider(BaseProvider):
-    """Invoke Gemini CLI with a deadline and disk-backed, bounded output capture."""
+    """Invoke Gemini CLI with bounded I/O and a minimal child-process environment."""
+
+    # Keep only variables required to locate the executable, resolve the user's
+    # CLI auth/config files, use temporary directories, and validate TLS. In
+    # particular, do not forward arbitrary application secrets to child tools.
+    _ENV_ALLOWLIST = frozenset({
+        "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+        "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "TEMP", "TMP", "TMPDIR",
+        "SYSTEMROOT", "WINDIR", "PATHEXT", "LANG", "LC_ALL", "TERM",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+        "NODE_EXTRA_CA_CERTS",
+    })
+
+    @classmethod
+    def _cli_environment(cls, source=None):
+        """Return a copy containing only the documented runtime essentials."""
+        source = os.environ if source is None else source
+        return {key: value for key, value in source.items()
+                if key.upper() in cls._ENV_ALLOWLIST and isinstance(value, str)}
 
     def __init__(self, *, executable="gemini", timeout=45, max_prompt_chars=20000,
                  max_output_chars=50000):
@@ -79,7 +97,7 @@ class GeminiCLIProvider(BaseProvider):
                     stdout=stdout_file,
                     stderr=stderr_file,
                     shell=False,
-                    env=os.environ.copy(),
+                    env=self._cli_environment(),
                     **kwargs,
                 )
             except OSError as exc:
