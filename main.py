@@ -268,6 +268,9 @@ def main():
             "firewall_block": lambda ip, seconds: firewall.block_temporary(ip, seconds=seconds),
             "firewall_remove": lambda rule_id: firewall.remove(rule_id),
             "packet_capture": run_packet_capture,
+            "evolution_record": lambda category, summary: evolution.record(category, summary),
+            "evolution_run": lambda: evolution.run_cycle(),
+            "evolution_review": lambda proposal_id, decision: evolution.review(proposal_id, decision),
         },
         actor="local-owner",
         session_id="cli-session",
@@ -479,16 +482,22 @@ def main():
                 continue
             category, summary = payload.split("|", 1)
             try:
-                item = evolution.record(category.strip(), summary.strip())
-                print(f"Yuki > Recorded local evolution observation {item['id']}; secret-like strings are redacted.")
+                outcome = durable_operations.execute(
+                    "evolution_record", {"category": category.strip(), "summary": summary.strip()}
+                )
+                if outcome.ok:
+                    print(f"Yuki > Recorded local evolution observation {outcome.result['id']}; secret-like strings are redacted.")
+                else:
+                    print(f"Yuki > Observation was not recorded: {outcome.status}")
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Observation was not recorded: {exc}")
         elif command == "/evolution run":
-            if not _confirm("evolution:run", "Analyze explicitly recorded local observations and create review proposals. No actions or code changes will run."):
-                print("Yuki > Evolution cycle cancelled.")
-                continue
             try:
-                report = evolution.run_cycle()
+                outcome = durable_operations.execute("evolution_run", {})
+                if not outcome.ok:
+                    print(f"Yuki > Evolution cycle blocked: {outcome.status}")
+                    continue
+                report = outcome.result
                 print(f"Yuki > Reviewed {report['observations_reviewed']} observations; {len(report['proposals'])} proposals await review.")
                 for proposal in report["proposals"]:
                     print(f"- {proposal['id']} [{proposal['kind']}] {proposal['title']}: {proposal['detail']}")
@@ -502,11 +511,14 @@ def main():
                 continue
             proposal_id, decision = parts[2], parts[3].strip()
             decision = "accepted_for_manual_followup" if decision == "accept" else "rejected"
-            if not _confirm("evolution:review", f"Record review decision {decision!r} for proposal {proposal_id}."):
-                print("Yuki > Proposal review cancelled.")
-                continue
             try:
-                print("Yuki > " + str(evolution.review(proposal_id, decision)))
+                outcome = durable_operations.execute(
+                    "evolution_review", {"proposal_id": proposal_id, "decision": decision}
+                )
+                if outcome.ok:
+                    print("Yuki > " + str(outcome.result))
+                else:
+                    print(f"Yuki > Proposal review blocked: {outcome.status}")
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Proposal was not changed: {exc}")
         elif command == "/voice status":
