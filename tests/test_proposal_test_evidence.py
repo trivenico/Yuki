@@ -25,12 +25,20 @@ class ProposalTestEvidenceTests(unittest.TestCase):
         self.assertEqual(records[0]["proposal_sha256"], "c" * 64)
         self.assertNotIn("stdout", records[0]["results"][0])
         self.assertEqual(records[0]["previous_hash"], "0" * 64)
+        self.assertTrue(self.store.verify_chain())
 
     def test_evidence_is_append_only(self):
         self.store.append(proposal_sha256="c" * 64, workspace_name="yuki-improvement-demo", results=[self._result()])
         with self.assertRaises(Exception):
             with self.store._connect() as db:
                 db.execute("DELETE FROM proposal_test_evidence")
+
+    def test_detects_payload_tampering(self):
+        self.store.append(proposal_sha256="c" * 64, workspace_name="yuki-improvement-demo", results=[self._result()])
+        with self.store._connect() as db:
+            db.execute("DROP TRIGGER proposal_test_evidence_no_update")
+            db.execute("UPDATE proposal_test_evidence SET result_json='[]' WHERE id=1")
+        self.assertFalse(self.store.verify_chain())
 
     def test_rejects_invalid_digest_and_workspace(self):
         with self.assertRaises(ProposalTestEvidenceError):
