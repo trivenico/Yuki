@@ -255,6 +255,21 @@ def main():
                 print(f"Yuki > {response.message}")
                 if response.ok and response.data is not None:
                     print(response.data)
+            elif command.startswith("/research "):
+                topic = command[len("/research "):].strip()
+                res = agent.run_skill("deep_research", topic)
+                print(f"Yuki > {res.message}")
+            elif command.startswith("/delegate "):
+                goal = command[len("/delegate "):].strip()
+                res = agent.run_skill("agent_delegator", goal)
+                print(f"Yuki > {res.message}")
+            elif command.startswith("/gateway "):
+                payload = command[len("/gateway "):].strip()
+                from core.channel_gateway import ChannelGateway, ChannelMessage
+                gw = ChannelGateway(agent=agent)
+                msg = ChannelMessage(channel="cli_gateway", user_id="user", content=payload)
+                out = gw.handle_message(msg)
+                print(f"Yuki > {out['response']}")
             elif command.startswith("/stitch create "):
                 title = command[len("/stitch create "):].strip()
                 import json
