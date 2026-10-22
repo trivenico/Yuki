@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -54,8 +55,17 @@ class TaskStore:
         connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
         return connection
 
+    @contextmanager
+    def _session(self):
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     def _initialize(self):
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS agent_tasks (
@@ -147,7 +157,7 @@ class TaskStore:
         created = _stamp(now)
         deadline = _stamp(now + timedelta(seconds=deadline_seconds)) if deadline_seconds else None
         task_id = str(uuid.uuid4())
-        with self._connect() as db:
+        with self._session() as db:
             if idempotency_key is not None:
                 existing = db.execute(
                     "SELECT * FROM agent_tasks WHERE idempotency_key=?", (idempotency_key,)
@@ -250,7 +260,7 @@ class TaskStore:
                 db.execute("UPDATE agent_tasks SET status='failed',updated_at=?,error=?,worker_id=NULL,lease_expires_at=NULL WHERE id=?",
                            (now, "task deadline expired", task_id))
                 self._event(db, task_id, "deadline_expired")
-                raise ValueError("task deadline expired")
+                return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
             db.execute("UPDATE agent_tasks SET lease_expires_at=?,updated_at=? WHERE id=?", (lease, now, task_id))
             self._event(db, task_id, "heartbeat", {"worker_id": worker_id.strip()})
             return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
