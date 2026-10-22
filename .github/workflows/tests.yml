@@ -22,5 +22,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: python -m pip install --requirement requirements.txt
+      - name: Compile all Python files
+        run: python -m compileall -q .
+      - name: Run static repository audit
+        run: python -m tools.repo_audit .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
