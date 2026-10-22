@@ -18,6 +18,27 @@ class GeminiCLIProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "character limit"):
             provider.generate("four")
 
+
+    def test_child_environment_excludes_unrelated_application_secrets(self):
+        source = {
+            "PATH": "/usr/bin",
+            "HOME": "/home/tester",
+            "USERPROFILE": "C:\\\\Users\\\\tester",
+            "OPENAI_API_KEY": "do-not-forward",
+            "AWS_SECRET_ACCESS_KEY": "do-not-forward",
+            "DATABASE_URL": "do-not-forward",
+            "GEMINI_API_KEY": "do-not-forward",
+            "NODE_EXTRA_CA_CERTS": "/tmp/custom-ca.pem",
+        }
+        env = GeminiCLIProvider._cli_environment(source)
+        self.assertEqual(env["PATH"], "/usr/bin")
+        self.assertEqual(env["HOME"], "/home/tester")
+        self.assertEqual(env["NODE_EXTRA_CA_CERTS"], "/tmp/custom-ca.pem")
+        self.assertNotIn("OPENAI_API_KEY", env)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+        self.assertNotIn("DATABASE_URL", env)
+        self.assertNotIn("GEMINI_API_KEY", env)
+
     def test_availability_checks_installation(self):
         with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"):
             self.assertTrue(GeminiCLIProvider().is_available())
