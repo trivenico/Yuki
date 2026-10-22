@@ -131,11 +131,13 @@ def registry_from_catalog(catalog: Iterable[Mapping]) -> CapabilityRegistry:
         caps = item.get("capabilities", [])
         if not isinstance(caps, list) or any(not isinstance(cap, str) for cap in caps):
             raise ValueError(f"invalid capabilities for provider {name}")
-        # Catalog capabilities are a subset of this router's deliberately narrow
-        # contract. Unsupported claims are rejected rather than inferred.
+        # Only allow capabilities understood by this router. Catalog hints such
+        # as "multimodal_model_dependent" are descriptive, not guaranteed adapter
+        # capabilities, so they are intentionally not routable requirements.
+        safe_caps = frozenset(cap for cap in caps if cap in _ALLOWED_CAPABILITIES)
         entries.append(ProviderCapabilities(
             provider=name.strip().lower(),
-            capabilities=frozenset(caps),
+            capabilities=safe_caps,
             implemented=item.get("implemented") is True,
             ready=item.get("ready") is True,
             privacy=str(item.get("privacy", "unknown")),
