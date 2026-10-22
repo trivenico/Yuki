@@ -1,6 +1,7 @@
 """Append-only evidence for supervised self-improvement test runs."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -41,10 +42,14 @@ class ProposalTestEvidenceStore:
                 BEFORE DELETE ON proposal_test_evidence
                 BEGIN SELECT RAISE(ABORT, 'test evidence is append-only'); END""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(str(self.path), timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            yield db
+        finally:
+            db.close()
 
     def append(self, *, proposal_sha256: str, workspace_name: str,
                results: list[dict[str, Any]]) -> str:
@@ -94,8 +99,6 @@ class ProposalTestEvidenceStore:
                 if db.in_transaction:
                     db.execute("ROLLBACK")
                 raise
-            finally:
-                db.close()
         return run_id
 
     def verify_chain(self) -> bool:
