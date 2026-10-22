@@ -20,18 +20,25 @@ class HighRiskCLIConfirmationTests(unittest.TestCase):
         }
         found = {}
         for node in ast.walk(main):
-            if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+            if not isinstance(node, ast.If):
                 continue
             test = node.test
-            if not isinstance(test.left, ast.Name) or test.left.id != "command":
-                continue
-            literals = [
-                item.value for item in test.comparators
-                if isinstance(item, ast.Constant) and isinstance(item.value, str)
-            ]
-            for literal in literals:
-                if literal in expected:
-                    found[literal] = node.body
+            literal = None
+            if (
+                isinstance(test, ast.Call) and isinstance(test.func, ast.Attribute)
+                and test.func.attr == "startswith" and isinstance(test.func.value, ast.Name)
+                and test.func.value.id == "command" and test.args
+                and isinstance(test.args[0], ast.Constant) and isinstance(test.args[0].value, str)
+            ):
+                literal = test.args[0].value
+            elif isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "command":
+                literal = next(
+                    (item.value for item in test.comparators
+                     if isinstance(item, ast.Constant) and isinstance(item.value, str)),
+                    None,
+                )
+            if literal in expected:
+                found[literal] = node.body
 
         self.assertEqual(set(found), set(expected))
         for command, body in found.items():
