@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import closing
 import hashlib, json, secrets, sqlite3
 from pathlib import Path
 from typing import Callable, FrozenSet
@@ -36,7 +37,7 @@ class CodingTaskExecutionStore:
             raise ValueError("database_path must be a non-empty path")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.database_path, timeout=5.0) as db:
+        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
             db.execute("PRAGMA busy_timeout=5000")
             db.execute("""CREATE TABLE IF NOT EXISTS coding_task_execution_evidence (
                 run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL,
