@@ -40,12 +40,14 @@ class TaskStore:
     """SQLite-backed task queue with leases, approvals, budgets and an event ledger."""
 
     def __init__(self, database: str | Path, *, busy_timeout_ms: int = 5000):
-        self.database = str(database)
-        if not self.database:
+        raw_database = str(database)
+        if not raw_database.strip():
             raise ValueError("database path must be non-empty")
+        if raw_database == ":memory:":
+            raise ValueError("TaskStore requires a persistent database path, not :memory:")
+        self.database = str(Path(raw_database).expanduser().resolve())
         self.busy_timeout_ms = _positive_int(busy_timeout_ms, "busy_timeout_ms", maximum=120000)
-        if self.database != ":memory:":
-            Path(self.database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self):
@@ -158,6 +160,7 @@ class TaskStore:
         deadline = _stamp(now + timedelta(seconds=deadline_seconds)) if deadline_seconds else None
         task_id = str(uuid.uuid4())
         with self._session() as db:
+            db.execute("BEGIN IMMEDIATE")
             if idempotency_key is not None:
                 existing = db.execute(
                     "SELECT * FROM agent_tasks WHERE idempotency_key=?", (idempotency_key,)
