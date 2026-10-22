@@ -46,3 +46,21 @@ def production_inventory_report() -> dict:
         "outstanding": outstanding,
         "production_ready": not outstanding,
     }
+
+
+# All CLI dispatch predicates in main.py, including read-only commands. Keep this
+# set in sync with the AST regression test; adding a command without a policy
+# entry fails CI. Prefix entries correspond to str.startswith() predicates.
+COMMAND_DISPATCH_PATTERNS = frozenset({
+    "/status", "/skills", "/quit", "/exit", "/help", "/readiness", "/performance",
+    "/task ", "/ask ", "/ask-cloud ", "/skill ", "/plan ", "/memory add ",
+    "/memory list", "/memory search ", "/memory delete ", "/memory clear",
+    "/knowledge index ", "/reminder add ", "/reconcile list", "/reconcile resolve ",
+    "/reminders", "/reminders due", "/evolution status", "/evolution record ",
+    "/evolution run", "/evolution review ", "/voice status", "/voice record ",
+    "/voice speak ", "/voice transcribe ", "/voice wakeword status",
+    "/voice wakeword listen ", "/voice speaker-check ", "/security status",
+    "/security recon ", "/sandbox status", "/sandbox run ", "/defense status",
+    "/defense sniff", "/defense block ", "/defense remove ", "/metasploit status",
+    "/dashboard",
+})
