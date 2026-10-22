@@ -159,7 +159,7 @@ class MCPBridgeTests(unittest.TestCase):
             "params": {"name": "yuki_chat", "arguments": {"message": "hello"}},
         }
         response = _handle_rpc(payload, RaisingAgent(), self.providers, chat_slots=slots)
-        self.assertFalse(response["result"]["isError"])
+        self.assertTrue(response["result"]["isError"])
         self.assertTrue(slots.acquire(blocking=False))
         slots.release()
 
