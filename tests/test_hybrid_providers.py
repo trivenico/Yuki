@@ -37,6 +37,33 @@ class Response:
         return self.body[:size]
 
 
+class ProviderRetryClassificationTests(unittest.TestCase):
+    @patch("urllib.request.urlopen")
+    def test_quota_http_error_is_retryable(self, urlopen):
+        error = __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+            "https://example.test", 402, "Payment Required", {}, None
+        )
+        error.read = lambda size=-1: b'{"error":{"code":"insufficient_quota"}}'
+        urlopen.side_effect = error
+        provider = OpenAICompatibleProvider("model", api_key_env="TEST_API_KEY",
+            base_url="https://example.test/v1")
+        with patch.dict(os.environ, {"TEST_API_KEY": "test-secret"}):
+            with self.assertRaises(RetryableProviderError):
+                provider.generate("hello")
+
+    @patch("urllib.request.urlopen")
+    def test_auth_error_is_not_retryable(self, urlopen):
+        error = __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+            "https://example.test", 401, "Unauthorized", {}, None
+        )
+        error.read = lambda size=-1: b'{"error":{"code":"invalid_api_key"}}'
+        urlopen.side_effect = error
+        provider = OpenAICompatibleProvider("model", api_key_env="TEST_API_KEY",
+            base_url="https://example.test/v1")
+        with patch.dict(os.environ, {"TEST_API_KEY": "test-secret"}):
+            with self.assertRaisesRegex(RuntimeError, "HTTP status 401"):
+                provider.generate("hello")
+
 class FailoverProviderTests(unittest.TestCase):
     def test_uses_next_model_after_retryable_capacity_failure(self):
         class Model:
