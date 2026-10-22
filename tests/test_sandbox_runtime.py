@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from unittest.mock import patch
+
 from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import SandboxRuntimeError, build_docker_argv
+
 
 class DockerSandboxArgvTests(unittest.TestCase):
     def setUp(self):
@@ -11,15 +13,26 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
-    def test_restrictive_flags_and_argument_vector(self, _uid, _gid):
+    def test_restrictive_flags_and_read_only_workspace_default(self, _uid, _gid):
+        command = ["python", "--version"]
         argv = build_docker_argv(SandboxPolicy(), image="python:3.12",
-            workspace=self.tmp.name, command=["python", "-c", "print('hello world')"])
+            workspace=self.tmp.name, command=command)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--read-only", argv)
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--pids-limit", argv)
-        self.assertEqual(argv[-3:], ["python", "-c", "print('hello world')"])
+        mount = argv[argv.index("--mount") + 1]
+        self.assertTrue(mount.endswith(",ro"))
+        self.assertEqual(argv[-2:], command)
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_write_workspace_capability_is_explicit(self, _uid, _gid):
+        policy = SandboxPolicy(capabilities=frozenset({"write_workspace"}))
+        argv = build_docker_argv(policy, image="python:3.12",
+            workspace=self.tmp.name, command=["python", "--version"])
+        self.assertTrue(argv[argv.index("--mount") + 1].endswith(",rw"))
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
@@ -39,18 +52,22 @@ class DockerSandboxArgvTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
-    def test_invalid_image_and_shell_string_are_rejected(self, _uid, _gid):
+    def test_invalid_image_and_command_are_rejected(self, _uid, _gid):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python; invalid",
                 workspace=self.tmp.name, command=["python", "--version"])
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace=self.tmp.name, command="python --version")
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(SandboxPolicy(), image="python:3.12",
+                workspace=self.tmp.name, command=["python", "bad\x00arg"])
 
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image="python:3.12",
                 workspace="relative/path", command=["python", "--version"])
+
 
 if __name__ == "__main__":
     unittest.main()
