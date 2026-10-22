@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-def run_dashboard(agent=None, *, command_handler=None, token_usage=None) -> None:
+def run_dashboard(agent=None, *, command_handler=None, token_usage=None, reconciliation=None, operator="local-owner") -> None:
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Vertical
@@ -21,10 +21,11 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None) -> None
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield Label("Performance telemetry loading…", id="performance_status")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="Enter /help, /status, /skills, /performance, or /quit", id="command")
+                yield Input(placeholder="/help /status /skills /performance /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
             yield Footer()
 
         def on_mount(self):
+            self._reconciliation_confirmation = None
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
             self._refresh_performance()
             self.set_interval(2.0, self._refresh_performance)
@@ -46,6 +47,61 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None) -> None
             log = self.query_one("#log", RichLog)
             if command == "/quit":
                 self.exit()
+                return
+            if command == "/reconcile list":
+                if reconciliation is None:
+                    log.write("Reconciliation service unavailable.")
+                    return
+                try:
+                    items = reconciliation.list_pending()
+                    if not items:
+                        log.write("No executions currently require reconciliation.")
+                    for item in items:
+                        log.write(
+                            f"KEY={item.idempotency_key} STATE={item.state} "
+                            f"ACTION_SHA256={item.action_hash} UPDATED={item.updated_at}"
+                        )
+                except Exception as exc:
+                    log.write(f"Reconciliation listing unavailable: {type(exc).__name__}")
+                return
+            if command.startswith("/reconcile resolve "):
+                if reconciliation is None:
+                    log.write("Reconciliation service unavailable.")
+                    return
+                payload = command[len("/reconcile resolve "):]
+                if "|" not in payload:
+                    log.write("Use /reconcile resolve KEY DISPOSITION | EVIDENCE")
+                    return
+                header, evidence = payload.split("|", 1)
+                parts = header.strip().split(maxsplit=1)
+                if len(parts) != 2 or not evidence.strip():
+                    log.write("Provide an execution key, disposition, and evidence.")
+                    return
+                key, disposition = parts
+                self._reconciliation_confirmation = (key, disposition, evidence.strip())
+                log.write(
+                    f"Review KEY={key} DISPOSITION={disposition}. This records a decision only; "
+                    "it will not retry or change execution state. Type exactly "
+                    f"/reconcile confirm {key} to record it, or anything else to cancel."
+                )
+                return
+            if command.startswith("/reconcile confirm "):
+                expected = command[len("/reconcile confirm "):].strip()
+                pending = self._reconciliation_confirmation
+                self._reconciliation_confirmation = None
+                if pending is None or expected != pending[0]:
+                    log.write("Reconciliation confirmation cancelled or did not match.")
+                    return
+                try:
+                    decision = reconciliation.resolve(
+                        pending[0], operator=operator, disposition=pending[1], evidence=pending[2]
+                    )
+                    log.write(
+                        f"Decision recorded for {decision['idempotency_key']}: "
+                        f"{decision['disposition']}. No retry was performed."
+                    )
+                except Exception as exc:
+                    log.write(f"Reconciliation failed safely: {type(exc).__name__}: {exc}")
                 return
             if command == "/performance":
                 try:
