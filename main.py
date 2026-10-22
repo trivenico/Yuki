@@ -41,6 +41,7 @@ from core.durable_memory_runtime import DurableMemoryRuntime
 from core.durable_knowledge_runtime import DurableKnowledgeRuntime
 from core.durable_reminder_runtime import DurableReminderRuntime
 from core.performance_monitor import collect_performance, format_performance_report
+from core.capability_catalog import format_capability_catalog
 from core.performance_history import format_performance_history
 from core.device_diagnostics import discover_devices, format_device_report
 from core.token_usage import TokenUsageTracker
@@ -83,6 +84,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /capabilities                  Show implemented, gated, and unavailable features
   /readiness                     Detect runtime and local model readiness
   /performance                   Show CPU, RAM, GPU, and recorded token usage
   /skills                        List registered skills
@@ -341,6 +343,8 @@ def main():
             return
         if command == "/help":
             print_help()
+        elif command == "/capabilities":
+            print(format_capability_catalog())
         elif command == "/readiness":
             try:
                 report = build_readiness_report().to_dict()
