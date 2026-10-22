@@ -31,9 +31,12 @@ class PerformanceMonitorTests(unittest.TestCase):
     def test_invalid_nvidia_sentinel_metrics_are_not_reported_as_real_gpu_data(self):
         class Result:
             returncode = 0
-            stdout = "GPU A, -1, 100, 1000\\nGPU B, 45, 200, 1000\\nGPU C, 101, 10, 100\\n"
-        with patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"), \\
-             patch("core.performance_monitor.subprocess.run", return_value=Result()):
+            stdout = "GPU A, -1, 100, 1000\nGPU B, 45, 200, 1000\nGPU C, 101, 10, 100\n"
+
+        with (
+            patch("core.performance_monitor.shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("core.performance_monitor.subprocess.run", return_value=Result()),
+        ):
             metrics = collect_performance()
         self.assertTrue(metrics["gpu"]["available"])
         self.assertEqual(len(metrics["gpu"]["devices"]), 1)
