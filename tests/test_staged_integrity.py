@@ -14,7 +14,7 @@ class StagedIntegrityTests(unittest.TestCase):
             content = "def test_ok(): pass\n"
             path = root / "tests" / "test_candidate.py"
             path.parent.mkdir()
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(content.encode("utf-8"))
             digest = hashlib.sha256()
             digest.update(b"tests/test_candidate.py")
             digest.update(b"\0")
@@ -28,7 +28,7 @@ class StagedIntegrityTests(unittest.TestCase):
                            "size_bytes": len(content.encode())}]
             }), encoding="utf-8")
             self.assertEqual(verify_staged_workspace(root), proposal_sha)
-            path.write_text("tampered\n", encoding="utf-8")
+            path.write_bytes(b"tampered\n")
             with self.assertRaises(StagedIntegrityError):
                 verify_staged_workspace(root)
 
