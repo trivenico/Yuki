@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from core.context_budget import context_budget
@@ -113,6 +114,73 @@ def _gpu_metrics() -> dict[str, Any]:
         }
 
 
+
+# Keep slow driver work off the UI thread. A single worker prevents overlapping
+# probes, and collect_performance() only reads the most recent completed result.
+_GPU_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yuki-gpu-telemetry")
+_GPU_ASYNC_LOCK = threading.Lock()
+_GPU_ASYNC_FUTURE: Future[dict[str, Any]] | None = None
+_GPU_ASYNC_VALUE: dict[str, Any] | None = None
+_GPU_ASYNC_AT: float | None = None
+_GPU_ASYNC_TTL_SECONDS = 5.0
+
+
+def _copy_gpu_value(value: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(value)
+    if isinstance(value.get("devices"), list):
+        copied["devices"] = [dict(device) for device in value["devices"]]
+    return copied
+
+
+def _gpu_metrics_nonblocking() -> dict[str, Any]:
+    """Return cached GPU data immediately and schedule refreshes in one worker."""
+    global _GPU_ASYNC_FUTURE, _GPU_ASYNC_VALUE, _GPU_ASYNC_AT
+    now = time.monotonic()
+    with _GPU_ASYNC_LOCK:
+        if _GPU_ASYNC_FUTURE is not None and _GPU_ASYNC_FUTURE.done():
+            try:
+                _GPU_ASYNC_VALUE = _GPU_ASYNC_FUTURE.result()
+                _GPU_ASYNC_AT = now
+            except Exception:
+                _GPU_ASYNC_VALUE = {"available": False,
+                                    "detail": "GPU telemetry probe failed."}
+                _GPU_ASYNC_AT = now
+            _GPU_ASYNC_FUTURE = None
+
+        age = now - _GPU_ASYNC_AT if _GPU_ASYNC_AT is not None else None
+        if _GPU_ASYNC_FUTURE is None and (age is None or age >= _GPU_ASYNC_TTL_SECONDS):
+            _GPU_ASYNC_FUTURE = _GPU_EXECUTOR.submit(_probe_gpu_metrics)
+
+        if _GPU_ASYNC_VALUE is None:
+            return {
+                "available": False,
+                "status": "pending",
+                "age_seconds": None,
+                "detail": "GPU telemetry probe is running; no completed sample yet.",
+            }
+        result = _copy_gpu_value(_GPU_ASYNC_VALUE)
+        result["status"] = "fresh" if age is not None and age < _GPU_ASYNC_TTL_SECONDS else "stale"
+        result["age_seconds"] = round(age, 2) if age is not None else None
+        return result
+
+
+def _reset_gpu_metrics_async_for_tests() -> None:
+    """Reset async telemetry state; wait for any probe so tests remain isolated."""
+    global _GPU_ASYNC_FUTURE, _GPU_ASYNC_VALUE, _GPU_ASYNC_AT
+    with _GPU_ASYNC_LOCK:
+        future = _GPU_ASYNC_FUTURE
+        _GPU_ASYNC_FUTURE = None
+        _GPU_ASYNC_VALUE = None
+        _GPU_ASYNC_AT = None
+    if future is not None:
+        future.cancel()
+        if not future.cancelled():
+            try:
+                future.result(timeout=2)
+            except Exception:
+                pass
+
+
 def _reset_gpu_metrics_cache_for_tests() -> None:
     """Reset process-local cache for deterministic tests."""
     global _GPU_CACHE_AT, _GPU_CACHE_VALUE
@@ -168,7 +236,7 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
         "cpu": cpu,
         "memory": memory or {"total_bytes": None, "used_bytes": None,
                              "available_bytes": None, "percent": None, "source": "unavailable"},
-        "gpu": _gpu_metrics(),
+        "gpu": _gpu_metrics_nonblocking(),
         "tokens": safe_token_summary,
         "context": context,
     }
@@ -203,6 +271,10 @@ def format_performance_report(metrics: dict[str, Any]) -> str:
         f"RAM: {format_bytes(memory.get('used_bytes'))} used / {format_bytes(memory.get('total_bytes'))} total"
         + (f" ({memory['percent']:.1f}%)" if isinstance(memory.get("percent"), (int, float)) else ""),
     ]
+    if gpu.get("status"):
+        age = gpu.get("age_seconds")
+        freshness = f", age {age:.1f}s" if isinstance(age, (int, float)) else ""
+        lines.append(f"GPU telemetry: {gpu['status']}{freshness}")
     if gpu.get("available"):
         for index, device in enumerate(gpu["devices"], 1):
             lines.append(
