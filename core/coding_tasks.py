@@ -123,7 +123,8 @@ class CodingTaskStore:
                 "INSERT INTO coding_tasks VALUES (?, ?, ?, ?, 'draft', '[]', NULL, NULL, NULL, ?, ?, 0)",
                 (task_id, key, goal, workspace, now, now),
             )
-            return self.get(task_id)
+        # Read back only after the INSERT transaction has committed.
+        return self.get(task_id)
 
     def get(self, task_id: str) -> CodingTask:
         if not isinstance(task_id, str) or not task_id or "\x00" in task_id:
