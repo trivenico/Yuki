@@ -67,6 +67,15 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertTrue(providers["gemini"]["implemented"])
         self.assertIn("official_gemini_cli_account_sign_in", providers["gemini"]["auth_methods"])
 
+    def test_gemini_selection_requires_cli_installation(self):
+        from unittest.mock import patch
+        manager = ProviderManager()
+        manager._selected = "mock"
+        with patch("providers.gemini_cli.shutil.which", return_value=None):
+            message = manager.select("gemini")
+        self.assertIn("not installed", message)
+        self.assertEqual(manager.current().name, "mock")
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
