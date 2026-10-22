@@ -343,7 +343,13 @@ def main():
                 print(f"Yuki > Readiness diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/performance":
             try:
-                print(format_performance_report(collect_performance(token_summary=token_usage.summary())))
+                provider_state = vars(ai.provider) if ai.provider is not None else {}
+                context_data = provider_state.get("last_context_budget")
+                if isinstance(getattr(type(ai.provider), "last_context_budget", None), property):
+                    context_data = ai.provider.last_context_budget
+                print(format_performance_report(collect_performance(
+                    token_summary=token_usage.summary(), context_budget_data=context_data
+                ))
             except Exception as exc:
                 print(f"Yuki > Performance diagnostics unavailable ({type(exc).__name__}).")
         elif command == "/status":
@@ -704,7 +710,7 @@ def main():
         elif command == "/dashboard":
             try:
                 from ui.dashboard import run_dashboard
-                run_dashboard(agent, command_handler=dashboard_command, token_usage=token_usage, reconciliation=reconciliation, operator="local-owner")
+                run_dashboard(agent, command_handler=dashboard_command, token_usage=token_usage, provider=ai.provider, reconciliation=reconciliation, operator="local-owner")
             except RuntimeError as exc:
                 print(f"Yuki > Dashboard unavailable: {exc}")
         else:
