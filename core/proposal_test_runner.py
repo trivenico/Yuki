@@ -12,6 +12,7 @@ from typing import Sequence
 
 from core.sandbox_executor import SandboxExecutionError, SandboxResult, execute_docker_sandbox
 from core.sandbox_policy import SandboxPolicy
+from core.staged_integrity import StagedIntegrityError, verify_staged_workspace
 
 
 class ProposalTestRunError(RuntimeError):
@@ -67,6 +68,10 @@ def run_proposal_checks(
 ) -> tuple[SandboxResult, ...]:
     """Run ordered checks in the same disposable workspace, stopping on failure."""
     managed = _managed_workspace(workspace, parent_dir)
+    try:
+        verify_staged_workspace(managed)
+    except (StagedIntegrityError, OSError, ValueError) as exc:
+        raise ProposalTestRunError("Candidate integrity must pass before any sandbox execution.") from exc
     if not isinstance(commands, (list, tuple)) or not commands:
         raise ProposalTestRunError("At least one explicit check is required.")
     for command in commands:
