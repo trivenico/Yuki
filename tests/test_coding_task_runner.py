@@ -85,6 +85,18 @@ class CodingTaskRunnerTests(unittest.TestCase):
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
     @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    def test_container_cleanup_runs_when_wait_raises(self, build, popen, kill_container):
+        proc = FakeProcess()
+        proc.wait = unittest.mock.Mock(side_effect=OSError("docker client interrupted"))
+        popen.return_value = proc
+        with self.assertRaises(OSError):
+            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+                               command=["python", "-V"], approve=lambda request: True)
+        kill_container.assert_called_once()
+
+    @patch("core.coding_task_runner._kill_container")
+    @patch("core.coding_task_runner.subprocess.Popen")
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
     def test_timeout_kills_client_and_container(self, build, popen, kill_container):
         proc = FakeProcess()
         proc.wait = unittest.mock.Mock(side_effect=[subprocess.TimeoutExpired("docker", 2), -9])
