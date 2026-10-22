@@ -78,7 +78,9 @@ def _gpu_metrics() -> dict[str, Any]:
 
 def collect_performance(*, token_summary: dict[str, Any] | None = None,
                         context_limit: int | None = None,
-                        context_used: int | None = None) -> dict[str, Any]:
+                        context_used: int | None = None,
+                        context_estimated: bool = False,
+                        context_budget_data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect best-effort local metrics; all unknown values remain explicitly unknown."""
     cpu: dict[str, Any] = {"percent": None, "logical_cores": os.cpu_count(),
                            "detail": "Install psutil for CPU utilization sampling."}
@@ -94,7 +96,22 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
     except (ImportError, OSError, RuntimeError):
         pass
 
-    context = context_budget(limit_tokens=context_limit, used_tokens=context_used)
+    if isinstance(context_budget_data, dict):
+        supplied_limit = context_budget_data.get("limit_tokens")
+        supplied_used = context_budget_data.get("used_tokens")
+        supplied_estimated = context_budget_data.get("estimated", False)
+        if isinstance(supplied_estimated, bool):
+            context = context_budget(
+                limit_tokens=supplied_limit, used_tokens=supplied_used,
+                estimated=supplied_estimated,
+            )
+        else:
+            context = context_budget(limit_tokens=None, used_tokens=None)
+    else:
+        context = context_budget(
+            limit_tokens=context_limit, used_tokens=context_used,
+            estimated=context_estimated,
+        )
 
     safe_token_summary = token_summary if isinstance(token_summary, dict) else {
         "calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
