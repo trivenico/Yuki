@@ -12,6 +12,10 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
+        self.assertTrue(entries["deepseek"]["implemented"])
+        self.assertTrue(entries["kimi"]["implemented"])
+        self.assertTrue(entries["openrouter"]["implemented"])
+        self.assertTrue(entries["huggingface"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
