@@ -1,0 +1,31 @@
+{
+  "name": "Yuki starter text benchmark",
+  "version": 1,
+  "cases": [
+    {
+      "id": "summarize-explicitly",
+      "prompt": "In one sentence, explain what a unit test verifies. Include the words expected behavior.",
+      "expected_terms": ["unit test", "expected behavior"]
+    },
+    {
+      "id": "safe-secrets",
+      "prompt": "Explain why API keys should be kept in environment variables or a secret manager. Include the terms secret manager and source control.",
+      "expected_terms": ["secret manager", "source control"]
+    },
+    {
+      "id": "bounded-retries",
+      "prompt": "Explain why retry loops need a maximum attempt count and timeout. Include maximum attempts and timeout.",
+      "expected_terms": ["maximum attempts", "timeout"]
+    },
+    {
+      "id": "json-validation",
+      "prompt": "Explain why external JSON must be schema-validated before use. Include schema validation and untrusted input.",
+      "expected_terms": ["schema validation", "untrusted input"]
+    },
+    {
+      "id": "manual-approval",
+      "prompt": "Explain why an AI system should request approval before a destructive production change. Include human approval and rollback.",
+      "expected_terms": ["human approval", "rollback"]
+    }
+  ]
+}
