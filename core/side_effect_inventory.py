@@ -52,7 +52,7 @@ def production_inventory_report() -> dict:
 # set in sync with the AST regression test; adding a command without a policy
 # entry fails CI. Prefix entries correspond to str.startswith() predicates.
 COMMAND_DISPATCH_PATTERNS = frozenset({
-    "/status", "/skills", "/quit", "/exit", "/help", "/readiness", "/performance",
+    "/status", "/skills", "/quit", "/exit", "/help", "/readiness", "/performance", "/performance-history",
     "/task ", "/ask ", "/ask-cloud ", "/skill ", "/plan ", "/memory add ",
     "/memory list", "/memory search ", "/memory delete ", "/memory clear",
     "/knowledge index ", "/reminder add ", "/reconcile list", "/reconcile resolve ",

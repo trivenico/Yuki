@@ -12,6 +12,7 @@ import subprocess
 from typing import Any
 
 from core.context_budget import context_budget
+from core.performance_history import PERFORMANCE_HISTORY
 
 
 def _memory_from_proc() -> dict[str, Any] | None:
@@ -118,7 +119,7 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
         "exact_events": 0, "estimated_events": 0, "alerts": [],
         "detail": "No valid token usage summary is available."
     }
-    return {
+    metrics = {
         "platform": platform.system(),
         "cpu": cpu,
         "memory": memory or {"total_bytes": None, "used_bytes": None,
@@ -127,6 +128,9 @@ def collect_performance(*, token_summary: dict[str, Any] | None = None,
         "tokens": safe_token_summary,
         "context": context,
     }
+    # Keep a bounded numeric history for trends; do not retain prompts or provider responses.
+    PERFORMANCE_HISTORY.record(metrics)
+    return metrics
 
 
 def format_bytes(value: int | None) -> str:

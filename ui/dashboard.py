@@ -11,6 +11,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
         raise RuntimeError("Install optional Textual with: pip install -r requirements-ui.txt") from exc
 
     from core.performance_monitor import collect_performance, format_performance_report
+    from core.performance_history import format_performance_history
 
     class YukiDashboard(App):
         TITLE = "Yuki — Supervision"
@@ -21,7 +22,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield Label("Performance telemetry loading…", id="performance_status")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/help /status /skills /performance /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
+                yield Input(placeholder="/help /status /skills /performance /performance-history /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
             yield Footer()
 
         def on_mount(self):
@@ -112,9 +113,17 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
             if command == "/performance":
                 try:
                     summary = token_usage.summary() if token_usage is not None else None
-                    log.write(format_performance_report(collect_performance(token_summary=summary)))
+                    provider_state = vars(provider) if provider is not None else {}
+                    context_data = provider_state.get("last_context_budget")
+                    if provider is not None and isinstance(getattr(type(provider), "last_context_budget", None), property):
+                        context_data = provider.last_context_budget
+                    log.write(format_performance_report(collect_performance(
+                        token_summary=summary, context_budget_data=context_data
+                    )))
                 except Exception:
                     log.write("Performance diagnostics unavailable; unsupported metrics remain unknown.")
+            elif command == "/performance-history":
+                log.write(format_performance_history())
             elif command in {"/help", "/status", "/skills"} and command_handler:
                 try:
                     log.write(str(command_handler(command))[:12000])
