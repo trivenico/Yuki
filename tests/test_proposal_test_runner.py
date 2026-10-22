@@ -25,9 +25,9 @@ class ProposalTestRunnerTests(unittest.TestCase):
         (self.workspace / "test_example.py").write_bytes(candidate)
         proposal = hashlib.sha256()
         proposal.update(b"test_example.py")
-        proposal.update(b"\\0")
+        proposal.update(b"\0")
         proposal.update(candidate)
-        proposal.update(b"\\0")
+        proposal.update(b"\0")
         (self.workspace / "MANIFEST.json").write_text(json.dumps({
             "schema_version": 1,
             "proposal_sha256": proposal.hexdigest(),
