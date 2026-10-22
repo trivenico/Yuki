@@ -9,6 +9,18 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
 
+def _provider_timeout(env):
+    """Return the validated network timeout shared by configured providers."""
+    raw = env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45")
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("YUKI_PROVIDER_TIMEOUT_SECONDS must be a number between 1 and 120.") from exc
+    if not 1 <= timeout <= 120:
+        raise ValueError("YUKI_PROVIDER_TIMEOUT_SECONDS must be between 1 and 120.")
+    return timeout
+
+
 def create_provider(config=None, *, environ=None):
     """Build mock, local Ollama, or hybrid routing from validated config.
 
@@ -22,9 +34,11 @@ def create_provider(config=None, *, environ=None):
         return MockProvider()
     if selected not in {"ollama", "hybrid"}:
         raise ValueError("provider must be one of: mock, ollama, hybrid.")
+    timeout = _provider_timeout(env)
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        timeout=timeout,
     )
     if selected == "ollama":
         return local
@@ -36,6 +50,7 @@ def create_provider(config=None, *, environ=None):
                 cloud_model,
                 api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")),
                 base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://api.openai.com/v1")),
+                timeout=timeout,
             )
         raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
         cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
