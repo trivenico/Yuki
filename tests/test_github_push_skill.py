@@ -33,20 +33,20 @@ class GitHubPushSkillTests(unittest.TestCase):
 
     def test_status_does_not_push_and_reports_confirmation(self):
         outputs = {
-            ("rev-parse", "--show-toplevel"): str(self.repo),
+            ("rev-parse", "--show-toplevel"): str(self.repo.resolve()),
             ("branch", "--show-current"): "main",
             ("remote", "get-url", "origin"): "https://github.com/acme/demo.git",
             ("status", "--porcelain", "--untracked-files=normal"): "",
         }
         with patch.object(self.skill, "_run_git", side_effect=lambda p, *a: outputs[tuple(a)]):
-            result = self.skill.run(json.dumps({"action": "status", "repo_path": str(self.repo)}))
+            result = self.skill.run(json.dumps({"action": "status", "repo_path": str(self.repo.resolve())}))
         self.assertTrue(result.ok)
         self.assertTrue(result.data["confirmation_required"])
         self.assertTrue(result.data["working_tree_clean"])
 
     def test_push_requires_exact_confirmation_and_clean_tree(self):
         outputs = {
-            ("rev-parse", "--show-toplevel"): str(self.repo),
+            ("rev-parse", "--show-toplevel"): str(self.repo.resolve()),
             ("branch", "--show-current"): "main",
             ("remote", "get-url", "origin"): "https://github.com/acme/demo.git",
             ("status", "--porcelain", "--untracked-files=normal"): "",
@@ -62,13 +62,13 @@ class GitHubPushSkillTests(unittest.TestCase):
                 return ""
             return outputs[tuple(args)]
         with patch.object(self.skill, "_run_git", side_effect=git):
-            bad = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo), "confirm": "yes"}))
+            bad = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo.resolve()), "confirm": "yes"}))
         self.assertFalse(bad.ok)
         self.assertFalse(any(c[0] == "push" for c in calls))
 
         calls.clear()
         with patch.object(self.skill, "_run_git", side_effect=git):
-            good = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo),
+            good = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo.resolve()),
                                                "confirm": "PUSH acme/demo main"}))
         self.assertTrue(good.ok)
         self.assertTrue(good.data["pushed"])
@@ -76,17 +76,16 @@ class GitHubPushSkillTests(unittest.TestCase):
 
     def test_dirty_tree_blocks_push(self):
         outputs = {
-            ("rev-parse", "--show-toplevel"): str(self.repo),
+            ("rev-parse", "--show-toplevel"): str(self.repo.resolve()),
             ("branch", "--show-current"): "main",
             ("remote", "get-url", "origin"): "https://github.com/acme/demo.git",
             ("status", "--porcelain", "--untracked-files=normal"): " M app.py",
         }
         with patch.object(self.skill, "_run_git", side_effect=lambda p, *a: outputs[tuple(a)]) as git:
-            result = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo),
+            result = self.skill.run(json.dumps({"action": "push", "repo_path": str(self.repo.resolve()),
                                                   "confirm": "PUSH acme/demo main"}))
         self.assertFalse(result.ok)
         self.assertIn("not clean", result.message)
-        git.assert_not_called if False else None
 
 
 if __name__ == "__main__":
