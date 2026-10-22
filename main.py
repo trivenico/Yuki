@@ -27,6 +27,8 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.task_checkpoint_store import SQLiteTaskCheckpointStore
+from core.checkpointed_task_service import CheckpointedTaskService
 from core.readiness import build_readiness_report
 from core.recovery_bootstrap import recover_workspace_on_startup
 from core.production_guard import assert_production_runtime_supported
@@ -172,6 +174,9 @@ def main():
         actor="local-owner", confirm=confirm_durable_skill,
     )
     task_agent = ApprovedTaskAgent(ai.provider, durable_agent, max_steps=config["max_agent_steps"])
+    checkpointed_tasks = CheckpointedTaskService(
+        SQLiteTaskCheckpointStore(str(workspace / "task_checkpoints.sqlite3")), task_agent
+    )
     token_usage = TokenUsageTracker(workspace / "token_usage.json", session_id="cli-session")
     # Attach usage accounting to active provider adapters without changing routing.
     def attach_usage_tracker(provider, visited=None):
@@ -394,14 +399,23 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command == "/tasks":
+            tasks = checkpointed_tasks.list_incomplete()
+            if not tasks:
+                print("Yuki > No incomplete checkpointed tasks.")
+            for task in tasks:
+                print(f"- {task.task_id} [{task.status}] revision={task.revision} updated={task.updated_at} goal={str(task.payload.get('goal', ''))[:120]}")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
                 print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                 continue
-            print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
-            result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            print("Yuki > Preparing a bounded, checkpointed plan. Every skill call requires fresh approval.")
+            outcome = checkpointed_tasks.execute(goal)
+            checkpoint = outcome.checkpoint
+            print(f"Yuki > {outcome.message} [task_id={checkpoint.task_id}, checkpoint={checkpoint.status}, revision={checkpoint.revision}, agent_status={outcome.agent_status}]")
+            if outcome.error_type:
+                print(f"Yuki > Task was not marked complete ({outcome.error_type}); inspect /tasks before any retry.")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
