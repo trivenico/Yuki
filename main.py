@@ -33,6 +33,7 @@ from core.production_guard import assert_production_runtime_supported
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.execution_ledger import SQLiteExecutionLedger
+from core.execution_reconciliation import SQLiteExecutionReconciliation
 from core.approval_flow import ApprovalCoordinator
 from core.durable_skill_runtime import DurableSkillRuntime
 from core.durable_memory_runtime import DurableMemoryRuntime
@@ -87,6 +88,9 @@ def print_help():
   /knowledge index RELATIVE_PATH Index a text file inside workspace (durable approval required)
   /reminder add ISO_DATETIME | TEXT (approval required)
   /reminders | /reminders due
+  /reconcile list               List interrupted executions needing operator review
+  /reconcile resolve KEY DISPOSITION | EVIDENCE
+                                 Record an evidence-based decision; never retries
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
   /voice status
@@ -133,6 +137,10 @@ def main():
     execution_ledger = SQLiteExecutionLedger(str(workspace / "execution_ledger.sqlite3"))
     approval_coordinator = ApprovalCoordinator(
         pending_store=pending_store, audit_log=audit_log, execution_ledger=execution_ledger
+    )
+    reconciliation = SQLiteExecutionReconciliation(
+        str(workspace / "execution_reconciliation.sqlite3"),
+        ledger=execution_ledger, audit_log=audit_log,
     )
 
     def confirm_durable_skill(action):
@@ -377,6 +385,41 @@ def main():
                 print(f"Yuki > {result.message}" + (f" ({result.data})" if result.data else ""))
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Reminder was not saved: {exc}")
+        elif command == "/reconcile list":
+            try:
+                items = reconciliation.list_pending()
+                if not items:
+                    print("Yuki > No executions currently require reconciliation.")
+                for item in items:
+                    print(f"KEY={item.idempotency_key} STATE={item.state} ACTION={item.action}")
+            except Exception as exc:
+                print(f"Yuki > Reconciliation listing unavailable: {type(exc).__name__}")
+        elif command.startswith("/reconcile resolve "):
+            payload = command[len("/reconcile resolve "):]
+            if "|" not in payload:
+                print("Yuki > Use /reconcile resolve KEY confirmed_completed|confirmed_not_executed|unresolved | evidence")
+                continue
+            header, evidence = payload.split("|", 1)
+            parts = header.strip().split(maxsplit=1)
+            if len(parts) != 2:
+                print("Yuki > Provide an execution KEY and disposition.")
+                continue
+            key, disposition = parts
+            if not _confirm(
+                "execution:reconcile",
+                f"Record disposition {disposition!r} for execution {key!r}; this does not retry or change execution state.",
+                "high",
+            ):
+                print("Yuki > Reconciliation cancelled.")
+                continue
+            try:
+                decision = reconciliation.resolve(
+                    key, operator="local-owner", disposition=disposition,
+                    evidence=evidence.strip(),
+                )
+                print(f"Yuki > Decision recorded for {decision['idempotency_key']}: {decision['disposition']}. No retry was performed.")
+            except (ValueError, OSError, RuntimeError) as exc:
+                print(f"Yuki > Reconciliation failed safely: {exc}")
         elif command == "/reminders":
             for item in reminders.list():
                 print(f"{item['id']} [{'delivered' if item.get('delivered') else 'pending'}] {item['due_at']}: {item['text']}")
