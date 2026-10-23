@@ -12,7 +12,7 @@
 
 ## Validation status
 
-The code and tests have been committed to the PR branch. They have **not been executed in this environment**. The current-head commit did not return any workflow runs or combined status checks through the available GitHub status query, so CI is not yet verified. Keep the PR draft until a fresh CI run passes and the patch receives review.
+The code and tests have been committed to the PR branch. GitHub Actions on commit `78309c5318f3bdc9dc5fffe74e283ea38dd6d65d` completed successfully, including the cross-platform quality gate (Ubuntu, macOS, Windows) and built-in authentication security tests. The quality gate ran 525 tests successfully; auth test jobs also passed. This is CI evidence for that commit, not a complete production security certification.
 
 ## Operational notes and remaining security work
 
