@@ -6,17 +6,17 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: yuki-engineering-workflow-\${{ github.ref }}
+  group: yuki-engineering-workflow-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   test:
-    name: Engineering workflow / Python 3.11 / \${{ matrix.os }}
+    name: Engineering workflow / Python 3.11 / ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: \${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
