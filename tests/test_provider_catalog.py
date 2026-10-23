@@ -15,12 +15,12 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertEqual(hybrid["configured_model"], "model-x")
         self.assertTrue(hybrid["selected"])
 
-    def test_unimplemented_cloud_providers_are_not_reported_ready(self):
-        catalog = build_provider_catalog(environ={"OPENAI_API_KEY":"some-key","YUKI_OPENAI_MODEL":"gpt-x"})
-        openai = next(x for x in catalog if x["name"] == "openai")
-        self.assertFalse(openai["implemented"])
-        self.assertFalse(openai["ready"])
-        self.assertEqual(openai["status"], "adapter_not_implemented")
+    def test_unimplemented_anthropic_provider_is_not_reported_ready(self):
+        catalog = build_provider_catalog(environ={"ANTHROPIC_API_KEY":"some-key","YUKI_ANTHROPIC_MODEL":"claude-x"})
+        anthropic = next(x for x in catalog if x["name"] == "anthropic")
+        self.assertFalse(anthropic["implemented"])
+        self.assertFalse(anthropic["ready"])
+        self.assertEqual(anthropic["status"], "adapter_not_implemented")
 
     def test_ollama_requires_model_configuration(self):
         catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})

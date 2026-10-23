@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 _DEFAULT_ALLOWED_HOSTS = frozenset({
     "api.openai.com", "openrouter.ai", "api.deepseek.com",
     "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
-    "api.z.ai", "api.tokenrouter.io",
+    "api.z.ai", "api.tokenrouter.io", "router.huggingface.co",
 })
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -49,25 +49,26 @@ def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
 class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
-                 base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None):
+                 base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None, environ=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
             raise ValueError("API key environment variable name is invalid.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
+        self._environ = os.environ if environ is None else environ
         self.base_url = _trusted_https_endpoint(base_url, allowed_hosts)
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
 
     def is_available(self):
-        return bool(os.environ.get(self.api_key_env, "").strip())
+        return bool(str(self._environ.get(self.api_key_env, "")).strip())
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        api_key = os.environ.get(self.api_key_env, "").strip()
+        api_key = str(self._environ.get(self.api_key_env, "")).strip()
         if not api_key:
             raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
         payload = json.dumps({

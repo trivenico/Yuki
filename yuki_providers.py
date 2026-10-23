@@ -18,20 +18,35 @@ class ProviderManager:
         self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
-        self._factories: dict[str, Callable] = {"mock": MockProvider, "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ)}
+        self._factories: dict[str, Callable] = {
+            "mock": MockProvider,
+            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+        }
         self._selected: Optional[str] = "mock"
         for item in (
             ProviderInfo("mock", ("none",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("openai", ("official_api_key_flow_planned",)),
+            ProviderInfo("openai", ("OPENAI_API_KEY environment variable",), True),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
-            ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
-            ProviderInfo("kimi", ("official_api_key_flow_planned",)),
-            ProviderInfo("minimax", ("official_api_key_flow_planned",)),
+            ProviderInfo("deepseek", ("DEEPSEEK_API_KEY environment variable",), True),
+            ProviderInfo("kimi", ("MOONSHOT_API_KEY environment variable",), True),
+            ProviderInfo("minimax", ("MINIMAX_API_KEY environment variable",), True),
+            ProviderInfo("openrouter", ("OPENROUTER_API_KEY environment variable",), True),
+            ProviderInfo("tokenrouter", ("TOKENROUTER_API_KEY environment variable",), True),
+            ProviderInfo("huggingface", ("HF_TOKEN environment variable",), True),
+            ProviderInfo("zai", ("ZAI_API_KEY environment variable",), True),
         ):
-            self.register(item)
+            factory = None
+            if item.name in {"openai", "deepseek", "kimi", "minimax", "openrouter", "tokenrouter", "huggingface", "zai"}:
+                factory = lambda provider_name=item.name: create_provider(
+                    {**self._config, "provider": provider_name}, environ=self._environ
+                )
+            self.register(item, factory=factory)
+        configured = str(self._config.get("provider", "mock")).strip().lower()
+        if configured in self._providers and self._providers[configured].implemented:
+            self._selected = configured
 
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):

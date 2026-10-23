@@ -11,7 +11,11 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["mock"]["implemented"])
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
-        self.assertFalse(entries["openai"]["implemented"])
+        self.assertTrue(entries["openai"]["implemented"])
+        self.assertTrue(entries["deepseek"]["implemented"])
+        self.assertTrue(entries["kimi"]["implemented"])
+        self.assertTrue(entries["openrouter"]["implemented"])
+        self.assertTrue(entries["huggingface"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
@@ -31,10 +35,10 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
-    def test_unimplemented_provider_does_not_change_selection(self):
+    def test_unconfigured_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
         message = manager.select("openai")
-        self.assertIn("not implemented", message)
+        self.assertIn("Cannot select openai", message)
         self.assertEqual(manager.current().name, "mock")
 
     def test_custom_factory_must_return_provider_contract(self):
