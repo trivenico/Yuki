@@ -147,8 +147,8 @@ class SpecialistAgentCoordinator:
             raise ValueError("agent_id must be a bounded identifier.")
         if not isinstance(agent.name, str) or not agent.name.strip() or len(agent.name) > 100:
             raise ValueError("agent name must be non-empty bounded text.")
-        if not isinstance(agent.action, str) or not _ID.fullmatch(agent.action):
-            raise ValueError("agent action must be an allow-listed action identifier.")
+        if not isinstance(agent.action, str) or agent.action not in WorkflowEngine.ALLOWED_ACTIONS:
+            raise ValueError("agent action must be an existing workflow-engine allow-listed action.")
         if not isinstance(agent.capabilities, frozenset) or any(
             not isinstance(item, str) or not _ID.fullmatch(item) for item in agent.capabilities
         ):
