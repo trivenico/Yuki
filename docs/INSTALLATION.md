@@ -15,6 +15,10 @@ python main.py
 
 Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
 
+## ChatGPT integration
+
+See [ChatGPT MCP integration](CHATGPT_INTEGRATION.md) for the opt-in status-and-chat bridge, authentication requirements, and connection limitations. The bridge is not started by default.
+
 ## Optional integrations
 
 Install only what you intend to use:
