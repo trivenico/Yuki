@@ -55,10 +55,10 @@ def _docker_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key in allowed}
 
 
-def _kill_container(container_name: str) -> None:
-    """Best-effort bounded removal of the named container after every run."""
+def _kill_container(container_name: str) -> bool:
+    """Return whether Docker confirmed removal of the named container."""
     try:
-        subprocess.run(
+        completed = subprocess.run(
             ["docker", "rm", "--force", container_name],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -68,8 +68,9 @@ def _kill_container(container_name: str) -> None:
             timeout=5,
             check=False,
         )
+        return completed.returncode == 0
     except (OSError, subprocess.SubprocessError):
-        pass
+        return False
 
 
 def run_sandboxed_task(
@@ -90,6 +91,14 @@ def run_sandboxed_task(
     """
     if not callable(approve):
         raise SandboxExecutionError("a trusted per-run approval callback is required")
+    if (
+        not isinstance(command, (list, tuple))
+        or not command
+        or len(command) > 64
+        or any(not isinstance(arg, str) or not arg or "\\x00" in arg or len(arg) > 2048 for arg in command)
+        or sum(len(arg) for arg in command) > 8192
+    ):
+        raise SandboxExecutionError("command argv exceeds the configured count or size limits")
     try:
         policy.validate()
         argv = build_docker_argv(
@@ -115,6 +124,9 @@ def run_sandboxed_task(
         raise SandboxExecutionError("execution requires explicit approval")
 
     container_name = "yuki-task-" + secrets.token_hex(12)
+    # The runner owns cleanup; disable Docker's --rm so it can confirm removal.
+    if "--rm" in argv:
+        argv.remove("--rm")
     image_index = len(argv) - len(command) - 1
     argv[image_index:image_index] = ["--name", container_name]
 
@@ -191,9 +203,10 @@ def run_sandboxed_task(
             except OSError:
                 pass
             reader.join(timeout=1)
-        # Cleanup must run even if wait/output collection raises unexpectedly.
+        # Cleanup must be confirmed; a failed cleanup must never look successful.
         # docker rm --force also stops a container if its CLI was interrupted.
-        _kill_container(container_name)
+        if not _kill_container(container_name):
+            raise SandboxExecutionError("sandbox container cleanup could not be confirmed")
     if reader_errors:
         raise SandboxExecutionError("failed while collecting bounded sandbox output") from reader_errors[0]
 
