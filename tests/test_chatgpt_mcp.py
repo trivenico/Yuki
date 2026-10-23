@@ -163,9 +163,15 @@ class MCPBridgeTests(unittest.TestCase):
         self.assertTrue(slots.acquire(blocking=False))
         slots.release()
 
-    def test_invalid_remote_binding_configuration_fails_closed(self):
-        with self.assertRaises(BridgeConfigError):
-            _load_config({"YUKI_MCP_BEARER_TOKEN": "x" * 48, "YUKI_MCP_HOST": "0.0.0.0"})
+    def test_remote_binding_is_disabled_even_with_opt_in(self):
+        for host in ("0.0.0.0", "192.168.1.10", "::"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(BridgeConfigError, "personal-use preview"):
+                    _load_config({
+                        "YUKI_MCP_BEARER_TOKEN": "x" * 64,
+                        "YUKI_MCP_HOST": host,
+                        "YUKI_MCP_ALLOW_REMOTE": "true",
+                    })
 
     def test_conversation_memory_refuses_non_loopback_binding(self):
         _validate_memory_binding(False, "0.0.0.0")
