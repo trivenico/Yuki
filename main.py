@@ -28,6 +28,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
+from core.resilience import ResilienceMonitor
 
 
 def _ask_approval(request):
@@ -64,6 +65,7 @@ def print_help():
   /help                          Show commands
   /status                        Show capability status
   /readiness                     Detect runtime and local model readiness
+  /health                        Run read-only core health checks
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -163,6 +165,17 @@ def main():
             except Exception as exc:
                 # Diagnostics must never prevent the guarded core from continuing.
                 print(f"Yuki > Readiness diagnostics unavailable ({type(exc).__name__}).")
+        elif command == "/health":
+            # Checks are read-only and explicitly registered here; no recovery is automatic.
+            monitor = ResilienceMonitor([
+                ("workspace_directory", lambda: workspace.is_dir()),
+                ("agent_skill_interface", lambda: callable(getattr(agent, "run_skill", None))),
+                ("readiness_report", lambda: isinstance(build_readiness_report().to_dict().get("capabilities"), dict)),
+            ])
+            report = monitor.run().to_dict()
+            print(f"Yuki health: {report['status']} (checked {report['checked_at']})")
+            for check in report["checks"]:
+                print(f"- {check['name']}: {check['status']} — {check['detail']} ({check['duration_ms']} ms)")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
