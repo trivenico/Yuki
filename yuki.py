@@ -12,6 +12,7 @@ from yuki_tools import TOOLS, run_tool
 from core.plugin_loader import _static_candidates
 from skills.registry import SkillRegistry
 from core.repo_wiring_audit import audit_python_wiring
+from core.skill_registry_audit import audit_skill_registry
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -53,6 +54,7 @@ Yuki commands:
   /providers                      List provider adapters and implementation status
   /skills scan                    Statically discover candidate Python skills (does not import them)
   /skills status                  Compare discovered candidates with registered built-in skills
+  /skills audit                   Compare skill modules with explicit registry imports
   /wiring audit                   Inventory Python files and static inbound imports
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
@@ -135,6 +137,20 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             lines.append(f"  ... and {len(flags) - 80} more; use the JSON audit API for full details.")
         lines.append("Heuristic only: dynamic imports, entry points, plugins, external launchers, and non-Python wiring may not be visible.")
         write_audit_event("wiring:audit", "completed" if not report["parse_or_size_issues"] else "completed_with_issues")
+        return "\\n".join(lines)
+    if command == "/skills audit":
+        try:
+            report = audit_skill_registry(Path(__file__).resolve().parent)
+        except (OSError, ValueError) as error:
+            write_audit_event("skills:audit", "failed")
+            return f"Skill registry audit failed ({type(error).__name__})."
+        lines = [f"Skill registry wiring audit: {report['skill_module_count']} candidate modules; {report['registry_import_count']} directly imported by registry."]
+        lines.append("Directly wired modules: " + (", ".join(report["directly_wired"]) if report["directly_wired"] else "none"))
+        lines.append(f"Not directly wired: {len(report['not_directly_wired'])}")
+        lines.extend(f"  review: {name}" for name in report["not_directly_wired"])
+        lines.extend(f"  source issue: {item['path']} — {item['reason']}" for item in report["issues"])
+        lines.append(report["interpretation"])
+        write_audit_event("skills:audit", "completed" if not report["issues"] else "completed_with_issues")
         return "\\n".join(lines)
     if command == "/skills status":
         skills_dir = Path(__file__).with_name("skills")
