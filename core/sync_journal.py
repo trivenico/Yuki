@@ -5,6 +5,7 @@ not open network listeners, authenticate peers, or automatically sync data.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -134,11 +135,16 @@ class SyncJournal:
             elif row["value"] != origin_id:
                 raise SyncJournalError("Database origin ID does not match configured origin.")
 
+    @contextmanager
     def _connect(self):
+        """Open one SQLite connection and always close it, including on Windows."""
         db = sqlite3.connect(self.database_path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _decode(row) -> SyncEvent:
@@ -155,6 +161,9 @@ class SyncJournal:
     def append(self, kind: str, entity_id: str, payload: dict[str, Any]) -> SyncEvent:
         payload_json = _payload_json(payload)
         with self._connect() as db:
+            # Serialize sequence allocation and insert so concurrent writers
+            # cannot both observe the same maximum sequence.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) AS seq FROM sync_events WHERE origin_id=?",
                 (self.origin_id,),
@@ -191,16 +200,25 @@ class SyncJournal:
         ):
             raise ValueError("cursors must map origin IDs to non-negative integer sequences.")
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM sync_events ORDER BY origin_id, sequence"
-            ).fetchall()
-        result = []
-        for row in rows:
-            if row["sequence"] > cursors.get(row["origin_id"], 0):
-                result.append(self._decode(row))
-                if len(result) >= limit:
-                    break
-        return result
+            if cursors:
+                known = list(cursors)
+                clauses = ["origin_id NOT IN (" + ",".join("?" for _ in known) + ")"]
+                params = list(known)
+                for origin, sequence in cursors.items():
+                    clauses.append("(origin_id=? AND sequence>?)")
+                    params.extend((origin, sequence))
+                query = (
+                    "SELECT * FROM sync_events WHERE (" + " OR ".join(clauses) + ") "
+                    "ORDER BY origin_id, sequence LIMIT ?"
+                )
+                params.append(limit)
+                rows = db.execute(query, params).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM sync_events ORDER BY origin_id, sequence LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [self._decode(row) for row in rows]
 
     def ingest(self, events: Iterable[SyncEvent | dict[str, Any]], *, limit: int = 5000) -> int:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5000:
