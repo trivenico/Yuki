@@ -137,12 +137,16 @@ class SyncJournal:
 
     @contextmanager
     def _connect(self):
-        """Open one SQLite connection and always close it, including on Windows."""
+        """Commit successful units of work and roll back failures before closing."""
         db = sqlite3.connect(self.database_path, timeout=10)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
         try:
             yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
         finally:
             db.close()
 
