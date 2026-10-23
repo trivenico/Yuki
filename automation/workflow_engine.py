@@ -74,9 +74,17 @@ class WorkflowEngine:
             raise ValueError("wait_for_approval always requires explicit approval.")
         return name.strip(), action, argument, approval
 
-    def run(self, steps: list[WorkflowStep | dict[str, Any]]) -> list[dict[str, Any]]:
+    def run(
+        self,
+        steps: list[WorkflowStep | dict[str, Any]],
+        *,
+        cancellation_check: Callable[[], bool] | None = None,
+    ) -> list[dict[str, Any]]:
         if not isinstance(steps, (list, tuple)) or not 1 <= len(steps) <= self.MAX_STEPS:
             raise ValueError("Workflow must contain 1-20 steps.")
+
+        if cancellation_check is not None and not callable(cancellation_check):
+            raise TypeError("cancellation_check must be callable.")
 
         validated = [self._validate_step(index, step) for index, step in enumerate(steps)]
         names = [step[0] for step in validated]
@@ -85,12 +93,34 @@ class WorkflowEngine:
 
         results: list[dict[str, Any]] = []
         for name, action, argument, requires_approval in validated:
+            if cancellation_check is not None:
+                try:
+                    cancelled = cancellation_check()
+                except Exception:
+                    # Cancellation status is safety-critical: inability to check means stop.
+                    results.append({"step": name, "ok": False, "status": "cancellation_check_failed"})
+                    break
+                if cancelled is True:
+                    results.append({"step": name, "ok": False, "status": "cancelled"})
+                    break
+
             needs_approval = requires_approval or action == "wait_for_approval"
             if needs_approval and (
                 self.approver is None or self.approver(name, action, argument) is not True
             ):
                 results.append({"step": name, "ok": False, "status": "approval_denied"})
                 break
+
+            # Approval may take time; re-check immediately before any handler/recorded action.
+            if cancellation_check is not None and action != "wait_for_approval":
+                try:
+                    cancelled = cancellation_check()
+                except Exception:
+                    results.append({"step": name, "ok": False, "status": "cancellation_check_failed"})
+                    break
+                if cancelled is True:
+                    results.append({"step": name, "ok": False, "status": "cancelled"})
+                    break
 
             if action == "wait_for_approval":
                 results.append({"step": name, "ok": True, "status": "approved"})
