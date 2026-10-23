@@ -12,7 +12,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -98,6 +98,53 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
+
+
+    def test_retry_requires_permission_and_failed_or_interrupted_state(self):
+        task = self.create("retry-permission")
+        with self.assertRaises(PermissionError):
+            self.runtime.retry_failed(actor_id="supervisor", task_id=task.task_id,
+                                      expected_version=task.version)
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=task.version)
+
+    def test_retry_creates_fresh_task_with_provenance_and_is_idempotent(self):
+        task = self.create("retry-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        retried = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                             expected_version=failed.version)
+        self.assertNotEqual(retried.task_id, task.task_id)
+        self.assertEqual(retried.state, "queued")
+        self.assertEqual(retried.attempts, 0)
+        events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual(events[0].payload["retry_of"], task.task_id)
+        again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                          expected_version=failed.version)
+        self.assertEqual(again.task_id, retried.task_id)
+
+    def test_retry_rejects_stale_version_and_requires_fresh_approval(self):
+        protected_steps = [{"name": "protected", "action": "emit", "argument": "work",
+                            "requires_approval": True}]
+        task = self.runtime.enqueue(actor_id="alice", idempotency_key="retry-protected",
+                                    name="protected-task", steps=protected_steps)
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertIsNotNone(claimed)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        retried = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                            expected_version=failed.version)
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=task.version)
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(worker_id="worker-b")
+        self.assertEqual(self.store.get(retried.task_id).state, "queued")
 
     def test_invalid_progress_payload_is_rejected(self):
         task = self.create()
