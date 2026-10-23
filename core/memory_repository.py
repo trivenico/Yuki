@@ -32,6 +32,8 @@ class MemoryRepository:
     def delete(self, memory_id: str) -> bool:
         return self.store.delete(memory_id)
 
-    def clear(self) -> int:
-        """Clear only when the caller has already obtained user confirmation."""
+    def clear(self, *, confirmed: bool = False) -> int:
+        """Clear all notes only with an explicit caller confirmation flag."""
+        if confirmed is not True:
+            raise PermissionError("Clearing memory requires confirmed=True.")
         return self.store.clear()
