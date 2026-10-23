@@ -32,16 +32,17 @@ class MetadataDiscoveryTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def manifest(self, name="weather", **overrides):
+    def manifest(self, filename="weather", **overrides):
+        manifest_name = overrides.pop("name", filename)
         data = {
-            "name": name,
+            "name": manifest_name,
             "description": "Get a weather summary",
             "risk": "low",
             "permissions": ["network"],
             "entrypoint": "weather.py",
         }
         data.update(overrides)
-        path = self.root / f"{name}.skill.json"
+        path = self.root / f"{filename}.skill.json"
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
