@@ -6,7 +6,7 @@ from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from integrations.chatgpt_mcp import BridgeConfigError, ConversationStore, _handle_rpc, _load_config, create_handler
+from integrations.chatgpt_mcp import BridgeConfigError, ConversationStore, _handle_rpc, _load_config, _validate_memory_binding, create_handler
 from providers.mock import MockProvider
 from yuki_agent import YukiAgent
 from yuki_providers import ProviderManager
@@ -166,6 +166,12 @@ class MCPBridgeTests(unittest.TestCase):
     def test_invalid_remote_binding_configuration_fails_closed(self):
         with self.assertRaises(BridgeConfigError):
             _load_config({"YUKI_MCP_BEARER_TOKEN": "x" * 48, "YUKI_MCP_HOST": "0.0.0.0"})
+
+    def test_conversation_memory_refuses_non_loopback_binding(self):
+        _validate_memory_binding(False, "0.0.0.0")
+        _validate_memory_binding(True, "127.0.0.1")
+        with self.assertRaisesRegex(BridgeConfigError, "restricted to loopback"):
+            _validate_memory_binding(True, "0.0.0.0")
 
 
 if __name__ == "__main__":
