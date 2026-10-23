@@ -1,8 +1,11 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+from getpass import getpass
 from pathlib import Path
 
+from core.auth import BuiltInAuthService
+from core.cli_auth import DEFAULT_AUTH_DB, authenticate_local_cli
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
@@ -63,9 +66,11 @@ Yuki commands:
   /learning                       Show recent learning history
   /learning clear                 Clear learning history
   /audit                          Show recent metadata-only audit events
+  /logout                         End the authenticated session
   /quit                           Exit Yuki
 
-The default mock provider makes no network calls. Provider registry entries are not live integrations.
+Login is required before the command loop starts. The default mock provider makes no network calls.
+Provider registry entries are not live integrations.
 """)
 
 
@@ -76,7 +81,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
     policy = policy or SecurityPolicy(allowed_tools=TOOLS.keys())
 
-    if command in ("/quit", "/exit"):
+    if command in ("/quit", "/exit", "/logout"):
         return "__QUIT__"
     if command == "/help":
         show_help()
@@ -113,7 +118,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Recent audit events: {len(load_audit_events())}"
         )
     if command == "/providers":
-        return "\n".join(
+        return "\\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
             f'{" (selected)" if item["selected"] else ""}; auth metadata: {", ".join(item["auth_methods"])}'
             for item in providers.list_providers()
@@ -145,7 +150,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             return result
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
     if command == "/memory":
-        return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
+        return "\\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
     if command.startswith("/memory add "):
         note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
@@ -177,12 +182,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     if command.startswith("/lessons"):
         task = command[len("/lessons"):].strip()
         lessons = suggest_lessons(task)
-        return "\n".join(f"- {lesson}" for lesson in lessons) if lessons else "No matching lessons saved yet."
+        return "\\n".join(f"- {lesson}" for lesson in lessons) if lessons else "No matching lessons saved yet."
     if command == "/learning":
         history = load_history()
         if not history:
             return "No learning history yet."
-        return "\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
+        return "\\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
                          for item in history[-10:])
     if command == "/learning clear":
         result = clear_history()
@@ -192,38 +197,57 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         events = load_audit_events()[-10:]
         if not events:
             return "No audit events yet."
-        return "\n".join(f'{item["timestamp"][:19]} {item["action"]}: {item["outcome"]}' for item in events)
+        return "\\n".join(f'{item["timestamp"][:19]} {item["action"]}: {item["outcome"]}' for item in events)
 
     related = suggest_lessons(command)
     response = agent.ask(command)
     if related:
-        response += "\n\nRelevant saved lessons:\n" + "\n".join(f"- {lesson}" for lesson in related)
+        response += "\\n\\nRelevant saved lessons:\\n" + "\\n".join(f"- {lesson}" for lesson in related)
     return response
 
 
-def main():
-    providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
-    policy = SecurityPolicy(allowed_tools=TOOLS.keys())
-    memory = load_memory()
-    tasks = load_tasks()
-    print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
-    print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
-    while True:
-        try:
-            message = input("\nYou > ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
-            break
-        try:
-            response = handle_command(message, memory, tasks, agent, providers, policy)
-        except Exception as error:
-            response = f"Yuki encountered a recoverable error: {type(error).__name__}."
-        if response == "__QUIT__":
-            print("Yuki > Goodbye.")
-            break
-        if response:
-            print(f"Yuki > {response}")
+def main(*, auth_service=None, input_fn=None, password_fn=None):
+    """Run the terminal app only after a local account has authenticated."""
+    if input_fn is None:
+        input_fn = input
+    if password_fn is None:
+        password_fn = getpass
+    if auth_service is None:
+        auth_service = BuiltInAuthService(str(DEFAULT_AUTH_DB))
+
+    session = authenticate_local_cli(
+        auth_service, input_fn=input_fn, password_fn=password_fn,
+    )
+    if session is None:
+        print("Authentication required. Yuki is not starting.")
+        return
+
+    try:
+        providers = ProviderManager()
+        agent = YukiAgent(provider=providers.create_selected_adapter())
+        policy = SecurityPolicy(allowed_tools=TOOLS.keys())
+        memory = load_memory()
+        tasks = load_tasks()
+        print("Yuki terminal prototype. Type /help for commands; /logout or /quit to end the session.")
+        print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
+        while True:
+            try:
+                message = input_fn("\\nYou > ")
+            except (EOFError, KeyboardInterrupt):
+                print("\\nGoodbye.")
+                break
+            try:
+                response = handle_command(message, memory, tasks, agent, providers, policy)
+            except Exception as error:
+                response = f"Yuki encountered a recoverable error: {type(error).__name__}."
+            if response == "__QUIT__":
+                print("Yuki > Goodbye.")
+                break
+            if response:
+                print(f"Yuki > {response}")
+    finally:
+        # The raw token exists only in this process and is never emitted to logs.
+        auth_service.revoke_session(session.token)
 
 
 if __name__ == "__main__":
