@@ -227,7 +227,7 @@ class AuthorizedReadOnlyTools:
         scanned_files = scanned_bytes = 0
         truncated = False
         for path in sorted(base.rglob("*")):
-            if any(part in _BLOCKED_PARTS or _SECRET_NAME.search(part) for part in path.relative_to(self._root).parts):
+            if path.is_symlink() or any(part in _BLOCKED_PARTS or _SECRET_NAME.search(part) for part in path.relative_to(self._root).parts):
                 continue
             try:
                 resolved = path.resolve(strict=True)
