@@ -1,0 +1,45 @@
+name: Phase 85 specialist handler worker
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-specialist-worker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  specialist-worker:
+    name: Specialist worker / Python 3.11 / ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install declared dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile specialist worker
+        run: python -m compileall -q automation/specialist_worker.py automation/agent_coordinator.py automation/task_runtime.py automation/workflow_store.py tests/test_specialist_worker.py
+      - name: Test specialist worker
+        run: python -m unittest discover -s tests -p 'test_specialist_worker.py' -v
+      - name: Test specialist coordinator
+        run: python -m unittest discover -s tests -p 'test_agent_coordinator.py' -v
+      - name: Test task runtime regressions
+        run: python -m unittest discover -s tests -p 'test_task_runtime.py' -v
+      - name: Test workflow store regressions
+        run: python -m unittest discover -s tests -p 'test_workflow_store.py' -v
+      - name: Test workflow engine safety
+        run: python -m unittest discover -s tests -p 'test_workflow_engine.py' -v
