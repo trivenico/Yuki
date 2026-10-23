@@ -66,7 +66,7 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
     def test_unlisted_secret_and_parent_paths_rejected(self):
         with self.assertRaises(ToolAuthorizationError):
             self.service().apply(principal=self.principal, changes=[self.change(path=".env", content="x")])
-        with self.assertRaises(ToolAuthorizationError):
+        with self.assertRaises(ToolInputError):
             self.service(allowed=("../outside.py",)).apply(
                 principal=self.principal,
                 changes=[FileChange("../outside.py", "0" * 64, "x")],
@@ -100,7 +100,7 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
 
     def test_duplicate_paths_and_excessive_changes_rejected(self):
         change = self.change()
-        with self.assertRaises(ToolInputError):
+        with self.assertRaises(ToolAuthorizationError):
             self.service().apply(principal=self.principal, changes=[change, change])
         with self.assertRaises(ToolInputError):
             self.service().apply(principal=self.principal, changes=[change] * 9)
