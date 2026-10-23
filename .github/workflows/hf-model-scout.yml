@@ -24,9 +24,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Test scout without network access
@@ -39,7 +39,7 @@ jobs:
             --limit-per-task "$SCOUT_LIMIT" \
             --output-dir artifacts/model-scout
       - name: Upload timestamped discovery report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: yuki-hf-model-scout-${{ github.run_id }}
           path: artifacts/model-scout/*.json
