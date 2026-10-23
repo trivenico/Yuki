@@ -157,10 +157,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
             queued.run_id, expected_version=queued.version, to_state="running", lease_owner="worker-a"
         )
         self.assertEqual(running.state, "running")
-        self.assertEqual(running.version, 1)
+        self.assertEqual(running.version, 2)
         self.assertEqual(running.attempts, 1)
         succeeded = self.store.transition(
-            running.run_id, expected_version=1, to_state="succeeded",
+            running.run_id, expected_version=running.version, to_state="succeeded",
             result={"steps_completed": 1},
         )
         self.assertEqual(succeeded.state, "succeeded")
