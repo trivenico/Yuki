@@ -1,0 +1,38 @@
+name: Built-in authentication security tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-auth-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authentication:
+    name: Auth tests / Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install declared dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Compile authentication and workflow modules
+        run: python -m compileall -q core/auth.py automation/workflow_approval.py automation/workflow_store.py tests/test_auth.py
+      - name: Run authentication and workflow approval tests
+        run: python -m unittest tests.test_auth tests.test_workflow_approval tests.test_workflow_store -v
