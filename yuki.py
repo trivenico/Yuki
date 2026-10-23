@@ -53,6 +53,8 @@ Yuki commands:
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
   /skills scan                    Statically discover candidate Python skills (does not import them)
+  /skills list                    List skills registered in the runtime registry
+  /skills inspect NAME            Show metadata for one registered skill
   /skills status                  Compare discovered candidates with registered built-in skills
   /skills audit                   Compare skill modules with explicit registry imports
   /wiring audit                   Inventory Python files and static inbound imports
@@ -169,6 +171,33 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         lines.append("Dynamic plugin registration is not enabled by this status command; trust policy remains explicit.")
         write_audit_event("skills:status", "completed" if not failures else "completed_with_issues")
         return "\\n".join(lines)
+    if command == "/skills list":
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            entries = registry.describe()
+        except Exception as error:
+            write_audit_event("skills:list", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        write_audit_event("skills:list", "completed")
+        if not entries:
+            return "No skills are registered."
+        return "\\n".join(f"{item['name']} [{item['risk']}] — {item['description']}" for item in entries)
+    if command.startswith("/skills inspect "):
+        name = command[len("/skills inspect "):].strip()
+        if not name or any(char.isspace() for char in name):
+            return "Usage: /skills inspect NAME"
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:inspect", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:inspect", "not_found")
+            return f"No registered skill named '{name}'."
+        result = f"Name: {skill.name}\\nDescription: {skill.description}\\nRisk: {skill.risk}\\nRequires approval: {bool(getattr(skill, 'requires_approval', True))}\\nExecutable through this command: no (inspection only)."
+        write_audit_event("skills:inspect", "completed")
+        return result
     if command == "/skills scan":
         skills_dir = Path(__file__).with_name("skills")
         candidates, failures = _static_candidates([skills_dir])
