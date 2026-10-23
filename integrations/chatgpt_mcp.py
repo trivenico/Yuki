@@ -397,9 +397,19 @@ def create_handler(agent=None, providers=None, *, token=None, store=None, max_co
     return MCPHandler
 
 
+def _validate_memory_binding(memory_enabled: bool, host: str) -> None:
+    """Refuse shared-interface conversation storage without per-user authorization."""
+    if memory_enabled and host not in {"127.0.0.1", "::1", "localhost"}:
+        raise BridgeConfigError(
+            "Conversation memory is restricted to loopback until session ownership "
+            "is bound to an authenticated user identity."
+        )
+
+
 def main() -> None:
     config = _load_config()
     memory_enabled = os.environ.get("YUKI_MCP_MEMORY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    _validate_memory_binding(memory_enabled, config["host"])
     store = None
     if memory_enabled:
         db_path = os.environ.get("YUKI_MCP_MEMORY_DB", "./yuki_workspace/chat_history.sqlite3")
