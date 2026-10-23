@@ -1,0 +1,38 @@
+name: Phase 90 authorized task retries
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: yuki-authorized-retries-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: Authorized retries / Python 3.11 / ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install declared dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile retry implementation and tests
+        run: python -m compileall -q automation/task_runtime.py automation/workflow_store.py tests/test_task_runtime.py
+      - name: Test task runtime and retry policy
+        run: python -m unittest discover -s tests -p 'test_task_runtime.py' -v
+      - name: Test workflow safety
+        run: python -m unittest discover -s tests -p 'test_workflow_engine.py' -v
+      - name: Test workflow store
+        run: python -m unittest discover -s tests -p 'test_workflow_store.py' -v
+      - name: Test supervised worker
+        run: python -m unittest discover -s tests -p 'test_worker_supervisor.py' -v
