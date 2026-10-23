@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled"})
+_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -181,6 +181,26 @@ class TaskRuntime:
                                      payload={"error_code": error_code, "state_version": failed.version},
                                      expected_version=failed.version)
         return self._record(self.store.get(task_id))
+
+
+    def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
+        """Mark expired worker leases interrupted and journal each recovery; never replay them."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:recover", ""):
+            raise PermissionError("task recovery is not authorized.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        interrupted = self.store.mark_expired_running_as_interrupted(limit=limit)
+        records: list[TaskRecord] = []
+        for run in interrupted:
+            self.store.append_task_event(
+                run.run_id, kind="task.interrupted", actor_id=actor,
+                payload={"state": "interrupted", "error_code": "lease_expired",
+                         "automatic_replay": False},
+                expected_version=run.version,
+            )
+            records.append(self._record(self.store.get(run.run_id)))
+        return records
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
