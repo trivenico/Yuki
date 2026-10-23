@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,27 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(first.state, "queued")
         self.assertEqual(first.version, 0)
         self.assertEqual(first.definition, self.definition)
+
+    def test_concurrent_idempotent_creates_return_same_run(self):
+        results = []
+        errors = []
+        barrier = threading.Barrier(6)
+
+        def create():
+            try:
+                barrier.wait(timeout=3)
+                results.append(self.create(key="concurrent-key").run_id)
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=create) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 6)
+        self.assertEqual(len(set(results)), 1)
 
     def test_idempotency_payload_mismatch_is_rejected(self):
         self.create()
