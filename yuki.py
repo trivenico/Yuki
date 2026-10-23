@@ -10,6 +10,7 @@ from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, writ
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
 from core.plugin_loader import _static_candidates
+from skills.registry import SkillRegistry
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -50,6 +51,7 @@ Yuki commands:
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
   /skills scan                    Statically discover candidate Python skills (does not import them)
+  /skills status                  Compare discovered candidates with registered built-in skills
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
@@ -114,6 +116,23 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Learning records: {len(load_history())}\\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
+    if command == "/skills status":
+        skills_dir = Path(__file__).with_name("skills")
+        candidates, failures = _static_candidates([skills_dir])
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            registered = set(registry.names())
+        except Exception as error:
+            write_audit_event("skills:status", "failed")
+            return f"Could not inspect the built-in skill registry ({type(error).__name__}). No plugin modules were loaded."
+        lines = [f"Skill lifecycle status: {len(candidates)} discovered candidate module(s); {len(registered)} built-in registered skill(s)."]
+        lines.append("Registered built-ins: " + (", ".join(sorted(registered)) if registered else "none"))
+        lines.extend(f"  candidate module: {name}" for name in sorted(candidates))
+        lines.extend(f"  source issue: {item['module']} — {item['error']}" for item in failures)
+        lines.append("Note: module names and registry skill names are different identifiers; candidates are not assumed registered by name.")
+        lines.append("Dynamic plugin registration is not enabled by this status command; trust policy remains explicit.")
+        write_audit_event("skills:status", "completed" if not failures else "completed_with_issues")
+        return "\\n".join(lines)
     if command == "/skills scan":
         skills_dir = Path(__file__).with_name("skills")
         candidates, failures = _static_candidates([skills_dir])
