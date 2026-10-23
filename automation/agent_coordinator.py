@@ -19,6 +19,7 @@ from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_store import WorkflowConflict
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
 _MAX_SUBTASKS = 20
 _MAX_PLAN_BYTES = 24 * 1024
 
@@ -142,11 +143,14 @@ class SpecialistAgentCoordinator:
             raise ValueError("agent name must be non-empty bounded text.")
         if not isinstance(agent.action, str) or not _ID.fullmatch(agent.action):
             raise ValueError("agent action must be an allow-listed action identifier.")
-        for collection in (agent.capabilities, agent.permissions):
-            if not isinstance(collection, frozenset) or any(
-                not isinstance(item, str) or not _ID.fullmatch(item) for item in collection
-            ):
-                raise ValueError("capabilities and permissions must be frozensets of identifiers.")
+        if not isinstance(agent.capabilities, frozenset) or any(
+            not isinstance(item, str) or not _ID.fullmatch(item) for item in agent.capabilities
+        ):
+            raise ValueError("capabilities must be a frozenset of identifiers.")
+        if not isinstance(agent.permissions, frozenset) or any(
+            not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions
+        ):
+            raise ValueError("permissions must be a frozenset of permission identifiers.")
         if type(agent.enabled) is not bool:
             raise ValueError("enabled must be a boolean.")
 
