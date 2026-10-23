@@ -212,6 +212,7 @@ class SpecialistAgentCoordinator:
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
+             "required_permissions": sorted(i.required_permissions),
              "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
@@ -240,6 +241,7 @@ class SpecialistAgentCoordinator:
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
+             "required_permissions": sorted(i.required_permissions),
              "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
              "agent_id": assignments[i.subtask_id].agent_id,
              "action": assignments[i.subtask_id].action}
@@ -263,11 +265,12 @@ class SpecialistAgentCoordinator:
                 agent = assignments[item.subtask_id]
                 db.execute("""
                     INSERT INTO agent_plan_subtasks(
-                        plan_id, subtask_id, agent_id, description, capabilities_json,
+                        plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
                         dependencies_json, requires_approval, task_id, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'blocked')
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'blocked')
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
+                      json.dumps(sorted(item.required_permissions)),
                       json.dumps(list(item.depends_on)), int(item.requires_approval)))
             return self._read_plan(db, plan_id)
 
