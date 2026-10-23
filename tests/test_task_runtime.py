@@ -15,7 +15,7 @@ class TaskRuntimeTests(unittest.TestCase):
                        "task:complete", "task:fail", "task:cancel"}
         self.runtime = TaskRuntime(
             self.store,
-            authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
+            authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
@@ -108,6 +108,21 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, message="ok", percent=True)
+
+    def test_expired_lease_recovery_is_authorized_and_journaled(self):
+        task = self.create("recover-expired")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                       (task.task_id,))
+        with self.assertRaises(PermissionError):
+            self.runtime.recover_expired(actor_id="alice")
+        recovered = self.runtime.recover_expired(actor_id="supervisor")
+        self.assertEqual([item.task_id for item in recovered], [task.task_id])
+        self.assertEqual(recovered[0].state, "interrupted")
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertFalse(events[-1].payload["automatic_replay"])
 
 
 if __name__ == "__main__":
