@@ -45,6 +45,7 @@ class SubtaskSpec:
     required_capabilities: tuple[str, ...]
     depends_on: tuple[str, ...] = ()
     requires_approval: bool = True
+    required_permissions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class PlannedSubtask:
     agent_id: str
     description: str
     required_capabilities: tuple[str, ...]
+    required_permissions: tuple[str, ...]
     depends_on: tuple[str, ...]
     requires_approval: bool
     task_id: str | None
