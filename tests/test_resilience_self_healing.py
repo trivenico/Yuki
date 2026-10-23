@@ -58,5 +58,28 @@ class SelfHealingTests(unittest.TestCase):
             engine.propose("unknown", "test")
 
 
+
+
+class RuntimeHealthIntegrationTests(unittest.TestCase):
+    def test_health_monitor_checks_are_explicit_and_read_only(self):
+        from pathlib import Path
+        from core.readiness import build_readiness_report
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            calls = []
+            monitor = ResilienceMonitor([
+                ("workspace_directory", lambda: workspace.is_dir()),
+                ("agent_skill_interface", lambda: callable(getattr(type("Agent", (), {"run_skill": lambda self: None})(), "run_skill", None))),
+                ("readiness_report", lambda: isinstance(build_readiness_report(
+                    environ={}, executable_finder=lambda name: None, module_finder=lambda name: None
+                ).to_dict().get("capabilities"), dict)),
+            ])
+            report = monitor.run()
+            self.assertEqual(report.status, "healthy")
+            self.assertEqual(len(report.checks), 3)
+            self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
