@@ -149,7 +149,12 @@ class AuthorizedReadOnlyTools:
         candidate = Path(value)
         if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
             raise ToolInputError("absolute paths and parent traversal are not allowed.")
-        resolved = (self._root / candidate).resolve(strict=True)
+        if any(part in _BLOCKED_PARTS or _SECRET_NAME.search(part) for part in candidate.parts):
+            raise ToolInputError("path is excluded by workspace safety policy.")
+        try:
+            resolved = (self._root / candidate).resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise ToolInputError("path does not exist or cannot be resolved safely.") from exc
         try:
             relative = resolved.relative_to(self._root)
         except ValueError as exc:
