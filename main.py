@@ -29,6 +29,7 @@ from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
+from core.self_healing import SelfHealingEngine
 
 
 def _ask_approval(request):
@@ -66,6 +67,8 @@ def print_help():
   /status                        Show capability status
   /readiness                     Detect runtime and local model readiness
   /health                        Run read-only core health checks
+  /recovery actions               List approved recovery handlers
+  /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
@@ -114,6 +117,18 @@ def main():
     searchable_memory = VectorMemory(memory_path)
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
+    recovery = SelfHealingEngine(
+        approve=lambda proposal: _confirm(
+            "recovery:" + proposal.action, proposal.reason, proposal.risk
+        )
+    )
+    # This first registered handler is intentionally diagnostic-only: it proves
+    # the approval path end-to-end without mutating files, services, or settings.
+    recovery.register(
+        "readiness_refresh",
+        lambda: {"ok": isinstance(build_readiness_report().to_dict().get("capabilities"), dict)},
+        risk="low",
+    )
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     evolution = DailyEvolutionCycle(workspace)
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
@@ -176,6 +191,22 @@ def main():
             print(f"Yuki health: {report['status']} (checked {report['checked_at']})")
             for check in report["checks"]:
                 print(f"- {check['name']}: {check['status']} — {check['detail']} ({check['duration_ms']} ms)")
+        elif command == "/recovery actions":
+            print("Registered recovery handlers:")
+            print("- readiness_refresh (low risk; read-only diagnostics)")
+            print("No service restart, configuration edit, or code upgrade handler is registered.")
+        elif command.startswith("/recovery run "):
+            payload = command[len("/recovery run "):]
+            if "|" not in payload:
+                print("Yuki > Use /recovery run NAME | REASON")
+                continue
+            action, reason = payload.split("|", 1)
+            try:
+                proposal = recovery.propose(action.strip(), reason.strip())
+                result = recovery.execute_approved(proposal)
+                print(f"Yuki recovery: {result.status} — {result.message}")
+            except (KeyError, ValueError) as exc:
+                print(f"Yuki > Recovery request rejected: {exc}")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
