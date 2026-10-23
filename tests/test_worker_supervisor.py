@@ -38,7 +38,8 @@ class WorkerSupervisorTests(unittest.TestCase):
     def create_task(self, key):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key=key,
-            subtasks=[SubtaskSpec("report", "Summarize verified inputs", ("reporting",),\n                                  requires_approval=False)],
+            subtasks=[SubtaskSpec("report", "Summarize verified inputs", ("reporting",),
+                                  requires_approval=False)],
         )
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
