@@ -2,12 +2,14 @@
 
 ## Intended deployment
 
-Yuki is a personal-use project during development. It must not be published as a public service or offered to other users until the production release gates below are satisfied. A comparison with StonicAI is a product target, not evidence that Yuki already has equivalent capabilities or assurance.
+**Yuki is a private, single-owner personal assistant project**: the goal is a JARVIS-like assistant for its owner, not a public SaaS, multi-tenant service, or product offered to other users. Use the owner's own machine and accounts, with owner-controlled permissions and explicit confirmation for consequential actions. Do not publish it or enable remote access during development.
+
+The JARVIS / StonicAI comparison describes the desired personal-assistant experience and quality bar; it is not evidence that Yuki already has equivalent capabilities, autonomy, integrations, reliability, or security assurance. Production qualification is still required even for personal use, because a local agent can affect private files, accounts, devices, and systems.
 
 ## Current safe-use boundary
 
-- Run locally under the owner's operating-system account.
-- Keep MCP bound to loopback. Do not publish it, tunnel it, reverse-proxy it, or bind it to a LAN/public interface during preview.
+- Run locally under the owner's operating-system account; treat the owner as the only user and do not add public registration, shared accounts, or multi-tenant assumptions.
+- Keep MCP bound to loopback. Do not publish it, tunnel it, reverse-proxy it, or bind it to a LAN/public interface. No other person should have network access to the assistant during preview.
 - Keep cloud providers and integrations explicitly configured; prefer local Ollama/mock mode for smoke tests and never send private prompts to cloud providers without explicit choice.
 - Keep optional conversation memory disabled unless needed for a local test. Session IDs are not authenticated identities.
 - Keep plugin discovery and untrusted skill imports disabled. A Python plugin is code execution with the process user's permissions, not a sandbox.
