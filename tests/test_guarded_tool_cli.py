@@ -11,6 +11,8 @@ from yuki_security import SecurityPolicy
 class GuardedToolCliTests(unittest.TestCase):
     def setUp(self):
         yuki._TOOL_APPROVALS.clear()
+        self.original_registry = yuki._TOOL_REGISTRY
+        self.addCleanup(setattr, yuki, "_TOOL_REGISTRY", self.original_registry)
         self.policy = SecurityPolicy(allowed_tools=yuki.TOOLS.keys())
         self.agent = object()
         self.providers = object()
