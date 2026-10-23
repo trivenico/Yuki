@@ -30,6 +30,17 @@ class CodingTaskRunnerTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.policy = SandboxPolicy(max_output_bytes=8, timeout_seconds=2)
 
+    @patch("core.coding_task_runner.build_docker_argv")
+    def test_actual_nul_byte_is_rejected_before_approval_or_launch(self, build):
+        approve = unittest.mock.Mock(return_value=True)
+        with self.assertRaises(SandboxExecutionError):
+            run_sandboxed_task(
+                self.policy, image="python:3.12", workspace=self.tmp.name,
+                command=["python", "bad\\x00arg"], approve=approve,
+            )
+        approve.assert_not_called()
+        build.assert_not_called()
+
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
     @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
