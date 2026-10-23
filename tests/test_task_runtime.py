@@ -132,6 +132,8 @@ class TaskRuntimeTests(unittest.TestCase):
                             "requires_approval": True}]
         task = self.runtime.enqueue(actor_id="alice", idempotency_key="retry-protected",
                                     name="protected-task", steps=protected_steps)
+        approved = self.store.approve(task.task_id, actor_id="alice", session_id="test-session",
+                                      expected_version=task.version)
         claimed = self.store.claim_next(worker_id="worker-a")
         self.assertIsNotNone(claimed)
         failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
