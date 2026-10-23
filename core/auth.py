@@ -152,7 +152,7 @@ class BuiltInAuthService:
             # Session validation always checks expiry/revocation independently of cleanup.
             cutoff = _timestamp(_utcnow() - timedelta(days=_SESSION_RETENTION_DAYS))
             db.execute(
-                "DELETE FROM auth_sessions WHERE expires_at < ? AND expires_at < ?",
+                "DELETE FROM auth_sessions WHERE expires_at < ?",
                 (cutoff, cutoff),
             )
             db.execute(
@@ -285,6 +285,22 @@ class BuiltInAuthService:
             result = db.execute("UPDATE auth_users SET disabled=1 WHERE user_id=?", (user_id,))
             db.execute("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (_timestamp(_utcnow()), user_id))
             return result.rowcount == 1
+
+    def cleanup_sessions(self, *, retention_days=_SESSION_RETENTION_DAYS):
+        """Delete expired/revoked session rows older than retention_days.
+
+        Call periodically from maintenance code; session resolution does not depend
+        on this cleanup, so expired/revoked sessions remain invalid beforehand.
+        """
+        if isinstance(retention_days, bool) or not isinstance(retention_days, int) or not 1 <= retention_days <= 365:
+            raise ValueError("retention_days must be between 1 and 365.")
+        cutoff = _timestamp(_utcnow() - timedelta(days=retention_days))
+        with self._connect() as db:
+            result = db.execute(
+                "DELETE FROM auth_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)",
+                (cutoff, cutoff),
+            )
+            return result.rowcount
 
     def list_users(self):
         with self._connect() as db:
