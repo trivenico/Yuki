@@ -144,8 +144,7 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowConflict):
             self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                       expected_version=task.version)
-        with self.assertRaises(WorkflowTransitionError):
-            self.store.claim_next(worker_id="worker-b")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
         self.assertEqual(self.store.get(retried.task_id).state, "queued")
 
     def test_invalid_progress_payload_is_rejected(self):
