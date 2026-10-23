@@ -71,7 +71,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
             risk = "high"
             requires_approval = True
             def execute(self, argument=""):
-                return "executed"
+                return type("Result", (), {"ok": True, "message": "executed"})()
         # Register through the test registry to isolate invocation policy.
         self.registry.register(HighRisk())
         first = self.runtime.invoke("weather")
