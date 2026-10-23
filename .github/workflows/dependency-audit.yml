@@ -1,0 +1,29 @@
+name: Dependency manifest audit
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit duplicate and conflicting requirement declarations
+        run: python tools/dependency_audit.py
+      - name: Test dependency audit
+        run: python -m unittest tests.test_dependency_audit -v
