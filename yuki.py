@@ -11,6 +11,7 @@ from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_t
 from yuki_tools import TOOLS, run_tool
 from core.plugin_loader import _static_candidates
 from skills.registry import SkillRegistry
+from core.repo_wiring_audit import audit_python_wiring
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -52,6 +53,7 @@ Yuki commands:
   /providers                      List provider adapters and implementation status
   /skills scan                    Statically discover candidate Python skills (does not import them)
   /skills status                  Compare discovered candidates with registered built-in skills
+  /wiring audit                   Inventory Python files and static inbound imports
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
@@ -116,6 +118,24 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Learning records: {len(load_history())}\\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
+    if command == "/wiring audit":
+        try:
+            report = audit_python_wiring(Path(__file__).resolve().parent)
+        except (OSError, ValueError) as error:
+            write_audit_event("wiring:audit", "failed")
+            return f"Repository wiring audit failed ({type(error).__name__})."
+        counts = report["counts"]
+        lines = [f"Static repository wiring audit: {report['python_file_count']} Python files examined."]
+        lines.extend(f"  {status}: {count}" for status, count in sorted(counts.items()))
+        lines.append(f"Parse/size issues: {len(report['parse_or_size_issues'])}")
+        flags = [item for item in report["files"] if item["status"] in {"no_static_inbound_import", "needs_inspection"}]
+        lines.append(f"Files needing review (not proof of being unused): {len(flags)}")
+        lines.extend(f"  {item['status']}: {item['path']}" for item in flags[:80])
+        if len(flags) > 80:
+            lines.append(f"  ... and {len(flags) - 80} more; use the JSON audit API for full details.")
+        lines.append("Heuristic only: dynamic imports, entry points, plugins, external launchers, and non-Python wiring may not be visible.")
+        write_audit_event("wiring:audit", "completed" if not report["parse_or_size_issues"] else "completed_with_issues")
+        return "\\n".join(lines)
     if command == "/skills status":
         skills_dir = Path(__file__).with_name("skills")
         candidates, failures = _static_candidates([skills_dir])
