@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.requeued"})
+_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -212,17 +212,12 @@ class TaskRuntime:
             workflow_name=original.workflow_name,
             definition=original.definition,
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=10)
+        existing_events = self.store.list_task_events(retried.run_id, limit=1)
         if not existing_events:
-            created = self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition)},
-                expected_version=retried.version,
-            )
-            retried = self.store.get(retried.run_id)
             self.store.append_task_event(
-                retried.run_id, kind="task.requeued", actor_id=actor,
-                payload={"retry_of": original.run_id, "source_state": original.state,
+                retried.run_id, kind="task.created", actor_id=actor,
+                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
+                         "retry_of": original.run_id, "source_state": original.state,
                          "source_version": original.version,
                          "approval_required": self.store._requires_approval(original.definition)},
                 expected_version=retried.version,
