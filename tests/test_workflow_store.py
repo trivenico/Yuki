@@ -140,7 +140,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
     def test_approval_requires_a_nonempty_actor(self):
         run = self.create(key="approval-actor")
         with self.assertRaises(ValueError):
-            self.store.approve(run.run_id, actor_id=" ", expected_version=run.version)
+            self.store.approve(run.run_id, actor_id=" ", session_id="session-1", expected_version=run.version)
     def test_idempotency_payload_mismatch_is_rejected(self):
         self.create()
         with self.assertRaises(WorkflowConflict):
