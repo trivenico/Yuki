@@ -1,0 +1,38 @@
+name: Phase 93 engineering workflow
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: yuki-engineering-workflow-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: Engineering workflow / Python 3.11 / ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install declared dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile workflow and tests
+        run: python -m compileall -q automation/engineering_workflow.py automation/approved_workspace_changes.py automation/specialist_read_tool_adapter.py tests/test_engineering_workflow.py
+      - name: Test engineering workflow
+        run: python -m unittest discover -s tests -p 'test_engineering_workflow.py' -v
+      - name: Test approved workspace changes
+        run: python -m unittest discover -s tests -p 'test_approved_workspace_changes.py' -v
+      - name: Test specialist read tools
+        run: python -m unittest discover -s tests -p 'test_specialist_read_tool_adapter.py' -v
+      - name: Test workflow safety
+        run: python -m unittest discover -s tests -p 'test_workflow_engine.py' -v
