@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
