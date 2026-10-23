@@ -115,6 +115,7 @@ class SpecialistAgentCoordinator:
                     agent_id TEXT NOT NULL,
                     description TEXT NOT NULL,
                     capabilities_json TEXT NOT NULL,
+                    permissions_json TEXT NOT NULL DEFAULT "[]",
                     dependencies_json TEXT NOT NULL,
                     requires_approval INTEGER NOT NULL,
                     task_id TEXT,
@@ -123,6 +124,9 @@ class SpecialistAgentCoordinator:
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
+            if "permissions_json" not in columns:
+                db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
 
     def _connect(self):
