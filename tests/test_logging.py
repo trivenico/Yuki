@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -30,7 +31,10 @@ class LoggingTests(unittest.TestCase):
             lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(lines), 1)
             record = json.loads(lines[0])
-            self.assertEqual(record["action"], "file_write")
+            self.assertEqual(record["action_fingerprint"], hashlib.sha256(b"file_write").hexdigest())
+            self.assertNotIn("action", record)
+            self.assertNotIn("reason", record)
+            self.assertNotIn("Save notes", lines[0])
             self.assertEqual(record["decision"], "approved")
 
 

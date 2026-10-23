@@ -1,12 +1,20 @@
-"""In-memory or persistent store for action approval decisions."""
+"""Deprecated compatibility shim for the unsafe legacy approval store.
+
+This class intentionally cannot grant authorization. Use PermissionGate and its
+fresh, action-bound approval flow instead.
+"""
 
 
 class ActionApprovalStore:
+    """Fail-closed compatibility shim; never treats an action ID as approval."""
+
     def __init__(self):
-        self._approvals = {}
+        pass
 
     def approve(self, action_id: str, approved: bool = True):
-        self._approvals[action_id] = approved
+        raise RuntimeError(
+            "ActionApprovalStore cannot grant approvals; use PermissionGate."
+        )
 
     def is_approved(self, action_id: str) -> bool:
-        return self._approvals.get(action_id, False)
+        return False
