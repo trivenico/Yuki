@@ -18,6 +18,9 @@ MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
 
+# One-shot approvals exist only for this process and are consumed on use.
+_APPROVED_SKILL_RUNS: set[str] = set()
+
 
 def load_memory():
     try:
@@ -55,6 +58,8 @@ Yuki commands:
   /skills scan                    Statically discover candidate Python skills (does not import them)
   /skills list                    List skills registered in the runtime registry
   /skills inspect NAME            Show metadata for one registered skill
+  /skills approve NAME            Approve one invocation of an approval-gated skill
+  /skills run NAME [ARGUMENT]     Invoke a registered skill through its guarded execute() method
   /skills status                  Compare discovered candidates with registered built-in skills
   /skills audit                   Compare skill modules with explicit registry imports
   /wiring audit                   Inventory Python files and static inbound imports
@@ -171,6 +176,53 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         lines.append("Dynamic plugin registration is not enabled by this status command; trust policy remains explicit.")
         write_audit_event("skills:status", "completed" if not failures else "completed_with_issues")
         return "\\n".join(lines)
+    if command.startswith("/skills approve "):
+        name = command[len("/skills approve "):].strip()
+        if not name or any(char.isspace() for char in name):
+            return "Usage: /skills approve NAME"
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:approve", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:approve", "not_found")
+            return f"No registered skill named '{name}'."
+        _APPROVED_SKILL_RUNS.add(name)
+        write_audit_event("skills:approve", "approved_once")
+        return f"One invocation of '{name}' approved for this process. Run /skills run {name} [ARGUMENT] to consume approval."
+    if command.startswith("/skills run "):
+        remainder = command[len("/skills run "):]
+        parts = remainder.split(maxsplit=1)
+        if not parts:
+            return "Usage: /skills run NAME [ARGUMENT]"
+        name = parts[0]
+        argument = parts[1] if len(parts) > 1 else ""
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:run", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:run", "not_found")
+            return f"No registered skill named '{name}'."
+        needs_approval = bool(getattr(skill, "requires_approval", True)) or str(getattr(skill, "risk", "low")).lower() in {"high", "critical"}
+        if needs_approval and name not in _APPROVED_SKILL_RUNS:
+            write_audit_event("skills:run", "approval_required")
+            return f"Approval required. Review the skill with /skills inspect {name}, then explicitly approve with /skills approve {name}."
+        if needs_approval:
+            _APPROVED_SKILL_RUNS.discard(name)
+        try:
+            result = skill.execute(argument)
+        except Exception as error:
+            write_audit_event("skills:run", "failed")
+            return f"Skill invocation failed safely ({type(error).__name__})."
+        ok = bool(getattr(result, "ok", False))
+        message_text = str(getattr(result, "message", "Skill returned an invalid result."))[:2000]
+        write_audit_event("skills:run", "completed" if ok else "skill_failed")
+        return message_text
     if command == "/skills list":
         try:
             registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
