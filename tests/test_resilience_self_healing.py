@@ -103,6 +103,14 @@ class RecoveryAuditLogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 log.recent(201)
 
+    def test_max_events_configuration_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recovery.sqlite3"
+            for invalid_limit in (99, 100001, True):
+                with self.assertRaises(ValueError):
+                    RecoveryAuditLog(path, max_events=invalid_limit)
+
+
 class RuntimeHealthIntegrationTests(unittest.TestCase):
     def test_health_monitor_checks_are_explicit_and_read_only(self):
         from pathlib import Path
