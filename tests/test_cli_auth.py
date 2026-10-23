@@ -19,7 +19,7 @@ class LocalCliAuthTests(unittest.TestCase):
         )
 
     def test_first_run_bootstraps_admin_and_returns_session_without_printing_token(self):
-        answers = iter(["root.user", "A secure local password 7!", "A secure local password 7!", "root.user"])
+        answers = iter(["root.user", "root.user"])
         passwords = iter(["A secure local password 7!", "A secure local password 7!", "A secure local password 7!"])
         with patch("builtins.print") as output:
             session = authenticate_local_cli(self.auth, input_fn=lambda _: next(answers), password_fn=lambda _: next(passwords))
