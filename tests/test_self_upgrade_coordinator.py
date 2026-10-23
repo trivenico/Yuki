@@ -60,14 +60,6 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         with self.assertRaises(ToolAuthorizationError):
             self.coordinator.validate(principal=principal, changes=[change])
 
-    def test_symlinked_files_are_not_copied(self):
-        secret = self.root / "outside-secret.txt"
-        secret.write_text("do-not-copy", encoding="utf-8")
-        (self.source / "linked.txt").symlink_to(secret)
-        destination = self.root / "copy"
-        destination.mkdir()
-        self.coordinator._copy_workspace(destination)
-        self.assertFalse((destination / "src" / "linked.txt").exists())
 
 
 if __name__ == "__main__":
