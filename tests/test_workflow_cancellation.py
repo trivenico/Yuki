@@ -49,7 +49,7 @@ class WorkflowCancellationTests(unittest.TestCase):
 
     def test_cancellation_validates_actor_and_reason(self):
         run = self.create()
-        for actor in ("", " ", "x" * 201, "bad\\x00actor"):
+        for actor in ("", " ", "x" * 201, "bad" + chr(0) + "actor"):
             with self.subTest(actor=actor), self.assertRaises(ValueError):
                 self.store.cancel_run(run.run_id, expected_version=run.version, actor_id=actor)
         with self.assertRaises(ValueError):
