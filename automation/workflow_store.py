@@ -128,6 +128,23 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lease "
                 "ON workflow_runs(state, lease_expires_at)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS task_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(task_id, sequence),
+                    FOREIGN KEY(task_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence "
+                "ON task_events(task_id, sequence)"
+            )
 
     @contextmanager
     def _connect(self):
@@ -457,3 +474,64 @@ class WorkflowRunStore:
                     ).fetchone()
                     changed.append(self._row(changed_row))
         return changed
+
+
+    def append_task_event(
+        self, task_id: str, *, kind: str, actor_id: str,
+        payload: dict[str, Any], expected_version: int,
+    ):
+        """Atomically append a bounded task event and increment the task version."""
+        from automation.task_runtime import TaskEvent, _EVENT_KINDS
+        if kind not in _EVENT_KINDS:
+            raise ValueError("Unknown task event kind.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(payload, dict):
+            raise ValueError("task event payload must be an object.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        payload_json = _bounded_json(payload, 8 * 1024, "task event payload")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError("task not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("task version changed; reload before appending an event.")
+            if row["state"] in _TERMINAL:
+                raise WorkflowTransitionError("cannot append events to a terminal task.")
+            updated = db.execute(
+                "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
+                (now, task_id, expected_version),
+            )
+            if updated.rowcount != 1:
+                raise WorkflowConflict("task changed concurrently.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (task_id,),
+            ).fetchone()[0]
+            cursor = db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (task_id, sequence, kind, actor_id.strip(), payload_json, now),
+            )
+            return TaskEvent(cursor.lastrowid, task_id, sequence, kind, actor_id.strip(),
+                             json.loads(payload_json), now)
+
+    def list_task_events(self, task_id: str, *, after_sequence: int = 0, limit: int = 100):
+        from automation.task_runtime import TaskEvent
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task_id must be non-empty text.")
+        if type(after_sequence) is not int or after_sequence < 0:
+            raise ValueError("after_sequence must be a non-negative integer.")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer from 1 to 500.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM task_events WHERE task_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+                (task_id, after_sequence, limit),
+            ).fetchall()
+            return [TaskEvent(row["event_id"], row["task_id"], row["sequence"], row["kind"],
+                              row["actor_id"], json.loads(row["payload_json"]), row["created_at"])
+                    for row in rows]
