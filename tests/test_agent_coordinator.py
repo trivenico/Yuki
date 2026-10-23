@@ -39,7 +39,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
-            SubtaskSpec("collect", "Collect public sources", ("research",)),
+            SubtaskSpec("collect", "Collect public sources", ("research",), required_permissions=("web:read",)),
         ])
         self.assertEqual(plan.subtasks[0].agent_id, "research")
         dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
@@ -68,6 +68,12 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         by_id = {s.subtask_id: s for s in second.subtasks}
         self.assertEqual(by_id["collect"].status, "succeeded")
         self.assertIsNotNone(by_id["write"].task_id)
+
+    def test_required_permissions_are_part_of_routing(self):
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(actor_id="alice", idempotency_key="no-permission", subtasks=[
+                SubtaskSpec("collect", "Collect private sources", ("research",), required_permissions=("billing:write",)),
+            ])
 
     def test_cycles_and_unknown_dependencies_are_rejected(self):
         with self.assertRaises(AgentPlanError):
