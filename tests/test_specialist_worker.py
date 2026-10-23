@@ -6,7 +6,7 @@ from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
 from automation.specialist_worker import (
-    SpecialistTaskWorker, build_provider_specialist_handlers,
+    SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -112,6 +112,31 @@ class SpecialistWorkerTests(unittest.TestCase):
         handlers = build_provider_specialist_handlers(FakeProvider(available=False))
         with self.assertRaises(RuntimeError):
             handlers["reporting"]("Summarize the supplied facts")
+
+    def test_selected_provider_manager_is_wired_to_registered_agent_roles(self):
+        class Manager:
+            def create_selected_adapter(self):
+                return FakeProvider(output="provider result")
+
+        handlers = build_handlers_from_provider_manager(
+            Manager(), {"code-review": "coding", "qa-check": "testing"}
+        )
+        self.assertEqual(set(handlers), {"code-review", "qa-check"})
+        self.assertEqual(handlers["code-review"]("Review this patch"), "provider result")
+
+    def test_provider_manager_role_map_fails_closed(self):
+        class MissingManager:
+            pass
+
+        with self.assertRaises(TypeError):
+            build_handlers_from_provider_manager(MissingManager(), {"agent": "coding"})
+        class EmptyManager:
+            def create_selected_adapter(self):
+                return None
+        with self.assertRaises(RuntimeError):
+            build_handlers_from_provider_manager(EmptyManager(), {"agent": "coding"})
+        with self.assertRaises(ValueError):
+            build_handlers_from_provider_manager(object(), {"agent": "shell"})
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
