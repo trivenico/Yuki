@@ -180,6 +180,7 @@ class ApprovedWorkspaceChanges:
                     handle.write(new)
                     handle.flush()
                     os.fsync(handle.fileno())
+                os.chmod(temp_name, target.stat().st_mode & 0o777)
                 staged.append((relative, target, old, Path(temp_name)))
             # Recheck all source digests immediately before replacing any file.
             for relative, target, old, _ in staged:
@@ -188,6 +189,8 @@ class ApprovedWorkspaceChanges:
             for relative, target, old, temp_path in staged:
                 os.replace(temp_path, target)
                 replaced.append((relative, target, old))
+            # Treat failure to persist the success audit event as an operation failure.
+            self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         except Exception as exc:
             rollback_errors = []
             for _, target, old in reversed(replaced):
@@ -209,7 +212,6 @@ class ApprovedWorkspaceChanges:
             if rollback_errors:
                 raise WorkspaceChangeError("change failed and rollback needs operator attention.") from exc
             raise WorkspaceChangeError("change failed; replaced files were rolled back.") from exc
-        self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         return ChangeResult(change_id, principal.actor_id, tuple(x[0] for x in normalized), digest)
 
 
@@ -251,9 +253,19 @@ class ApprovedTestRunner:
         target_path = self.root.joinpath(*test_module.split("."))
         module_file = target_path.with_suffix(".py")
         package_file = target_path / "__init__.py"
-        if not module_file.is_file() and not package_file.is_file():
+        source_file = module_file if module_file.is_file() else package_file
+        try:
+            source_file.resolve(strict=True).relative_to(self.root)
+            cursor = self.root
+            for part in source_file.relative_to(self.root).parts:
+                cursor = cursor / part
+                if cursor.is_symlink():
+                    raise ToolInputError("symlink test targets are not allowed.")
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ToolInputError("test target must resolve inside the workspace.") from exc
+        if not source_file.is_file():
             raise ToolInputError("allow-listed test module is missing from the workspace.")
-        source_digest = hashlib.sha256((module_file if module_file.is_file() else package_file).read_bytes()).hexdigest()
+        source_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
         run_digest = hashlib.sha256(f"{test_module}:{source_digest}:{sys.version_info.major}.{sys.version_info.minor}".encode()).hexdigest()
         run_id = "test_" + run_digest[:24]
         try:
