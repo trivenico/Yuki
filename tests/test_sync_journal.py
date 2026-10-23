@@ -13,6 +13,12 @@ class SyncJournalTests(unittest.TestCase):
         self.local = SyncJournal(str(self.root / "local.sqlite3"), "laptop-01")
         self.cloud = SyncJournal(str(self.root / "cloud.sqlite3"), "cloud-01")
 
+    def tearDown(self):
+        # Explicitly release SQLite handles before TemporaryDirectory cleanup,
+        # particularly on Windows where open database files cannot be removed.
+        self.local = None
+        self.cloud = None
+
     def test_round_trip_events_and_cursor_based_incremental_export(self):
         first = self.local.append("memory.note.created", "note-1", {"text": "hello"})
         second = self.local.append("conversation.message", "conversation-1", {"text": "world"})
@@ -66,6 +72,24 @@ class SyncJournalTests(unittest.TestCase):
             self.local.export_after({"laptop-01": -1})
         with self.assertRaises(ValueError):
             self.local.export_after(limit=5001)
+
+
+    def test_export_cursor_filters_each_origin_independently(self):
+        self.local.append("memory.note.created", "local-1", {"text": "local"})
+        self.cloud.append("memory.note.created", "cloud-1", {"text": "cloud"})
+        self.local.ingest(self.cloud.export_after())
+        exported = self.local.export_after({"laptop-01": 1, "cloud-01": 0})
+        self.assertEqual([(event.origin_id, event.sequence) for event in exported], [("cloud-01", 1)])
+
+    def test_concurrent_appends_allocate_unique_sequences(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        def append_one(index):
+            return self.local.append("memory.note.created", f"note-{index}", {"index": index})
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            events = list(pool.map(append_one, range(32)))
+        self.assertEqual(sorted(event.sequence for event in events), list(range(1, 33)))
 
     def test_payload_must_be_bounded_json_object(self):
         with self.assertRaises(InvalidSyncEvent):
