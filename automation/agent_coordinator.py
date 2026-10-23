@@ -399,6 +399,7 @@ class SpecialistAgentCoordinator:
             subtasks=tuple(PlannedSubtask(
                 subtask_id=s["subtask_id"], agent_id=s["agent_id"], description=s["description"],
                 required_capabilities=tuple(json.loads(s["capabilities_json"])),
+                required_permissions=tuple(json.loads(s["permissions_json"])),
                 depends_on=tuple(json.loads(s["dependencies_json"])),
                 requires_approval=bool(s["requires_approval"]), task_id=s["task_id"], status=s["status"],
             ) for s in subtasks),
