@@ -53,6 +53,24 @@ class SelfHealingTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(calls, ["ran"])
 
+
+    def test_unapproved_recovery_does_not_execute(self):
+        calls = []
+        engine = SelfHealingEngine(lambda proposal: False)
+        engine.register("safe_probe", lambda: calls.append("ran") or {"ok": True}, risk="low")
+        result = engine.execute_approved(engine.propose("safe_probe", "verify readiness"))
+        self.assertEqual(result.status, "denied")
+        self.assertEqual(calls, [])
+
+    def test_recovery_callback_failure_is_sanitized(self):
+        def broken():
+            raise RuntimeError("private-path-or-secret")
+        engine = SelfHealingEngine(lambda proposal: True)
+        engine.register("broken_probe", broken, risk="low")
+        result = engine.execute_approved(engine.propose("broken_probe", "test failure"))
+        self.assertEqual(result.status, "failed")
+        self.assertNotIn("private-path-or-secret", result.message)
+
     def test_unknown_action_rejected(self):
         engine = SelfHealingEngine(lambda proposal: True)
         with self.assertRaises(KeyError):
