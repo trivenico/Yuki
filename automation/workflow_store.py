@@ -78,6 +78,8 @@ class WorkflowRun:
     attempts: int
     lease_owner: str | None
     lease_expires_at: str | None
+    approved_by: str | None
+    approved_at: str | None
 
 
 class WorkflowRunStore:
@@ -106,9 +108,16 @@ class WorkflowRunStore:
                     version INTEGER NOT NULL DEFAULT 0,
                     attempts INTEGER NOT NULL DEFAULT 0,
                     lease_owner TEXT,
-                    lease_expires_at TEXT
+                    lease_expires_at TEXT,
+                    approved_by TEXT,
+                    approved_at TEXT,
+                    approval_digest TEXT
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
+            for column in ("approved_by", "approved_at", "approval_digest"):
+                if column not in columns:
+                    db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -172,6 +181,8 @@ class WorkflowRunStore:
             attempts=row["attempts"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
+            approved_by=row["approved_by"],
+            approved_at=row["approved_at"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
@@ -212,6 +223,37 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    @staticmethod
+    def _requires_approval(definition: list[dict[str, Any]]) -> bool:
+        return any(step.get("requires_approval", True) is True for step in definition)
+
+    def approve(self, run_id: str, *, actor_id: str, expected_version: int) -> WorkflowRun:
+        """Persist approval for this exact definition; caller must authenticate actor_id."""
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or chr(0) in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before approving.")
+            if row["state"] != "queued":
+                raise WorkflowTransitionError("only queued workflows can be approved.")
+            updated = db.execute("""
+                UPDATE workflow_runs SET approved_by=?, approved_at=?,
+                    approval_digest=request_digest, updated_at=?, version=version+1
+                WHERE run_id=? AND version=? AND state='queued'
+            """, (actor_id.strip(), now, now, run_id, expected_version))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow run changed concurrently.")
+            return self._row(db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone())
+
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
@@ -225,10 +267,18 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
+            rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 1"
-            ).fetchone()
+                "ORDER BY created_at, run_id LIMIT 100"
+            ).fetchall()
+            row = next((
+                candidate for candidate in rows
+                if not self._requires_approval(json.loads(candidate["definition_json"]))
+                or (
+                    candidate["approved_by"] and candidate["approved_at"]
+                    and candidate["approval_digest"] == candidate["request_digest"]
+                )
+            ), None)
             if row is None:
                 return None
             updated = db.execute("""
@@ -346,6 +396,12 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if to_state == "running" and self._requires_approval(current.definition):
+                if not (
+                    row["approved_by"] and row["approved_at"]
+                    and row["approval_digest"] == row["request_digest"]
+                ):
+                    raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             attempts = current.attempts + (1 if to_state == "running" else 0)

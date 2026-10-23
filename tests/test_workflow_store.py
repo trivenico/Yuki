@@ -54,6 +54,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
+        queued = self.store.approve(queued.run_id, actor_id="reviewer-1", expected_version=queued.version)
         barrier = threading.Barrier(8)
         claims = []
         errors = []
@@ -79,6 +80,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
+        queued = self.store.approve(queued.run_id, actor_id="reviewer-1", expected_version=queued.version)
         claimed = self.store.claim_next(worker_id="worker-a", lease_seconds=30)
         self.assertEqual(claimed.run_id, queued.run_id)
         renewed = self.store.renew_lease(
@@ -101,6 +103,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_expired_lease_cannot_be_renewed(self):
         queued = self.create(key="expired-renew")
+        queued = self.store.approve(queued.run_id, actor_id="reviewer-1", expected_version=queued.version)
         claimed = self.store.claim_next(worker_id="worker-a", lease_seconds=1)
         self.assertEqual(claimed.run_id, queued.run_id)
         with self.store._connect() as db:
@@ -113,6 +116,31 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 claimed.run_id, worker_id="worker-a", expected_version=claimed.version
             )
 
+    def test_protected_workflow_cannot_be_claimed_without_approval(self):
+        run = self.create(key="approval-required")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(run.run_id, expected_version=run.version, to_state="running", lease_owner="worker-a")
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
+    def test_approval_is_versioned_and_allows_claim(self):
+        run = self.create(key="approval-versioned")
+        approved = self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version)
+        self.assertEqual(approved.version, run.version + 1)
+        self.assertEqual(approved.approved_by, "reviewer-1")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, run.run_id)
+        self.assertEqual(claimed.state, "running")
+
+    def test_stale_approval_version_is_rejected(self):
+        run = self.create(key="approval-stale")
+        with self.assertRaises(WorkflowConflict):
+            self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version + 1)
+
+    def test_approval_requires_a_nonempty_actor(self):
+        run = self.create(key="approval-actor")
+        with self.assertRaises(ValueError):
+            self.store.approve(run.run_id, actor_id=" ", expected_version=run.version)
     def test_idempotency_payload_mismatch_is_rejected(self):
         self.create()
         with self.assertRaises(WorkflowConflict):
@@ -124,14 +152,15 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_state_transitions_are_versioned(self):
         queued = self.create()
+        queued = self.store.approve(queued.run_id, actor_id="reviewer-1", expected_version=queued.version)
         running = self.store.transition(
-            queued.run_id, expected_version=0, to_state="running", lease_owner="worker-a"
+            queued.run_id, expected_version=queued.version, to_state="running", lease_owner="worker-a"
         )
         self.assertEqual(running.state, "running")
-        self.assertEqual(running.version, 1)
+        self.assertEqual(running.version, 2)
         self.assertEqual(running.attempts, 1)
         succeeded = self.store.transition(
-            running.run_id, expected_version=1, to_state="succeeded",
+            running.run_id, expected_version=running.version, to_state="succeeded",
             result={"steps_completed": 1},
         )
         self.assertEqual(succeeded.state, "succeeded")
@@ -156,8 +185,9 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_expired_lease_is_interrupted_not_replayed(self):
         run = self.create()
+        run = self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version)
         running = self.store.transition(
-            run.run_id, expected_version=0, to_state="running",
+            run.run_id, expected_version=run.version, to_state="running",
             lease_owner="worker-a", lease_seconds=1,
         )
         expired = self.store.mark_expired_running_as_interrupted(
@@ -189,8 +219,9 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 definition=[{"name": "x", "action": "emit", "argument": "a" * 2100}],
             )
         run = self.create()
+        run = self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version)
         running = self.store.transition(
-            run.run_id, expected_version=0, to_state="running", lease_owner="w"
+            run.run_id, expected_version=run.version, to_state="running", lease_owner="w"
         )
         with self.assertRaises(ValueError):
             self.store.transition(
