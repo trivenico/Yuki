@@ -109,16 +109,16 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         available_tools = ", ".join(policy.allowed_tools())
         tasks_open = sum(1 for item in tasks if isinstance(item, dict) and not item.get("completed", False))
         return (
-            "Yuki dashboard\\n"
-            f"Provider: {current.name if current else 'none'} ({agent.status()})\\n"
-            f"Allowed tools: {available_tools or 'none'}\\n"
-            f"Open tasks: {tasks_open}\\n"
-            f"Saved notes: {len(memory)}\\n"
-            f"Learning records: {len(load_history())}\\n"
+            "Yuki dashboard\n"
+            f"Provider: {current.name if current else 'none'} ({agent.status()})\n"
+            f"Allowed tools: {available_tools or 'none'}\n"
+            f"Open tasks: {tasks_open}\n"
+            f"Saved notes: {len(memory)}\n"
+            f"Learning records: {len(load_history())}\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
     if command == "/providers":
-        return "\\n".join(
+        return "\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
             f'{" (selected)" if item["selected"] else ""}; auth metadata: {", ".join(item["auth_methods"])}'
             for item in providers.list_providers()
@@ -150,7 +150,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             return result
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
     if command == "/memory":
-        return "\\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
+        return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
     if command.startswith("/memory add "):
         note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
@@ -182,12 +182,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     if command.startswith("/lessons"):
         task = command[len("/lessons"):].strip()
         lessons = suggest_lessons(task)
-        return "\\n".join(f"- {lesson}" for lesson in lessons) if lessons else "No matching lessons saved yet."
+        return "\n".join(f"- {lesson}" for lesson in lessons) if lessons else "No matching lessons saved yet."
     if command == "/learning":
         history = load_history()
         if not history:
             return "No learning history yet."
-        return "\\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
+        return "\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
                          for item in history[-10:])
     if command == "/learning clear":
         result = clear_history()
@@ -197,12 +197,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         events = load_audit_events()[-10:]
         if not events:
             return "No audit events yet."
-        return "\\n".join(f'{item["timestamp"][:19]} {item["action"]}: {item["outcome"]}' for item in events)
+        return "\n".join(f'{item["timestamp"][:19]} {item["action"]}: {item["outcome"]}' for item in events)
 
     related = suggest_lessons(command)
     response = agent.ask(command)
     if related:
-        response += "\\n\\nRelevant saved lessons:\\n" + "\\n".join(f"- {lesson}" for lesson in related)
+        response += "\n\nRelevant saved lessons:\n" + "\n".join(f"- {lesson}" for lesson in related)
     return response
 
 
@@ -232,9 +232,9 @@ def main(*, auth_service=None, input_fn=None, password_fn=None):
         print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
         while True:
             try:
-                message = input_fn("\\nYou > ")
+                message = input_fn("\nYou > ")
             except (EOFError, KeyboardInterrupt):
-                print("\\nGoodbye.")
+                print("\nGoodbye.")
                 break
             try:
                 response = handle_command(message, memory, tasks, agent, providers, policy)
