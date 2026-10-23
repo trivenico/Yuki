@@ -13,6 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from companion.memory import MemoryStore
 
@@ -78,7 +79,7 @@ def migrate_memory(source: str | Path, destination: str | Path, *, apply: bool =
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             entries = [
                 {
-                    "id": __import__("uuid").uuid4().hex,
+                    "id": uuid4().hex,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "category": category,
                     "text": text,
@@ -88,11 +89,9 @@ def migrate_memory(source: str | Path, destination: str | Path, *, apply: bool =
             json.dump(entries, handle, ensure_ascii=False, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        # Exclusive creation prevents clobbering a destination created concurrently.
-        with open(dst, "xb") as target, open(temp_name, "r", encoding="utf-8") as staged:
-            shutil.copyfileobj(staged, target)
-            target.flush()
-            os.fsync(target.fileno())
+        # Atomic same-filesystem link publishes the complete staged file without
+        # overwriting a destination created concurrently.
+        os.link(temp_name, dst)
     except FileExistsError as exc:
         raise MemoryMigrationError("Destination appeared during migration; refusing to overwrite it.") from exc
     finally:
