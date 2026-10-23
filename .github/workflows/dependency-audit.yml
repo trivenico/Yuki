@@ -26,4 +26,4 @@ jobs:
       - name: Audit duplicate and conflicting requirement declarations
         run: python tools/dependency_audit.py
       - name: Test dependency audit
-        run: python -m unittest tests.test_dependency_audit -v
+        run: python -m unittest discover -s tests -p "test_dependency_audit.py" -v
