@@ -10,10 +10,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import os
 from pathlib import Path
 import re
 import secrets
 import sqlite3
+import stat
 
 _MIN_ITERATIONS = 100_000
 _DEFAULT_ITERATIONS = 600_000
@@ -33,6 +35,48 @@ def _utcnow():
 
 def _timestamp(value):
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _prepare_auth_storage(database_path):
+    """Check and restrict the SQLite database path before SQLite opens it."""
+    path = Path(database_path).expanduser()
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if parent.is_symlink() or not parent.is_dir():
+        raise PermissionError("Authentication database parent must be a real directory.")
+    if os.name == "posix":
+        parent_stat = parent.stat()
+        if parent_stat.st_uid != os.getuid():
+            raise PermissionError("Authentication database directory must be owned by the current user.")
+        if stat.S_IMODE(parent_stat.st_mode) & 0o077:
+            raise PermissionError(
+                "Authentication database directory is accessible to group/others; "
+                "use a private per-user directory with permissions 0700."
+            )
+    try:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(path), flags, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        pass
+    try:
+        file_stat = path.lstat()
+    except OSError as exc:
+        raise PermissionError("Authentication database file is unavailable.") from exc
+    if stat.S_ISLNK(file_stat.st_mode) or not stat.S_ISREG(file_stat.st_mode):
+        raise PermissionError("Authentication database must be a regular file, not a symlink or special file.")
+    if os.name == "posix":
+        if file_stat.st_uid != os.getuid():
+            raise PermissionError("Authentication database must be owned by the current user.")
+        try:
+            os.chmod(path, 0o600, follow_symlinks=False)
+        except (OSError, NotImplementedError) as exc:
+            raise PermissionError("Could not restrict authentication database permissions.") from exc
+        if stat.S_IMODE(path.stat().st_mode) & 0o077:
+            raise PermissionError("Authentication database permissions are not private.")
+    return str(path)
 
 
 @dataclass(frozen=True)
@@ -70,7 +114,7 @@ class BuiltInAuthService:
             raise ValueError("max_failed_logins must be between 3 and 20.")
         if isinstance(lockout_seconds, bool) or not isinstance(lockout_seconds, int) or not 30 <= lockout_seconds <= 86400:
             raise ValueError("lockout_seconds must be between 30 seconds and 24 hours.")
-        self.database_path = str(Path(database_path).expanduser())
+        self.database_path = _prepare_auth_storage(str(Path(database_path).expanduser()))
         self.password_iterations = password_iterations
         self.session_ttl_seconds = session_ttl_seconds
         self.max_failed_logins = max_failed_logins

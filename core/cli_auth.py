@@ -6,12 +6,25 @@ must gate protected command dispatch on the returned session and revoke it on ex
 from __future__ import annotations
 
 from getpass import getpass
+import os
 from pathlib import Path
 from typing import Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService, IssuedSession
 
-DEFAULT_AUTH_DB = Path(__file__).resolve().parent.parent / "yuki_auth.sqlite3"
+def _default_auth_db() -> Path:
+    """Use a per-user state directory instead of storing credentials in the repo."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA")
+        if base:
+            return Path(base) / "Yuki" / "auth.sqlite3"
+        return Path.home() / "AppData" / "Local" / "Yuki" / "auth.sqlite3"
+    state_home = os.environ.get("XDG_STATE_HOME")
+    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
+    return base / "yuki" / "auth.sqlite3"
+
+
+DEFAULT_AUTH_DB = _default_auth_db()
 
 
 def authenticate_local_cli(

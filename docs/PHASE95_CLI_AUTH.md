@@ -20,3 +20,12 @@ The code and tests have been committed to the PR branch. GitHub Actions on commi
 - Use a private local machine account and full-disk encryption. This helper is not a defense against malware or another process running as the same OS user.
 - The CLI authentication boundary protects the normal `python yuki.py` entrypoint; it does not replace authorization checks at every separately exposed API/service boundary.
 - Run `python -m unittest discover -s tests -v` and review all current-head GitHub Actions results before merging.
+
+
+## Phase 96 follow-up — authentication storage
+
+The default CLI database path now uses a per-user state directory rather than the repository root. Before SQLite opens the database, the auth service rejects symlinks and special files. On POSIX, the containing directory must be owned by the current user and have no group/other access; the database is restricted to owner-only mode (0600). The containing directory also protects SQLite WAL/SHM sidecars.
+
+Local auth DB and WAL/SHM artifacts are explicitly ignored by Git. Added platform-aware tests cover private file modes, shared-directory rejection, existing database permission tightening, and symlink rejection.
+
+**Limitations:** the standard-library implementation does not set or audit Windows ACLs; Windows CI is not proof that the chosen LOCALAPPDATA directory has the desired ACL. Custom database paths must also use a private parent directory. Backups must retain equivalent access controls and must never be committed or placed in shared storage. Keep the storage-hardening PR draft until current-head CI passes and the Windows ACL limitation has an accepted deployment control.
