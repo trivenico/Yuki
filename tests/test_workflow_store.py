@@ -113,6 +113,31 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 claimed.run_id, worker_id="worker-a", expected_version=claimed.version
             )
 
+    def test_protected_workflow_cannot_be_claimed_without_approval(self):
+        run = self.create(key="approval-required")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(run.run_id, expected_version=run.version, to_state="running", lease_owner="worker-a")
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
+    def test_approval_is_versioned_and_allows_claim(self):
+        run = self.create(key="approval-versioned")
+        approved = self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version)
+        self.assertEqual(approved.version, run.version + 1)
+        self.assertEqual(approved.approved_by, "reviewer-1")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, run.run_id)
+        self.assertEqual(claimed.state, "running")
+
+    def test_stale_approval_version_is_rejected(self):
+        run = self.create(key="approval-stale")
+        with self.assertRaises(WorkflowConflict):
+            self.store.approve(run.run_id, actor_id="reviewer-1", expected_version=run.version + 1)
+
+    def test_approval_requires_a_nonempty_actor(self):
+        run = self.create(key="approval-actor")
+        with self.assertRaises(ValueError):
+            self.store.approve(run.run_id, actor_id=" ", expected_version=run.version)
     def test_idempotency_payload_mismatch_is_rejected(self):
         self.create()
         with self.assertRaises(WorkflowConflict):
