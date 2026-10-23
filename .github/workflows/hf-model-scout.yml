@@ -39,7 +39,7 @@ jobs:
             --limit-per-task "$SCOUT_LIMIT" \
             --output-dir artifacts/model-scout
       - name: Upload timestamped discovery report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: yuki-hf-model-scout-${{ github.run_id }}
           path: artifacts/model-scout/*.json
