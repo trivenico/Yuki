@@ -31,6 +31,14 @@ yuki_workspace/
 audio_private/
 models/
 
+# Local authentication database and SQLite sidecars; never commit account/session metadata
+yuki_auth.sqlite3
+yuki_auth.sqlite3-wal
+yuki_auth.sqlite3-shm
+*.auth.sqlite3
+*.auth.sqlite3-wal
+*.auth.sqlite3-shm
+
 # Editors and operating systems
 .vscode/
 .idea/
