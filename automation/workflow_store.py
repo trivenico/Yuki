@@ -500,7 +500,20 @@ class WorkflowRunStore:
             if row["version"] != expected_version:
                 raise WorkflowConflict("task version changed; reload before appending an event.")
             if row["state"] in _TERMINAL:
-                raise WorkflowTransitionError("cannot append events to a terminal task.")
+                expected_terminal_event = {
+                    "succeeded": "task.completed",
+                    "failed": "task.failed",
+                    "cancelled": "task.cancelled",
+                }.get(row["state"])
+                if kind != expected_terminal_event:
+                    raise WorkflowTransitionError("cannot append events to a terminal task.")
+                prior_terminal = db.execute(
+                    "SELECT 1 FROM task_events WHERE task_id=? AND kind IN "
+                    "('task.completed', 'task.failed', 'task.cancelled') LIMIT 1",
+                    (task_id,),
+                ).fetchone()
+                if prior_terminal:
+                    raise WorkflowTransitionError("terminal event has already been recorded.")
             updated = db.execute(
                 "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
                 (now, task_id, expected_version),
