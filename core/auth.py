@@ -211,6 +211,26 @@ class BuiltInAuthService:
             """, (digest, now)).fetchone()
             return self._user(row) if row else None
 
+    def resolve_session_principal(self, token):
+        """Return the workflow principal with the opaque database session ID, not the token."""
+        if not isinstance(token, str) or not 20 <= len(token) <= 256:
+            return None
+        digest, now = hashlib.sha256(token.encode("utf-8")).hexdigest(), _timestamp(_utcnow())
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT s.token_hash AS session_id, u.user_id, u.username, u.role
+                FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
+                WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.disabled=0
+            """, (digest, now)).fetchone()
+        if row is None:
+            return None
+        from automation.workflow_approval import AuthenticatedPrincipal
+        user = self._user(row)
+        return AuthenticatedPrincipal(
+            actor_id=user.user_id, session_id=row["session_id"],
+            permissions=user.permissions,
+        )
+
     def revoke_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return False
@@ -256,13 +276,12 @@ class _Connection:
 
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
-    from automation.workflow_approval import AuthenticatedPrincipal
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService")
 
     def resolve(request_context):
-        user = auth_service.resolve_session(request_context)
-        if user is None:
+        principal = auth_service.resolve_session_principal(request_context)
+        if principal is None:
             raise AuthenticationError("Authentication required.")
-        return AuthenticatedPrincipal(user.user_id, request_context, user.permissions)
+        return principal
     return resolve
