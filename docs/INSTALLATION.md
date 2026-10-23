@@ -10,10 +10,14 @@
 ```sh
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
-python main.py
+python yuki.py
 ```
 
-Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
+Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe yuki.py`. macOS/Linux users can use `sh install_unix.sh`.
+
+## ChatGPT integration
+
+See [ChatGPT MCP integration](CHATGPT_INTEGRATION.md) for the opt-in status-and-chat bridge, authentication requirements, and connection limitations. The bridge is not started by default.
 
 ## Optional integrations
 
