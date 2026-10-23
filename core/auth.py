@@ -218,7 +218,7 @@ class BuiltInAuthService:
         digest, now = hashlib.sha256(token.encode("utf-8")).hexdigest(), _timestamp(_utcnow())
         with self._connect() as db:
             row = db.execute("""
-                SELECT s.session_id, u.user_id, u.username, u.role
+                SELECT s.token_hash AS session_id, u.user_id, u.username, u.role
                 FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
                 WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.disabled=0
             """, (digest, now)).fetchone()
