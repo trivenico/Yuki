@@ -30,6 +30,7 @@ from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
+from core.recovery_audit import RecoveryAuditLog
 
 
 def _ask_approval(request):
@@ -117,6 +118,7 @@ def main():
     searchable_memory = VectorMemory(memory_path)
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
+    recovery_audit = RecoveryAuditLog(workspace / "recovery_audit.sqlite3")
     recovery = SelfHealingEngine(
         approve=lambda proposal: _confirm(
             "recovery:" + proposal.action, proposal.reason, proposal.risk
@@ -195,6 +197,9 @@ def main():
             print("Registered recovery handlers:")
             print("- readiness_refresh (low risk; read-only diagnostics)")
             print("No service restart, configuration edit, or code upgrade handler is registered.")
+        elif command == "/recovery audit":
+            for event in recovery_audit.recent():
+                print("- {} | {} | {}".format(event["occurred_at"], event["action"], event["status"]))
         elif command.startswith("/recovery run "):
             payload = command[len("/recovery run "):]
             if "|" not in payload:
@@ -204,6 +209,7 @@ def main():
             try:
                 proposal = recovery.propose(action.strip(), reason.strip())
                 result = recovery.execute_approved(proposal)
+                recovery_audit.record(result.action or action.strip(), result.status)
                 print(f"Yuki recovery: {result.status} — {result.message}")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Recovery request rejected: {exc}")
