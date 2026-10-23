@@ -23,3 +23,6 @@ proposal build as approval or test success.
 This phase is not an OS sandbox. Running tests over untrusted proposed code can
 execute that code, so test execution must happen in a disposable, appropriately
 isolated environment with no production credentials or network privileges.
+
+## Integration gate
+The proposal builder depends on the guarded workspace-change and read-tool contracts. CI must run against the current `main` baseline, including `core.guarded_tool_runtime`; a rerun of an old merge ref is not evidence that the current dependency chain is healthy.
