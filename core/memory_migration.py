@@ -36,7 +36,7 @@ def _read_legacy(path: Path) -> list[tuple[str, str]]:
         elif isinstance(item, dict) and isinstance(item.get("text"), str):
             text = item["text"].strip()
             category = item.get("category", "note")
-            if category not in {"note", "preference", "lesson"}:
+            if not isinstance(category, str) or category not in {"note", "preference", "lesson"}:
                 category = "note"
         else:
             raise MemoryMigrationError("Source contains an unsupported record; nothing was changed.")
