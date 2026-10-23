@@ -40,10 +40,10 @@ class YukiCliEntrypointAuthTests(unittest.TestCase):
         self.assertIsNotNone(row["revoked_at"])
 
     def test_session_is_revoked_when_command_loop_raises(self):
-        answers = iter(["root.user", "trigger"])
+        answers = iter(["root.user", "trigger", "/quit"])
         passwords = iter(["A secure local password 7!"])
         with patch("yuki.load_memory", return_value=[]), patch("yuki.load_tasks", return_value=[]), \
-             patch("yuki.handle_command", side_effect=RuntimeError("test failure")), patch("builtins.print"):
+             patch("yuki.handle_command", side_effect=[RuntimeError("test failure"), "__QUIT__"]), patch("builtins.print"):
             yuki.main(auth_service=self.auth, input_fn=lambda _: next(answers),
                       password_fn=lambda _: next(passwords))
         with self.auth._connect() as db:
