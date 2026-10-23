@@ -29,6 +29,10 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 - `core/mcp_client.py` supports allow-listed HTTPS MCP discovery and approved tool calls, but it is not connected to the runtime command/registry/UI flow. Discovery never grants permission to execute a tool.
 - See [Ruflo adoption audit](docs/RUFLO_ADOPTION_AUDIT.md) for limitations and security requirements.
 
+## ChatGPT MCP bridge (experimental)
+
+Yuki includes an opt-in authenticated MCP-over-HTTP bridge for status and bounded text chat. It is not enabled by default and does not create a live ChatGPT connection by itself. See [ChatGPT integration](docs/CHATGPT_INTEGRATION.md) for setup and security limitations.
+
 ## Connected capabilities in this revision
 
 - `yuki.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
