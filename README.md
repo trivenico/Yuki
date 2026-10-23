@@ -33,6 +33,10 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 Yuki includes an opt-in authenticated MCP-over-HTTP bridge for status and bounded text chat. It is not enabled by default and does not create a live ChatGPT connection by itself. See [ChatGPT integration](docs/CHATGPT_INTEGRATION.md) for setup and security limitations.
 
+## Personal assistant scope
+
+Yuki is being developed as a **single-owner, private personal assistant**—JARVIS-like in purpose, not a public service. Until production qualification is complete, keep it on the owner's machine, bind local services to loopback, do not expose it through tunnels or public endpoints, and require explicit approval for consequential actions. See [Personal-use and production release gates](docs/PERSONAL_USE_PRODUCTION_GATES.md).
+
 ## Connected capabilities in this revision
 
 - `yuki.py`: terminal runtime wires the registry, approval gate, local memory/search, bounded planner, knowledge indexer, optional speech, optional read-only Gmail, Nmap, Docker, defensive packet alerts, dry-run firewall and optional Textual dashboard.
