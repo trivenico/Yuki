@@ -394,14 +394,14 @@ class WorkflowRunStore:
             if row is None:
                 raise KeyError("workflow run not found.")
             current = self._row(row)
+            if current.version != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before updating.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
                     and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
-            if current.version != expected_version:
-                raise WorkflowConflict("workflow run version changed; reload before updating.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
