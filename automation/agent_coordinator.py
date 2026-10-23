@@ -16,6 +16,7 @@ import sqlite3
 from typing import Callable, Iterable
 
 from automation.task_runtime import TaskRecord, TaskRuntime
+from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
