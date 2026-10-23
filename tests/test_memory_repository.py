@@ -21,6 +21,23 @@ class MemoryRepositoryTests(unittest.TestCase):
         self.assertTrue(repo.delete(note["id"]))
         self.assertEqual(repo.list(), [])
 
+    def test_clear_requires_explicit_confirmation(self):
+        repo = MemoryRepository(self.root / "memory.json")
+        repo.remember("keep this until confirmed")
+        with self.assertRaises(PermissionError):
+            repo.clear()
+        self.assertEqual(len(repo.list()), 1)
+        self.assertEqual(repo.clear(confirmed=True), 1)
+        self.assertEqual(repo.list(), [])
+
+    def test_corrupt_repository_fails_closed_without_overwriting(self):
+        path = self.root / "memory.json"
+        path.write_text("{broken", encoding="utf-8")
+        repo = MemoryRepository(path)
+        with self.assertRaises(RuntimeError):
+            repo.remember("must not overwrite corrupted data")
+        self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+
     def test_migration_preview_does_not_write_or_mutate_source(self):
         source = self.root / "legacy.json"
         destination = self.root / "unified.json"
