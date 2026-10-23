@@ -35,4 +35,8 @@ jobs:
       - name: Compile authentication and workflow modules
         run: python -m compileall -q core/auth.py automation/workflow_approval.py automation/workflow_store.py tests/test_auth.py
       - name: Run authentication and workflow approval tests
-        run: python -m unittest tests.test_auth tests.test_workflow_approval tests.test_workflow_store -v
+        run: python -m unittest discover -s tests -p 'test_auth.py' -v
+      - name: Run workflow approval regression tests
+        run: python -m unittest discover -s tests -p 'test_workflow_approval.py' -v
+      - name: Run durable workflow store regression tests
+        run: python -m unittest discover -s tests -p 'test_workflow_store.py' -v
