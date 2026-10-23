@@ -5,4 +5,4 @@ sounddevice>=0.4.6,<1.0
 numpy>=1.26,<3.0
 openwakeword>=0.6,<1.0
 # Piper executable and a compatible voice model are installed separately.
-soundfile>=0.12,<1.0
+soundfile>=0.14.0,<1.0
