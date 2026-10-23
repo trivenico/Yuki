@@ -3,6 +3,7 @@ import tempfile
 
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
+from core.recovery_audit import RecoveryAuditLog
 
 
 class ResilienceMonitorTests(unittest.TestCase):
@@ -78,6 +79,28 @@ class SelfHealingTests(unittest.TestCase):
 
 
 
+
+
+class RecoveryAuditLogTests(unittest.TestCase):
+    def test_records_only_bounded_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = RecoveryAuditLog(Path(directory) / "recovery.sqlite3", max_events=100)
+            log.record("readiness_refresh", "completed")
+            events = log.recent()
+            self.assertEqual(events[0]["action"], "readiness_refresh")
+            self.assertEqual(events[0]["status"], "completed")
+
+    def test_invalid_status_is_normalized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = RecoveryAuditLog(Path(directory) / "recovery.sqlite3", max_events=100)
+            log.record("probe", "secret payload")
+            self.assertEqual(log.recent()[0]["status"], "invalid")
+
+    def test_recent_limit_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = RecoveryAuditLog(Path(directory) / "recovery.sqlite3", max_events=100)
+            with self.assertRaises(ValueError):
+                log.recent(201)
 
 class RuntimeHealthIntegrationTests(unittest.TestCase):
     def test_health_monitor_checks_are_explicit_and_read_only(self):
