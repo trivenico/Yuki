@@ -3,7 +3,7 @@ import unittest
 
 from core.agent import YukiCoreAgent
 from core.permissions import PermissionGate
-from skills.base import Skill
+from skills.base import Skill, SkillResult
 from skills.registry import SkillRegistry
 
 
@@ -15,8 +15,8 @@ class DemoSkill(Skill):
     usage = "Pass a query to find relevant workspace documents"
     agent_guidance = "Search narrowly, verify evidence, and summarize the result."
     requires_approval = False
-    def execute(self, argument=""):
-        return {"ok": True, "message": "searched:" + argument}
+    def run(self, argument=""):
+        return SkillResult(True, "searched:" + argument)
 
 
 class Gate:
