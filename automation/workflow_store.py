@@ -89,6 +89,8 @@ class WorkflowRunStore:
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
                     run_id TEXT PRIMARY KEY,
@@ -123,6 +125,7 @@ class WorkflowRunStore:
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA busy_timeout=5000")
             db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
             yield db
             db.commit()
         except Exception:
@@ -188,6 +191,9 @@ class WorkflowRunStore:
         ).hexdigest()
         now = _now()
         with self._connect() as db:
+            # Serialize the read-before-insert path so concurrent retries with
+            # the same key return the same run instead of leaking IntegrityError.
+            db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
             ).fetchone()
