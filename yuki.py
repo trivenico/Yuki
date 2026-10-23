@@ -9,6 +9,7 @@ from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
+from core.plugin_loader import _static_candidates
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -48,6 +49,7 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
+  /skills scan                    Statically discover candidate Python skills (does not import them)
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
@@ -112,6 +114,19 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Learning records: {len(load_history())}\\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
+    if command == "/skills scan":
+        skills_dir = Path(__file__).with_name("skills")
+        candidates, failures = _static_candidates([skills_dir])
+        lines = [f"Static skill scan: {len(candidates)} candidate module(s)."]
+        lines.extend(f"  candidate: {name} (not imported; trust and registration not implied)" for name in sorted(candidates))
+        lines.extend(f"  scan issue: {item['module']} — {item['error']}" for item in failures)
+        if not failures:
+            lines.append("No source parsing or size issues detected.")
+        lines.append("This command only scans source. It does not trust, import, register, or execute skills.")
+        write_audit_event("skills:scan", "completed" if not failures else "completed_with_issues")
+        return "\n".join(lines)
+    if command.startswith("/skills"):
+        return "Usage: /skills scan"
     if command == "/providers":
         return "\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
