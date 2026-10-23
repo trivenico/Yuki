@@ -56,6 +56,25 @@ class PrivateDeploymentPreflightTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("permissions are too broad" in item for item in result["errors"]))
 
+
+    def test_rejects_symlinked_auth_database(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        target = self.root / "target.sqlite3"
+        target.write_text("test")
+        self.db.symlink_to(target)
+        result = inspect_environment(self.env, platform="linux")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("symbolic link" in item for item in result["errors"]))
+
+    def test_checks_parent_permissions_even_when_database_exists(self):
+        self.db.write_text("test")
+        self.db.chmod(0o600)
+        self.root.chmod(0o755)
+        result = inspect_environment(self.env, platform="linux")
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("directory permissions are too broad" in item for item in result["errors"]))
+
     def test_windows_acl_check_is_explicitly_a_warning(self):
         result = inspect_environment(self.env, platform="win32")
         self.assertTrue(result["ok"])
