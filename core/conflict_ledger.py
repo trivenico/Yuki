@@ -161,8 +161,7 @@ class ConflictLedger:
             ).fetchone()
             if existing:
                 if (existing["memory_id"] != memory_id or
-                    existing["versions_hash"] != versions_hash or
-                    existing["created_at"] != created_at):
+                    existing["versions_hash"] != versions_hash):
                     raise ConflictLedgerError("Conflict ID already exists with different content.")
                 resolution = db.execute(
                     "SELECT * FROM memory_conflict_resolutions WHERE conflict_id=?", (conflict_id,)
