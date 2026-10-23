@@ -29,6 +29,14 @@ class ConflictLedgerTests(unittest.TestCase):
         self.assertEqual(reopened.versions, tuple(self.versions))
         self.assertEqual(len(self.ledger.audit_events("conflict-1")), 1)
 
+    def test_same_conflict_retry_with_new_timestamp_keeps_original_record(self):
+        first = self.ledger.record_conflict(**self.conflict)
+        retried = dict(self.conflict, created_at="2026-10-23T12:05:00+00:00")
+        second = self.ledger.record_conflict(**retried)
+        self.assertEqual(first, second)
+        self.assertEqual(second.created_at, self.conflict["created_at"])
+        self.assertEqual(len(self.ledger.audit_events("conflict-1")), 1)
+
     def test_same_conflict_id_with_changed_content_is_rejected(self):
         self.ledger.record_conflict(**self.conflict)
         changed = dict(self.conflict, versions=[self.versions[0], dict(self.versions[1], text="tampered")])
