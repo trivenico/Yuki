@@ -36,7 +36,7 @@ class MemoryVersion:
             raise MemoryConflictError("sequence must be a positive integer.")
         if not isinstance(self.text, str) or not self.text.strip() or len(self.text) > 4000:
             raise MemoryConflictError("text must contain 1-4000 characters.")
-        if self.category not in {"note", "preference", "lesson"}:
+        if not isinstance(self.category, str) or self.category not in {"note", "preference", "lesson"}:
             raise MemoryConflictError("unsupported memory category.")
         if self.parent_version_id is not None and (
             not isinstance(self.parent_version_id, str) or not self.parent_version_id.strip()
