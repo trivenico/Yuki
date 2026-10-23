@@ -36,7 +36,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(
                 self.policy, image="python:3.12", workspace=self.tmp.name,
-                command=["python", "bad\\x00arg"], approve=approve,
+                command=["python", "bad\x00arg"], approve=approve,
             )
         approve.assert_not_called()
         build.assert_not_called()
