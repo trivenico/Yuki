@@ -120,6 +120,14 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(actor_id="alice", idempotency_key="empty", subtasks=[])
 
+    def test_agent_action_must_be_in_workflow_allow_list(self):
+        with self.assertRaises(ValueError):
+            SpecialistAgentCoordinator(
+                self.runtime, str(Path(self.tmp.name) / "unsafe-action.sqlite3"),
+                [SpecialistAgent("unsafe", "Unsafe", frozenset({"research"}), "shell")],
+                authorize=self.agent_auth,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
