@@ -59,6 +59,14 @@ class MemoryConflictTests(unittest.TestCase):
         with self.assertRaises(MemoryConflictError):
             version_fingerprint(invalid)
 
+    def test_untrusted_category_types_fail_with_domain_error(self):
+        invalid = MemoryVersion(
+            memory_id="note-1", version_id="v2", origin_id="cloud-1",
+            sequence=2, text="bad category", category=["note"],
+        )
+        with self.assertRaises(MemoryConflictError):
+            version_fingerprint(invalid)
+
     def test_versions_without_ancestry_are_not_assumed_to_be_ordered(self):
         other = MemoryVersion(
             memory_id="note-1", version_id="v2", origin_id="cloud-1",
