@@ -18,14 +18,18 @@ class WorkflowApprovalService:
         principal = self.principal_resolver(request_context)
         if not isinstance(principal, AuthenticatedPrincipal):
             raise PermissionError("No trusted principal was resolved.")
-        if not principal.actor_id.strip() or not principal.session_id.strip():
+        if (
+            not isinstance(principal.actor_id, str) or not principal.actor_id.strip()
+            or not isinstance(principal.session_id, str) or not principal.session_id.strip()
+            or not isinstance(principal.permissions, frozenset)
+        ):
             raise PermissionError("Authenticated principal is incomplete.")
         if self.APPROVE_PERMISSION not in principal.permissions:
             raise PermissionError("Missing workflow approval permission.")
         run = self.store.get(run_id)
         if run is None:
             raise KeyError("Workflow run not found.")
-        if not self.store._requires_approval(run.definition):
+        if not any(step.get("requires_approval", True) is True for step in run.definition):
             raise ValueError("Workflow does not require approval.")
         if self.authorize is not None:
             try:
