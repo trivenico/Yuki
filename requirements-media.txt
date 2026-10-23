@@ -1,2 +1,2 @@
 # Optional YouTube captions. Caption availability depends on video and API/library support.
-youtube-transcript-api>=1.0,<2.0
+youtube-transcript-api>=1.2.4,<2.0
