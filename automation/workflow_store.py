@@ -214,7 +214,7 @@ class WorkflowRunStore:
 
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
