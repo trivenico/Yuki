@@ -52,6 +52,67 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
 
+    def test_claim_next_is_atomic_across_workers(self):
+        queued = self.create(key="single-claim")
+        barrier = threading.Barrier(8)
+        claims = []
+        errors = []
+
+        def claim(worker):
+            try:
+                barrier.wait(timeout=3)
+                claims.append(self.store.claim_next(worker_id=worker))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=claim, args=(f"worker-{i}",)) for i in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+        self.assertEqual(errors, [])
+        winners = [claim for claim in claims if claim is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(winners[0].run_id, queued.run_id)
+        self.assertEqual(winners[0].state, "running")
+        self.assertEqual(winners[0].attempts, 1)
+
+    def test_lease_renewal_is_owner_and_version_bound(self):
+        queued = self.create(key="renew")
+        claimed = self.store.claim_next(worker_id="worker-a", lease_seconds=30)
+        self.assertEqual(claimed.run_id, queued.run_id)
+        renewed = self.store.renew_lease(
+            claimed.run_id, worker_id="worker-a", expected_version=claimed.version,
+            lease_seconds=60,
+        )
+        self.assertEqual(renewed.version, claimed.version + 1)
+        self.assertGreater(
+            datetime.fromisoformat(renewed.lease_expires_at),
+            datetime.fromisoformat(claimed.lease_expires_at),
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.renew_lease(
+                renewed.run_id, worker_id="worker-b", expected_version=renewed.version
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                renewed.run_id, worker_id="worker-a", expected_version=claimed.version
+            )
+
+    def test_expired_lease_cannot_be_renewed(self):
+        queued = self.create(key="expired-renew")
+        claimed = self.store.claim_next(worker_id="worker-a", lease_seconds=1)
+        self.assertEqual(claimed.run_id, queued.run_id)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(), claimed.run_id),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                claimed.run_id, worker_id="worker-a", expected_version=claimed.version
+            )
+
     def test_idempotency_payload_mismatch_is_rejected(self):
         self.create()
         with self.assertRaises(WorkflowConflict):
