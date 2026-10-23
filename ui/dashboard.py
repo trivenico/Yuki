@@ -23,7 +23,7 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield Label("Performance telemetry loading…", id="performance_status")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/help /status /skills /performance /performance-history /devices /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
+                yield Input(placeholder="/help /status /skills /performance /routing /performance-history /devices /reconcile list /reconcile resolve KEY DISPOSITION | EVIDENCE /quit", id="command")
             yield Footer()
 
         def on_mount(self):
@@ -123,6 +123,16 @@ def run_dashboard(agent=None, *, command_handler=None, token_usage=None, provide
                     )))
                 except Exception:
                     log.write("Performance diagnostics unavailable; unsupported metrics remain unknown.")
+            elif command == "/routing":
+                route_status = getattr(provider, "route_status", None)
+                if not callable(route_status):
+                    log.write("Routing diagnostics unavailable for the configured provider.")
+                else:
+                    try:
+                        import json
+                        log.write(json.dumps(route_status(), indent=2, sort_keys=True))
+                    except Exception as exc:
+                        log.write(f"Routing diagnostics unavailable ({type(exc).__name__}).")
             elif command == "/performance-history":
                 log.write(format_performance_history())
             elif command == "/devices":

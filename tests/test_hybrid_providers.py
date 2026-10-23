@@ -64,6 +64,24 @@ class ProviderRetryClassificationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "HTTP status 401"):
                 provider.generate("hello")
 
+class RoutingStatusSurfaceTests(unittest.TestCase):
+    def test_route_status_does_not_expose_prompt_or_response(self):
+        class Model:
+            def __init__(self, model, **kwargs):
+                self.model = model
+                self.last_context_budget = None
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                return "private generated answer"
+        router = FailoverProvider(["model-a"], provider_factory=Model)
+        router.generate("private input")
+        status = router.route_status()
+        self.assertEqual(status["status"], "success")
+        self.assertEqual(status["selected_model"], "model-a")
+        self.assertNotIn("private input", repr(status))
+        self.assertNotIn("private generated answer", repr(status))
+
 class FailoverDiagnosticsTests(unittest.TestCase):
     def test_route_status_reports_fallback_without_prompt_or_secret(self):
         class Model:
