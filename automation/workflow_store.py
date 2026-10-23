@@ -212,6 +212,77 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
+        """Atomically claim the oldest queued run; never steals or replays running work."""
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            # Serialize selection and claim so concurrent workers cannot claim
+            # the same queued run.
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE state='queued' "
+                "ORDER BY created_at, run_id LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            updated = db.execute("""
+                UPDATE workflow_runs SET state='running', updated_at=?,
+                    version=version+1, attempts=attempts+1, lease_owner=?,
+                    lease_expires_at=?
+                WHERE run_id=? AND version=? AND state='queued'
+            """, (now, worker_id.strip(), lease_expires, row["run_id"], row["version"]))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow run was claimed concurrently.")
+            claimed = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
+            ).fetchone()
+            return self._row(claimed)
+
+    def renew_lease(
+        self, run_id: str, *, worker_id: str, expected_version: int,
+        lease_seconds: int = 60,
+    ) -> WorkflowRun:
+        """Renew only the active worker's unexpired lease using compare-and-swap."""
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if row["state"] != "running" or row["lease_owner"] != worker_id:
+                raise WorkflowTransitionError("only the current worker may renew a running lease.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before renewing.")
+            if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                raise WorkflowConflict("expired workflow lease cannot be renewed.")
+            updated = db.execute("""
+                UPDATE workflow_runs SET lease_expires_at=?, updated_at=?, version=version+1
+                WHERE run_id=? AND version=? AND state='running'
+                    AND lease_owner=? AND lease_expires_at>=?
+            """, (lease_expires, now, run_id, expected_version, worker_id, now))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow lease changed concurrently or expired.")
+            renewed = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            return self._row(renewed)
+
     def get(self, run_id: str) -> WorkflowRun | None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("run_id must be non-empty text.")
