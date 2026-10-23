@@ -232,9 +232,11 @@ class SpecialistAgentCoordinator:
 
     def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
+        needed_permissions = set(subtask.required_permissions)
         candidates = [
             agent for agent in self.agents.values()
             if agent.enabled and needed <= agent.capabilities
+            and needed_permissions <= agent.permissions
         ]
         if not candidates:
             raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
