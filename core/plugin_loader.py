@@ -18,7 +18,7 @@ _MAX_SOURCE_BYTES = 512 * 1024
 
 
 def _static_candidates(paths):
-    """Return modules containing a syntactically recognizable local Skill subclass."""
+    """Return modules with a Skill subclass implementing execute() or run()."""
     candidates = set()
     failures = []
     for package_path in paths:
@@ -41,11 +41,15 @@ def _static_candidates(paths):
                     continue
                 bases = [base.id if isinstance(base, ast.Name) else base.attr
                          for base in node.bases if isinstance(base, (ast.Name, ast.Attribute))]
-                if any(base == "Skill" or base.endswith("Skill") for base in bases):
-                    if any(isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                           and child.name == "execute" for child in node.body):
-                        candidates.add(name)
-                        break
+                if not any(base == "Skill" or base.endswith("Skill") for base in bases):
+                    continue
+                methods = {child.name for child in node.body
+                           if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))}
+                # The existing Skill API supports run(); execute() may be inherited
+                # from Skill and therefore need not be repeated in every subclass.
+                if methods.intersection({"execute", "run"}):
+                    candidates.add(name)
+                    break
     return candidates, failures
 
 
@@ -88,7 +92,7 @@ class PluginLoader:
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
             if name not in candidates:
-                report["skipped"].append({"module": name, "reason": "static scan found no Skill subclass with execute"})
+                report["skipped"].append({"module": name, "reason": "static scan found no Skill subclass with execute() or run()"})
                 continue
             if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
                 report["skipped"].append({"module": name, "reason": "candidate is not in explicit trust list"})
