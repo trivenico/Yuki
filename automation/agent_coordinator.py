@@ -275,7 +275,7 @@ class SpecialistAgentCoordinator:
                     INSERT INTO agent_plan_subtasks(
                         plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
                         dependencies_json, requires_approval, task_id, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'blocked')
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
                       json.dumps(sorted(item.required_permissions)),
