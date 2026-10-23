@@ -32,31 +32,39 @@ def inspect_environment(env=None, *, platform=None):
         path = Path(auth_db).expanduser()
         if not path.is_absolute():
             errors.append("YUKI_AUTH_DB must be an absolute path.")
-        elif path.exists():
-            if not path.is_file():
-                errors.append("YUKI_AUTH_DB must refer to a regular file.")
-            elif platform != "win32":
-                try:
-                    mode_bits = stat.S_IMODE(path.stat().st_mode)
-                    if mode_bits & 0o077:
-                        errors.append("Authentication database permissions are too broad; restrict access to the service account.")
-                except OSError:
-                    errors.append("Authentication database permissions could not be inspected.")
-            else:
-                warnings.append("Windows ACLs must be reviewed separately; POSIX mode-bit checks do not validate Windows access control.")
         else:
             parent = path.parent
-            if not parent.exists():
-                errors.append("Authentication database parent directory must exist before deployment.")
-            elif platform != "win32":
-                try:
-                    mode_bits = stat.S_IMODE(parent.stat().st_mode)
-                    if mode_bits & 0o077:
-                        errors.append("Authentication database directory permissions are too broad; restrict access to the service account.")
-                except OSError:
-                    errors.append("Authentication database directory permissions could not be inspected.")
+            if path.is_symlink():
+                errors.append("YUKI_AUTH_DB must not be a symbolic link.")
+            elif path.exists():
+                if not path.is_file():
+                    errors.append("YUKI_AUTH_DB must refer to a regular file.")
+                if platform != "win32":
+                    try:
+                        file_mode = stat.S_IMODE(path.lstat().st_mode)
+                        parent_mode = stat.S_IMODE(parent.stat().st_mode)
+                        if file_mode & 0o077:
+                            errors.append("Authentication database permissions are too broad; restrict access to the service account.")
+                        if parent_mode & 0o077:
+                            errors.append("Authentication database directory permissions are too broad; restrict access to the service account.")
+                    except OSError:
+                        errors.append("Authentication database or parent directory permissions could not be inspected.")
+                else:
+                    warnings.append("Windows ACLs must be reviewed separately; POSIX mode bits do not validate Windows access control.")
             else:
-                warnings.append("Windows ACLs for the authentication database directory must be reviewed separately.")
+                if not parent.exists():
+                    errors.append("Authentication database parent directory must exist before deployment.")
+                elif not parent.is_dir() or parent.is_symlink():
+                    errors.append("Authentication database parent must be a real directory, not a symbolic link.")
+                elif platform != "win32":
+                    try:
+                        mode_bits = stat.S_IMODE(parent.stat().st_mode)
+                        if mode_bits & 0o077:
+                            errors.append("Authentication database directory permissions are too broad; restrict access to the service account.")
+                    except OSError:
+                        errors.append("Authentication database directory permissions could not be inspected.")
+                else:
+                    warnings.append("Windows ACLs for the authentication database directory must be reviewed separately.")
 
     access = env.get("YUKI_PRIVATE_ACCESS", "")
     if access not in {"wireguard", "cloudflare_access", "other_vpn"}:
