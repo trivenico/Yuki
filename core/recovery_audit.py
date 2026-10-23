@@ -5,6 +5,7 @@ exception messages, and credentials are intentionally excluded.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -26,13 +27,14 @@ class RecoveryAuditLog:
         self.max_events = max_events
         self._lock = RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS recovery_events ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL, "
-                "action TEXT NOT NULL, status TEXT NOT NULL)"
-            )
-            db.execute("CREATE INDEX IF NOT EXISTS recovery_events_time_idx ON recovery_events(id)")
+        with closing(self._connect()) as db:
+            with db:
+                db.execute(
+                    "CREATE TABLE IF NOT EXISTS recovery_events ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL, "
+                    "action TEXT NOT NULL, status TEXT NOT NULL)"
+                )
+                db.execute("CREATE INDEX IF NOT EXISTS recovery_events_time_idx ON recovery_events(id)")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=2.0)
@@ -45,21 +47,22 @@ class RecoveryAuditLog:
         if not isinstance(status, str) or status not in self._ALLOWED_STATUSES:
             status = "invalid"
         timestamp = datetime.now(timezone.utc).isoformat()
-        with self._lock, self._connect() as db:
-            db.execute(
-                "INSERT INTO recovery_events (occurred_at, action, status) VALUES (?, ?, ?)",
-                (timestamp, action, status),
-            )
-            db.execute(
-                "DELETE FROM recovery_events WHERE id NOT IN "
-                "(SELECT id FROM recovery_events ORDER BY id DESC LIMIT ?)",
-                (self.max_events,),
-            )
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                db.execute(
+                    "INSERT INTO recovery_events (occurred_at, action, status) VALUES (?, ?, ?)",
+                    (timestamp, action, status),
+                )
+                db.execute(
+                    "DELETE FROM recovery_events WHERE id NOT IN "
+                    "(SELECT id FROM recovery_events ORDER BY id DESC LIMIT ?)",
+                    (self.max_events,),
+                )
 
     def recent(self, limit: int = 50) -> list[dict[str, str]]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
-        with self._lock, self._connect() as db:
+        with self._lock, closing(self._connect()) as db:
             rows = db.execute(
                 "SELECT occurred_at, action, status FROM recovery_events ORDER BY id DESC LIMIT ?",
                 (limit,),
