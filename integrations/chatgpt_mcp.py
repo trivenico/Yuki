@@ -75,10 +75,11 @@ def _load_config(environ=None) -> dict[str, Any]:
         raise BridgeConfigError("YUKI_MCP_PORT must be an integer.") from exc
     if not 1 <= port <= 65535:
         raise BridgeConfigError("YUKI_MCP_PORT must be between 1 and 65535.")
-    if host not in {"127.0.0.1", "::1", "localhost"} and env.get("YUKI_MCP_ALLOW_REMOTE") != "true":
-        raise BridgeConfigError("Remote binding requires YUKI_MCP_ALLOW_REMOTE=true.")
-    if host not in {"127.0.0.1", "::1", "localhost"} and len(token) < 40:
-        raise BridgeConfigError("Remote deployments require a bearer token of at least 40 characters.")
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        raise BridgeConfigError(
+            "Remote binding is disabled while Yuki is in personal-use preview. "
+            "Bind to loopback; remote access requires a separately reviewed production release."
+        )
     return {"token": token, "host": host, "port": port}
 
 
