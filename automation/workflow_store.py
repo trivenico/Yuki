@@ -80,6 +80,7 @@ class WorkflowRun:
     lease_expires_at: str | None
     approved_by: str | None
     approved_at: str | None
+    approved_session_hash: str | None
 
 
 class WorkflowRunStore:
@@ -111,11 +112,12 @@ class WorkflowRunStore:
                     lease_expires_at TEXT,
                     approved_by TEXT,
                     approved_at TEXT,
-                    approval_digest TEXT
+                    approval_digest TEXT,
+                    approved_session_hash TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -183,6 +185,7 @@ class WorkflowRunStore:
             lease_expires_at=row["lease_expires_at"],
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
+            approved_session_hash=row["approved_session_hash"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
@@ -227,10 +230,13 @@ class WorkflowRunStore:
     def _requires_approval(definition: list[dict[str, Any]]) -> bool:
         return any(step.get("requires_approval", True) is True for step in definition)
 
-    def approve(self, run_id: str, *, actor_id: str, expected_version: int) -> WorkflowRun:
+    def approve(self, run_id: str, *, actor_id: str, session_id: str, expected_version: int) -> WorkflowRun:
         """Persist approval for this exact definition; caller must authenticate actor_id."""
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or chr(0) in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         now = _now()
@@ -245,9 +251,10 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError("only queued workflows can be approved.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
-                    approval_digest=request_digest, updated_at=?, version=version+1
+                    approval_digest=request_digest, approved_session_hash=?,
+                    updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, now, run_id, expected_version))
+            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             return self._row(db.execute(
@@ -276,6 +283,7 @@ class WorkflowRunStore:
                 if not self._requires_approval(json.loads(candidate["definition_json"]))
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
+                    and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
                 )
             ), None)
@@ -399,6 +407,7 @@ class WorkflowRunStore:
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
+                    and row["approved_session_hash"]
                     and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
