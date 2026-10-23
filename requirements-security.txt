@@ -1,2 +1,2 @@
 # Optional packet inspection; requires authorized local capture privileges.
-scapy>=2.5,<3.0
+scapy>=2.8.0,<3.0
