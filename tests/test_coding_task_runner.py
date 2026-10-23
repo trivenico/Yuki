@@ -107,6 +107,25 @@ class CodingTaskRunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, -9)
         kill_container.assert_called_once()
 
+    @patch("core.coding_task_runner._kill_container", return_value=False)
+    @patch("core.coding_task_runner.subprocess.Popen")
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    def test_cleanup_failure_fails_closed(self, _build, popen, _kill):
+        popen.return_value = FakeProcess(b"ok\\n", 0)
+        with self.assertRaises(SandboxExecutionError):
+            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+                               command=["python", "-V"], approve=lambda request: True)
+
+    @patch("core.coding_task_runner.build_docker_argv")
+    def test_command_argument_count_and_size_are_bounded(self, build):
+        with self.assertRaises(SandboxExecutionError):
+            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+                               command=["python"] + ["x"] * 64, approve=lambda request: True)
+        with self.assertRaises(SandboxExecutionError):
+            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+                               command=["python", "x" * 2049], approve=lambda request: True)
+        build.assert_not_called()
+
     def test_missing_approval_callback_is_rejected(self):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
