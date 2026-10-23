@@ -161,33 +161,44 @@ class BuiltInAuthService:
         if not isinstance(username, str) or len(username) > 128 or not isinstance(password, str) or len(password) > _MAX_PASSWORD_LENGTH:
             raise AuthenticationError("Invalid username or password.")
         now = _utcnow()
+        invalid = False
+        issued = None
         with self._connect() as db:
             row = db.execute("SELECT * FROM auth_users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
             if row is None:
                 hashlib.pbkdf2_hmac("sha256", (password or "invalid").encode("utf-8"), b"yuki-auth-dummy-salt", self.password_iterations)
-                raise AuthenticationError("Invalid username or password.")
-            if row["disabled"]:
-                raise AuthenticationError("Invalid username or password.")
-            if row["locked_until"]:
-                try:
-                    if datetime.fromisoformat(row["locked_until"]) > now:
-                        raise AuthenticationError("Invalid username or password.")
-                except ValueError:
-                    pass
-            candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), row["password_salt"], row["password_iterations"])
-            if not hmac.compare_digest(candidate, row["password_hash"]):
-                failures = row["failed_logins"] + 1
-                locked_until = _timestamp(now + timedelta(seconds=self.lockout_seconds)) if failures >= self.max_failed_logins else None
-                db.execute("UPDATE auth_users SET failed_logins=?,locked_until=? WHERE user_id=?", (failures, locked_until, row["user_id"]))
-                raise AuthenticationError("Invalid username or password.")
-            db.execute("UPDATE auth_users SET failed_logins=0,locked_until=NULL WHERE user_id=?", (row["user_id"],))
-            token = secrets.token_urlsafe(_SESSION_BYTES)
-            expires = now + timedelta(seconds=self.session_ttl_seconds)
-            db.execute(
-                "INSERT INTO auth_sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
-                (hashlib.sha256(token.encode("ascii")).hexdigest(), row["user_id"], _timestamp(now), _timestamp(expires)),
-            )
-            return IssuedSession(token, self._user(row), _timestamp(expires))
+                invalid = True
+            elif row["disabled"]:
+                invalid = True
+            else:
+                locked = False
+                if row["locked_until"]:
+                    try:
+                        locked = datetime.fromisoformat(row["locked_until"]) > now
+                    except ValueError:
+                        locked = False
+                if locked:
+                    invalid = True
+                else:
+                    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), row["password_salt"], row["password_iterations"])
+                    if not hmac.compare_digest(candidate, row["password_hash"]):
+                        failures = row["failed_logins"] + 1
+                        locked_until = _timestamp(now + timedelta(seconds=self.lockout_seconds)) if failures >= self.max_failed_logins else None
+                        # Do not raise inside this transaction: that would roll back the lockout counter.
+                        db.execute("UPDATE auth_users SET failed_logins=?,locked_until=? WHERE user_id=?", (failures, locked_until, row["user_id"]))
+                        invalid = True
+                    else:
+                        db.execute("UPDATE auth_users SET failed_logins=0,locked_until=NULL WHERE user_id=?", (row["user_id"],))
+                        token = secrets.token_urlsafe(_SESSION_BYTES)
+                        expires = now + timedelta(seconds=self.session_ttl_seconds)
+                        db.execute(
+                            "INSERT INTO auth_sessions(token_hash,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+                            (hashlib.sha256(token.encode("ascii")).hexdigest(), row["user_id"], _timestamp(now), _timestamp(expires)),
+                        )
+                        issued = IssuedSession(token, self._user(row), _timestamp(expires))
+        if invalid or issued is None:
+            raise AuthenticationError("Invalid username or password.")
+        return issued
 
     def resolve_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
