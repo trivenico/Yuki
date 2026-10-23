@@ -201,6 +201,13 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("self-dependencies and duplicate dependencies are not allowed.")
             if type(item.requires_approval) is not bool:
                 raise AgentPlanError("requires_approval must be a boolean.")
+            if not isinstance(item.required_permissions, tuple) or any(
+                not isinstance(p, str) or not _PERMISSION.fullmatch(p)
+                for p in item.required_permissions
+            ):
+                raise AgentPlanError("required_permissions must be bounded permission identifiers.")
+            if len(set(item.required_permissions)) != len(item.required_permissions):
+                raise AgentPlanError("required permissions must be unique.")
         for item in items:
             if any(dep not in ids for dep in item.depends_on):
                 raise AgentPlanError(f"subtask {item.subtask_id} references an unknown dependency.")
