@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.requeued"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -182,6 +182,52 @@ class TaskRuntime:
                                      expected_version=failed.version)
         return self._record(self.store.get(task_id))
 
+
+
+    def retry_failed(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
+        """Explicitly enqueue a fresh task from failed/interrupted work; never replay in place.
+
+        The caller must be separately authorized for task:retry. The new run receives
+        a distinct idempotency key and fresh approval state, so approval-required work
+        must be approved again before a worker can claim it.
+        """
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:retry", task_id):
+            raise PermissionError("task retry is not authorized.")
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        original = self.store.get(task_id)
+        if original is None:
+            raise KeyError("task not found.")
+        if original.version != expected_version:
+            raise WorkflowConflict("task version changed; reload before retrying.")
+        if original.state not in {"failed", "interrupted"}:
+            raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
+        # A stable key makes duplicate submissions for the same observed version idempotent.
+        retry_key = f"retry:{original.run_id}:{expected_version}"
+        retried = self.store.create(
+            idempotency_key=retry_key,
+            workflow_name=original.workflow_name,
+            definition=original.definition,
+        )
+        existing_events = self.store.list_task_events(retried.run_id, limit=10)
+        if not existing_events:
+            created = self.store.append_task_event(
+                retried.run_id, kind="task.created", actor_id=actor,
+                payload={"name": retried.workflow_name, "step_count": len(retried.definition)},
+                expected_version=retried.version,
+            )
+            retried = self.store.get(retried.run_id)
+            self.store.append_task_event(
+                retried.run_id, kind="task.requeued", actor_id=actor,
+                payload={"retry_of": original.run_id, "source_state": original.state,
+                         "source_version": original.version,
+                         "approval_required": self.store._requires_approval(original.definition)},
+                expected_version=retried.version,
+            )
+        return self._record(self.store.get(retried.run_id))
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""
