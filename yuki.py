@@ -13,6 +13,8 @@ from skills.registry import SkillRegistry
 from core.guarded_skill_runtime import OneShotSkillApprovals
 from core.approved_skill_runtime import ApprovedSkillRuntime
 
+_INVOCATION_APPROVALS = OneShotSkillApprovals()
+
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
@@ -140,7 +142,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             runtime = ApprovedSkillRuntime(
                 registry,
                 _get_skill_approval_store(),
-                invocation_approvals=OneShotSkillApprovals(),
+                invocation_approvals=_INVOCATION_APPROVALS,
                 audit=lambda action, outcome: write_audit_event(action, outcome),
             )
         except Exception as error:
