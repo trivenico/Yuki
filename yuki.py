@@ -9,6 +9,9 @@ from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
+from skills.registry import SkillRegistry
+from core.guarded_skill_runtime import OneShotSkillApprovals
+from core.approved_skill_runtime import ApprovedSkillRuntime
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -42,6 +45,15 @@ def save_memory(memory):
         return False
 
 
+_SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'
+
+
+def _get_skill_approval_store():
+    from core.approved_skill_wiring import SkillApprovalStore
+    _SKILL_APPROVAL_DB.parent.mkdir(parents=True, exist_ok=True)
+    return SkillApprovalStore(_SKILL_APPROVAL_DB)
+
+
 def show_help():
     print("""
 Yuki commands:
@@ -51,6 +63,9 @@ Yuki commands:
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
+  /skill list                     List registered skills
+  /skill approve NAME             Approve one high-risk invocation
+  /skill invoke NAME [argument]   Invoke a registered skill through the guard
   /task add DESCRIPTION           Add a task
   /task list                      List tasks
   /task done ID                   Complete a task
@@ -118,6 +133,37 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f'{" (selected)" if item["selected"] else ""}; auth metadata: {", ".join(item["auth_methods"])}'
             for item in providers.list_providers()
         )
+    if command == "/skill" or command.startswith("/skill "):
+        parts = command.split(maxsplit=3)
+        try:
+            registry = SkillRegistry.defaults(Path.cwd())
+            runtime = ApprovedSkillRuntime(
+                registry,
+                _get_skill_approval_store(),
+                invocation_approvals=OneShotSkillApprovals(),
+                audit=lambda action, outcome: write_audit_event(action, outcome),
+            )
+        except Exception as error:
+            return f"Skill runtime unavailable ({type(error).__name__})."
+        if len(parts) == 1 or parts[1] == "list":
+            return "\\n".join(
+                f'{item["name"]} [{item["risk"]}]: {item["description"]}'
+                for item in registry.describe()
+            ) or "No skills registered."
+        if parts[1] == "approve" and len(parts) >= 3:
+            try:
+                runtime.approve_invocation(parts[2])
+                write_audit_event("skill:approval", "granted")
+                return f"One-shot invocation approval granted for {parts[2]}."
+            except ValueError:
+                write_audit_event("skill:approval", "rejected")
+                return "Cannot approve an unknown skill."
+        if parts[1] == "invoke" and len(parts) >= 3:
+            argument = parts[3] if len(parts) == 4 else ""
+            result = runtime.invoke(parts[2], argument)
+            return result.message if result.ok else f"{result.status}: {result.message}"
+        return "Usage: /skill list | approve NAME | invoke NAME [argument]"
+
     if command == "/tool" or command.startswith("/tool "):
         parts = command.split(maxsplit=2)
         if len(parts) < 2:
