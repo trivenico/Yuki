@@ -74,6 +74,19 @@ class WorkflowEngineTests(unittest.TestCase):
         result = engine.run([WorkflowStep("first", "emit"), WorkflowStep("second", "note")])
         self.assertEqual(result, [{"step": "first", "ok": False, "status": "handler_failed"}])
 
+    def test_validates_all_steps_before_any_handler_runs(self):
+        calls = []
+        engine = WorkflowEngine(
+            handlers={"emit": lambda text: calls.append(text) or text},
+            approver=lambda *_args: True,
+        )
+        with self.assertRaises(ValueError):
+            engine.run([
+                WorkflowStep("first", "emit", "side-effect"),
+                {"name": "invalid", "action": "not-allowed"},
+            ])
+        self.assertEqual(calls, [])
+
     def test_invalid_workflow_bounds_are_rejected(self):
         engine = WorkflowEngine(approver=lambda *_: True)
         with self.assertRaises(ValueError):
