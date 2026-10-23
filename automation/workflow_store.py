@@ -504,12 +504,13 @@ class WorkflowRunStore:
                     "succeeded": "task.completed",
                     "failed": "task.failed",
                     "cancelled": "task.cancelled",
+                    "interrupted": "task.interrupted",
                 }.get(row["state"])
                 if kind != expected_terminal_event:
                     raise WorkflowTransitionError("cannot append events to a terminal task.")
                 prior_terminal = db.execute(
                     "SELECT 1 FROM task_events WHERE task_id=? AND kind IN "
-                    "('task.completed', 'task.failed', 'task.cancelled') LIMIT 1",
+                    "('task.completed', 'task.failed', 'task.cancelled', 'task.interrupted') LIMIT 1",
                     (task_id,),
                 ).fetchone()
                 if prior_terminal:
