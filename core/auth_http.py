@@ -6,6 +6,7 @@ development escape hatch and must never be used for a public deployment.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 import hmac
 import secrets
@@ -26,12 +27,18 @@ def issue_session_cookie_headers(session, *, secure_cookies: bool = True) -> lis
         raise ValueError("a valid issued session is required.")
     csrf = secrets.token_urlsafe(32)
     secure = "; Secure" if secure_cookies else ""
-    max_age = max(0, int(getattr(session, "max_age_seconds", 0) or 0))
+    try:
+        expiry = datetime.fromisoformat(expires_at)
+        if expiry.tzinfo is None:
+            raise ValueError("session expiry must include a timezone.")
+        max_age = max(0, int((expiry - datetime.now(timezone.utc)).total_seconds()))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("session expiry is invalid.") from exc
     # Do not accept caller-supplied cookie attributes or token fragments.
     session_value = (
-        f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict{secure}"
+        f"{SESSION_COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Strict{secure}"
     )
-    csrf_value = f"{CSRF_COOKIE}={csrf}; Path=/; SameSite=Strict{secure}"
+    csrf_value = f"{CSRF_COOKIE}={csrf}; Path=/; Max-Age={max_age}; SameSite=Strict{secure}"
     headers = [
         (b"set-cookie", session_value.encode("ascii")),
         (b"set-cookie", csrf_value.encode("ascii")),
