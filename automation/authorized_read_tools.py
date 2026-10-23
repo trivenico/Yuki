@@ -175,22 +175,26 @@ class AuthorizedReadOnlyTools:
         files: list[str] = []
         try:
             children = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+            truncated = False
             for child in children:
-                if len(files) >= _MAX_LIST_RESULTS:
-                    break
-                if child.name in _BLOCKED_PARTS or _SECRET_NAME.search(child.name):
+                if child.name in _BLOCKED_PARTS or _SECRET_NAME.search(child.name) or child.is_symlink():
                     continue
                 try:
                     resolved = child.resolve(strict=True)
-                    resolved.relative_to(self._root)
+                    relative = resolved.relative_to(self._root)
                 except (OSError, ValueError):
                     continue
+                if any(part in _BLOCKED_PARTS or _SECRET_NAME.search(part) for part in relative.parts):
+                    continue
                 if resolved.is_file() or resolved.is_dir():
+                    if len(files) >= _MAX_LIST_RESULTS:
+                        truncated = True
+                        break
                     files.append(self._relative(self._root, resolved) + ("/" if resolved.is_dir() else ""))
         except OSError as exc:
             raise RuntimeError("workspace listing failed safely.") from exc
         return {"path": self._relative(self._root, directory) if directory != self._root else ".",
-                "entries": files, "truncated": len(children) > len(files)}
+                "entries": files, "truncated": truncated}
 
     def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         path = self._safe_path(arguments.get("path"))
