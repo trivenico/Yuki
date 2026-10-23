@@ -460,7 +460,7 @@ class WorkflowRunStore:
             raise ValueError("run_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or chr(0) in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if not isinstance(reason_code, str) or not reason_code or len(reason_code) > 100 or any(
             ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in reason_code
