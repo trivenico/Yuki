@@ -405,6 +405,25 @@ def main():
                 print("Yuki > No incomplete checkpointed tasks.")
             for task in tasks:
                 print(f"- {task.task_id} [{task.status}] revision={task.revision} updated={task.updated_at} goal={str(task.payload.get('goal', ''))[:120]}")
+        elif command.startswith("/task-reconcile "):
+            parts = command.split(" ", 4)
+            if len(parts) != 5:
+                print("Yuki > Use /task-reconcile TASK_ID REVISION DISPOSITION | EVIDENCE")
+                print("Yuki > DISPOSITION: confirmed_completed, confirmed_not_executed, or unresolved")
+            else:
+                task_id, revision_text, disposition, evidence = parts[1], parts[2], parts[3], parts[4]
+                if "|" not in evidence:
+                    print("Yuki > Include evidence after a | separator.")
+                else:
+                    evidence = evidence.split("|", 1)[1].strip()
+                    try:
+                        outcome = checkpointed_tasks.reconcile(
+                            task_id, expected_revision=int(revision_text),
+                            disposition=disposition, evidence=evidence,
+                        )
+                        print(f"Yuki > Reconciliation recorded: {task_id} [{outcome.status}] revision={outcome.revision}. No task was automatically resumed.")
+                    except (ValueError, KeyError, RuntimeError) as exc:
+                        print(f"Yuki > Reconciliation refused: {exc}")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
