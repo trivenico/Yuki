@@ -21,6 +21,7 @@ _MIN_ITERATIONS = 100_000
 _DEFAULT_ITERATIONS = 600_000
 _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
+_SESSION_RETENTION_DAYS = 30
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
     "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
@@ -147,6 +148,17 @@ class BuiltInAuthService:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)")
+            # Keep recent revoked/expired records for incident review, then prune them.
+            # Session validation always checks expiry/revocation independently of cleanup.
+            cutoff = _timestamp(_utcnow() - timedelta(days=_SESSION_RETENTION_DAYS))
+            db.execute(
+                "DELETE FROM auth_sessions WHERE expires_at < ?",
+                (cutoff,),
+            )
+            db.execute(
+                "DELETE FROM auth_sessions WHERE revoked_at IS NOT NULL AND revoked_at < ?",
+                (cutoff,),
+            )
 
     def _connect(self):
         return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
@@ -273,6 +285,22 @@ class BuiltInAuthService:
             result = db.execute("UPDATE auth_users SET disabled=1 WHERE user_id=?", (user_id,))
             db.execute("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (_timestamp(_utcnow()), user_id))
             return result.rowcount == 1
+
+    def cleanup_sessions(self, *, retention_days=_SESSION_RETENTION_DAYS):
+        """Delete expired/revoked session rows older than retention_days.
+
+        Call periodically from maintenance code; session resolution does not depend
+        on this cleanup, so expired/revoked sessions remain invalid beforehand.
+        """
+        if isinstance(retention_days, bool) or not isinstance(retention_days, int) or not 1 <= retention_days <= 365:
+            raise ValueError("retention_days must be between 1 and 365.")
+        cutoff = _timestamp(_utcnow() - timedelta(days=retention_days))
+        with self._connect() as db:
+            result = db.execute(
+                "DELETE FROM auth_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)",
+                (cutoff, cutoff),
+            )
+            return result.rowcount
 
     def list_users(self):
         with self._connect() as db:
