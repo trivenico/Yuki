@@ -446,6 +446,71 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def cancel_run(
+        self, run_id: str, *, expected_version: int, actor_id: str,
+        reason_code: str = "cancel_requested",
+    ) -> WorkflowRun:
+        """Atomically cancel a non-terminal run and append its audit event.
+
+        This records cancellation intent/state; it cannot forcibly stop a Python
+        handler already executing in another thread or process. Workers must
+        cooperatively check persisted state before beginning each side effect.
+        """
+        if not isinstance(run_id, str) or not run_id or len(run_id) > 200:
+            raise ValueError("run_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(reason_code, str) or not reason_code or len(reason_code) > 100 or any(
+            ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in reason_code
+        ):
+            raise ValueError("reason_code must be a bounded machine-readable code.")
+
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            current = self._row(row)
+            if current.version != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before cancelling.")
+            if current.state in _TERMINAL:
+                raise WorkflowTransitionError("terminal workflow runs cannot be cancelled.")
+            if "cancelled" not in _TRANSITIONS[current.state]:
+                raise WorkflowTransitionError("workflow run cannot be cancelled from its current state.")
+
+            updated = db.execute("""
+                UPDATE workflow_runs SET state='cancelled', error_code=?,
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                WHERE run_id=? AND version=? AND state=?
+            """, (reason_code, now, run_id, expected_version, current.state))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow run changed concurrently.")
+
+            # Event insert and state transition share one SQLite transaction.
+            from automation.task_runtime import TaskEvent
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            payload_json = _bounded_json(
+                {"reason_code": reason_code, "previous_state": current.state},
+                8 * 1024, "task event payload",
+            )
+            cursor = db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, 'task.cancelled', ?, ?, ?)",
+                (run_id, sequence, actor_id.strip(), payload_json, now),
+            )
+            # Materialize to validate the durable event contract for callers.
+            TaskEvent(cursor.lastrowid, run_id, sequence, "task.cancelled",
+                      actor_id.strip(), json.loads(payload_json), now)
+            return self._row(db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone())
+
     def mark_expired_running_as_interrupted(self, *, now: datetime | None = None, limit: int = 50) -> list[WorkflowRun]:
         """Mark expired leases interrupted; never automatically replay side effects."""
         if type(limit) is not int or not 1 <= limit <= 100:
