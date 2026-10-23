@@ -95,7 +95,7 @@ def run_sandboxed_task(
         not isinstance(command, (list, tuple))
         or not command
         or len(command) > 64
-        or any(not isinstance(arg, str) or not arg or "\\x00" in arg or len(arg) > 2048 for arg in command)
+        or any(not isinstance(arg, str) or not arg or "\x00" in arg or len(arg) > 2048 for arg in command)
         or sum(len(arg) for arg in command) > 8192
     ):
         raise SandboxExecutionError("command argv exceeds the configured count or size limits")
