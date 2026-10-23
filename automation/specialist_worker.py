@@ -102,7 +102,7 @@ class SpecialistTaskWorker:
         if claimed is None:
             return None
 
-        agent_id = self._agent_id(claimed.workflow_name)
+        agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
         if handler is None:
             return self.runtime.fail(
@@ -137,7 +137,10 @@ class SpecialistTaskWorker:
             )
 
     @staticmethod
-    def _agent_id(workflow_name: str) -> str:
-        # The coordinator uses "agent-{agent_id}-{subtask_id}". Match registered
-        # identifiers, not arbitrary handler names supplied in the task definition.
-        return workflow_name.split("-", 2)[1] if workflow_name.startswith("agent-") and workflow_name.count("-") >= 2 else ""
+    def _agent_id(workflow_name: str, registered_ids) -> str:
+        # Agent IDs may themselves contain hyphens. Match only known registered
+        # IDs against the coordinator's stable task-name prefix.
+        for agent_id in sorted(registered_ids, key=len, reverse=True):
+            if workflow_name.startswith("agent-" + agent_id + "-"):
+                return agent_id
+        return ""
