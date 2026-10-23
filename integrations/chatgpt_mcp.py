@@ -1,7 +1,8 @@
-"""Minimal stateless MCP Streamable HTTP bridge for ChatGPT.
+"""Personal-use MCP Streamable HTTP bridge with strict loopback-only binding.
 
-Exposes only chat and status. Bind to loopback by default; remote deployment
-requires an explicit opt-in, a strong bearer token, and HTTPS at the edge.
+Exposes only chat and status. Remote binding is deliberately rejected during
+the personal-use preview, even if legacy remote opt-in environment variables
+are set. Optional conversation storage is local-only and disabled by default.
 """
 from __future__ import annotations
 
