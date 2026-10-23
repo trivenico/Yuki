@@ -247,12 +247,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:cancel", task_id):
             raise PermissionError("task cancellation is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
-        cancelled = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="cancelled", error_code="cancelled")
-        self.store.append_task_event(task_id, kind="task.cancelled", actor_id=actor,
-                                     payload={"state_version": cancelled.version},
-                                     expected_version=cancelled.version)
-        return self._record(self.store.get(task_id))
+        cancelled = self.store.cancel_run(
+            task_id, expected_version=expected_version, actor_id=actor,
+        )
+        return self._record(cancelled)
