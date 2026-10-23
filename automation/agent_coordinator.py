@@ -275,55 +275,98 @@ class SpecialistAgentCoordinator:
         """Create only dependency-ready tasks; workers still execute them separately."""
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
+        # Never hold a coordinator SQLite write lock while calling TaskRuntime:
+        # both may share one database file. Stable idempotency keys make concurrent
+        # advances and recovery after a partial write safe.
         with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
             plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
-            rows = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
-            statuses = {row["subtask_id"]: row for row in rows}
-            for row in rows:
-                if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"} and row["status"] != "blocked":
-                    continue
-                dependencies = json.loads(row["dependencies_json"])
-                if any(statuses[d]["status"] in {"failed", "cancelled", "blocked"} for d in dependencies):
-                    db.execute("UPDATE agent_plan_subtasks SET status='blocked' WHERE plan_id=? AND subtask_id=?",
-                               (plan_id, row["subtask_id"]))
-                    continue
-                if any(statuses[d]["task_id"] is None or self.runtime.get(actor_id=actor_id, task_id=statuses[d]["task_id"]).state != "succeeded"
-                       for d in dependencies):
-                    continue
-                agent = self.agents.get(row["agent_id"])
-                if agent is None or not agent.enabled:
-                    db.execute("UPDATE agent_plan_subtasks SET status='failed' WHERE plan_id=? AND subtask_id=?",
-                               (plan_id, row["subtask_id"]))
-                    continue
-                idem = f"agent-plan:{plan['idempotency_key']}:{row['subtask_id']}"
-                task = self.runtime.enqueue(
-                    actor_id=actor_id, idempotency_key=idem,
-                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                    steps=[{"name": row["subtask_id"], "action": agent.action,
-                            "argument": row["description"],
-                            "requires_approval": bool(row["requires_approval"])}],
+            plan_key = plan["idempotency_key"]
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
+            ).fetchall()]
+        by_id = {row["subtask_id"]: row for row in rows}
+
+        for row in rows:
+            if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
+                continue
+            dependencies = json.loads(row["dependencies_json"])
+            dependency_states = []
+            waiting = False
+            blocked = False
+            for dep_id in dependencies:
+                dep = by_id[dep_id]
+                if dep["status"] in {"failed", "cancelled", "blocked"}:
+                    blocked = True
+                    break
+                if dep["task_id"] is None:
+                    waiting = True
+                    break
+                dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
+                if dep_task.state in {"failed", "cancelled", "interrupted"}:
+                    blocked = True
+                    break
+                if dep_task.state != "succeeded":
+                    waiting = True
+                    break
+                dependency_states.append(dep_task.state)
+            if blocked:
+                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                row["status"] = "blocked"
+                continue
+            if waiting:
+                continue
+            agent = self.agents.get(row["agent_id"])
+            if agent is None or not agent.enabled:
+                self._set_subtask(plan_id, row["subtask_id"], status="failed")
+                row["status"] = "failed"
+                continue
+            task = self.runtime.enqueue(
+                actor_id=actor_id,
+                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                steps=[{
+                    "name": row["subtask_id"], "action": agent.action,
+                    "argument": row["description"],
+                    "requires_approval": bool(row["requires_approval"]),
+                }],
+            )
+            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            row["task_id"] = task.task_id
+            row["status"] = task.state
+
+        # Refresh runtime states outside coordinator DB transactions.
+        with self._connect() as db:
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
+            ).fetchall()]
+        for row in rows:
+            if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
+                continue
+            task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
+            if task.state == "succeeded":
+                state = "succeeded"
+            elif task.state in {"failed", "cancelled", "interrupted"}:
+                state = "cancelled" if task.state == "cancelled" else "failed"
+            else:
+                state = task.state
+            if state != row["status"]:
+                self._set_subtask(plan_id, row["subtask_id"], status=state)
+        return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
+    def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
+        with self._connect() as db:
+            if task_id is None:
+                db.execute(
+                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
+                    (status, plan_id, subtask_id),
                 )
-                db.execute("UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
-                           (task.task_id, task.state, plan_id, row["subtask_id"]))
-            # Refresh task states, never assume an enqueue means execution succeeded.
-            rows = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
-            for row in rows:
-                if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
-                    continue
-                task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
-                if task.state == "succeeded":
-                    state = "succeeded"
-                elif task.state in {"failed", "cancelled", "interrupted"}:
-                    state = "failed" if task.state != "cancelled" else "cancelled"
-                else:
-                    state = task.state
-                if state != row["status"]:
-                    db.execute("UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
-                               (state, plan_id, row["subtask_id"]))
-            return self._read_plan(db, plan_id)
+            else:
+                db.execute(
+                    "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
+                    (task_id, status, plan_id, subtask_id),
+                )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):
