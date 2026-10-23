@@ -153,7 +153,7 @@ class BuiltInAuthService:
             cutoff = _timestamp(_utcnow() - timedelta(days=_SESSION_RETENTION_DAYS))
             db.execute(
                 "DELETE FROM auth_sessions WHERE expires_at < ?",
-                (cutoff, cutoff),
+                (cutoff,),
             )
             db.execute(
                 "DELETE FROM auth_sessions WHERE revoked_at IS NOT NULL AND revoked_at < ?",
