@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Audit the repository's pip requirements files for duplicate declarations.
+"""Audit pip requirements files for duplicate and conflicting declarations.
 
-This intentionally uses only the standard library so the audit also runs before
-optional dependencies are installed. It supports the simple package-specifier
-format used by this repository; URL/VCS and pip option lines are reported as
-unsupported rather than silently interpreted as package names.
+Standard-library-only so the check runs before optional dependencies install.
+This supports the simple package-specifier syntax used by this repository.
 """
 from __future__ import annotations
 
@@ -20,6 +18,7 @@ NAME_NORMALIZER = re.compile(r"[-_.]+")
 
 
 def normalize_name(name: str) -> str:
+    """Normalize a distribution name using PEP 503 separators."""
     return NAME_NORMALIZER.sub("-", name).lower()
 
 
@@ -36,9 +35,8 @@ def audit_files(paths: list[Path]) -> list[str]:
             if line.startswith(("-", "git+", "http://", "https://")):
                 errors.append(f"{path}:{line_number}: unsupported requirement directive/URL: {line}")
                 continue
-            # Strip inline comments only when introduced by whitespace, preserving URL fragments.
-            line = re.split(r"\\s+#", line, maxsplit=1)[0].strip()
-            match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\\[[^]]+\\])?\\s*(.*)$", line)
+            line = re.split(r"\s+#", line, maxsplit=1)[0].strip()
+            match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^]]+\])?\s*(.*)$", line)
             if not match or not NAME_RE.fullmatch(match.group(1)):
                 errors.append(f"{path}:{line_number}: unsupported requirement syntax: {line}")
                 continue
@@ -54,8 +52,6 @@ def audit_files(paths: list[Path]) -> list[str]:
             seen_in_file[name] = (line_number, specifier)
             declarations[name].append((path, line_number, specifier))
 
-    # A package may be repeated in separate optional manifests only if its
-    # constraints agree exactly; otherwise installs can become order-dependent.
     for name, entries in sorted(declarations.items()):
         if len(entries) < 2:
             continue
@@ -63,7 +59,6 @@ def audit_files(paths: list[Path]) -> list[str]:
         if len(specs) > 1:
             details = ", ".join(f"{path.name}:{line} '{spec}'" for path, line, spec in entries)
             errors.append(f"conflicting constraints for '{name}' across manifests: {details}")
-
     return errors
 
 
