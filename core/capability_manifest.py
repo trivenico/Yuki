@@ -62,7 +62,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         "Registers uniquely named skills and describes them without executing them.",
         ("skills/registry.py",), ("Python 3.10+",), ("skill:invoke",),
         ("registered skill execution when explicitly invoked",), ("local", "hosted"),
-        "medium", ("tests/test_registry.py",),
+        "medium", ("tests/test_role_plugin_loader.py",),
         ("Registry presence does not prove each skill is complete or production-ready.",),
     ),
     CapabilityContract(
@@ -88,7 +88,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         "JSON-based task proposals and guarded registered-skill invocation.",
         ("yuki.py", "yuki_agent.py"), ("configured model provider",),
         ("skill:invoke",), ("approved skill actions",), ("local",),
-        "high", ("tests/test_agent.py",),
+        "high", ("tests/test_yuki_agent_runtime.py",),
         ("Not a mature native tool-calling/ReAct loop; provider and skill coverage varies.",),
     ),
     CapabilityContract(
@@ -97,7 +97,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("core/vector_memory.py", "yuki.py"), ("local workspace storage",),
         ("memory:read", "memory:write", "memory:delete"),
         ("local memory persistence",), ("local",), "medium",
-        ("tests/test_vector_memory.py",),
+        ("tests/test_yuki.py",),
         ("Not an embedding/vector database or tenant-aware hosted memory service.",),
     ),
     CapabilityContract(
@@ -115,7 +115,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("skills/web_skill.py", "skills/web_deep_read.py", "automation/browser.py"),
         ("configured allowed-host list",), ("web:read",),
         ("outbound HTTPS requests",), ("local", "hosted"), "medium",
-        ("tests/test_web_skill.py",),
+        ("tests/test_production_integrations.py",),
         ("Not general browser control; retrieved page text remains untrusted.",),
     ),
     CapabilityContract(
@@ -123,7 +123,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         "Provides an allow-listed HTTPS MCP client primitive with per-call approval.",
         ("core/mcp_client.py",), ("configured MCP servers",),
         ("mcp:discover", "mcp:call"), ("outbound HTTPS MCP requests",),
-        ("local", "hosted"), "high", ("tests/test_mcp_client.py",),
+        ("local", "hosted"), "high", ("tests/test_production_integrations.py",),
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
