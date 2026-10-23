@@ -67,9 +67,6 @@ def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], st
 
 def build_handlers_from_provider_manager(provider_manager, agent_roles: Mapping[str, str]) -> dict[str, Callable[[str], str]]:
     """Build handlers from Yuki's already-selected provider and explicit role map."""
-    factory = getattr(provider_manager, "create_selected_adapter", None)
-    if not callable(factory):
-        raise TypeError("provider_manager must expose create_selected_adapter().")
     if not isinstance(agent_roles, Mapping) or not agent_roles:
         raise ValueError("agent_roles must be a non-empty mapping.")
     for agent_id, role in agent_roles.items():
@@ -77,6 +74,9 @@ def build_handlers_from_provider_manager(provider_manager, agent_roles: Mapping[
             raise ValueError("agent IDs must be bounded identifiers.")
         if not isinstance(role, str) or role not in _SPECIALIST_INSTRUCTIONS:
             raise ValueError("each agent must map to a supported specialist role.")
+    factory = getattr(provider_manager, "create_selected_adapter", None)
+    if not callable(factory):
+        raise TypeError("provider_manager must expose create_selected_adapter().")
     provider = factory()
     if provider is None:
         raise RuntimeError("no provider is selected.")
