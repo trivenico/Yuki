@@ -201,6 +201,39 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.file.read_text(encoding="utf-8"), old)
 
 
+    def test_isolated_runner_factory_is_used_when_host_execution_disabled(self):
+        old = self.file.read_text(encoding="utf-8")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        calls = []
+        fake_runner = type("FakeIsolatedRunner", (), {
+            "run": lambda _self, *, principal, test_module: (
+                calls.append((principal.actor_id, test_module)) or
+                SimpleNamespace(target=test_module, exit_code=0, timed_out=False,
+                                duration_seconds=0.01, stdout="isolated", stderr="")
+            )
+        })()
+        coordinator = IsolatedUpgradeCoordinator(
+            self.root,
+            trusted_principal=lambda p: p.actor_id == "test-operator",
+            approve_change=lambda actor, change_id, digest: True,
+            approve_test=lambda actor, run_id, digest: True,
+            audit=lambda event: self.audit_events.append(event),
+            allowed_paths=["src/example.py"],
+            allowed_test_modules=["tests.test_example"],
+            isolated_runner_factory=lambda staged_root: (
+                self.assertTrue(staged_root.is_dir()) or fake_runner
+            ),
+        )
+        with patch(
+            "automation.self_upgrade_coordinator.ApprovedWorkspaceChanges.apply",
+            return_value=SimpleNamespace(content_digest="change-digest"),
+        ):
+            result = coordinator.validate(principal=self.principal, changes=[change])
+        self.assertEqual(result["outcome"], "passed")
+        self.assertFalse(result["promotion_allowed"])
+        self.assertEqual(calls, [("test-operator", "tests.test_example")])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), old)
+
 
 if __name__ == "__main__":
     unittest.main()
