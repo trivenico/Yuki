@@ -201,6 +201,27 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         self.assertIn("unittest.defaultTestLoader.loadTestsFromName(target)", harness)
         self.assertNotIn("unittest.main(module=None", harness)
 
+    def test_artifact_is_readable_by_fixed_non_root_container_uid(self):
+        artifact = self.root / "workspace.tar"
+        artifact.write_bytes(b"test artifact")
+        artifact.chmod(0o600)
+
+        self.runner._prepare_artifact_for_non_root(artifact)
+
+        self.assertEqual(artifact.stat().st_mode & 0o444, 0o444)
+        self.assertEqual(artifact.read_bytes(), b"test artifact")
+
+    def test_artifact_permission_preparation_rejects_symlink(self):
+        artifact = self.root / "workspace.tar"
+        target = self.root / "target.tar"
+        target.write_bytes(b"test artifact")
+        artifact.symlink_to(target)
+
+        with self.assertRaises(ToolInputError):
+            self.runner._prepare_artifact_for_non_root(artifact)
+
+        self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+
     def test_container_command_uses_readonly_artifact_and_bounded_tmpfs(self):
         command = self.runner._build_container_command(
             binary="/usr/bin/podman",
