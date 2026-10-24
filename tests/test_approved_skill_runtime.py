@@ -139,5 +139,49 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertIsNone(result.data)
 
 
+    def test_approval_is_bound_to_exact_argument(self):
+        class HighRisk:
+            name = "weather"
+            risk = "high"
+            requires_approval = True
+            def execute(self, argument=""):
+                return type("Result", (), {"ok": True, "message": "executed:" + argument})()
+        self.registry.register(HighRisk())
+        self.runtime.approve_invocation("weather", "approved-input")
+        changed = self.runtime.invoke("weather", "changed-input")
+        self.assertEqual(changed.status, "approval_required")
+        exact = self.runtime.invoke("weather", "approved-input")
+        self.assertTrue(exact.ok)
+        self.assertEqual(exact.message, "executed:approved-input")
+        replay = self.runtime.invoke("weather", "approved-input")
+        self.assertEqual(replay.status, "approval_required")
+
+    def test_one_shot_approval_consumption_is_atomic_for_exact_argument(self):
+        import threading
+        from core.guarded_skill_runtime import OneShotSkillApprovals
+
+        approvals = OneShotSkillApprovals()
+        approvals.approve("weather", "same-input")
+        barrier = threading.Barrier(3)
+        outcomes = []
+        lock = threading.Lock()
+
+        def consume():
+            barrier.wait()
+            outcome = approvals.consume("weather", "same-input")
+            with lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=consume) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(outcomes.count(True), 1)
+        self.assertEqual(outcomes.count(False), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
