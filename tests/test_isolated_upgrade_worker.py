@@ -1,6 +1,7 @@
 import hashlib
 from pathlib import Path
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -136,6 +137,24 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
             outside.unlink(missing_ok=True)
             if (self.root / "tests").exists():
                 (self.root / "tests").chmod(0o700)
+
+
+    def test_trusted_harness_is_valid_python_and_uses_explicit_test_loader(self):
+        harness = self.runner._trusted_harness()
+        compile(harness, "<yuki-isolated-worker-harness>", "exec")
+        self.assertIn("hashlib.sha256", harness)
+        self.assertIn("unittest.defaultTestLoader.loadTestsFromName(target)", harness)
+        self.assertNotIn("unittest.main(module=None", harness)
+
+    def test_artifact_is_digest_addressed_and_contains_regular_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact, digest = self.runner._create_content_addressed_artifact(Path(tmp) / "workspace.tar")
+            self.assertEqual(digest, hashlib.sha256(artifact.read_bytes()).hexdigest())
+            with tarfile.open(artifact, "r:") as archive:
+                members = archive.getmembers()
+            names = {member.name for member in members}
+            self.assertIn("tests/test_sample.py", names)
+            self.assertTrue(all(member.isfile() for member in members))
 
 if __name__ == "__main__":
     unittest.main()
