@@ -97,6 +97,30 @@ class DockerIsolatedTestRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unable to verify worker container state"):
                 self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
 
+    def test_cleanup_fails_closed_when_container_removal_fails(self):
+        cidfile = self.root / "worker.cid"
+        cidfile.write_text("a" * 64, encoding="utf-8")
+        listed = type("Result", (), {
+            "returncode": 0, "stdout": ("a" * 64 + "\\n").encode(), "stderr": b"",
+        })()
+        removal_failed = type("Result", (), {
+            "returncode": 1, "stdout": b"", "stderr": b"permission denied",
+        })()
+        with patch(
+            "automation.isolated_upgrade_worker_docker.subprocess.run",
+            side_effect=[listed, removal_failed],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "worker container removal failed"):
+                self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
+
+    def test_cleanup_rejects_malformed_container_id(self):
+        cidfile = self.root / "worker.cid"
+        cidfile.write_text("not-a-container-id;docker rm -f anything", encoding="utf-8")
+        with patch("automation.isolated_upgrade_worker_docker.subprocess.run") as run:
+            with self.assertRaisesRegex(RuntimeError, "container ID is malformed"):
+                self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
+        run.assert_not_called()
+
     def test_image_must_be_digest_pinned(self):
         with self.assertRaises(ValueError):
             DockerIsolatedTestRunner(
