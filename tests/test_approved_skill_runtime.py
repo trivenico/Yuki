@@ -65,6 +65,22 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "not_found")
 
+    def test_unknown_risk_fails_closed_and_requires_one_shot_approval(self):
+        class UnknownRisk:
+            name = "weather"
+            risk = "custom-unreviewed-risk"
+            requires_approval = False
+            def execute(self, argument=""):
+                return type("Result", (), {"ok": True, "message": "executed"})()
+        self.registry.register(UnknownRisk())
+        first = self.runtime.invoke("weather")
+        self.assertEqual(first.status, "approval_required")
+        self.runtime.approve_invocation("weather")
+        second = self.runtime.invoke("weather")
+        self.assertTrue(second.ok)
+        third = self.runtime.invoke("weather")
+        self.assertEqual(third.status, "approval_required")
+
     def test_high_risk_skill_requires_one_shot_invocation_approval(self):
         class HighRisk:
             name = "weather"
