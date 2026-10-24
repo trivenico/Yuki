@@ -5,6 +5,7 @@ sha256 image digest that contains Python 3.11+ and unittest. This test intention
 does not build or pull images, because image acquisition belongs to trusted setup.
 """
 import os
+import tempfile
 from pathlib import Path
 import tempfile
 import unittest
@@ -35,6 +36,10 @@ class RootlessPodmanIntegrationTests(unittest.TestCase):
             "  self.assertNotIn('YUKI_INTEGRATION_SECRET', os.environ)\n"
             " def test_root_filesystem_is_not_writable(self):\n"
             "  with self.assertRaises(OSError): pathlib.Path('/etc/yuki-worker-escape').write_text('no')\n"
+            " def test_artifact_mount_is_read_only(self):\n"
+            "  with self.assertRaises(OSError): pathlib.Path('/tmp/worker-artifact-escape').write_text('no')\n"
+            " def test_bounded_tmpfs_is_writable_for_scratch(self):\n"
+            "  with tempfile.NamedTemporaryFile(dir='/work') as scratch: self.assertTrue(pathlib.Path(scratch.name).exists())\n"
             " def test_network_is_unavailable(self):\n"
             "  s=socket.socket(); s.settimeout(1)\n"
             "  try:\n"
