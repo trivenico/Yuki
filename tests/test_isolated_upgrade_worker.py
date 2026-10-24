@@ -116,12 +116,12 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         target.write_text("trusted", encoding="utf-8")
         outside = self.root.parent / (self.root.name + "-replacement-target.txt")
         outside.write_text("outside", encoding="utf-8")
-        original_open = os.open
+        original_open = self.runner._open_component
         replaced = False
 
-        def replace_then_open(path, flags, *args, **kwargs):
+        def replace_then_open(name, flags, *, dir_fd):
             nonlocal replaced
-            if path == target.name and kwargs.get("dir_fd") is not None and not replaced:
+            if name == target.name and not replaced:
                 replaced = True
                 target.unlink()
                 try:
@@ -129,10 +129,10 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
                 except (OSError, NotImplementedError):
                     target.write_text("trusted", encoding="utf-8")
                     self.skipTest("symlinks unavailable")
-            return original_open(path, flags, *args, **kwargs)
+            return original_open(name, flags, dir_fd=dir_fd)
 
         try:
-            with patch("automation.isolated_upgrade_worker.os.open", side_effect=replace_then_open):
+            with patch.object(self.runner, "_open_component", side_effect=replace_then_open):
                 with self.assertRaises(ToolInputError):
                     self.runner._open_regular_file(target)
             self.assertTrue(replaced)
