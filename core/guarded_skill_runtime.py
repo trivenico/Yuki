@@ -45,8 +45,11 @@ class OneShotSkillApprovals:
             self._approved.clear()
 
 
+_INVALID_RESULT_DATA = object()
+
+
 def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
-    """Return JSON-safe result data within a bounded character budget."""
+    """Return bounded JSON-safe data; reject the whole payload if any value is unsupported."""
     budget = [limit]
     truncated = [False]
 
@@ -66,8 +69,7 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
             return item
         if isinstance(item, float):
             if not math.isfinite(item):
-                truncated[0] = True
-                return None
+                return _INVALID_RESULT_DATA
             text = repr(item)
             if len(text) > budget[0]:
                 truncated[0] = True
@@ -89,13 +91,13 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
                     truncated[0] = True
                     break
                 if not isinstance(key, str):
-                    truncated[0] = True
-                    continue
+                    return _INVALID_RESULT_DATA
                 safe_key = visit(key, depth + 1)
-                if not isinstance(safe_key, str):
-                    truncated[0] = True
-                    continue
+                if safe_key is _INVALID_RESULT_DATA or not isinstance(safe_key, str):
+                    return _INVALID_RESULT_DATA
                 safe_value = visit(child, depth + 1)
+                if safe_value is _INVALID_RESULT_DATA:
+                    return _INVALID_RESULT_DATA
                 result[safe_key] = safe_value
             if truncated[0] and budget[0] > 16:
                 result["_truncated"] = True
@@ -107,15 +109,19 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
                 if index >= 100 or budget[0] <= 0:
                     truncated[0] = True
                     break
-                result.append(visit(child, depth + 1))
+                safe_child = visit(child, depth + 1)
+                if safe_child is _INVALID_RESULT_DATA:
+                    return _INVALID_RESULT_DATA
+                result.append(safe_child)
             if truncated[0] and budget[0] > 16:
                 result.append({"_truncated": True})
                 budget[0] -= 16
             return result
-        truncated[0] = True
-        return None
+        return _INVALID_RESULT_DATA
 
     safe = visit(value)
+    if safe is _INVALID_RESULT_DATA:
+        return None, True
     return safe, truncated[0]
 
 
