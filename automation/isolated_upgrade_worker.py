@@ -369,7 +369,7 @@ class PodmanIsolatedTestRunner:
     @staticmethod
     def _trusted_harness() -> str:
         """Return controller-owned code that verifies and safely unpacks the artifact."""
-            return (
+        return (
                 "import hashlib,os,pathlib,sys,tarfile,tempfile,unittest\n"
                 "archive=pathlib.Path('/input/workspace.tar')\n"
                 "expected=sys.argv[1]; target=sys.argv[2]\n"
