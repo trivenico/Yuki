@@ -150,8 +150,13 @@ def invoke_registered_skill(
     approvals: OneShotSkillApprovals,
     audit: Callable[[str, str], None] | None = None,
     max_result_chars: int = 2000,
+    expected_skill: Any = None,
 ) -> SkillInvocationResult:
-    """Invoke one registry member after checking its risk and one-shot approval."""
+    """Invoke one registry member after checking its risk and one-shot approval.
+
+    When expected_skill is supplied, execute only that exact registered object;
+    a registry replacement between permission approval and dispatch fails closed.
+    """
     def record(status: str) -> None:
         if audit is not None:
             try:
@@ -183,6 +188,12 @@ def invoke_registered_skill(
     if skill is None:
         record("not_found")
         return SkillInvocationResult(False, "Skill is not registered.", skill_name, "not_found")
+    if expected_skill is not None and skill is not expected_skill:
+        record("skill_identity_changed")
+        return SkillInvocationResult(
+            False, "Registered skill changed after approval; invocation was blocked.",
+            skill_name, "skill_identity_changed"
+        )
 
     risk = str(getattr(skill, "risk", "high")).lower()
     known_risks = {"low", "medium", "high", "critical"}
