@@ -113,6 +113,36 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.file.read_text(encoding="utf-8"), old)
         self.assertEqual(self.audit_events[-1]["action"], "self_upgrade.validation")
 
+    def test_failed_test_stops_remaining_targets_and_never_promotes(self):
+        old = self.file.read_text(encoding="utf-8")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        coordinator = IsolatedUpgradeCoordinator(
+            self.root,
+            trusted_principal=lambda p: p.actor_id == "test-operator",
+            approve_change=lambda actor, change_id, digest: True,
+            approve_test=lambda actor, run_id, digest: True,
+            audit=lambda event: self.audit_events.append(event),
+            allowed_paths=["src/example.py"],
+            allowed_test_modules=["tests.test_example", "tests.test_second"],
+        )
+        failed = SimpleNamespace(
+            target="tests.test_example", exit_code=1, timed_out=False,
+            duration_seconds=0.01, stdout="", stderr="failure",
+        )
+        with patch(
+            "automation.self_upgrade_coordinator.ApprovedWorkspaceChanges.apply",
+            return_value=SimpleNamespace(content_digest="change-digest"),
+        ), patch(
+            "automation.self_upgrade_coordinator.ApprovedTestRunner.run",
+            return_value=failed,
+        ) as run:
+            result = coordinator.validate(principal=self.principal, changes=[change])
+        self.assertEqual(result["outcome"], "failed")
+        self.assertFalse(result["promotion_allowed"])
+        self.assertEqual(len(result["test_targets"]), 1)
+        run.assert_called_once()
+        self.assertEqual(self.file.read_text(encoding="utf-8"), old)
+
     def test_missing_permissions_fail_closed(self):
         principal = ToolPrincipal("test-operator", frozenset({"workspace:write"}))
         old = self.file.read_text(encoding="utf-8")
