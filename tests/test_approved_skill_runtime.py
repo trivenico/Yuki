@@ -213,5 +213,69 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(approvals.consume("weather", "safe-input"), False)
 
 
+    def test_facade_blocks_registry_replacement_after_approval(self):
+        original = DemoSkill()
+        replacement = DemoSkill()
+        self.registry.register(original)
+        self.runtime.approve_invocation("weather", "sunny")
+        self.registry.items["weather"] = replacement
+
+        result = self.runtime.invoke("weather", "sunny")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+        self.assertEqual(self.events[-1], ("skill:invoke", "skill_identity_changed"))
+
+    def test_facade_rejects_high_risk_approval_without_instance_snapshot(self):
+        class HighRisk:
+            name = "weather"
+            risk = "high"
+            requires_approval = True
+            def execute(self, argument=""):
+                return type("Result", (), {"ok": True, "message": "executed"})()
+
+        self.registry.register(HighRisk())
+        # Bypassing the facade's approval method must not create an accepted
+        # authorization because it has no captured skill-instance identity.
+        self.runtime.invocation_approvals.approve("weather", "dangerous")
+
+        result = self.runtime.invoke("weather", "dangerous")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+
+
+    def test_facade_does_not_let_concurrent_call_burn_in_flight_approval(self):
+        import threading
+
+        entered = threading.Event()
+        release = threading.Event()
+        class BlockingHighRisk:
+            name = "weather"
+            risk = "high"
+            requires_approval = True
+            def execute(self, argument=""):
+                entered.set()
+                if not release.wait(timeout=5):
+                    raise TimeoutError("test release timed out")
+                return type("Result", (), {"ok": True, "message": "executed"})()
+
+        self.registry.register(BlockingHighRisk())
+        self.runtime.approve_invocation("weather", "same-request")
+        outcomes = []
+        worker = threading.Thread(
+            target=lambda: outcomes.append(self.runtime.invoke("weather", "same-request"))
+        )
+        worker.start()
+        self.assertTrue(entered.wait(timeout=5))
+        duplicate = self.runtime.invoke("weather", "same-request")
+        self.assertEqual(duplicate.status, "approval_in_use")
+        release.set()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(outcomes), 1)
+        self.assertTrue(outcomes[0].ok)
+
+
 if __name__ == "__main__":
     unittest.main()
