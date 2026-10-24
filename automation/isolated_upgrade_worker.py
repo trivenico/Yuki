@@ -538,7 +538,7 @@ class PodmanIsolatedTestRunner:
         """Build the exact hardened Podman invocation for unit-testable review."""
         return [
             binary, "run", "--rm", "--cidfile", str(cidfile), "--pull=never",
-            "--network=none", "--read-only", "--userns=keep-id",
+            "--network=none", "--read-only", "--userns=keep-id", "--user=65532:65532",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--entrypoint", "python",
             "--pids-limit", str(self.pids_limit),
