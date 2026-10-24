@@ -37,6 +37,21 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_test_timeout_is_bounded(self):
+        for timeout in (0, 301, True, 1.5):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(ValueError):
+                    IsolatedUpgradeCoordinator(
+                        self.root,
+                        trusted_principal=lambda p: True,
+                        approve_change=lambda actor, change_id, digest: True,
+                        approve_test=lambda actor, run_id, digest: True,
+                        audit=lambda event: None,
+                        allowed_paths=["src/example.py"],
+                        allowed_test_modules=["tests.test_example"],
+                        test_timeout_seconds=timeout,
+                    )
+
     def test_validation_uses_approved_services_and_never_promotes(self):
         old = self.file.read_text(encoding="utf-8")
         change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\n")
