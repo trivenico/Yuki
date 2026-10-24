@@ -179,7 +179,7 @@ def invoke_registered_skill(
         or risk not in known_risks
         or risk in {"high", "critical"}
     )
-    if needs_approval and not approvals.consume(skill_name):
+    if needs_approval and not approvals.consume(skill_name, argument):
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
 
