@@ -16,6 +16,7 @@ class SkillInvocationResult:
     message: str
     skill_name: str
     status: str
+    data: Any = None
 
 
 class OneShotSkillApprovals:
@@ -95,8 +96,11 @@ def invoke_registered_skill(
 
     execute = getattr(skill, "execute", None)
     if not callable(execute):
+        # Built-in Yuki skills expose run(); some integrations expose execute().
+        execute = getattr(skill, "run", None)
+    if not callable(execute):
         record("invalid_skill")
-        return SkillInvocationResult(False, "Registered skill has no execute() interface.", skill_name, "invalid_skill")
+        return SkillInvocationResult(False, "Registered skill has no supported run()/execute() interface.", skill_name, "invalid_skill")
 
     try:
         result = execute(argument)
@@ -106,17 +110,23 @@ def invoke_registered_skill(
 
     # Legacy skills commonly return a plain string. Normalize that supported
     # contract explicitly; structured results must still declare ok/message.
+    data = None
     if isinstance(result, str):
         ok, message = True, result
     elif isinstance(result, bool):
         ok = result
         message = "Skill completed." if result else "Skill reported failure."
+    elif isinstance(result, dict):
+        ok = bool(result.get("ok", True))
+        message = result.get("message", "Skill completed." if ok else "Skill failed.")
+        data = {key: value for key, value in result.items() if key not in {"ok", "message"}}
     else:
         ok = bool(getattr(result, "ok", False))
         message = getattr(result, "message", "Skill returned an invalid result.")
+        data = getattr(result, "data", None)
     if not isinstance(message, str):
         message = "Skill returned an invalid result."
-        ok = False
+        ok, data = False, None
     status = "completed" if ok else "skill_failed"
     record(status)
-    return SkillInvocationResult(ok, message[:max_result_chars], skill_name, status)
+    return SkillInvocationResult(ok, message[:max_result_chars], skill_name, status, data)
