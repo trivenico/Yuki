@@ -1,10 +1,4 @@
-"""Guarded dispatch for Yuki's explicitly registered CLI tools.
-
-This boundary complements SecurityPolicy: policy authorization is checked before
-dispatch, arguments and results are bounded, and audit events never contain
-argument or result contents. Tool implementations themselves must remain
-least-privileged and independently safe.
-"""
+"""Guarded dispatch for explicitly registered CLI tools."""
 from __future__ import annotations
 
 from typing import Any, Callable
@@ -20,6 +14,23 @@ class GuardedToolRuntime:
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
     ):
+        if not isinstance(tools, dict):
+            raise TypeError("tools must be a dictionary")
+        for name, handler in tools.items():
+            if not isinstance(name, str) or not name or len(name) > 128:
+                raise ValueError("tool names must be non-empty strings of at most 128 characters")
+            if not callable(handler):
+                raise TypeError("every registered tool must be callable")
+        for value, label in (
+            (max_argument_chars, "max_argument_chars"),
+            (max_result_chars, "max_result_chars"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1_000_000:
+                raise ValueError(f"{label} must be an integer between 1 and 1000000")
+        if not callable(getattr(policy, "authorize_tool", None)):
+            raise TypeError("policy must provide authorize_tool(name)")
+        if audit is not None and not callable(audit):
+            raise TypeError("audit must be callable when provided")
         self._tools = dict(tools)
         self._policy = policy
         self._audit = audit
@@ -31,7 +42,7 @@ class GuardedToolRuntime:
             try:
                 self._audit("tool:" + name[:128], outcome)
             except Exception:
-                # A telemetry failure must not bypass or broaden authorization.
+                # Telemetry failure must not bypass or broaden authorization.
                 pass
 
     def invoke(self, name: str, argument: str = "") -> str:
