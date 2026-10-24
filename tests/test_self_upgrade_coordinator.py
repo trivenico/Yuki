@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from automation.approved_workspace_changes import FileChange
+from automation.approved_workspace_changes import FileChange, WorkspaceChangeError
 from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationError
 from automation.self_upgrade_coordinator import IsolatedUpgradeCoordinator
 
@@ -71,6 +71,23 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
             self.assertFalse((staged / "private_key.pem").exists())
             self.assertFalse((staged / "linked.txt").exists())
             self.assertEqual((staged / "ordinary.txt").read_text(encoding="utf-8"), "safe")
+
+    def test_staging_fails_closed_when_file_cannot_be_inspected(self):
+        blocked = self.root / "unreadable.txt"
+        blocked.write_text("content", encoding="utf-8")
+        original_stat = Path.stat
+
+        def stat_with_failure(path_obj, *args, **kwargs):
+            if path_obj == blocked:
+                raise OSError("simulated metadata failure")
+            return original_stat(path_obj, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as destination:
+            staged = Path(destination) / "workspace"
+            staged.mkdir()
+            with patch("pathlib.Path.stat", new=stat_with_failure):
+                with self.assertRaisesRegex(WorkspaceChangeError, "unable to inspect"):
+                    self.coordinator._copy_workspace(staged)
 
     def test_validation_uses_approved_services_and_never_promotes(self):
         old = self.file.read_text(encoding="utf-8")
