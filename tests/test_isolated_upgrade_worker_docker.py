@@ -69,6 +69,34 @@ class DockerIsolatedTestRunnerTests(unittest.TestCase):
         self.assertIn("dst=/tmp,readonly", mount)
         self.assertIn("--user=65532:65532", command)
 
+    def test_runtime_environment_preserves_rootless_docker_socket_context(self):
+        with patch.dict("os.environ", {
+            "PATH": "/usr/bin", "HOME": "/home/worker",
+            "DOCKER_HOST": "unix:///run/user/1000/docker.sock",
+            "DOCKER_CONTEXT": "rootless", "AWS_SECRET_ACCESS_KEY": "must-not-forward",
+        }, clear=True):
+            env = self.runner._runtime_env()
+        self.assertEqual(env["DOCKER_HOST"], "unix:///run/user/1000/docker.sock")
+        self.assertEqual(env["DOCKER_CONTEXT"], "rootless")
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+
+    def test_cleanup_verifies_container_is_gone(self):
+        cidfile = self.root / "worker.cid"
+        cidfile.write_text("a" * 64, encoding="utf-8")
+        absent = type("Result", (), {"returncode": 1, "stdout": b"", "stderr": b""})()
+        with patch("automation.isolated_upgrade_worker_docker.subprocess.run", return_value=absent) as run:
+            self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][1:3], ["container", "ls"])
+
+    def test_cleanup_fails_closed_when_daemon_cannot_verify_state(self):
+        cidfile = self.root / "worker.cid"
+        cidfile.write_text("a" * 64, encoding="utf-8")
+        unavailable = type("Result", (), {"returncode": 2, "stdout": b"", "stderr": b"daemon unavailable"})()
+        with patch("automation.isolated_upgrade_worker_docker.subprocess.run", return_value=unavailable):
+            with self.assertRaisesRegex(RuntimeError, "unable to verify worker container state"):
+                self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
+
     def test_image_must_be_digest_pinned(self):
         with self.assertRaises(ValueError):
             DockerIsolatedTestRunner(
