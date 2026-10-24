@@ -211,6 +211,7 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         )
         self.assertIn("--network=none", command)
         self.assertIn("--read-only", command)
+        self.assertIn("--user=65532:65532", command)
         self.assertIn("--cap-drop=ALL", command)
         self.assertIn("--security-opt=no-new-privileges", command)
         self.assertIn("/work:rw,noexec,nosuid,nodev,size=100m", command)
