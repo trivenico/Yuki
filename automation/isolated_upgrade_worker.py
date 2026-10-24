@@ -156,6 +156,11 @@ class PodmanIsolatedTestRunner:
             return True
         return False
 
+    @staticmethod
+    def _open_component(name: str, flags: int, *, dir_fd: int) -> int:
+        """Open one child component relative to a verified directory descriptor."""
+        return os.open(name, flags, dir_fd=dir_fd)
+
     def _open_regular_file(self, path: Path) -> tuple[BinaryIO, os.stat_result]:
         """Open a regular file through no-follow directory descriptors.
 
@@ -180,7 +185,7 @@ class PodmanIsolatedTestRunner:
             root_fd = os.open(self.root, os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0))
             parent_fd = root_fd
             for component in parts[:-1]:
-                next_fd = os.open(
+                next_fd = self._open_component(
                     component, os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0),
                     dir_fd=parent_fd,
                 )
@@ -191,7 +196,7 @@ class PodmanIsolatedTestRunner:
             before = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
             if not stat.S_ISREG(before.st_mode):
                 raise ToolInputError("only regular files are allowed in worker input.")
-            file_fd = os.open(
+            file_fd = self._open_component(
                 leaf, os.O_RDONLY | nofollow | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0),
                 dir_fd=parent_fd,
             )
