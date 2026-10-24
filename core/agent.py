@@ -6,6 +6,7 @@ from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
+from skills.catalog import SkillCatalog
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,26 @@ class YukiCoreAgent:
 
     def available_skills(self):
         return self.registry.describe()
+
+    def discover_skills(self, task_query: str, *, limit: int = 5):
+        """Find relevant registered skills without executing or authorizing them."""
+        return SkillCatalog(self.registry).search(task_query, limit=limit)
+
+    def run_skill_for_task(self, task_query: str, argument: str = "") -> AgentResponse:
+        """Select the best catalog match, then use the normal approval-gated path.
+
+        Empty queries and missing matches fail closed. Catalog ranking is discovery,
+        not authorization; PermissionGate remains the final approval boundary.
+        """
+        cards = self.discover_skills(task_query, limit=5)
+        if not cards:
+            return AgentResponse(
+                False,
+                "No registered skill matches this task; clarify the request or choose a skill.",
+                stage="skill_not_found",
+            )
+        selected = cards[0]
+        return self.run_skill(selected.name, argument)
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
         skill = self.registry.get(name)
