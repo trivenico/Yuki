@@ -32,7 +32,7 @@ class MetadataDiscoveryTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def manifest(self, name="weather", **overrides):
+    def manifest(self, name="weather", *, filename=None, **overrides):
         data = {
             "name": name,
             "description": "Get a weather summary",
@@ -41,7 +41,7 @@ class MetadataDiscoveryTests(unittest.TestCase):
             "entrypoint": "weather.py",
         }
         data.update(overrides)
-        path = self.root / f"{name}.skill.json"
+        path = self.root / f"{filename or name}.skill.json"
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
@@ -79,7 +79,7 @@ class MetadataDiscoveryTests(unittest.TestCase):
 
     def test_duplicate_names_are_rejected(self):
         self.manifest("weather")
-        self.manifest("weather2", name="weather")
+        self.manifest("weather", filename="weather2")
         with self.assertRaises(SkillDiscoveryError):
             discover_skill_manifests(self.root)
 
