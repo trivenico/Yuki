@@ -38,10 +38,10 @@ jobs:
           import os
           import re
           image = os.environ["WORKER_IMAGE"].strip()
-          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:_-]*@sha256:[0-9a-f]{64}", image):
-              raise SystemExit("worker_image must be a valid image reference pinned by a lowercase sha256 digest")
-          if not any(image.startswith(prefix) for prefix in ("docker.io/", "quay.io/", "ghcr.io/")):
-              raise SystemExit("worker_image must come from docker.io, quay.io, or ghcr.io")
+          if not re.fullmatch(r"docker\.io/library/python:3\.11-slim@sha256:[0-9a-f]{64}", image):
+              raise SystemExit(
+                  "worker_image must be the official docker.io/library/python:3.11-slim image pinned by a lowercase sha256 digest"
+              )
           PY
 
       - name: Install Podman
