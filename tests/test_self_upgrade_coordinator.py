@@ -63,7 +63,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
 
     def test_audit_failure_denies_validation_result(self):
         old = self.file.read_text(encoding="utf-8")
-        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\n")
         self.coordinator.audit = lambda event: (_ for _ in ()).throw(OSError("audit unavailable"))
         with patch("automation.self_upgrade_coordinator.ApprovedWorkspaceChanges.apply",
                    return_value=SimpleNamespace(content_digest="change-digest")), \\
