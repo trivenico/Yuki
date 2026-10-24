@@ -560,9 +560,16 @@ class PodmanIsolatedTestRunner:
     def _prepare_artifact_for_non_root(path: Path) -> None:
         """Make the private bind-mounted artifact readable to the fixed non-root UID."""
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
         fd = None
+        directory_fd = None
         try:
-            fd = os.open(path, flags)
+            # Podman mounts the containing directory at /tmp. The fixed non-root
+            # UID must be able to traverse it, while the artifact itself stays
+            # read-only and the host-created directory remains otherwise private.
+            directory_fd = os.open(path.parent, directory_flags)
+            os.fchmod(directory_fd, 0o711)
+            fd = os.open(path.name, flags, dir_fd=directory_fd)
             metadata = os.fstat(fd)
             if not stat.S_ISREG(metadata.st_mode):
                 raise ToolInputError("worker artifact must be a regular file.")
@@ -577,6 +584,8 @@ class PodmanIsolatedTestRunner:
         finally:
             if fd is not None:
                 os.close(fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
 
     def _execute_artifact(
         self, *, principal: ToolPrincipal, test_module: str, run_digest: str,
