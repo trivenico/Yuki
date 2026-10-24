@@ -79,7 +79,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         original_is_symlink = Path.is_symlink
 
         def stat_with_failure(path_obj, *args, **kwargs):
-            if path_obj == blocked:
+            if path_obj.name == blocked.name:
                 raise OSError("simulated metadata failure")
             return original_stat(path_obj, *args, **kwargs)
 
