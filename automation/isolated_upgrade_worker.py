@@ -174,7 +174,14 @@ class PodmanIsolatedTestRunner:
         dir_fd_supported = os.open in getattr(os, "supports_dir_fd", set())
         if nofollow is None or directory_flag is None or not dir_fd_supported:
             raise ToolInputError("safe descriptor-based worker file access is unsupported on this platform.")
-        relative = path.relative_to(self.root)
+        # Resolve only the parent path to normalize platform aliases such as
+        # macOS /var -> /private/var; preserve the leaf so symlinks are rejected,
+        # not followed by Path.resolve().
+        candidate = path.parent.resolve() / path.name
+        try:
+            relative = candidate.relative_to(self.root)
+        except ValueError as exc:
+            raise ToolInputError("worker file path is outside the workspace root.") from exc
         parts = relative.parts
         if not parts or any(part in ("", ".", "..") for part in parts):
             raise ToolInputError("worker file path is not a safe relative path.")
