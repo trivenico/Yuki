@@ -124,6 +124,34 @@ class PodmanIsolatedTestRunner:
         if rootless is not True:
             raise ToolAuthorizationError("isolated test execution requires rootless Podman.")
 
+    @staticmethod
+    def _is_excluded_path(relative: Path) -> bool:
+        """Exclude common credential stores and generated/runtime directories from worker input.
+
+        This is defense in depth, not a secret scanner. Callers must stage only a
+        reviewed workspace and must never place production credentials in it.
+        """
+        parts = tuple(part.casefold() for part in relative.parts)
+        excluded_dirs = {
+            ".git", ".ssh", ".aws", ".azure", ".gnupg", ".config",
+            ".venv", "venv", "env", "node_modules", "__pycache__",
+            ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+        }
+        if any(part in excluded_dirs for part in parts[:-1]):
+            return True
+        name = parts[-1] if parts else ""
+        sensitive_names = {
+            "credentials", "credentials.json", "secrets.json", "secret",
+            "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "known_hosts",
+            "authorized_keys", ".netrc", ".npmrc", ".pypirc",
+            "service-account.json", "service_account.json",
+        }
+        if name in sensitive_names or name.startswith(".env"):
+            return True
+        if name.endswith((".pem", ".key", ".p12", ".pfx", ".keystore")):
+            return True
+        return False
+
     def _workspace_digest(self) -> str:
         """Hash the complete mounted workspace using bounded, deterministic traversal."""
         digest = hashlib.sha256()
@@ -134,14 +162,20 @@ class PodmanIsolatedTestRunner:
             for dirname in dirs:
                 if (current_path / dirname).is_symlink():
                     raise ToolInputError("symlink directories are not allowed in the worker workspace.")
-            dirs[:] = sorted(dirs)
+            dirs[:] = sorted(
+                dirname for dirname in dirs
+                if not self._is_excluded_path((current_path / dirname).relative_to(self.root))
+            )
             for name in sorted(files):
                 path = current_path / name
                 if path.is_symlink():
                     raise ToolInputError("symlink entries are not allowed in the worker workspace.")
+                relative_path = path.relative_to(self.root)
+                if self._is_excluded_path(relative_path):
+                    continue
                 try:
                     metadata = path.stat()
-                    relative = path.relative_to(self.root).as_posix()
+                    relative = relative_path.as_posix()
                     if not path.is_file():
                         continue
                     count += 1
@@ -174,11 +208,16 @@ class PodmanIsolatedTestRunner:
                     for dirname in dirs:
                         if (current_path / dirname).is_symlink():
                             raise ToolInputError("symlink directories are not allowed in artifact.")
-                    dirs[:] = sorted(dirs)
+                    dirs[:] = sorted(
+                        dirname for dirname in dirs
+                        if not self._is_excluded_path((current_path / dirname).relative_to(self.root))
+                    )
                     for name in sorted(files):
                         path = current_path / name
                         if path.is_symlink():
                             raise ToolInputError("symlink entries are not allowed in artifact.")
+                        if self._is_excluded_path(path.relative_to(self.root)):
+                            continue
                         if not path.is_file():
                             continue
                         size = path.stat().st_size
@@ -270,11 +309,16 @@ class PodmanIsolatedTestRunner:
             for dirname in dirs:
                 if (current_path / dirname).is_symlink():
                     raise ToolInputError("symlink directories are not allowed in the worker workspace.")
-            dirs[:] = sorted(dirs)
+            dirs[:] = sorted(
+                dirname for dirname in dirs
+                if not self._is_excluded_path((current_path / dirname).relative_to(self.root))
+            )
             for name in sorted(files):
                 source = current_path / name
                 if source.is_symlink():
                     raise ToolInputError("symlink entries are not allowed in the worker workspace.")
+                if self._is_excluded_path(source.relative_to(self.root)):
+                    continue
                 try:
                     metadata = source.stat()
                     if not source.is_file():
