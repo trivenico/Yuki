@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import time
+import tempfile
 from typing import Callable, Sequence
 
 from automation.approved_workspace_changes import _MAX_OUTPUT_BYTES
@@ -144,6 +145,39 @@ class PodmanIsolatedTestRunner:
             raise ToolInputError("test target is missing or exceeds the source size limit.")
         return source
 
+    def _ensure_container_removed(self, binary: str, cidfile: Path) -> None:
+        if not cidfile.is_file():
+            raise RuntimeError("worker container ID unavailable; cleanup cannot be verified.")
+        container_id = cidfile.read_text(encoding="utf-8").strip()
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            raise RuntimeError("worker container ID is malformed; cleanup cannot be verified.")
+        try:
+            exists = subprocess.run(
+                [binary, "container", "exists", container_id], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+            if exists.returncode == 1:
+                return
+            if exists.returncode != 0:
+                raise RuntimeError("unable to verify worker container state.")
+            removed = subprocess.run(
+                [binary, "rm", "--force", container_id], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, check=False, shell=False,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+            if removed.returncode != 0:
+                raise RuntimeError("worker container removal failed.")
+            verify = subprocess.run(
+                [binary, "container", "exists", container_id], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
+                env={"PATH": os.environ.get("PATH", "")},
+            )
+            if verify.returncode != 1:
+                raise RuntimeError("worker container cleanup could not be confirmed.")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("worker container cleanup could not be confirmed.") from exc
+
     def run(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
         if not isinstance(principal, ToolPrincipal):
             raise ToolAuthorizationError("trusted authenticated principal required.")
@@ -175,11 +209,12 @@ class PodmanIsolatedTestRunner:
             raise ToolAuthorizationError("Podman executable is unavailable; isolated tests denied.")
         self._verify_rootless_runtime(binary)
 
+        control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
+        cidfile = control_dir / "container.cid"
         command = [
-            binary, "run", "--rm", "--pull=never",
+            binary, "run", "--rm", "--cidfile", str(cidfile), "--pull=never",
             "--network=none", "--read-only", "--userns=keep-id",
-            "--user=65532:65532", "--cap-drop=ALL",
-            "--security-opt=no-new-privileges",
+            "--cap-drop=ALL", "--security-opt=no-new-privileges",
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
@@ -196,34 +231,35 @@ class PodmanIsolatedTestRunner:
         output_exceeded = False
         proc = None
         try:
-            proc = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                shell=False, close_fds=True, start_new_session=True,
-                env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
-            )
-            assert proc.stdout is not None and proc.stderr is not None
-            with selectors.DefaultSelector() as selector:
-                selector.register(proc.stdout, selectors.EVENT_READ, stdout)
-                selector.register(proc.stderr, selectors.EVENT_READ, stderr)
-                while selector.get_map() or proc.poll() is None:
-                    remaining = self.timeout_seconds - (time.monotonic() - start)
-                    if remaining <= 0:
-                        timed_out = True
-                        break
-                    for key, _ in selector.select(min(0.1, remaining)):
-                        chunk = os.read(key.fd, 8192)
-                        if not chunk:
-                            selector.unregister(key.fileobj)
-                            continue
-                        sink = key.data
-                        if len(stdout) + len(stderr) + len(chunk) > self.output_limit_bytes:
-                            room = max(0, self.output_limit_bytes - len(stdout) - len(stderr))
-                            sink.extend(chunk[:room])
-                            output_exceeded = True
+            try:
+                proc = subprocess.Popen(
+                    command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    shell=False, close_fds=True, start_new_session=True,
+                    env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
+                )
+                assert proc.stdout is not None and proc.stderr is not None
+                with selectors.DefaultSelector() as selector:
+                    selector.register(proc.stdout, selectors.EVENT_READ, stdout)
+                    selector.register(proc.stderr, selectors.EVENT_READ, stderr)
+                    while selector.get_map() or proc.poll() is None:
+                        remaining = self.timeout_seconds - (time.monotonic() - start)
+                        if remaining <= 0:
+                            timed_out = True
                             break
-                        sink.extend(chunk)
-                    if output_exceeded:
-                        break
+                        for key, _ in selector.select(min(0.1, remaining)):
+                            chunk = os.read(key.fd, 8192)
+                            if not chunk:
+                                selector.unregister(key.fileobj)
+                                continue
+                            sink = key.data
+                            if len(stdout) + len(stderr) + len(chunk) > self.output_limit_bytes:
+                                room = max(0, self.output_limit_bytes - len(stdout) - len(stderr))
+                                sink.extend(chunk[:room])
+                                output_exceeded = True
+                                break
+                            sink.extend(chunk)
+                        if output_exceeded:
+                            break
                 if timed_out or output_exceeded:
                     try:
                         os.killpg(proc.pid, signal.SIGKILL)
@@ -234,15 +270,24 @@ class PodmanIsolatedTestRunner:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=2)
-        except (OSError, ValueError) as exc:
-            if proc is not None and proc.poll() is None:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    proc.kill()
-                proc.wait()
-            self._record(principal.actor_id, "worker_error", run_digest, test_module)
-            raise RuntimeError("isolated worker failed to start or supervise.") from exc
+                # A killed Podman client does not prove the container stopped. Verify
+                # the container ID is gone; forcibly remove it when it still exists.
+                self._ensure_container_removed(binary, cidfile)
+            except (OSError, ValueError, subprocess.TimeoutExpired, RuntimeError) as exc:
+                if proc is not None and proc.poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        proc.kill()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass
+                self._record(principal.actor_id, "cleanup_failed", run_digest, test_module)
+                raise RuntimeError("isolated worker failed or cleanup could not be verified.") from exc
+        finally:
+            shutil.rmtree(control_dir, ignore_errors=True)
+
         duration = round(time.monotonic() - start, 3)
         if timed_out:
             exit_code = 124
