@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import tempfile
@@ -30,7 +31,7 @@ _BLOCKED_DIRS = frozenset({
 })
 _MAX_COPY_FILES = 3000
 _MAX_COPY_BYTES = 100 * 1024 * 1024
-_SENSITIVE_FILE = __import__("re").compile(r"(secret|credential|password|token|private.?key|id_rsa|id_ed25519|\.pem$|\.key$)", __import__("re").I)
+_SENSITIVE_FILE = re.compile(r"(secret|credential|password|token|private.?key|id_rsa|id_ed25519|\.pem$|\.key$)", re.I)
 
 
 class IsolatedUpgradeCoordinator:
@@ -63,8 +64,8 @@ class IsolatedUpgradeCoordinator:
         self.audit = audit
         self.allowed_paths = tuple(allowed_paths)
         self.allowed_test_modules = tuple(allowed_test_modules)
-        if isinstance(test_timeout_seconds, bool) or not isinstance(test_timeout_seconds, int) or not 1 <= test_timeout_seconds <= 300:
-            raise ValueError("test_timeout_seconds must be an integer from 1 to 300.")
+        if isinstance(test_timeout_seconds, bool) or not isinstance(test_timeout_seconds, int) or not 1 <= test_timeout_seconds <= 120:
+            raise ValueError("test_timeout_seconds must be an integer from 1 to 120.")
         self.test_timeout_seconds = test_timeout_seconds
         self.proposal_builder = SelfUpgradeProposalBuilder(self.allowed_paths)
 
