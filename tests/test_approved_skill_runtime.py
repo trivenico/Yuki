@@ -189,5 +189,29 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertFalse(result.ok)
 
 
+    def test_runtime_rejects_skill_identity_change_after_approval(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        approved_skill = DemoSkill()
+        replacement_skill = DemoSkill()
+
+        class MutableRegistry:
+            def get(self, name):
+                return replacement_skill
+
+        approvals = OneShotSkillApprovals()
+        approvals.approve("weather", "safe-input")
+        result = invoke_registered_skill(
+            MutableRegistry(),
+            "weather",
+            "safe-input",
+            approvals=approvals,
+            expected_skill=approved_skill,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+        self.assertEqual(approvals.consume("weather", "safe-input"), False)
+
+
 if __name__ == "__main__":
     unittest.main()
