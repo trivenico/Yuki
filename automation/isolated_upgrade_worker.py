@@ -21,7 +21,6 @@ import time
 import tempfile
 from typing import Callable, Sequence
 
-from automation.approved_workspace_changes import _MAX_OUTPUT_BYTES
 from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError, ToolPrincipal
 
 _IMAGE_DIGEST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]*@sha256:[0-9a-f]{64}$")
@@ -131,7 +130,10 @@ class PodmanIsolatedTestRunner:
         total = 0
         for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
             current_path = Path(current)
-            dirs[:] = sorted(d for d in dirs if not (current_path / d).is_symlink())
+            for dirname in dirs:
+                if (current_path / dirname).is_symlink():
+                    raise ToolInputError("symlink directories are not allowed in the worker workspace.")
+            dirs[:] = sorted(dirs)
             for name in sorted(files):
                 path = current_path / name
                 if path.is_symlink():
