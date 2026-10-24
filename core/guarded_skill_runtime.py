@@ -66,12 +66,31 @@ _INVALID_RESULT_DATA = object()
 _OMIT_RESULT_DATA = object()
 
 
-def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
-    """Return JSON-safe result data whose compact JSON encoding fits limit.
+def _json_string_content_cost(value: str, max_cost: int) -> tuple[int, int]:
+    """Return escaped JSON string-content cost and the safe prefix length."""
+    cost = 0
+    length = 0
+    for char in value:
+        codepoint = ord(char)
+        if char in ('"', "\\\\"):
+            char_cost = 2
+        elif codepoint < 0x20 or 0xD800 <= codepoint <= 0xDFFF:
+            char_cost = 6
+        elif codepoint > 0xFFFF:
+            char_cost = 12
+        elif codepoint > 0x7E:
+            char_cost = 6
+        else:
+            char_cost = 1
+        if cost + char_cost > max_cost:
+            break
+        cost += char_cost
+        length += 1
+    return cost, length
 
-    The budget conservatively accounts for JSON escaping (up to six output
-    characters per input character), container delimiters, commas and colons.
-    """
+
+def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
+    """Return JSON-safe result data whose compact JSON encoding fits limit."""
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 2:
         return None, value is not None
 
@@ -114,11 +133,12 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
             budget[0] -= cost
             return item
         if isinstance(item, str):
-            available_chars = max(0, (budget[0] - 2) // 12)
-            if len(item) > available_chars:
-                item = item[:available_chars]
+            available = max(0, budget[0] - 2)
+            content_cost, prefix_length = _json_string_content_cost(item, available)
+            if prefix_length < len(item):
                 truncated[0] = True
-            cost = 2 + 12 * len(item)
+                item = item[:prefix_length]
+            cost = 2 + content_cost
             if cost > budget[0]:
                 truncated[0] = True
                 return _OMIT_RESULT_DATA
@@ -136,7 +156,11 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
                     break
                 if not isinstance(key, str):
                     return _INVALID_RESULT_DATA
-                key_cost = 2 + 12 * len(key)
+                key_content_cost, key_length = _json_string_content_cost(key, max(0, budget[0] - 4))
+                if key_length < len(key):
+                    truncated[0] = True
+                    break
+                key_cost = 2 + key_content_cost
                 separator_cost = 1 if result else 0
                 if separator_cost + key_cost + 1 > budget[0]:
                     truncated[0] = True
