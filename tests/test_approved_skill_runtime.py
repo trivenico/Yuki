@@ -213,5 +213,37 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(approvals.consume("weather", "safe-input"), False)
 
 
+    def test_facade_blocks_registry_replacement_after_approval(self):
+        original = DemoSkill()
+        replacement = DemoSkill()
+        self.registry.register(original)
+        self.runtime.approve_invocation("weather", "sunny")
+        self.registry.items["weather"] = replacement
+
+        result = self.runtime.invoke("weather", "sunny")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+        self.assertEqual(self.events[-1], ("skill:invoke", "skill_identity_changed"))
+
+    def test_facade_rejects_high_risk_approval_without_instance_snapshot(self):
+        class HighRisk:
+            name = "weather"
+            risk = "high"
+            requires_approval = True
+            def execute(self, argument=""):
+                return type("Result", (), {"ok": True, "message": "executed"})()
+
+        self.registry.register(HighRisk())
+        # Bypassing the facade's approval method must not create an accepted
+        # authorization because it has no captured skill-instance identity.
+        self.runtime.invocation_approvals.approve("weather", "dangerous")
+
+        result = self.runtime.invoke("weather", "dangerous")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+
+
 if __name__ == "__main__":
     unittest.main()
