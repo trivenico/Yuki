@@ -52,6 +52,12 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.stage, "skill_not_found")
         self.assertEqual(self.gate.requests, [])
 
+    def test_permission_request_does_not_log_skill_argument(self):
+        secret = "sensitive-user-content-should-not-be-in-approval-reason"
+        self.agent.run_skill_for_task("search workspace files", secret)
+        self.assertNotIn(secret, self.gate.requests[0]["reason"])
+        self.assertIn("arguments are redacted", self.gate.requests[0]["reason"])
+
     def test_denied_approval_prevents_execution(self):
         self.gate.allowed = False
         result = self.agent.run_skill_for_task("search workspace files", "secret")
