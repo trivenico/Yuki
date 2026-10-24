@@ -43,11 +43,11 @@ class ApprovedSkillRuntime:
             eligible.append(candidate)
         return self.wiring.wire_approved(tuple(eligible), trusted_instances)
 
-    def approve_invocation(self, skill_name: str) -> None:
+    def approve_invocation(self, skill_name: str, argument: str = "") -> None:
         skill = self.registry.get(skill_name)
         if skill is None:
             raise ValueError("Cannot approve an invocation for an unregistered skill.")
-        self.invocation_approvals.approve(skill_name)
+        self.invocation_approvals.approve(skill_name, argument)
 
     def invoke(self, skill_name: str, argument: str = "") -> SkillInvocationResult:
         return invoke_registered_skill(
