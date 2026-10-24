@@ -19,6 +19,7 @@ import signal
 import subprocess
 import time
 import tempfile
+import tarfile
 from typing import Callable, Sequence
 
 from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError, ToolPrincipal
@@ -162,6 +163,46 @@ class PodmanIsolatedTestRunner:
                     raise ToolInputError("unable to hash the complete worker workspace.") from exc
         return digest.hexdigest()
 
+    def _create_content_addressed_artifact(self, destination: Path) -> tuple[Path, str]:
+        """Create a bounded tar artifact containing regular files only."""
+        count = 0
+        total = 0
+        try:
+            with tarfile.open(destination, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
+                    current_path = Path(current)
+                    for dirname in dirs:
+                        if (current_path / dirname).is_symlink():
+                            raise ToolInputError("symlink directories are not allowed in artifact.")
+                    dirs[:] = sorted(dirs)
+                    for name in sorted(files):
+                        path = current_path / name
+                        if path.is_symlink():
+                            raise ToolInputError("symlink entries are not allowed in artifact.")
+                        if not path.is_file():
+                            continue
+                        size = path.stat().st_size
+                        count += 1
+                        total += size
+                        if count > 3000 or total > 50 * 1024 * 1024:
+                            raise ToolInputError("content-addressed artifact exceeds configured bounds.")
+                        relative = path.relative_to(self.root).as_posix()
+                        info = archive.gettarinfo(str(path), arcname=relative)
+                        if not info.isfile():
+                            raise ToolInputError("only regular files are allowed in artifact.")
+                        with path.open("rb") as stream:
+                            archive.addfile(info, stream)
+            digest = hashlib.sha256()
+            with destination.open("rb") as stream:
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            return destination, digest.hexdigest()
+        except (OSError, tarfile.TarError) as exc:
+            raise ToolInputError("unable to create content-addressed artifact.") from exc
+
     def _module_file(self, module: str) -> Path:
         if module not in self.allowed_test_modules:
             raise ToolAuthorizationError("test target is not explicitly allow-listed.")
@@ -303,18 +344,32 @@ class PodmanIsolatedTestRunner:
         source = self._module_file(test_module)
         source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
         workspace_digest = self._workspace_digest()
-        run_digest = hashlib.sha256(
-            f"{test_module}:{source_digest}:{workspace_digest}:{self.image}:{self.timeout_seconds}:{self.memory_limit}:{self.cpu_limit}:{self.pids_limit}".encode()
-        ).hexdigest()
-        run_id = "isolated_test_" + run_digest[:24]
-        try:
-            approved = self.approve_run(principal.actor_id, run_id, run_digest) is True
-        except Exception:
-            approved = False
-        if not approved:
-            self._record(principal.actor_id, "denied", run_digest, test_module)
-            raise ToolAuthorizationError("explicit approval for this isolated test digest is required.")
-        self._record(principal.actor_id, "requested", run_digest, test_module)
+        with tempfile.TemporaryDirectory(prefix="yuki-worker-artifact-") as artifact_temp:
+            artifact_path, artifact_digest = self._create_content_addressed_artifact(Path(artifact_temp) / "workspace.tar")
+            run_digest = hashlib.sha256(
+                f"{test_module}:{source_digest}:{workspace_digest}:{artifact_digest}:{self.image}:{self.timeout_seconds}:{self.memory_limit}:{self.cpu_limit}:{self.pids_limit}".encode()
+            ).hexdigest()
+            run_id = "isolated_test_" + run_digest[:24]
+            try:
+                approved = self.approve_run(principal.actor_id, run_id, run_digest) is True
+            except Exception:
+                approved = False
+            if not approved:
+                self._record(principal.actor_id, "denied", run_digest, test_module,
+                             artifact_digest=artifact_digest)
+                raise ToolAuthorizationError("explicit approval for this isolated artifact digest is required.")
+            self._record(principal.actor_id, "requested", run_digest, test_module,
+                         artifact_digest=artifact_digest)
+            return self._execute_artifact(
+                principal=principal, test_module=test_module, run_digest=run_digest,
+                source_digest=source_digest, workspace_digest=workspace_digest,
+                artifact_digest=artifact_digest, artifact_path=artifact_path,
+            )
+
+    def _execute_artifact(
+        self, *, principal: ToolPrincipal, test_module: str, run_digest: str,
+        source_digest: str, workspace_digest: str, artifact_digest: str, artifact_path: Path,
+    ) -> IsolatedTestRunResult:
         binary = shutil.which(self.podman_binary)
         if not binary:
             self._record(principal.actor_id, "runtime_unavailable", run_digest, test_module)
