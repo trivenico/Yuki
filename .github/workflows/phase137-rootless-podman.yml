@@ -25,6 +25,10 @@ jobs:
   # branch before merge. Keep permissions read-only and require an immutable,
   # allow-listed worker image digest below.
   rootless-podman-integration:
+    # On PRs, execute the runtime integration only when maintainers have
+    # configured an approved immutable digest. Manual release-gate runs always
+    # execute and fail closed if neither input nor repository variable is set.
+    if: github.event_name == 'workflow_dispatch' || vars.YUKI_TEST_WORKER_IMAGE != ''
     name: Rootless Podman isolation contract
     runs-on: ubuntu-latest
     timeout-minutes: 15
