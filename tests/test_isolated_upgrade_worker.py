@@ -114,7 +114,7 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
 
         def replace_then_open(path, flags, *args, **kwargs):
             nonlocal replaced
-            if Path(path) == target and not replaced:
+            if path == target.name and kwargs.get("dir_fd") is not None and not replaced:
                 replaced = True
                 target.unlink()
                 try:
