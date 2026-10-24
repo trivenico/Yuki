@@ -6,9 +6,10 @@ has a matching explicit approval record.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
-from typing import Any
+from typing import Any, Iterator
 
 from skills.metadata_discovery import (
     SkillCandidate, discover_skill_manifests, register_approved_skill,
@@ -36,10 +37,24 @@ class SkillApprovalStore:
                 )
             """)
 
-    def _connect(self):
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield a transaction-scoped connection and always close its file handle.
+
+        sqlite3.Connection's context manager commits/rolls back but does not close
+        the connection. Explicit closure is required for deterministic cleanup,
+        especially on Windows where open SQLite files cannot be removed.
+        """
         connection = sqlite3.connect(self.database, timeout=5)
-        connection.execute("PRAGMA busy_timeout=5000")
-        return connection
+        try:
+            connection.execute("PRAGMA busy_timeout=5000")
+            yield connection
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def approve(self, candidate: SkillCandidate, *, approved_by: str) -> None:
         if not isinstance(candidate, SkillCandidate) or candidate.status != "pending_review":
