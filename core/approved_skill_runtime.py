@@ -66,13 +66,41 @@ class ApprovedSkillRuntime:
         skill = self.registry.get(skill_name)
         if skill is None:
             raise ValueError("Cannot approve an invocation for an unregistered skill.")
-        self.invocation_approvals.approve(skill_name, argument)
+        key = self._approval_key(skill_name, argument)
+        # Store the instance snapshot and approval together so invocation cannot
+        # observe a partially-created authorization.
+        with self._instance_lock:
+            self.invocation_approvals.approve(skill_name, argument)
+            self._approved_instances[key] = skill
 
     def invoke(self, skill_name: str, argument: str = "") -> SkillInvocationResult:
+        skill = self.registry.get(skill_name)
+        try:
+            key = self._approval_key(skill_name, argument)
+        except ValueError:
+            key = None
+        with self._instance_lock:
+            approved_instance = self._approved_instances.pop(key, None) if key is not None else None
+
+        # A high-risk invocation without an instance snapshot must fail closed.
+        if approved_instance is not None:
+            expected_skill = approved_instance
+        elif skill is not None:
+            risk = str(getattr(skill, "risk", "high")).lower()
+            needs_approval = (
+                bool(getattr(skill, "requires_approval", True))
+                or risk not in {"low", "medium", "high", "critical"}
+                or risk in {"high", "critical"}
+            )
+            expected_skill = _MISSING_APPROVED_INSTANCE if needs_approval else skill
+        else:
+            expected_skill = _MISSING_APPROVED_INSTANCE
+
         return invoke_registered_skill(
             self.registry,
             skill_name,
             argument,
             approvals=self.invocation_approvals,
             audit=self.audit,
+            expected_skill=expected_skill,
         )
