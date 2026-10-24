@@ -429,26 +429,30 @@ class PodmanIsolatedTestRunner:
         destination.chmod(0o500)
         return destination
 
+    def _runner_for_snapshot(self, snapshot: Path) -> "PodmanIsolatedTestRunner":
+        """Create the backend runner over the private snapshot."""
+        return PodmanIsolatedTestRunner(
+            snapshot,
+            image=self.image,
+            trusted_principal=self.trusted_principal,
+            approve_run=self.approve_run,
+            audit=self.audit,
+            allowed_test_modules=self.allowed_test_modules,
+            timeout_seconds=self.timeout_seconds,
+            podman_binary=self.podman_binary,
+            output_limit_bytes=self.output_limit_bytes,
+            memory_limit=self.memory_limit,
+            cpu_limit=self.cpu_limit,
+            pids_limit=self.pids_limit,
+        )
+
     def run(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
         """Run against a private snapshot so the original workspace cannot race approval."""
         with tempfile.TemporaryDirectory(prefix="yuki-worker-snapshot-") as temporary:
             snapshot = Path(temporary) / "workspace"
             try:
                 self._create_workspace_snapshot(snapshot)
-                runner = PodmanIsolatedTestRunner(
-                    snapshot,
-                    image=self.image,
-                    trusted_principal=self.trusted_principal,
-                    approve_run=self.approve_run,
-                    audit=self.audit,
-                    allowed_test_modules=self.allowed_test_modules,
-                    timeout_seconds=self.timeout_seconds,
-                    podman_binary=self.podman_binary,
-                    output_limit_bytes=self.output_limit_bytes,
-                    memory_limit=self.memory_limit,
-                    cpu_limit=self.cpu_limit,
-                    pids_limit=self.pids_limit,
-                )
+                runner = self._runner_for_snapshot(snapshot)
                 return runner._run_snapshot(principal=principal, test_module=test_module)
             finally:
                 # TemporaryDirectory must be able to remove read-only snapshot dirs.
