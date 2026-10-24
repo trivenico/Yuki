@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import tarfile
@@ -12,6 +13,12 @@ from automation.isolated_upgrade_worker import PodmanIsolatedTestRunner
 IMAGE = "localhost/yuki-test-worker@sha256:" + "a" * 64
 
 
+@unittest.skipUnless(
+    hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+    and os.open in getattr(os, "supports_dir_fd", set()),
+    "worker file-access security contract requires POSIX no-follow dir-fd APIs",
+)
 class PodmanIsolatedTestRunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
