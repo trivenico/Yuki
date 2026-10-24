@@ -7,6 +7,7 @@ import os
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from automation.authorized_read_tools import ToolPrincipal
 from automation.isolated_upgrade_worker_docker import DockerIsolatedTestRunner
@@ -59,9 +60,10 @@ class RootlessDockerIntegrationTests(unittest.TestCase):
             allowed_test_modules=("tests.test_isolation_contract",),
             timeout_seconds=20,
         )
-        os.environ["YUKI_INTEGRATION_SECRET"] = "must-not-be-forwarded"
-        self.addCleanup(os.environ.pop, "YUKI_INTEGRATION_SECRET", None)
-        result = runner.run(principal=self.principal, test_module="tests.test_isolation_contract")
+        # Restore any pre-existing runner environment value after the test;
+        # never mutate the trusted runner's process environment permanently.
+        with patch.dict(os.environ, {"YUKI_INTEGRATION_SECRET": "must-not-be-forwarded"}):
+            result = runner.run(principal=self.principal, test_module="tests.test_isolation_contract")
         self.assertEqual(result.exit_code, 0, msg=result.stdout + "\n" + result.stderr)
         self.assertFalse(result.timed_out)
         self.assertTrue(any(event.get("outcome") == "succeeded" for event in self.events))
