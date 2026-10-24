@@ -15,6 +15,9 @@ from core.guarded_skill_runtime import OneShotSkillApprovals, SkillInvocationRes
 from skills.metadata_discovery import SkillCandidate
 
 
+_MISSING_APPROVED_INSTANCE = object()
+
+
 class ApprovedSkillRuntime:
     def __init__(
         self,
@@ -28,6 +31,20 @@ class ApprovedSkillRuntime:
         self.invocation_approvals = invocation_approvals or OneShotSkillApprovals()
         self.audit = audit
         self.wiring = ApprovedSkillWiringService(registry, approval_store)
+        self._instance_lock = threading.Lock()
+        self._approved_instances: dict[tuple[str, str], Any] = {}
+
+    @staticmethod
+    def _approval_key(skill_name: str, argument: str) -> tuple[str, str]:
+        if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
+            raise ValueError("A non-empty bounded skill name is required.")
+        if not isinstance(argument, str) or len(argument) > 20000:
+            raise ValueError("Approval argument must be text no longer than 20000 characters.")
+        try:
+            encoded = argument.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Approval argument must be valid UTF-8 text.") from exc
+        return skill_name, hashlib.sha256(encoded).hexdigest()
 
     def discover(self, root):
         return self.wiring.discover(root)
