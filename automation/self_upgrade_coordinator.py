@@ -61,6 +61,8 @@ class IsolatedUpgradeCoordinator:
         self.audit = audit
         self.allowed_paths = tuple(allowed_paths)
         self.allowed_test_modules = tuple(allowed_test_modules)
+        if isinstance(test_timeout_seconds, bool) or not isinstance(test_timeout_seconds, int) or not 1 <= test_timeout_seconds <= 300:
+            raise ValueError("test_timeout_seconds must be an integer from 1 to 300.")
         self.test_timeout_seconds = test_timeout_seconds
         self.proposal_builder = SelfUpgradeProposalBuilder(self.allowed_paths)
 
