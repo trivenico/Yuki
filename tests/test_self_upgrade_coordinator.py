@@ -76,16 +76,24 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         blocked = self.root / "unreadable.txt"
         blocked.write_text("content", encoding="utf-8")
         original_stat = Path.stat
+        original_is_symlink = Path.is_symlink
 
         def stat_with_failure(path_obj, *args, **kwargs):
             if path_obj == blocked:
                 raise OSError("simulated metadata failure")
             return original_stat(path_obj, *args, **kwargs)
 
+        def is_symlink_without_stat(path_obj):
+            if path_obj == blocked:
+                return False
+            return original_is_symlink(path_obj)
+
         with tempfile.TemporaryDirectory() as destination:
             staged = Path(destination) / "workspace"
             staged.mkdir()
-            with patch("pathlib.Path.stat", new=stat_with_failure):
+            with patch("pathlib.Path.stat", new=stat_with_failure), patch(
+                "pathlib.Path.is_symlink", new=is_symlink_without_stat
+            ):
                 with self.assertRaisesRegex(WorkspaceChangeError, "unable to inspect"):
                     self.coordinator._copy_workspace(staged)
 
