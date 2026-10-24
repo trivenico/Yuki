@@ -114,11 +114,11 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
             budget[0] -= cost
             return item
         if isinstance(item, str):
-            available_chars = max(0, (budget[0] - 2) // 6)
+            available_chars = max(0, (budget[0] - 2) // 12)
             if len(item) > available_chars:
                 item = item[:available_chars]
                 truncated[0] = True
-            cost = 2 + 6 * len(item)
+            cost = 2 + 12 * len(item)
             if cost > budget[0]:
                 truncated[0] = True
                 return _OMIT_RESULT_DATA
@@ -136,7 +136,7 @@ def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
                     break
                 if not isinstance(key, str):
                     return _INVALID_RESULT_DATA
-                key_cost = 2 + 6 * len(key)
+                key_cost = 2 + 12 * len(key)
                 separator_cost = 1 if result else 0
                 if separator_cost + key_cost + 1 > budget[0]:
                     truncated[0] = True
