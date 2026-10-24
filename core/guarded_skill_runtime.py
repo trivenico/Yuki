@@ -58,6 +58,9 @@ class OneShotSkillApprovals:
             self._approved.clear()
 
 
+_INVALID_RESULT_DATA = object()
+
+
 def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
     """Return bounded JSON-safe data; reject the whole payload if any value is unsupported."""
     budget = [limit]
