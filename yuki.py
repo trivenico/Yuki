@@ -8,11 +8,15 @@ from yuki_learning import record_outcome, suggest_lessons, load_history, clear_h
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
-from yuki_tools import TOOLS, run_tool
+from yuki_tools import TOOLS
+from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+from core.guarded_tool_adapter import GuardedToolRegistry
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
+_TOOL_APPROVALS = OneShotSkillApprovals()
+_TOOL_REGISTRY = GuardedToolRegistry()
 
 
 def load_memory():
@@ -50,7 +54,8 @@ Yuki commands:
   /providers                      List provider adapters and implementation status
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
-  /tool NAME [argument]           Run an explicitly allowed tool
+  /tool NAME [argument]           Run an explicitly allowed tool through approval checks
+  /tool approve NAME              Approve one invocation of a tool
   /task add DESCRIPTION           Add a task
   /task list                      List tasks
   /task done ID                   Complete a task
@@ -118,6 +123,17 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f'{" (selected)" if item["selected"] else ""}; auth metadata: {", ".join(item["auth_methods"])}'
             for item in providers.list_providers()
         )
+    if command == "/tool approve" or command.startswith("/tool approve "):
+        parts = command.split(maxsplit=2)
+        if len(parts) != 3:
+            return "Usage: /tool approve NAME"
+        name = parts[2]
+        if not policy.authorize_tool(name) or _TOOL_REGISTRY.get(name) is None:
+            write_audit_event("tool:approve", "denied")
+            return "Tool is not allowed by Yuki's local security policy."
+        _TOOL_APPROVALS.approve(name)
+        write_audit_event("tool:approve", "approved_once")
+        return f"One invocation of '{name}' approved for this process."
     if command == "/tool" or command.startswith("/tool "):
         parts = command.split(maxsplit=2)
         if len(parts) < 2:
@@ -126,9 +142,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if not policy.authorize_tool(name):
             write_audit_event("tool:" + name, "denied")
             return "Tool blocked by Yuki's local security policy."
-        result = run_tool(name, parts[2] if len(parts) > 2 else "")
-        write_audit_event("tool:" + name, "completed")
-        return result
+        result = invoke_registered_skill(
+            _TOOL_REGISTRY, name, parts[2] if len(parts) > 2 else "",
+            approvals=_TOOL_APPROVALS,
+            audit=lambda action, status: write_audit_event(action, status),
+        )
+        return result.message
     if command == "/task" or command.startswith("/task "):
         parts = command.split(maxsplit=2)
         if len(parts) < 2 or parts[1] == "list":
