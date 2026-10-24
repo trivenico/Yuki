@@ -423,7 +423,7 @@ class PodmanIsolatedTestRunner:
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
             "--tmpfs", "/work:rw,nosuid,nodev,size=100m",
-            "--mount", f"type=bind,src={artifact_path},dst=/input/workspace.tar,ro",
+            "--mount", f"type=bind,src={artifact_path.parent},dst=/input,ro",
             "--env", "PYTHONIOENCODING=utf-8",
             "--env", "PYTHONUNBUFFERED=1",
             "--env", "PYTHONDONTWRITEBYTECODE=1",
