@@ -52,6 +52,26 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
                         test_timeout_seconds=timeout,
                     )
 
+    def test_staging_copy_excludes_sensitive_files_and_symlinks(self):
+        (self.root / ".env").write_text("API_KEY=not-a-real-key", encoding="utf-8")
+        (self.root / "api_token.txt").write_text("not-a-real-token", encoding="utf-8")
+        (self.root / "private_key.pem").write_text("not-a-real-key", encoding="utf-8")
+        (self.root / "ordinary.txt").write_text("safe", encoding="utf-8")
+        link = self.root / "linked.txt"
+        try:
+            link.symlink_to(self.root / "ordinary.txt")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks are unavailable on this platform")
+        with tempfile.TemporaryDirectory() as destination:
+            staged = Path(destination) / "workspace"
+            staged.mkdir()
+            self.coordinator._copy_workspace(staged)
+            self.assertFalse((staged / ".env").exists())
+            self.assertFalse((staged / "api_token.txt").exists())
+            self.assertFalse((staged / "private_key.pem").exists())
+            self.assertFalse((staged / "linked.txt").exists())
+            self.assertEqual((staged / "ordinary.txt").read_text(encoding="utf-8"), "safe")
+
     def test_validation_uses_approved_services_and_never_promotes(self):
         old = self.file.read_text(encoding="utf-8")
         change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\n")
