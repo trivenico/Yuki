@@ -143,6 +143,8 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         harness = self.runner._trusted_harness()
         compile(harness, "<yuki-isolated-worker-harness>", "exec")
         self.assertIn("hashlib.sha256", harness)
+        self.assertIn("archive=pathlib.Path('/tmp/workspace.tar')", harness)
+        self.assertNotIn("/input/workspace.tar", harness)
         self.assertIn("unittest.defaultTestLoader.loadTestsFromName(target)", harness)
         self.assertNotIn("unittest.main(module=None", harness)
 
