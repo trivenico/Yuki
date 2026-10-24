@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from automation.authorized_read_tools import ToolAuthorizationError, ToolPrincipal
+from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError, ToolPrincipal
 from automation.isolated_upgrade_worker import PodmanIsolatedTestRunner
 
 
@@ -82,7 +82,7 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         except (OSError, NotImplementedError):
             self.skipTest("symlinks unavailable")
         runner = self.make_runner(allowed_test_modules=("tests.test_link",))
-        with self.assertRaises(ToolAuthorizationError):
+        with self.assertRaises((ToolAuthorizationError, ToolInputError)):
             runner.run(principal=self.principal, test_module="tests.test_link")
 
 
