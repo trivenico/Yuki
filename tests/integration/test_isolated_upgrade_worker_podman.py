@@ -7,7 +7,6 @@ does not build or pull images, because image acquisition belongs to trusted setu
 import os
 import tempfile
 from pathlib import Path
-import tempfile
 import unittest
 
 from automation.authorized_read_tools import ToolPrincipal
