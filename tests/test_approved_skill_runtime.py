@@ -98,6 +98,120 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         third = self.runtime.invoke("weather")
         self.assertEqual(third.status, "approval_required")
 
+    def test_structured_result_data_is_bounded(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        class LargeResultSkill:
+            name = "large"
+            risk = "low"
+            requires_approval = False
+            def execute(self, _argument=""):
+                return {"ok": True, "message": "done", "payload": "x" * 100_000}
+
+        registry = Registry()
+        registry.register(LargeResultSkill())
+        events = []
+        result = invoke_registered_skill(
+            registry, "large", approvals=OneShotSkillApprovals(),
+            audit=lambda action, status: events.append((action, status)),
+            max_result_chars=64,
+        )
+        self.assertTrue(result.ok)
+        self.assertLessEqual(len(result.data["payload"]), 64)
+        self.assertIn(("skill:invoke", "result_data_truncated"), events)
+
+    def test_non_json_result_data_is_not_returned(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        class InvalidDataSkill:
+            name = "invalid-data"
+            risk = "low"
+            requires_approval = False
+            def execute(self, _argument=""):
+                return {"ok": True, "message": "done", "payload": object()}
+
+        registry = Registry()
+        registry.register(InvalidDataSkill())
+        result = invoke_registered_skill(
+            registry, "invalid-data", approvals=OneShotSkillApprovals(),
+        )
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.data)
+
+
+    def test_approval_is_bound_to_exact_argument(self):
+        class HighRisk:
+            name = "weather"
+            risk = "high"
+            requires_approval = True
+            def execute(self, argument=""):
+                return type("Result", (), {"ok": True, "message": "executed:" + argument})()
+        self.registry.register(HighRisk())
+        self.runtime.approve_invocation("weather", "approved-input")
+        changed = self.runtime.invoke("weather", "changed-input")
+        self.assertEqual(changed.status, "approval_required")
+        exact = self.runtime.invoke("weather", "approved-input")
+        self.assertTrue(exact.ok)
+        self.assertEqual(exact.message, "executed:approved-input")
+        replay = self.runtime.invoke("weather", "approved-input")
+        self.assertEqual(replay.status, "approval_required")
+
+    def test_one_shot_approval_consumption_is_atomic_for_exact_argument(self):
+        import threading
+        from core.guarded_skill_runtime import OneShotSkillApprovals
+
+        approvals = OneShotSkillApprovals()
+        approvals.approve("weather", "same-input")
+        barrier = threading.Barrier(3)
+        outcomes = []
+        lock = threading.Lock()
+
+        def consume():
+            barrier.wait()
+            outcome = approvals.consume("weather", "same-input")
+            with lock:
+                outcomes.append(outcome)
+
+        threads = [threading.Thread(target=consume) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(outcomes.count(True), 1)
+        self.assertEqual(outcomes.count(False), 1)
+
+    def test_invalid_utf8_argument_is_rejected_without_exception(self):
+        self.registry.register(DemoSkill())
+        result = self.runtime.invoke("weather", chr(0xD800))
+        self.assertEqual(result.status, "invalid_argument")
+        self.assertFalse(result.ok)
+
+
+    def test_runtime_rejects_skill_identity_change_after_approval(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        approved_skill = DemoSkill()
+        replacement_skill = DemoSkill()
+
+        class MutableRegistry:
+            def get(self, name):
+                return replacement_skill
+
+        approvals = OneShotSkillApprovals()
+        approvals.approve("weather", "safe-input")
+        result = invoke_registered_skill(
+            MutableRegistry(),
+            "weather",
+            "safe-input",
+            approvals=approvals,
+            expected_skill=approved_skill,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "skill_identity_changed")
+        self.assertEqual(approvals.consume("weather", "safe-input"), False)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,7 +44,7 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.tool_name, "workspace_search")
         self.assertEqual(result.message, "searched:deployment guide")
-        self.assertEqual(self.gate.requests[0]["action"], "skill:workspace_search")
+        self.assertRegex(self.gate.requests[0]["action"], r"^skill:workspace_search:sha256:[0-9a-f]{64}$")
 
     def test_no_match_fails_closed_without_approval_or_execution(self):
         result = self.agent.run_skill_for_task("bake sourdough bread", "recipe")
