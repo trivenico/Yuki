@@ -148,6 +148,27 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         self.assertIn("unittest.defaultTestLoader.loadTestsFromName(target)", harness)
         self.assertNotIn("unittest.main(module=None", harness)
 
+    def test_container_command_uses_readonly_artifact_and_bounded_tmpfs(self):
+        command = self.runner._build_container_command(
+            binary="/usr/bin/podman",
+            cidfile=Path("/tmp/container.cid"),
+            artifact_path=Path("/tmp/artifact/workspace.tar"),
+            artifact_digest="a" * 64,
+            test_module="tests.test_sample",
+        )
+        self.assertIn("--network=none", command)
+        self.assertIn("--read-only", command)
+        self.assertIn("--cap-drop=ALL", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+        self.assertIn("/work:rw,nosuid,nodev,size=100m", command)
+        self.assertIn("type=bind,src=/tmp/artifact,dst=/tmp,ro", command)
+        self.assertIn("TMPDIR=/work", command)
+        self.assertIn("TMP=/work", command)
+        self.assertIn("TEMP=/work", command)
+        self.assertIn("--pull=never", command)
+        self.assertNotIn("--privileged", command)
+        self.assertEqual(command.count("--network=none"), 1)
+
     def test_artifact_is_digest_addressed_and_contains_regular_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             artifact, digest = self.runner._create_content_addressed_artifact(Path(tmp) / "workspace.tar")
