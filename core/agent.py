@@ -1,5 +1,6 @@
 """Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
 from dataclasses import dataclass
+import hashlib
 from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
@@ -72,8 +73,14 @@ class YukiCoreAgent:
         # Strict policy: request fresh approval for every skill invocation. This is
         # intentionally stricter than per-skill defaults so model output cannot
         # invoke a state-changing or external capability without human confirmation.
+        argument_fingerprint = hashlib.sha256(argument.encode("utf-8")).hexdigest()
         approved = self.permission_gate.request(
-            action=f"skill:{skill.name}", reason=f"Invoke {skill.name} ({skill.description}); arguments are redacted.", risk=skill.risk
+            action=f"skill:{skill.name}:sha256:{argument_fingerprint}",
+            reason=(
+                f"Invoke {skill.name} ({skill.description}); arguments are redacted. "
+                f"Argument SHA-256: {argument_fingerprint}."
+            ),
+            risk=skill.risk,
         )
         if not approved:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
