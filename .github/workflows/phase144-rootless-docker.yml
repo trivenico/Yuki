@@ -32,7 +32,7 @@ jobs:
 
       - name: Validate administrator-approved immutable worker image
         env:
-          WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: |
           python - <<'PY'
           import os
@@ -58,11 +58,11 @@ jobs:
 
       - name: Pull only the administrator-approved digest-pinned worker image
         env:
-          WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: docker pull "$WORKER_IMAGE"
 
       - name: Run opt-in Docker integration contract from protected main
         env:
           YUKI_DOCKER_INTEGRATION: "1"
-          YUKI_TEST_WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          YUKI_TEST_WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: python -m unittest tests.integration.test_isolated_upgrade_worker_docker -v
