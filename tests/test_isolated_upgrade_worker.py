@@ -209,6 +209,7 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         self.runner._prepare_artifact_for_non_root(artifact)
 
         self.assertEqual(artifact.stat().st_mode & 0o444, 0o444)
+        self.assertEqual(self.root.stat().st_mode & 0o711, 0o711)
         self.assertEqual(artifact.read_bytes(), b"test artifact")
 
     def test_artifact_permission_preparation_rejects_symlink(self):
