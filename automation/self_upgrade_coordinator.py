@@ -89,8 +89,10 @@ class IsolatedUpgradeCoordinator:
                     if not source.is_file():
                         continue
                     size = source.stat().st_size
-                except OSError:
-                    continue
+                except OSError as exc:
+                    raise WorkspaceChangeError(
+                        f"workspace staging denied: unable to inspect {source.name!r}."
+                    ) from exc
                 file_count += 1
                 byte_count += size
                 if file_count > _MAX_COPY_FILES or byte_count > _MAX_COPY_BYTES:
