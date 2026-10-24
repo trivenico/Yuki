@@ -60,7 +60,7 @@ class SkillCatalogTests(unittest.TestCase):
         approvals = OneShotSkillApprovals()
         first = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)
         self.assertEqual(first.status, "approval_required")
-        approvals.approve("workspace_search")
+        approvals.approve("workspace_search", "deploy")
         second = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)
         self.assertTrue(second.ok)
         third = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)
@@ -70,7 +70,7 @@ class SkillCatalogTests(unittest.TestCase):
         approvals = OneShotSkillApprovals()
         self.skill.risk = "high"
         self.skill.requires_approval = True
-        approvals.approve("workspace_search")
+        approvals.approve("workspace_search", "first")
         first = self.catalog.invoke("workspace_search", "first", approvals=approvals)
         second = self.catalog.invoke("workspace_search", "second", approvals=approvals)
         self.assertTrue(first.ok)
