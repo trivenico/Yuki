@@ -33,6 +33,7 @@ class ApprovedSkillRuntime:
         self.wiring = ApprovedSkillWiringService(registry, approval_store)
         self._instance_lock = threading.Lock()
         self._approved_instances: dict[tuple[str, str], Any] = {}
+        self._in_flight: set[tuple[str, str]] = set()
 
     @staticmethod
     def _approval_key(skill_name: str, argument: str) -> tuple[str, str]:
@@ -80,7 +81,14 @@ class ApprovedSkillRuntime:
         except ValueError:
             key = None
         with self._instance_lock:
+            if key is not None and key in self._in_flight:
+                return SkillInvocationResult(
+                    False, "An invocation for this approved request is already in progress.",
+                    skill_name, "approval_in_use"
+                )
             approved_instance = self._approved_instances.pop(key, None) if key is not None else None
+            if key is not None and approved_instance is not None:
+                self._in_flight.add(key)
 
         # A high-risk invocation without an instance snapshot must fail closed.
         if approved_instance is not None:
@@ -96,11 +104,16 @@ class ApprovedSkillRuntime:
         else:
             expected_skill = _MISSING_APPROVED_INSTANCE
 
-        return invoke_registered_skill(
-            self.registry,
-            skill_name,
-            argument,
-            approvals=self.invocation_approvals,
-            audit=self.audit,
-            expected_skill=expected_skill,
-        )
+        try:
+            return invoke_registered_skill(
+                self.registry,
+                skill_name,
+                argument,
+                approvals=self.invocation_approvals,
+                audit=self.audit,
+                expected_skill=expected_skill,
+            )
+        finally:
+            if key is not None and approved_instance is not None:
+                with self._instance_lock:
+                    self._in_flight.discard(key)
