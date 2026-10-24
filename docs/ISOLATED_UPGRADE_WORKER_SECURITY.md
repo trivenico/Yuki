@@ -4,6 +4,8 @@ Status: **design/acceptance contract only; no production sandbox is implemented 
 
 The current self-upgrade coordinator defaults to denying host-side test execution. Do not set `allow_host_test_execution=True` for untrusted proposals. A disposable directory, subprocess, test allow-list, digest-bound approval, or successful CI run is not an operating-system sandbox.
 
+The current Podman adapter's workspace file access requires POSIX `O_NOFOLLOW`, `O_DIRECTORY`, and `dir_fd` support. It fails closed when those primitives are unavailable; the worker filesystem-contract unit suite is skipped on unsupported platforms. The intended runtime target is a Linux host with rootless Podman, and the exact deployment host must still pass the opt-in integration contract. Descriptor-relative traversal protects file and parent-directory lookups beneath the opened workspace root, but it does not replace a private staging area, a patched kernel/runtime, or an independent security review.
+
 ## Trust boundaries
 
 - **Controller (trusted):** authenticates the requester, obtains approval, computes immutable content digests, submits a bounded artifact, records the job, and decides whether a result is acceptable.
