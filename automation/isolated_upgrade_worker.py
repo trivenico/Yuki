@@ -456,7 +456,7 @@ class PodmanIsolatedTestRunner:
             "--entrypoint", "python",
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
-            "--tmpfs", "/work:rw,nosuid,nodev,size=100m",
+            "--tmpfs", "/work:rw,noexec,nosuid,nodev,size=100m",
             "--mount", f"type=bind,src={artifact_path.parent},dst=/tmp,ro",
             # The artifact directory is mounted read-only at /tmp. Keep all runtime
             # scratch files on the dedicated writable, size-limited /work tmpfs.
