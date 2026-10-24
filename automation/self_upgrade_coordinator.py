@@ -49,6 +49,7 @@ class IsolatedUpgradeCoordinator:
         allowed_test_modules: Sequence[str],
         test_timeout_seconds: int = 60,
         allow_host_test_execution: bool = False,
+        isolated_runner_factory: Callable[[Path], object] | None = None,
     ) -> None:
         self.root = Path(workspace).expanduser().resolve()
         if not self.root.is_dir():
@@ -71,6 +72,9 @@ class IsolatedUpgradeCoordinator:
         if type(allow_host_test_execution) is not bool:
             raise ValueError("allow_host_test_execution must be a boolean.")
         self.allow_host_test_execution = allow_host_test_execution
+        if isolated_runner_factory is not None and not callable(isolated_runner_factory):
+            raise TypeError("isolated_runner_factory must be callable when provided.")
+        self.isolated_runner_factory = isolated_runner_factory
         self.proposal_builder = SelfUpgradeProposalBuilder(self.allowed_paths)
 
     def _copy_workspace(self, destination: Path) -> None:
@@ -126,9 +130,9 @@ class IsolatedUpgradeCoordinator:
         if "workspace:write" not in principal.permissions or "tests:execute" not in principal.permissions:
             raise ToolAuthorizationError("workspace:write and tests:execute permissions are required.")
 
-        if not self.allow_host_test_execution:
+        if not self.allow_host_test_execution and self.isolated_runner_factory is None:
             raise ToolAuthorizationError(
-                "host test execution is disabled; configure a dedicated isolated worker before validating proposals."
+                "host test execution is disabled; configure an isolated runner factory before validating proposals."
             )
 
         proposal: UpgradeProposal = self.proposal_builder.build(changes)
@@ -145,14 +149,20 @@ class IsolatedUpgradeCoordinator:
             )
             applied = change_service.apply(principal=principal, changes=changes)
 
-            runner = ApprovedTestRunner(
-                staged_root,
-                trusted_principal=self.trusted_principal,
-                approve_run=self.approve_test,
-                audit=self.audit,
-                allowed_test_modules=self.allowed_test_modules,
-                timeout_seconds=self.test_timeout_seconds,
-            )
+            if self.allow_host_test_execution:
+                runner = ApprovedTestRunner(
+                    staged_root,
+                    trusted_principal=self.trusted_principal,
+                    approve_run=self.approve_test,
+                    audit=self.audit,
+                    allowed_test_modules=self.allowed_test_modules,
+                    timeout_seconds=self.test_timeout_seconds,
+                )
+            else:
+                # The factory must bind the isolated worker to this exact staged copy.
+                runner = self.isolated_runner_factory(staged_root)
+                if not callable(getattr(runner, "run", None)):
+                    raise ToolAuthorizationError("isolated runner factory returned an invalid runner.")
             test_results = []
             for module in self.allowed_test_modules:
                 result = runner.run(principal=principal, test_module=module)
