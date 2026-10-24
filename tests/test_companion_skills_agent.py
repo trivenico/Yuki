@@ -80,7 +80,7 @@ class CompanionSkillAgentTests(unittest.TestCase):
         self.assertEqual(invalid_type.stage, "invalid_argument")
         oversized = agent.run_skill("time", "x" * 20001)
         self.assertEqual(oversized.stage, "invalid_argument")
-        invalid_utf8 = agent.run_skill("time", "\\ud800")
+        invalid_utf8 = agent.run_skill("time", chr(0xD800))
         self.assertEqual(invalid_utf8.stage, "invalid_argument")
         self.assertEqual(seen, [])
 
