@@ -63,81 +63,120 @@ class OneShotSkillApprovals:
 
 
 _INVALID_RESULT_DATA = object()
+_OMIT_RESULT_DATA = object()
 
 
 def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
-    """Return bounded JSON-safe data; reject the whole payload if any value is unsupported."""
+    """Return JSON-safe result data whose compact JSON encoding fits limit.
+
+    The budget conservatively accounts for JSON escaping (up to six output
+    characters per input character), container delimiters, commas and colons.
+    """
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 2:
+        return None, value is not None
+
     budget = [limit]
     truncated = [False]
 
     def visit(item: Any, depth: int = 0) -> Any:
-        if budget[0] <= 0 or depth > 8:
+        if depth > 8 or budget[0] <= 0:
             truncated[0] = True
+            return _OMIT_RESULT_DATA
+
+        if item is None:
+            cost = 4
+            if cost > budget[0]:
+                truncated[0] = True
+                return _OMIT_RESULT_DATA
+            budget[0] -= cost
             return None
-        if item is None or isinstance(item, bool):
-            budget[0] -= 4
+        if isinstance(item, bool):
+            cost = 4 if item else 5
+            if cost > budget[0]:
+                truncated[0] = True
+                return _OMIT_RESULT_DATA
+            budget[0] -= cost
             return item
         if isinstance(item, int):
-            text = str(item)
-            if len(text) > budget[0]:
+            cost = len(str(item))
+            if cost > budget[0]:
                 truncated[0] = True
-                return None
-            budget[0] -= len(text)
+                return _OMIT_RESULT_DATA
+            budget[0] -= cost
             return item
         if isinstance(item, float):
             if not math.isfinite(item):
                 return _INVALID_RESULT_DATA
-            text = repr(item)
-            if len(text) > budget[0]:
+            cost = len(repr(item))
+            if cost > budget[0]:
                 truncated[0] = True
-                return None
-            budget[0] -= len(text)
+                return _OMIT_RESULT_DATA
+            budget[0] -= cost
             return item
         if isinstance(item, str):
-            if len(item) > budget[0]:
-                result = item[:max(0, budget[0])]
-                budget[0] = 0
+            available_chars = max(0, (budget[0] - 2) // 6)
+            if len(item) > available_chars:
+                item = item[:available_chars]
                 truncated[0] = True
-                return result
-            budget[0] -= len(item)
+            cost = 2 + 6 * len(item)
+            if cost > budget[0]:
+                truncated[0] = True
+                return _OMIT_RESULT_DATA
+            budget[0] -= cost
             return item
         if isinstance(item, dict):
+            if budget[0] < 2:
+                truncated[0] = True
+                return _OMIT_RESULT_DATA
+            budget[0] -= 2
             result = {}
-            for index, (key, child) in enumerate(item.items()):
-                if index >= 100 or budget[0] <= 0:
+            for key, child in item.items():
+                if len(result) >= 100:
                     truncated[0] = True
                     break
                 if not isinstance(key, str):
                     return _INVALID_RESULT_DATA
-                safe_key = visit(key, depth + 1)
-                if safe_key is _INVALID_RESULT_DATA or not isinstance(safe_key, str):
-                    return _INVALID_RESULT_DATA
+                key_cost = 2 + 6 * len(key)
+                separator_cost = 1 if result else 0
+                if separator_cost + key_cost + 1 > budget[0]:
+                    truncated[0] = True
+                    break
+                budget[0] -= separator_cost + key_cost + 1
                 safe_value = visit(child, depth + 1)
                 if safe_value is _INVALID_RESULT_DATA:
                     return _INVALID_RESULT_DATA
-                result[safe_key] = safe_value
-            if truncated[0] and budget[0] > 16:
-                result["_truncated"] = True
-                budget[0] -= 16
-            return result
-        if isinstance(item, (list, tuple)):
-            result = []
-            for index, child in enumerate(item):
-                if index >= 100 or budget[0] <= 0:
+                if safe_value is _OMIT_RESULT_DATA:
                     truncated[0] = True
                     break
+                result[key] = safe_value
+            return result
+        if isinstance(item, (list, tuple)):
+            if budget[0] < 2:
+                truncated[0] = True
+                return _OMIT_RESULT_DATA
+            budget[0] -= 2
+            result = []
+            for child in item:
+                if len(result) >= 100:
+                    truncated[0] = True
+                    break
+                separator_cost = 1 if result else 0
+                if separator_cost > budget[0]:
+                    truncated[0] = True
+                    break
+                budget[0] -= separator_cost
                 safe_child = visit(child, depth + 1)
                 if safe_child is _INVALID_RESULT_DATA:
                     return _INVALID_RESULT_DATA
+                if safe_child is _OMIT_RESULT_DATA:
+                    truncated[0] = True
+                    break
                 result.append(safe_child)
-            if truncated[0] and budget[0] > 16:
-                result.append({"_truncated": True})
-                budget[0] -= 16
             return result
         return _INVALID_RESULT_DATA
 
     safe = visit(value)
-    if safe is _INVALID_RESULT_DATA:
+    if safe is _INVALID_RESULT_DATA or safe is _OMIT_RESULT_DATA:
         return None, True
     return safe, truncated[0]
 
