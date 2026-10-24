@@ -34,7 +34,8 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertTrue(agent.run_skill(skill.name).ok)
         self.assertEqual(len(requests), 2)
-        self.assertIn("argument=", requests[0].reason)
+        self.assertNotIn("argument=", requests[0].reason)
+        self.assertIn("arguments are redacted", requests[0].reason)
 
 
     def test_approver_exception_fails_closed(self):

@@ -66,6 +66,17 @@ class SkillCatalogTests(unittest.TestCase):
         third = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)
         self.assertEqual(third.status, "approval_required")
 
+    def test_high_risk_approval_is_consumed_once(self):
+        approvals = OneShotSkillApprovals()
+        self.skill.risk = "high"
+        self.skill.requires_approval = True
+        approvals.approve("workspace_search")
+        first = self.catalog.invoke("workspace_search", "first", approvals=approvals)
+        second = self.catalog.invoke("workspace_search", "second", approvals=approvals)
+        self.assertTrue(first.ok)
+        self.assertEqual(first.message, "found:first")
+        self.assertEqual(second.status, "approval_required")
+
     def test_unknown_skill_is_not_invoked(self):
         result = self.catalog.invoke("missing", "", approvals=OneShotSkillApprovals())
         self.assertEqual(result.status, "not_found")
