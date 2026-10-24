@@ -382,6 +382,34 @@ class PodmanIsolatedTestRunner:
 
         control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
         cidfile = control_dir / "container.cid"
+        # This harness is trusted controller code. It verifies the mounted artifact
+        # digest before extracting only regular, in-bounds archive members.
+        harness = (
+            "import hashlib,os,pathlib,sys,tarfile,tempfile,unittest\\n"
+            "archive=pathlib.Path('/input/workspace.tar')\\n"
+            "expected=sys.argv[1]; target=sys.argv[2]\\n"
+            "h=hashlib.sha256(archive.read_bytes()).hexdigest()\\n"
+            "if h != expected: raise SystemExit('artifact digest mismatch')\\n"
+            "root=pathlib.Path('/work/source'); root.mkdir(parents=True,exist_ok=True)\\n"
+            "total=0; count=0\\n"
+            "with tarfile.open(archive,'r:') as tf:\\n"
+            " members=tf.getmembers()\\n"
+            " for m in members:\\n"
+            "  p=pathlib.PurePosixPath(m.name)\\n"
+            "  if p.is_absolute() or not p.parts or any(x in ('..','') for x in p.parts): raise SystemExit('unsafe archive path')\\n"
+            "  if not m.isfile() or m.issym() or m.islnk(): raise SystemExit('non-regular archive member')\\n"
+            "  count+=1; total+=m.size\\n"
+            "  if count>3000 or total>52428800: raise SystemExit('archive bounds exceeded')\\n"
+            "  out=root.joinpath(*p.parts); out.parent.mkdir(parents=True,exist_ok=True)\\n"
+            "  src=tf.extractfile(m)\\n"
+            "  if src is None: raise SystemExit('missing archive member data')\\n"
+            "  with src, out.open('xb') as dst:\\n"
+            "   import shutil; shutil.copyfileobj(src,dst,1048576)\\n"
+            "  out.chmod(0o400)\\n"
+            "os.chdir(root); sys.path.insert(0,str(root)); sys.dont_write_bytecode=True\\n"
+            "result=unittest.main(module=None,defaultTest=[target],verbosity=2,exit=False)\\n"
+            "raise SystemExit(0 if result.result.wasSuccessful() else 1)\\n"
+        )
         command = [
             binary, "run", "--rm", "--cidfile", str(cidfile), "--pull=never",
             "--network=none", "--read-only", "--userns=keep-id",
@@ -389,12 +417,13 @@ class PodmanIsolatedTestRunner:
             "--entrypoint", "python",
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
-            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
-            "--mount", f"type=bind,src={self.root},dst=/workspace,ro",
-            "--workdir", "/workspace",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
+            "--tmpfs", "/work:rw,nosuid,nodev,size=100m",
+            "--mount", f"type=bind,src={artifact_path},dst=/input/workspace.tar,ro",
             "--env", "PYTHONIOENCODING=utf-8",
             "--env", "PYTHONUNBUFFERED=1",
-            self.image, "-m", "unittest", test_module, "-v",
+            "--env", "PYTHONDONTWRITEBYTECODE=1",
+            self.image, "-c", harness, artifact_digest, test_module,
         ]
         start = time.monotonic()
         stdout = bytearray()
@@ -473,7 +502,7 @@ class PodmanIsolatedTestRunner:
         self._record(principal.actor_id, outcome, run_digest, test_module,
                      exit_code=exit_code, timed_out=timed_out, output_exceeded=output_exceeded,
                      duration_seconds=duration, source_digest=source_digest,
-                     workspace_digest=workspace_digest)
+                     workspace_digest=workspace_digest, artifact_digest=artifact_digest)
         return IsolatedTestRunResult(test_module, exit_code, timed_out or output_exceeded,
                                      duration, stdout.decode("utf-8", errors="replace"),
                                      stderr.decode("utf-8", errors="replace"))
