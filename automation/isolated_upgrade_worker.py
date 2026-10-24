@@ -137,7 +137,9 @@ class PodmanIsolatedTestRunner:
             ".venv", "venv", "env", "node_modules", "__pycache__",
             ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
         }
-        if any(part in excluded_dirs for part in parts[:-1]):
+        # Include the final component so excluded directories are pruned
+        # before os.walk descends into them, not merely filtered file-by-file.
+        if any(part in excluded_dirs for part in parts):
             return True
         name = parts[-1] if parts else ""
         sensitive_names = {
