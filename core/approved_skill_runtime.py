@@ -90,20 +90,23 @@ class ApprovedSkillRuntime:
             if key is not None and approved_instance is not None:
                 self._in_flight.add(key)
 
-        # A high-risk invocation without an instance snapshot must fail closed.
-        if approved_instance is not None:
-            expected_skill = approved_instance
-        elif skill is not None:
+        # Without a facade-created instance snapshot, preserve the public
+        # approval_required status and never let a separately inserted approval
+        # bypass the instance-binding boundary.
+        if approved_instance is None and skill is not None:
             risk = str(getattr(skill, "risk", "high")).lower()
             needs_approval = (
                 bool(getattr(skill, "requires_approval", True))
                 or risk not in {"low", "medium", "high", "critical"}
                 or risk in {"high", "critical"}
             )
-            expected_skill = _MISSING_APPROVED_INSTANCE if needs_approval else skill
-        else:
-            expected_skill = _MISSING_APPROVED_INSTANCE
+            if needs_approval:
+                return SkillInvocationResult(
+                    False, "Skill invocation requires facade-bound approval.",
+                    skill_name, "approval_required"
+                )
 
+        expected_skill = approved_instance if approved_instance is not None else skill
         try:
             return invoke_registered_skill(
                 self.registry,
