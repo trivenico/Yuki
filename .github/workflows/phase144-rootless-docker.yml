@@ -37,7 +37,7 @@ jobs:
           import os
           import re
           image = os.environ["WORKER_IMAGE"].strip()
-          if not re.fullmatch(r"docker\\.io/library/python:3\\.11-slim@sha256:[0-9a-f]{64}", image):
+          if not re.fullmatch(r"docker\.io/library/python:3\.11-slim@sha256:[0-9a-f]{64}", image):
               raise SystemExit("worker_image must be the approved official Python 3.11 slim image pinned by lowercase SHA-256 digest")
           PY
 
