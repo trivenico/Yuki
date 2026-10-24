@@ -73,6 +73,17 @@ class CompanionSkillAgentTests(unittest.TestCase):
         self.assertNotIn("first-sensitive-argument", seen[0].action)
         self.assertNotIn("first-sensitive-argument", seen[0].reason)
 
+    def test_invalid_argument_is_rejected_before_permission_prompt(self):
+        seen = []
+        agent = YukiCoreAgent([TimeSkill()], PermissionGate(lambda request: seen.append(request) or True))
+        invalid_type = agent.run_skill("time", object())
+        self.assertEqual(invalid_type.stage, "invalid_argument")
+        oversized = agent.run_skill("time", "x" * 20001)
+        self.assertEqual(oversized.stage, "invalid_argument")
+        invalid_utf8 = agent.run_skill("time", "\\ud800")
+        self.assertEqual(invalid_utf8.stage, "invalid_argument")
+        self.assertEqual(seen, [])
+
 
 if __name__ == "__main__":
     unittest.main()
