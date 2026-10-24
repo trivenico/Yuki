@@ -66,9 +66,6 @@ jobs:
           WORKER_IMAGE: ${{ inputs.worker_image }}
         run: podman pull "$WORKER_IMAGE"
 
-      - name: Install project
-        run: python -m pip install --upgrade pip && python -m pip install -e .
-
       - name: Run opt-in integration contract
         env:
           YUKI_PODMAN_INTEGRATION: "1"
