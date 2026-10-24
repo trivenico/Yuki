@@ -48,6 +48,7 @@ class IsolatedUpgradeCoordinator:
         allowed_paths: Sequence[str],
         allowed_test_modules: Sequence[str],
         test_timeout_seconds: int = 60,
+        allow_host_test_execution: bool = False,
     ) -> None:
         self.root = Path(workspace).expanduser().resolve()
         if not self.root.is_dir():
@@ -67,6 +68,9 @@ class IsolatedUpgradeCoordinator:
         if isinstance(test_timeout_seconds, bool) or not isinstance(test_timeout_seconds, int) or not 1 <= test_timeout_seconds <= 120:
             raise ValueError("test_timeout_seconds must be an integer from 1 to 120.")
         self.test_timeout_seconds = test_timeout_seconds
+        if type(allow_host_test_execution) is not bool:
+            raise ValueError("allow_host_test_execution must be a boolean.")
+        self.allow_host_test_execution = allow_host_test_execution
         self.proposal_builder = SelfUpgradeProposalBuilder(self.allowed_paths)
 
     def _copy_workspace(self, destination: Path) -> None:
@@ -121,6 +125,11 @@ class IsolatedUpgradeCoordinator:
             raise ToolAuthorizationError("principal validation failed closed.") from exc
         if "workspace:write" not in principal.permissions or "tests:execute" not in principal.permissions:
             raise ToolAuthorizationError("workspace:write and tests:execute permissions are required.")
+
+        if not self.allow_host_test_execution:
+            raise ToolAuthorizationError(
+                "host test execution is disabled; configure a dedicated isolated worker before validating proposals."
+            )
 
         proposal: UpgradeProposal = self.proposal_builder.build(changes)
         with tempfile.TemporaryDirectory(prefix="yuki-upgrade-validation-") as temp_name:
