@@ -7,6 +7,8 @@ shared guarded skill runtime.
 from __future__ import annotations
 
 from typing import Any, Callable
+import hashlib
+import threading
 
 from core.approved_skill_wiring import ApprovedSkillWiringService, SkillApprovalStore
 from core.guarded_skill_runtime import OneShotSkillApprovals, SkillInvocationResult, invoke_registered_skill
