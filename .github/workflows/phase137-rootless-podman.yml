@@ -10,7 +10,7 @@ on:
     inputs:
       worker_image:
         description: "Trusted Python 3.11+ worker image pinned by @sha256:<64 hex chars>"
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
 
       - name: Validate immutable worker image input
         env:
-          WORKER_IMAGE: ${{ inputs.worker_image }}
+          WORKER_IMAGE: ${{ inputs.worker_image || vars.YUKI_TEST_WORKER_IMAGE }}
         run: |
           python - <<'PY'
           import os
