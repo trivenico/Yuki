@@ -189,6 +189,9 @@ def invoke_registered_skill(
         record("not_found")
         return SkillInvocationResult(False, "Skill is not registered.", skill_name, "not_found")
     if expected_skill is not None and skill is not expected_skill:
+        # Burn any matching one-shot approval on an identity mismatch so a
+        # transient registry swap cannot leave a reusable authorization behind.
+        approvals.consume(skill_name, argument)
         record("skill_identity_changed")
         return SkillInvocationResult(
             False, "Registered skill changed after approval; invocation was blocked.",
