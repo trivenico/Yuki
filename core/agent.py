@@ -67,13 +67,27 @@ class YukiCoreAgent:
         return self.run_skill(selected.name, argument)
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
+        if not isinstance(argument, str) or len(argument) > 20000:
+            return AgentResponse(
+                False,
+                "Blocked: skill arguments must be text no longer than 20000 characters.",
+                name if isinstance(name, str) else None,
+                stage="invalid_argument",
+            )
+        try:
+            argument_bytes = argument.encode("utf-8")
+        except UnicodeEncodeError:
+            return AgentResponse(
+                False, "Blocked: skill arguments must be valid UTF-8 text.",
+                name if isinstance(name, str) else None, stage="invalid_argument",
+            )
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
         # Strict policy: request fresh approval for every skill invocation. This is
         # intentionally stricter than per-skill defaults so model output cannot
         # invoke a state-changing or external capability without human confirmation.
-        argument_fingerprint = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+        argument_fingerprint = hashlib.sha256(argument_bytes).hexdigest()
         approved = self.permission_gate.request(
             action=f"skill:{skill.name}:sha256:{argument_fingerprint}",
             reason=(
