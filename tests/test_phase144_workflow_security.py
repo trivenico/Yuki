@@ -36,14 +36,14 @@ class Phase144WorkflowSecurityTests(unittest.TestCase):
     def test_image_is_admin_configured_and_digest_pinned(self):
         self.assertIn("vars.YUKI_TEST_WORKER_IMAGE", self.source)
         self.assertIn(
-            r'docker\\.io/library/python:3\\.11-slim@sha256:[0-9a-f]{64}',
+            r'docker\.io/library/python:3\.11-slim@sha256:[0-9a-f]{64}',
             self.source,
         )
         self.assertNotIn("github.event.inputs", self.source)
 
     def test_rootless_runtime_is_checked_before_integration(self):
         self.assertIn("Verify rootless Docker daemon", self.source)
-        self.assertIn("docker pull \"$WORKER_IMAGE\"", self.source)
+        self.assertIn('docker pull "$WORKER_IMAGE"', self.source)
         self.assertIn("tests.integration.test_isolated_upgrade_worker_docker", self.source)
 
 
