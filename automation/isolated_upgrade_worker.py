@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import io
 import json
 import os
+import stat
 from pathlib import Path
 import re
 import selectors
@@ -20,7 +22,7 @@ import subprocess
 import time
 import tempfile
 import tarfile
-from typing import Callable, Sequence
+from typing import BinaryIO, Callable, Sequence
 
 from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError, ToolPrincipal
 
@@ -154,8 +156,51 @@ class PodmanIsolatedTestRunner:
             return True
         return False
 
+    @staticmethod
+    def _open_regular_file(path: Path) -> tuple[BinaryIO, os.stat_result]:
+        """Open one regular file and verify the opened descriptor matches the path.
+
+        O_NOFOLLOW blocks final-component symlinks on platforms that support it.
+        The before/after lstat plus fstat identity checks provide a fail-closed
+        fallback against final-component replacement on platforms without it.
+        This does not make untrusted parent directories safe; callers should use a
+        private staged workspace and must not treat this as a complete sandbox.
+        """
+        fd = None
+        try:
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode):
+                raise ToolInputError("only regular files are allowed in worker input.")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            if nofollow:
+                flags |= nofollow
+            fd = os.open(path, flags)
+            opened = os.fstat(fd)
+            after = path.lstat()
+            identity_before = (before.st_dev, before.st_ino)
+            identity_opened = (opened.st_dev, opened.st_ino)
+            identity_after = (after.st_dev, after.st_ino)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or not stat.S_ISREG(after.st_mode)
+                or identity_before != identity_opened
+                or identity_opened != identity_after
+            ):
+                raise ToolInputError("worker input changed during safe file open.")
+            stream = os.fdopen(fd, "rb")
+            fd = None
+            return stream, opened
+        except ToolInputError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise ToolInputError("unable to safely open worker input file.") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
     def _workspace_digest(self) -> str:
-        """Hash the complete mounted workspace using bounded, deterministic traversal."""
+        """Hash a bounded workspace through verified regular-file descriptors."""
         digest = hashlib.sha256()
         count = 0
         total = 0
@@ -170,37 +215,35 @@ class PodmanIsolatedTestRunner:
             )
             for name in sorted(files):
                 path = current_path / name
-                if path.is_symlink():
-                    raise ToolInputError("symlink entries are not allowed in the worker workspace.")
                 relative_path = path.relative_to(self.root)
                 if self._is_excluded_path(relative_path):
                     continue
-                try:
-                    metadata = path.stat()
-                    relative = relative_path.as_posix()
-                    if not path.is_file():
-                        continue
+                stream, metadata = self._open_regular_file(path)
+                with stream:
                     count += 1
-                    total += metadata.st_size
-                    if count > 3000 or total > 100 * 1024 * 1024:
+                    if count > 3000:
                         raise ToolInputError("worker workspace exceeds configured digest bounds.")
+                    relative = relative_path.as_posix()
                     digest.update(relative.encode("utf-8"))
                     digest.update(b"\\0")
-                    digest.update(str(metadata.st_size).encode("ascii"))
+                    size_bytes = 0
+                    while True:
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size_bytes += len(chunk)
+                        total += len(chunk)
+                        if total > 100 * 1024 * 1024:
+                            raise ToolInputError("worker workspace exceeds configured digest bounds.")
+                        digest.update(chunk)
+                    if size_bytes != metadata.st_size:
+                        raise ToolInputError("worker input changed size while hashing.")
+                    digest.update(str(size_bytes).encode("ascii"))
                     digest.update(b"\\0")
-                    with path.open("rb") as stream:
-                        while True:
-                            chunk = stream.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            digest.update(chunk)
-                    digest.update(b"\\0")
-                except OSError as exc:
-                    raise ToolInputError("unable to hash the complete worker workspace.") from exc
         return digest.hexdigest()
 
     def _create_content_addressed_artifact(self, destination: Path) -> tuple[Path, str]:
-        """Create a bounded tar artifact containing regular files only."""
+        """Create a bounded tar artifact from bytes read through verified descriptors."""
         count = 0
         total = 0
         try:
@@ -216,23 +259,26 @@ class PodmanIsolatedTestRunner:
                     )
                     for name in sorted(files):
                         path = current_path / name
-                        if path.is_symlink():
-                            raise ToolInputError("symlink entries are not allowed in artifact.")
-                        if self._is_excluded_path(path.relative_to(self.root)):
+                        relative_path = path.relative_to(self.root)
+                        if self._is_excluded_path(relative_path):
                             continue
-                        if not path.is_file():
-                            continue
-                        size = path.stat().st_size
-                        count += 1
-                        total += size
-                        if count > 3000 or total > 50 * 1024 * 1024:
-                            raise ToolInputError("content-addressed artifact exceeds configured bounds.")
-                        relative = path.relative_to(self.root).as_posix()
-                        info = archive.gettarinfo(str(path), arcname=relative)
-                        if not info.isfile():
-                            raise ToolInputError("only regular files are allowed in artifact.")
-                        with path.open("rb") as stream:
-                            archive.addfile(info, stream)
+                        stream, metadata = self._open_regular_file(path)
+                        with stream:
+                            count += 1
+                            if count > 3000:
+                                raise ToolInputError("content-addressed artifact exceeds configured bounds.")
+                            remaining = 50 * 1024 * 1024 - total
+                            if metadata.st_size > remaining:
+                                raise ToolInputError("content-addressed artifact exceeds configured bounds.")
+                            content = stream.read(metadata.st_size + 1)
+                            if len(content) != metadata.st_size or stream.read(1):
+                                raise ToolInputError("worker input changed size while packaging.")
+                        total += len(content)
+                        info = tarfile.TarInfo(name=relative_path.as_posix())
+                        info.size = len(content)
+                        info.mode = 0o400
+                        info.mtime = 0
+                        archive.addfile(info, io.BytesIO(content))
             digest = hashlib.sha256()
             with destination.open("rb") as stream:
                 while True:
@@ -299,7 +345,7 @@ class PodmanIsolatedTestRunner:
             raise RuntimeError("worker container cleanup could not be confirmed.") from exc
 
     def _create_workspace_snapshot(self, destination: Path) -> Path:
-        """Copy a bounded, symlink-free workspace to a private per-run snapshot."""
+        """Copy a bounded workspace using verified file descriptors into a private snapshot."""
         destination.mkdir(mode=0o700)
         count = 0
         total = 0
@@ -317,26 +363,32 @@ class PodmanIsolatedTestRunner:
             )
             for name in sorted(files):
                 source = current_path / name
-                if source.is_symlink():
-                    raise ToolInputError("symlink entries are not allowed in the worker workspace.")
-                if self._is_excluded_path(source.relative_to(self.root)):
+                relative_path = source.relative_to(self.root)
+                if self._is_excluded_path(relative_path):
                     continue
-                try:
-                    metadata = source.stat()
-                    if not source.is_file():
-                        continue
+                stream, metadata = self._open_regular_file(source)
+                with stream:
                     count += 1
-                    total += metadata.st_size
-                    if count > 3000 or total > 100 * 1024 * 1024:
+                    if count > 3000:
+                        raise ToolInputError("worker workspace exceeds configured snapshot bounds.")
+                    remaining = 100 * 1024 * 1024 - total
+                    if metadata.st_size > remaining:
                         raise ToolInputError("worker workspace exceeds configured snapshot bounds.")
                     target = target_dir / name
-                    # Open the source once and copy the bytes actually observed. The
-                    # approved digest is calculated from this private snapshot later.
-                    with source.open("rb") as src, target.open("xb") as dst:
-                        shutil.copyfileobj(src, dst, length=1024 * 1024)
-                    target.chmod(0o400)
-                except OSError as exc:
-                    raise ToolInputError("unable to create immutable worker snapshot.") from exc
+                    copied = 0
+                    with target.open("xb") as dst:
+                        while True:
+                            chunk = stream.read(min(1024 * 1024, remaining - copied + 1))
+                            if not chunk:
+                                break
+                            copied += len(chunk)
+                            if copied > remaining:
+                                raise ToolInputError("worker workspace exceeds configured snapshot bounds.")
+                            dst.write(chunk)
+                    if copied != metadata.st_size or stream.read(1):
+                        raise ToolInputError("worker input changed size while snapshotting.")
+                    total += copied
+                target.chmod(0o400)
         for current, dirs, _files in os.walk(destination, topdown=False):
             Path(current).chmod(0o500)
         destination.chmod(0o500)
