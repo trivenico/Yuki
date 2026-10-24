@@ -112,6 +112,10 @@ class DockerIsolatedTestRunner(PodmanIsolatedTestRunner):
         command.remove("--userns=keep-id")
         mount_index = command.index("--mount")
         command[mount_index + 1] = command[mount_index + 1].replace(",ro", ",readonly")
+        # The harness executes as UID/GID 65532. Explicit ownership makes its
+        # bounded scratch tmpfs writable without granting root or widening mounts.
+        tmpfs_index = command.index("--tmpfs")
+        command[tmpfs_index + 1] = "/work:rw,noexec,nosuid,nodev,size=100m,uid=65532,gid=65532,mode=700"
         return command
 
     def _runner_for_snapshot(self, snapshot: Path) -> "DockerIsolatedTestRunner":
