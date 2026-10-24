@@ -101,7 +101,7 @@ class DockerIsolatedTestRunnerTests(unittest.TestCase):
         cidfile = self.root / "worker.cid"
         cidfile.write_text("a" * 64, encoding="utf-8")
         listed = type("Result", (), {
-            "returncode": 0, "stdout": ("a" * 64 + "\\n").encode(), "stderr": b"",
+            "returncode": 0, "stdout": ("a" * 64 + "\n").encode(), "stderr": b"",
         })()
         removal_failed = type("Result", (), {
             "returncode": 1, "stdout": b"", "stderr": b"permission denied",
