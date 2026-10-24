@@ -132,7 +132,7 @@ class IsolatedUpgradeCoordinator:
 
         if not self.allow_host_test_execution and self.isolated_runner_factory is None:
             raise ToolAuthorizationError(
-                "host test execution is disabled; configure an isolated runner factory before validating proposals."
+                "host test execution is disabled; configure a dedicated isolated runner factory before validating proposals."
             )
 
         proposal: UpgradeProposal = self.proposal_builder.build(changes)
