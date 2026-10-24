@@ -72,7 +72,7 @@ def _json_string_content_cost(value: str, max_cost: int) -> tuple[int, int]:
     length = 0
     for char in value:
         codepoint = ord(char)
-        if char in ('"', "\\\\"):
+        if char == '"' or codepoint == 92:
             char_cost = 2
         elif codepoint < 0x20 or 0xD800 <= codepoint <= 0xDFFF:
             char_cost = 6
