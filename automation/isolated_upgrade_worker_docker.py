@@ -8,12 +8,13 @@ image is pinned by an immutable SHA-256 digest.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
 from automation.authorized_read_tools import ToolAuthorizationError
 from automation.isolated_upgrade_worker import (
-    IsolatedTestRunResult,
     PodmanIsolatedTestRunner,
 )
 
@@ -23,6 +24,50 @@ class DockerIsolatedTestRunner(PodmanIsolatedTestRunner):
 
     def __init__(self, workspace: str | Path, *, docker_binary: str = "docker", **kwargs):
         super().__init__(workspace, podman_binary=docker_binary, **kwargs)
+
+    def _runtime_env(self) -> dict[str, str]:
+        """Preserve only operator-selected variables needed to reach rootless Docker."""
+        allowed = ("PATH", "LANG", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT",
+                   "DOCKER_CONFIG", "XDG_RUNTIME_DIR")
+        return {key: os.environ[key] for key in allowed if key in os.environ}
+
+    def _ensure_container_removed(self, binary: str, cidfile: Path) -> None:
+        """Use Docker-compatible inspection and verify cleanup; fail closed on daemon errors."""
+        if not cidfile.is_file():
+            raise RuntimeError("worker container ID unavailable; cleanup cannot be verified.")
+        container_id = cidfile.read_text(encoding="utf-8").strip()
+        if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+            raise RuntimeError("worker container ID is malformed; cleanup cannot be verified.")
+
+        def listed() -> list[str]:
+            result = subprocess.run(
+                [binary, "container", "ls", "--all", "--no-trunc",
+                 "--filter", "id=" + container_id, "--format", "{{.ID}}"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=5, check=False, shell=False, env=self._runtime_env(),
+            )
+            if result.returncode != 0:
+                raise RuntimeError("unable to verify worker container state.")
+            return [line.strip() for line in result.stdout.decode("utf-8", "replace").splitlines()
+                    if line.strip()]
+
+        try:
+            matches = listed()
+            if not matches:
+                return
+            if any(not item.startswith(container_id) for item in matches):
+                raise RuntimeError("container ID lookup returned an unexpected container.")
+            removed = subprocess.run(
+                [binary, "rm", "--force", container_id], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, check=False,
+                shell=False, env=self._runtime_env(),
+            )
+            if removed.returncode != 0:
+                raise RuntimeError("worker container removal failed.")
+            if listed():
+                raise RuntimeError("worker container cleanup could not be confirmed.")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError("worker container cleanup could not be confirmed.") from exc
 
     def _verify_rootless_runtime(self, binary: str) -> None:
         try:
@@ -34,7 +79,7 @@ class DockerIsolatedTestRunner(PodmanIsolatedTestRunner):
                 timeout=5,
                 check=False,
                 shell=False,
-                env={"PATH": __import__("os").environ.get("PATH", "")},
+                env=self._runtime_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ToolAuthorizationError("rootless Docker runtime is unavailable.") from exc
