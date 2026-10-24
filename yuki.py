@@ -12,6 +12,7 @@ from yuki_tools import TOOLS, run_tool
 from skills.registry import SkillRegistry
 from core.guarded_skill_runtime import OneShotSkillApprovals
 from core.approved_skill_runtime import ApprovedSkillRuntime
+from core.guarded_tool_runtime import GuardedToolRuntime
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -171,12 +172,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if len(parts) < 2:
             return "Usage: /tool NAME [argument]"
         name = parts[1]
-        if not policy.authorize_tool(name):
-            write_audit_event("tool:" + name, "denied")
-            return "Tool blocked by Yuki's local security policy."
-        result = run_tool(name, parts[2] if len(parts) > 2 else "")
-        write_audit_event("tool:" + name, "completed")
-        return result
+        runtime = GuardedToolRuntime(
+            TOOLS,
+            policy,
+            audit=lambda action, outcome: write_audit_event(action, outcome),
+        )
+        return runtime.invoke(name, parts[2] if len(parts) > 2 else "")
     if command == "/task" or command.startswith("/task "):
         parts = command.split(maxsplit=2)
         if len(parts) < 2 or parts[1] == "list":
