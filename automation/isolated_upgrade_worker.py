@@ -124,6 +124,42 @@ class PodmanIsolatedTestRunner:
         if rootless is not True:
             raise ToolAuthorizationError("isolated test execution requires rootless Podman.")
 
+    def _workspace_digest(self) -> str:
+        """Hash the complete mounted workspace using bounded, deterministic traversal."""
+        digest = hashlib.sha256()
+        count = 0
+        total = 0
+        for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
+            current_path = Path(current)
+            dirs[:] = sorted(d for d in dirs if not (current_path / d).is_symlink())
+            for name in sorted(files):
+                path = current_path / name
+                if path.is_symlink():
+                    raise ToolInputError("symlink entries are not allowed in the worker workspace.")
+                try:
+                    metadata = path.stat()
+                    relative = path.relative_to(self.root).as_posix()
+                    if not path.is_file():
+                        continue
+                    count += 1
+                    total += metadata.st_size
+                    if count > 3000 or total > 100 * 1024 * 1024:
+                        raise ToolInputError("worker workspace exceeds configured digest bounds.")
+                    digest.update(relative.encode("utf-8"))
+                    digest.update(b"\\0")
+                    digest.update(str(metadata.st_size).encode("ascii"))
+                    digest.update(b"\\0")
+                    with path.open("rb") as stream:
+                        while True:
+                            chunk = stream.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            digest.update(chunk)
+                    digest.update(b"\\0")
+                except OSError as exc:
+                    raise ToolInputError("unable to hash the complete worker workspace.") from exc
+        return digest.hexdigest()
+
     def _module_file(self, module: str) -> Path:
         if module not in self.allowed_test_modules:
             raise ToolAuthorizationError("test target is not explicitly allow-listed.")
@@ -191,8 +227,9 @@ class PodmanIsolatedTestRunner:
             raise ToolAuthorizationError("tests:execute permission is required.")
         source = self._module_file(test_module)
         source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        workspace_digest = self._workspace_digest()
         run_digest = hashlib.sha256(
-            f"{test_module}:{source_digest}:{self.image}:{self.timeout_seconds}:{self.memory_limit}:{self.cpu_limit}:{self.pids_limit}".encode()
+            f"{test_module}:{source_digest}:{workspace_digest}:{self.image}:{self.timeout_seconds}:{self.memory_limit}:{self.cpu_limit}:{self.pids_limit}".encode()
         ).hexdigest()
         run_id = "isolated_test_" + run_digest[:24]
         try:
@@ -207,7 +244,11 @@ class PodmanIsolatedTestRunner:
         if not binary:
             self._record(principal.actor_id, "runtime_unavailable", run_digest, test_module)
             raise ToolAuthorizationError("Podman executable is unavailable; isolated tests denied.")
-        self._verify_rootless_runtime(binary)
+        try:
+            self._verify_rootless_runtime(binary)
+        except Exception:
+            self._record(principal.actor_id, "runtime_verification_failed", run_digest, test_module)
+            raise
 
         control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
         cidfile = control_dir / "container.cid"
@@ -215,6 +256,7 @@ class PodmanIsolatedTestRunner:
             binary, "run", "--rm", "--cidfile", str(cidfile), "--pull=never",
             "--network=none", "--read-only", "--userns=keep-id",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "--entrypoint", "python",
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
             "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
@@ -222,7 +264,7 @@ class PodmanIsolatedTestRunner:
             "--workdir", "/workspace",
             "--env", "PYTHONIOENCODING=utf-8",
             "--env", "PYTHONUNBUFFERED=1",
-            self.image, "python", "-m", "unittest", test_module, "-v",
+            self.image, "-m", "unittest", test_module, "-v",
         ]
         start = time.monotonic()
         stdout = bytearray()
@@ -300,7 +342,8 @@ class PodmanIsolatedTestRunner:
             outcome = "succeeded" if exit_code == 0 else "failed"
         self._record(principal.actor_id, outcome, run_digest, test_module,
                      exit_code=exit_code, timed_out=timed_out, output_exceeded=output_exceeded,
-                     duration_seconds=duration, source_digest=source_digest)
+                     duration_seconds=duration, source_digest=source_digest,
+                     workspace_digest=workspace_digest)
         return IsolatedTestRunResult(test_module, exit_code, timed_out or output_exceeded,
                                      duration, stdout.decode("utf-8", errors="replace"),
                                      stderr.decode("utf-8", errors="replace"))
