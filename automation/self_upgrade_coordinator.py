@@ -11,6 +11,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import tempfile
 from typing import Callable, Sequence
 
@@ -86,13 +87,14 @@ class IsolatedUpgradeCoordinator:
                 if source.is_symlink() or name.lower().startswith(".env") or _SENSITIVE_FILE.search(name):
                     continue
                 try:
-                    if not source.is_file():
-                        continue
-                    size = source.stat().st_size
+                    metadata = source.stat()
                 except OSError as exc:
                     raise WorkspaceChangeError(
                         f"workspace staging denied: unable to inspect {source.name!r}."
                     ) from exc
+                if not stat.S_ISREG(metadata.st_mode):
+                    continue
+                size = metadata.st_size
                 file_count += 1
                 byte_count += size
                 if file_count > _MAX_COPY_FILES or byte_count > _MAX_COPY_BYTES:
