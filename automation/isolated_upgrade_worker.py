@@ -398,23 +398,12 @@ class PodmanIsolatedTestRunner:
             )
     
 
-    def _execute_artifact(
-        self, *, principal: ToolPrincipal, test_module: str, run_digest: str,
-        source_digest: str, workspace_digest: str, artifact_digest: str, artifact_path: Path,
-    ) -> IsolatedTestRunResult:
-        binary = shutil.which(self.podman_binary)
-        if not binary:
-            self._record(principal.actor_id, "runtime_unavailable", run_digest, test_module)
-            raise ToolAuthorizationError("Podman executable is unavailable; isolated tests denied.")
-        try:
-            self._verify_rootless_runtime(binary)
-        except Exception:
-            self._record(principal.actor_id, "runtime_verification_failed", run_digest, test_module)
-            raise
-
-        control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
-        cidfile = control_dir / "container.cid"
-        command = [
+    def _build_container_command(
+        self, *, binary: str, cidfile: Path, artifact_path: Path,
+        artifact_digest: str, test_module: str,
+    ) -> list[str]:
+        """Build the exact hardened Podman invocation for unit-testable review."""
+        return [
             binary, "run", "--rm", "--cidfile", str(cidfile), "--pull=never",
             "--network=none", "--read-only", "--userns=keep-id",
             "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -433,6 +422,27 @@ class PodmanIsolatedTestRunner:
             "--env", "PYTHONDONTWRITEBYTECODE=1",
             self.image, "-c", self._trusted_harness(), artifact_digest, test_module,
         ]
+
+    def _execute_artifact(
+        self, *, principal: ToolPrincipal, test_module: str, run_digest: str,
+        source_digest: str, workspace_digest: str, artifact_digest: str, artifact_path: Path,
+    ) -> IsolatedTestRunResult:
+        binary = shutil.which(self.podman_binary)
+        if not binary:
+            self._record(principal.actor_id, "runtime_unavailable", run_digest, test_module)
+            raise ToolAuthorizationError("Podman executable is unavailable; isolated tests denied.")
+        try:
+            self._verify_rootless_runtime(binary)
+        except Exception:
+            self._record(principal.actor_id, "runtime_verification_failed", run_digest, test_module)
+            raise
+
+        control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
+        cidfile = control_dir / "container.cid"
+        command = self._build_container_command(
+            binary=binary, cidfile=cidfile, artifact_path=artifact_path,
+            artifact_digest=artifact_digest, test_module=test_module,
+        )
         start = time.monotonic()
         stdout = bytearray()
         stderr = bytearray()
