@@ -84,7 +84,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
             return original_stat(path_obj, *args, **kwargs)
 
         def is_symlink_without_stat(path_obj):
-            if path_obj == blocked:
+            if path_obj.name == blocked.name:
                 return False
             return original_is_symlink(path_obj)
 
