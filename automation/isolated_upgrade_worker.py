@@ -556,6 +556,28 @@ class PodmanIsolatedTestRunner:
             self.image, "-c", self._trusted_harness(), artifact_digest, test_module,
         ]
 
+    @staticmethod
+    def _prepare_artifact_for_non_root(path: Path) -> None:
+        """Make the private bind-mounted artifact readable to the fixed non-root UID."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = None
+        try:
+            fd = os.open(path, flags)
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ToolInputError("worker artifact must be a regular file.")
+            os.fchmod(fd, 0o444)
+            updated = os.fstat(fd)
+            if stat.S_IMODE(updated.st_mode) & 0o444 != 0o444:
+                raise ToolInputError("worker artifact is not readable by the non-root worker.")
+        except ToolInputError:
+            raise
+        except OSError as exc:
+            raise ToolInputError("unable to prepare artifact for non-root worker access.") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
     def _execute_artifact(
         self, *, principal: ToolPrincipal, test_module: str, run_digest: str,
         source_digest: str, workspace_digest: str, artifact_digest: str, artifact_path: Path,
@@ -568,6 +590,12 @@ class PodmanIsolatedTestRunner:
             self._verify_rootless_runtime(binary)
         except Exception:
             self._record(principal.actor_id, "runtime_verification_failed", run_digest, test_module)
+            raise
+
+        try:
+            self._prepare_artifact_for_non_root(artifact_path)
+        except ToolInputError:
+            self._record(principal.actor_id, "artifact_permission_failed", run_digest, test_module)
             raise
 
         control_dir = Path(tempfile.mkdtemp(prefix="yuki-worker-control-"))
