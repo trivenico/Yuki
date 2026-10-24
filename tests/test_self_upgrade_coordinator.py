@@ -32,6 +32,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
             audit=lambda event: self.audit_events.append(event),
             allowed_paths=["src/example.py"],
             allowed_test_modules=["tests.test_example"],
+            allow_host_test_execution=True,
         )
 
     def tearDown(self):
@@ -124,6 +125,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
             audit=lambda event: self.audit_events.append(event),
             allowed_paths=["src/example.py"],
             allowed_test_modules=["tests.test_example", "tests.test_second"],
+            allow_host_test_execution=True,
         )
         failed = SimpleNamespace(
             target="tests.test_example", exit_code=1, timed_out=False,
@@ -154,6 +156,24 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         ) as run:
             with self.assertRaisesRegex(WorkspaceChangeError, "simulated change failure"):
                 self.coordinator.validate(principal=self.principal, changes=[change])
+        run.assert_not_called()
+        self.assertEqual(self.file.read_text(encoding="utf-8"), old)
+
+    def test_host_test_execution_is_disabled_by_default(self):
+        old = self.file.read_text(encoding="utf-8")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        coordinator = IsolatedUpgradeCoordinator(
+            self.root,
+            trusted_principal=lambda p: p.actor_id == "test-operator",
+            approve_change=lambda actor, change_id, digest: True,
+            approve_test=lambda actor, run_id, digest: True,
+            audit=lambda event: self.audit_events.append(event),
+            allowed_paths=["src/example.py"],
+            allowed_test_modules=["tests.test_example"],
+        )
+        with patch("automation.self_upgrade_coordinator.ApprovedTestRunner.run") as run:
+            with self.assertRaisesRegex(ToolAuthorizationError, "host test execution is disabled"):
+                coordinator.validate(principal=self.principal, changes=[change])
         run.assert_not_called()
         self.assertEqual(self.file.read_text(encoding="utf-8"), old)
 
