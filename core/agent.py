@@ -112,6 +112,7 @@ class YukiCoreAgent:
             name,
             argument,
             approvals=self.invocation_approvals,
+            expected_skill=skill,
         )
         return AgentResponse(
             result.ok,
