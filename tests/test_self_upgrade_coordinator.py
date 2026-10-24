@@ -143,6 +143,20 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
         run.assert_called_once()
         self.assertEqual(self.file.read_text(encoding="utf-8"), old)
 
+    def test_workspace_change_failure_prevents_test_execution(self):
+        old = self.file.read_text(encoding="utf-8")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        with patch(
+            "automation.self_upgrade_coordinator.ApprovedWorkspaceChanges.apply",
+            side_effect=WorkspaceChangeError("simulated change failure"),
+        ), patch(
+            "automation.self_upgrade_coordinator.ApprovedTestRunner.run",
+        ) as run:
+            with self.assertRaisesRegex(WorkspaceChangeError, "simulated change failure"):
+                self.coordinator.validate(principal=self.principal, changes=[change])
+        run.assert_not_called()
+        self.assertEqual(self.file.read_text(encoding="utf-8"), old)
+
     def test_missing_permissions_fail_closed(self):
         principal = ToolPrincipal("test-operator", frozenset({"workspace:write"}))
         old = self.file.read_text(encoding="utf-8")
