@@ -85,7 +85,7 @@ class YukiCoreAgent:
             or risk in {"high", "critical"}
         )
         if needs_guard_approval:
-            self.invocation_approvals.approve(name)
+            self.invocation_approvals.approve(name, argument)
         result = invoke_registered_skill(
             self.registry,
             name,
