@@ -81,7 +81,14 @@ def invoke_registered_skill(
         return SkillInvocationResult(False, "Skill is not registered.", skill_name, "not_found")
 
     risk = str(getattr(skill, "risk", "high")).lower()
-    needs_approval = bool(getattr(skill, "requires_approval", True)) or risk in {"high", "critical"}
+    # Unknown risk labels must fail closed. A plugin cannot bypass approval by
+    # declaring a novel risk value while setting requires_approval=False.
+    known_risks = {"low", "medium", "high", "critical"}
+    needs_approval = (
+        bool(getattr(skill, "requires_approval", True))
+        or risk not in known_risks
+        or risk in {"high", "critical"}
+    )
     if needs_approval and not approvals.consume(skill_name):
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
