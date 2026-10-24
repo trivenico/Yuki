@@ -259,22 +259,35 @@ class PodmanIsolatedTestRunner:
         """Run against a private snapshot so the original workspace cannot race approval."""
         with tempfile.TemporaryDirectory(prefix="yuki-worker-snapshot-") as temporary:
             snapshot = Path(temporary) / "workspace"
-            self._create_workspace_snapshot(snapshot)
-            runner = PodmanIsolatedTestRunner(
-                snapshot,
-                image=self.image,
-                trusted_principal=self.trusted_principal,
-                approve_run=self.approve_run,
-                audit=self.audit,
-                allowed_test_modules=self.allowed_test_modules,
-                timeout_seconds=self.timeout_seconds,
-                podman_binary=self.podman_binary,
-                output_limit_bytes=self.output_limit_bytes,
-                memory_limit=self.memory_limit,
-                cpu_limit=self.cpu_limit,
-                pids_limit=self.pids_limit,
-            )
-            return runner._run_snapshot(principal=principal, test_module=test_module)
+            try:
+                self._create_workspace_snapshot(snapshot)
+                runner = PodmanIsolatedTestRunner(
+                    snapshot,
+                    image=self.image,
+                    trusted_principal=self.trusted_principal,
+                    approve_run=self.approve_run,
+                    audit=self.audit,
+                    allowed_test_modules=self.allowed_test_modules,
+                    timeout_seconds=self.timeout_seconds,
+                    podman_binary=self.podman_binary,
+                    output_limit_bytes=self.output_limit_bytes,
+                    memory_limit=self.memory_limit,
+                    cpu_limit=self.cpu_limit,
+                    pids_limit=self.pids_limit,
+                )
+                return runner._run_snapshot(principal=principal, test_module=test_module)
+            finally:
+                # TemporaryDirectory must be able to remove read-only snapshot dirs.
+                if snapshot.exists():
+                    for current, _dirs, _files in os.walk(snapshot, topdown=False):
+                        try:
+                            Path(current).chmod(0o700)
+                        except OSError:
+                            pass
+                    try:
+                        snapshot.chmod(0o700)
+                    except OSError:
+                        pass
 
     def _run_snapshot(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
         if not isinstance(principal, ToolPrincipal):
