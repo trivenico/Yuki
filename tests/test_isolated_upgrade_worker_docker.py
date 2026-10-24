@@ -61,6 +61,10 @@ class DockerIsolatedTestRunnerTests(unittest.TestCase):
         self.assertIn("--pids-limit", command)
         self.assertIn("--memory", command)
         self.assertIn("--cpus", command)
+        tmpfs = command[command.index("--tmpfs") + 1]
+        self.assertIn("uid=65532", tmpfs)
+        self.assertIn("gid=65532", tmpfs)
+        self.assertIn("mode=700", tmpfs)
         mount = command[command.index("--mount") + 1]
         self.assertIn("dst=/tmp,readonly", mount)
         self.assertIn("--user=65532:65532", command)
