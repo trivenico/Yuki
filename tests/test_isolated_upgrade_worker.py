@@ -160,7 +160,7 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         self.assertIn("--read-only", command)
         self.assertIn("--cap-drop=ALL", command)
         self.assertIn("--security-opt=no-new-privileges", command)
-        self.assertIn("/work:rw,nosuid,nodev,size=100m", command)
+        self.assertIn("/work:rw,noexec,nosuid,nodev,size=100m", command)
         mount = next(arg for arg in command if arg.startswith("type=bind,src="))
         self.assertEqual(mount.replace("\\", "/"), "type=bind,src=/tmp/artifact,dst=/tmp,ro")
         self.assertIn("TMPDIR=/work", command)
