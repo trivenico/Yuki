@@ -32,13 +32,13 @@ jobs:
 
       - name: Validate administrator-approved immutable worker image
         env:
-          WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: |
           python - <<'PY'
           import os
           import re
           image = os.environ.get("WORKER_IMAGE", "").strip()
-          if not re.fullmatch(r"docker\\.io/library/python:3\\.11-slim@sha256:[0-9a-f]{64}", image):
+          if not re.fullmatch(r"docker\.io/library/python:3\.11-slim@sha256:[0-9a-f]{64}", image):
               raise SystemExit("Set repository variable YUKI_TEST_WORKER_IMAGE to the administrator-approved official Python 3.11 slim image pinned by lowercase SHA-256 digest")
           PY
 
@@ -58,11 +58,11 @@ jobs:
 
       - name: Pull only the administrator-approved digest-pinned worker image
         env:
-          WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: docker pull "$WORKER_IMAGE"
 
       - name: Run opt-in Docker integration contract from protected main
         env:
           YUKI_DOCKER_INTEGRATION: "1"
-          YUKI_TEST_WORKER_IMAGE: ${{ vars.YUKI_TEST_WORKER_IMAGE }}
+          YUKI_TEST_WORKER_IMAGE: \${{ vars.YUKI_TEST_WORKER_IMAGE }}
         run: python -m unittest tests.integration.test_isolated_upgrade_worker_docker -v
