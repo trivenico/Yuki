@@ -101,10 +101,17 @@ class ApprovedSkillRuntime:
                 or risk in {"high", "critical"}
             )
             if needs_approval:
-                return SkillInvocationResult(
-                    False, "Skill invocation requires facade-bound approval.",
-                    skill_name, "approval_required"
-                )
+                # If a token exists without its facade-bound instance snapshot,
+                # burn it and reject it as an identity-binding violation. With
+                # no token, retain the normal approval_required response.
+                if self.invocation_approvals.consume(skill_name, argument):
+                    status = "skill_identity_changed"
+                    message = "Approval was not bound to the current skill instance."
+                else:
+                    status = "approval_required"
+                    message = "Skill invocation requires facade-bound approval."
+                self.audit("skill:invoke", status)
+                return SkillInvocationResult(False, message, skill_name, status)
 
         expected_skill = approved_instance if approved_instance is not None else skill
         try:
