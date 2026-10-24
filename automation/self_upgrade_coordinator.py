@@ -29,6 +29,7 @@ _BLOCKED_DIRS = frozenset({
 })
 _MAX_COPY_FILES = 3000
 _MAX_COPY_BYTES = 100 * 1024 * 1024
+_SENSITIVE_FILE = __import__("re").compile(r"(secret|credential|password|token|private.?key|id_rsa|id_ed25519|\.pem$|\.key$)", __import__("re").I)
 
 
 class IsolatedUpgradeCoordinator:
@@ -82,7 +83,7 @@ class IsolatedUpgradeCoordinator:
             target_dir.mkdir(parents=True, exist_ok=True)
             for name in files:
                 source = current_path / name
-                if source.is_symlink() or name.lower().startswith(".env"):
+                if source.is_symlink() or name.lower().startswith(".env") or _SENSITIVE_FILE.search(name):
                     continue
                 try:
                     if not source.is_file():
