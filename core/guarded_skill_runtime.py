@@ -34,7 +34,11 @@ class OneShotSkillApprovals:
             raise ValueError("A non-empty bounded skill name is required.")
         if not isinstance(argument, str) or len(argument) > 20000:
             raise ValueError("Approval argument must be text no longer than 20000 characters.")
-        digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+        try:
+            encoded_argument = argument.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Approval argument must be valid UTF-8 text.") from exc
+        digest = hashlib.sha256(encoded_argument).hexdigest()
         return skill_name, digest
 
     def approve(self, skill_name: str, argument: str = "") -> None:
@@ -163,6 +167,11 @@ def invoke_registered_skill(
     if not isinstance(argument, str) or len(argument) > 20000:
         record("invalid_argument")
         return SkillInvocationResult(False, "Argument must be text no longer than 20000 characters.", skill_name, "invalid_argument")
+    try:
+        argument.encode("utf-8")
+    except UnicodeEncodeError:
+        record("invalid_argument")
+        return SkillInvocationResult(False, "Argument must be valid UTF-8 text.", skill_name, "invalid_argument")
     if isinstance(max_result_chars, bool) or not isinstance(max_result_chars, int) or not 1 <= max_result_chars <= 10000:
         max_result_chars = 2000
 
