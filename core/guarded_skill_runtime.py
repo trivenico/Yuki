@@ -21,31 +21,41 @@ class SkillInvocationResult:
 
 
 class OneShotSkillApprovals:
-    """Thread-safe, process-local one-shot approvals bound to a skill name."""
+    """Thread-safe, process-local one-shot approvals bound to exact arguments."""
 
     def __init__(self) -> None:
-        self._approved: set[str] = set()
+        self._approved: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
 
-    def approve(self, skill_name: str) -> None:
-        if not isinstance(skill_name, str) or not skill_name:
-            raise ValueError("A non-empty skill name is required.")
-        with self._lock:
-            self._approved.add(skill_name)
+    @staticmethod
+    def _key(skill_name: str, argument: str) -> tuple[str, str]:
+        import hashlib
+        if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
+            raise ValueError("A non-empty bounded skill name is required.")
+        if not isinstance(argument, str) or len(argument) > 20000:
+            raise ValueError("Approval argument must be text no longer than 20000 characters.")
+        digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+        return skill_name, digest
 
-    def consume(self, skill_name: str) -> bool:
+    def approve(self, skill_name: str, argument: str = "") -> None:
+        key = self._key(skill_name, argument)
         with self._lock:
-            if skill_name not in self._approved:
+            self._approved.add(key)
+
+    def consume(self, skill_name: str, argument: str = "") -> bool:
+        try:
+            key = self._key(skill_name, argument)
+        except ValueError:
+            return False
+        with self._lock:
+            if key not in self._approved:
                 return False
-            self._approved.remove(skill_name)
+            self._approved.remove(key)
             return True
 
     def clear(self) -> None:
         with self._lock:
             self._approved.clear()
-
-
-_INVALID_RESULT_DATA = object()
 
 
 def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
