@@ -9,10 +9,17 @@ from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
+from core.plugin_loader import _static_candidates
+from skills.registry import SkillRegistry
+from core.repo_wiring_audit import audit_python_wiring
+from core.skill_registry_audit import audit_skill_registry
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
+
+# One-shot approvals exist only for this process and are consumed on use.
+_APPROVED_SKILL_RUNS: set[str] = set()
 
 
 def load_memory():
@@ -48,6 +55,14 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
+  /skills scan                    Statically discover candidate Python skills (does not import them)
+  /skills list                    List skills registered in the runtime registry
+  /skills inspect NAME            Show metadata for one registered skill
+  /skills approve NAME            Approve one invocation of an approval-gated skill
+  /skills run NAME [ARGUMENT]     Invoke a registered skill through its guarded execute() method
+  /skills status                  Compare discovered candidates with registered built-in skills
+  /skills audit                   Compare skill modules with explicit registry imports
+  /wiring audit                   Inventory Python files and static inbound imports
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
@@ -112,6 +127,142 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Learning records: {len(load_history())}\\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
+    if command == "/wiring audit":
+        try:
+            report = audit_python_wiring(Path(__file__).resolve().parent)
+        except (OSError, ValueError) as error:
+            write_audit_event("wiring:audit", "failed")
+            return f"Repository wiring audit failed ({type(error).__name__})."
+        counts = report["counts"]
+        lines = [f"Static repository wiring audit: {report['python_file_count']} Python files examined."]
+        lines.extend(f"  {status}: {count}" for status, count in sorted(counts.items()))
+        lines.append(f"Parse/size issues: {len(report['parse_or_size_issues'])}")
+        flags = [item for item in report["files"] if item["status"] in {"no_static_inbound_import", "needs_inspection"}]
+        lines.append(f"Files needing review (not proof of being unused): {len(flags)}")
+        lines.extend(f"  {item['status']}: {item['path']}" for item in flags[:80])
+        if len(flags) > 80:
+            lines.append(f"  ... and {len(flags) - 80} more; use the JSON audit API for full details.")
+        lines.append("Heuristic only: dynamic imports, entry points, plugins, external launchers, and non-Python wiring may not be visible.")
+        write_audit_event("wiring:audit", "completed" if not report["parse_or_size_issues"] else "completed_with_issues")
+        return "\\n".join(lines)
+    if command == "/skills audit":
+        try:
+            report = audit_skill_registry(Path(__file__).resolve().parent)
+        except (OSError, ValueError) as error:
+            write_audit_event("skills:audit", "failed")
+            return f"Skill registry audit failed ({type(error).__name__})."
+        lines = [f"Skill registry wiring audit: {report['skill_module_count']} candidate modules; {report['registry_import_count']} directly imported by registry."]
+        lines.append("Directly wired modules: " + (", ".join(report["directly_wired"]) if report["directly_wired"] else "none"))
+        lines.append(f"Not directly wired: {len(report['not_directly_wired'])}")
+        lines.extend(f"  review: {name}" for name in report["not_directly_wired"])
+        lines.extend(f"  source issue: {item['path']} — {item['reason']}" for item in report["issues"])
+        lines.append(report["interpretation"])
+        write_audit_event("skills:audit", "completed" if not report["issues"] else "completed_with_issues")
+        return "\\n".join(lines)
+    if command == "/skills status":
+        skills_dir = Path(__file__).with_name("skills")
+        candidates, failures = _static_candidates([skills_dir])
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            registered = set(registry.names())
+        except Exception as error:
+            write_audit_event("skills:status", "failed")
+            return f"Could not inspect the built-in skill registry ({type(error).__name__}). No plugin modules were loaded."
+        lines = [f"Skill lifecycle status: {len(candidates)} discovered candidate module(s); {len(registered)} built-in registered skill(s)."]
+        lines.append("Registered built-ins: " + (", ".join(sorted(registered)) if registered else "none"))
+        lines.extend(f"  candidate module: {name}" for name in sorted(candidates))
+        lines.extend(f"  source issue: {item['module']} — {item['error']}" for item in failures)
+        lines.append("Note: module names and registry skill names are different identifiers; candidates are not assumed registered by name.")
+        lines.append("Dynamic plugin registration is not enabled by this status command; trust policy remains explicit.")
+        write_audit_event("skills:status", "completed" if not failures else "completed_with_issues")
+        return "\\n".join(lines)
+    if command.startswith("/skills approve "):
+        name = command[len("/skills approve "):].strip()
+        if not name or any(char.isspace() for char in name):
+            return "Usage: /skills approve NAME"
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:approve", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:approve", "not_found")
+            return f"No registered skill named '{name}'."
+        _APPROVED_SKILL_RUNS.add(name)
+        write_audit_event("skills:approve", "approved_once")
+        return f"One invocation of '{name}' approved for this process. Run /skills run {name} [ARGUMENT] to consume approval."
+    if command.startswith("/skills run "):
+        remainder = command[len("/skills run "):]
+        parts = remainder.split(maxsplit=1)
+        if not parts:
+            return "Usage: /skills run NAME [ARGUMENT]"
+        name = parts[0]
+        argument = parts[1] if len(parts) > 1 else ""
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:run", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:run", "not_found")
+            return f"No registered skill named '{name}'."
+        needs_approval = bool(getattr(skill, "requires_approval", True)) or str(getattr(skill, "risk", "low")).lower() in {"high", "critical"}
+        if needs_approval and name not in _APPROVED_SKILL_RUNS:
+            write_audit_event("skills:run", "approval_required")
+            return f"Approval required. Review the skill with /skills inspect {name}, then explicitly approve with /skills approve {name}."
+        if needs_approval:
+            _APPROVED_SKILL_RUNS.discard(name)
+        try:
+            result = skill.execute(argument)
+        except Exception as error:
+            write_audit_event("skills:run", "failed")
+            return f"Skill invocation failed safely ({type(error).__name__})."
+        ok = bool(getattr(result, "ok", False))
+        message_text = str(getattr(result, "message", "Skill returned an invalid result."))[:2000]
+        write_audit_event("skills:run", "completed" if ok else "skill_failed")
+        return message_text
+    if command == "/skills list":
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            entries = registry.describe()
+        except Exception as error:
+            write_audit_event("skills:list", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        write_audit_event("skills:list", "completed")
+        if not entries:
+            return "No skills are registered."
+        return "\\n".join(f"{item['name']} [{item['risk']}] — {item['description']}" for item in entries)
+    if command.startswith("/skills inspect "):
+        name = command[len("/skills inspect "):].strip()
+        if not name or any(char.isspace() for char in name):
+            return "Usage: /skills inspect NAME"
+        try:
+            registry = SkillRegistry.defaults(Path(__file__).resolve().parent)
+            skill = registry.get(name)
+        except Exception as error:
+            write_audit_event("skills:inspect", "failed")
+            return f"Could not initialize the built-in skill registry ({type(error).__name__})."
+        if skill is None:
+            write_audit_event("skills:inspect", "not_found")
+            return f"No registered skill named '{name}'."
+        result = f"Name: {skill.name}\\nDescription: {skill.description}\\nRisk: {skill.risk}\\nRequires approval: {bool(getattr(skill, 'requires_approval', True))}\\nExecutable through this command: no (inspection only)."
+        write_audit_event("skills:inspect", "completed")
+        return result
+    if command == "/skills scan":
+        skills_dir = Path(__file__).with_name("skills")
+        candidates, failures = _static_candidates([skills_dir])
+        lines = [f"Static skill scan: {len(candidates)} candidate module(s)."]
+        lines.extend(f"  candidate: {name} (not imported; trust and registration not implied)" for name in sorted(candidates))
+        lines.extend(f"  scan issue: {item['module']} — {item['error']}" for item in failures)
+        if not failures:
+            lines.append("No source parsing or size issues detected.")
+        lines.append("This command only scans source. It does not trust, import, register, or execute skills.")
+        write_audit_event("skills:scan", "completed" if not failures else "completed_with_issues")
+        return "\n".join(lines)
+    if command.startswith("/skills"):
+        return "Usage: /skills scan"
     if command == "/providers":
         return "\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
