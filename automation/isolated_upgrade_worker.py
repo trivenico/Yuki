@@ -216,7 +216,67 @@ class PodmanIsolatedTestRunner:
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError("worker container cleanup could not be confirmed.") from exc
 
+    def _create_workspace_snapshot(self, destination: Path) -> Path:
+        """Copy a bounded, symlink-free workspace to a private per-run snapshot."""
+        destination.mkdir(mode=0o700)
+        count = 0
+        total = 0
+        for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
+            current_path = Path(current)
+            relative_dir = current_path.relative_to(self.root)
+            target_dir = destination / relative_dir
+            target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            for dirname in dirs:
+                if (current_path / dirname).is_symlink():
+                    raise ToolInputError("symlink directories are not allowed in the worker workspace.")
+            dirs[:] = sorted(dirs)
+            for name in sorted(files):
+                source = current_path / name
+                if source.is_symlink():
+                    raise ToolInputError("symlink entries are not allowed in the worker workspace.")
+                try:
+                    metadata = source.stat()
+                    if not source.is_file():
+                        continue
+                    count += 1
+                    total += metadata.st_size
+                    if count > 3000 or total > 100 * 1024 * 1024:
+                        raise ToolInputError("worker workspace exceeds configured snapshot bounds.")
+                    target = target_dir / name
+                    # Open the source once and copy the bytes actually observed. The
+                    # approved digest is calculated from this private snapshot later.
+                    with source.open("rb") as src, target.open("xb") as dst:
+                        shutil.copyfileobj(src, dst, length=1024 * 1024)
+                    target.chmod(0o400)
+                except OSError as exc:
+                    raise ToolInputError("unable to create immutable worker snapshot.") from exc
+        for current, dirs, _files in os.walk(destination, topdown=False):
+            Path(current).chmod(0o500)
+        destination.chmod(0o500)
+        return destination
+
     def run(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
+        """Run against a private snapshot so the original workspace cannot race approval."""
+        with tempfile.TemporaryDirectory(prefix="yuki-worker-snapshot-") as temporary:
+            snapshot = Path(temporary) / "workspace"
+            self._create_workspace_snapshot(snapshot)
+            runner = PodmanIsolatedTestRunner(
+                snapshot,
+                image=self.image,
+                trusted_principal=self.trusted_principal,
+                approve_run=self.approve_run,
+                audit=self.audit,
+                allowed_test_modules=self.allowed_test_modules,
+                timeout_seconds=self.timeout_seconds,
+                podman_binary=self.podman_binary,
+                output_limit_bytes=self.output_limit_bytes,
+                memory_limit=self.memory_limit,
+                cpu_limit=self.cpu_limit,
+                pids_limit=self.pids_limit,
+            )
+            return runner._run_snapshot(principal=principal, test_module=test_module)
+
+    def _run_snapshot(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
         if not isinstance(principal, ToolPrincipal):
             raise ToolAuthorizationError("trusted authenticated principal required.")
         try:
