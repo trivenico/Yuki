@@ -86,5 +86,22 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
             runner.run(principal=self.principal, test_module="tests.test_link")
 
 
+    def test_workspace_digest_changes_when_any_file_changes(self):
+        before = self.runner._workspace_digest()
+        (self.root / "README.md").write_text("different staged content", encoding="utf-8")
+        after = self.runner._workspace_digest()
+        self.assertNotEqual(before, after)
+
+    def test_workspace_digest_rejects_symlink_directory(self):
+        target = self.root / "outside"
+        target.mkdir()
+        link = self.root / "linked"
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlinks unavailable")
+        with self.assertRaises(ToolInputError):
+            self.runner._workspace_digest()
+
 if __name__ == "__main__":
     unittest.main()
