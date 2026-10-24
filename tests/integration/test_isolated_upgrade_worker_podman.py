@@ -30,7 +30,7 @@ class RootlessPodmanIntegrationTests(unittest.TestCase):
         (self.root / "tests" / "__init__.py").write_text("", encoding="utf-8")
         self.target = self.root / "tests" / "test_isolation_contract.py"
         self.target.write_text(
-            "import os, pathlib, socket, unittest\n"
+            "import os, pathlib, socket, tempfile, unittest\n"
             "class IsolationContract(unittest.TestCase):\n"
             " def test_host_secret_not_forwarded(self):\n"
             "  self.assertNotIn('YUKI_INTEGRATION_SECRET', os.environ)\n"
