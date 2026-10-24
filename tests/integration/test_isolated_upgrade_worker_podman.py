@@ -31,6 +31,8 @@ class RootlessPodmanIntegrationTests(unittest.TestCase):
         self.target.write_text(
             "import os, pathlib, socket, tempfile, unittest\n"
             "class IsolationContract(unittest.TestCase):\n"
+            " def test_worker_runs_non_root(self):\n"
+            "  self.assertNotEqual(os.geteuid(), 0)\n"
             " def test_host_secret_not_forwarded(self):\n"
             "  self.assertNotIn('YUKI_INTEGRATION_SECRET', os.environ)\n"
             " def test_root_filesystem_is_not_writable(self):\n"
