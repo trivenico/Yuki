@@ -31,6 +31,35 @@ class Registry:
 
 
 class ApprovedSkillRuntimeTests(unittest.TestCase):
+    def test_bounded_result_data_respects_serialized_json_budget(self):
+        from core.guarded_skill_runtime import _bounded_result_data
+
+        cases = [
+            ({"text": "x" * 10_000}, 64),
+            ({"text": "\\n\\t\\x00" * 100}, 80),
+            ({"nested": [{"value": "😀" * 100}, {"value": 42}]}, 48),
+            ({"a": True, "b": [1, 2, 3]}, 32),
+        ]
+        for value, limit in cases:
+            with self.subTest(limit=limit, value_type=type(value).__name__):
+                bounded, truncated = _bounded_result_data(value, limit)
+                self.assertIsNotNone(bounded)
+                self.assertLessEqual(
+                    len(json.dumps(bounded, ensure_ascii=True, separators=(",", ":"))),
+                    limit,
+                )
+                if len(json.dumps(value, ensure_ascii=True, separators=(",", ":"))) > limit:
+                    self.assertTrue(truncated)
+
+    def test_bounded_result_data_rejects_non_finite_and_unsupported_values(self):
+        from core.guarded_skill_runtime import _bounded_result_data
+
+        for value in ({"number": float("nan")}, {"object": object()}, {1: "non-string-key"}):
+            with self.subTest(value=type(value).__name__):
+                bounded, truncated = _bounded_result_data(value, 128)
+                self.assertIsNone(bounded)
+                self.assertTrue(truncated)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
