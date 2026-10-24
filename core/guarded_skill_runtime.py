@@ -6,6 +6,7 @@ all skill execution through this boundary; it does not sandbox skill code.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import threading
 from typing import Callable, Any
 
@@ -42,6 +43,80 @@ class OneShotSkillApprovals:
     def clear(self) -> None:
         with self._lock:
             self._approved.clear()
+
+
+def _bounded_result_data(value: Any, limit: int) -> tuple[Any, bool]:
+    """Return JSON-safe result data within a bounded character budget."""
+    budget = [limit]
+    truncated = [False]
+
+    def visit(item: Any, depth: int = 0) -> Any:
+        if budget[0] <= 0 or depth > 8:
+            truncated[0] = True
+            return None
+        if item is None or isinstance(item, bool):
+            budget[0] -= 4
+            return item
+        if isinstance(item, int):
+            text = str(item)
+            if len(text) > budget[0]:
+                truncated[0] = True
+                return None
+            budget[0] -= len(text)
+            return item
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                truncated[0] = True
+                return None
+            text = repr(item)
+            if len(text) > budget[0]:
+                truncated[0] = True
+                return None
+            budget[0] -= len(text)
+            return item
+        if isinstance(item, str):
+            if len(item) > budget[0]:
+                result = item[:max(0, budget[0])]
+                budget[0] = 0
+                truncated[0] = True
+                return result
+            budget[0] -= len(item)
+            return item
+        if isinstance(item, dict):
+            result = {}
+            for index, (key, child) in enumerate(item.items()):
+                if index >= 100 or budget[0] <= 0:
+                    truncated[0] = True
+                    break
+                if not isinstance(key, str):
+                    truncated[0] = True
+                    continue
+                safe_key = visit(key, depth + 1)
+                if not isinstance(safe_key, str):
+                    truncated[0] = True
+                    continue
+                safe_value = visit(child, depth + 1)
+                result[safe_key] = safe_value
+            if truncated[0] and budget[0] > 16:
+                result["_truncated"] = True
+                budget[0] -= 16
+            return result
+        if isinstance(item, (list, tuple)):
+            result = []
+            for index, child in enumerate(item):
+                if index >= 100 or budget[0] <= 0:
+                    truncated[0] = True
+                    break
+                result.append(visit(child, depth + 1))
+            if truncated[0] and budget[0] > 16:
+                result.append({"_truncated": True})
+                budget[0] -= 16
+            return result
+        truncated[0] = True
+        return None
+
+    safe = visit(value)
+    return safe, truncated[0]
 
 
 def invoke_registered_skill(
@@ -82,8 +157,6 @@ def invoke_registered_skill(
         return SkillInvocationResult(False, "Skill is not registered.", skill_name, "not_found")
 
     risk = str(getattr(skill, "risk", "high")).lower()
-    # Unknown risk labels must fail closed. A plugin cannot bypass approval by
-    # declaring a novel risk value while setting requires_approval=False.
     known_risks = {"low", "medium", "high", "critical"}
     needs_approval = (
         bool(getattr(skill, "requires_approval", True))
@@ -96,7 +169,6 @@ def invoke_registered_skill(
 
     execute = getattr(skill, "execute", None)
     if not callable(execute):
-        # Built-in Yuki skills expose run(); some integrations expose execute().
         execute = getattr(skill, "run", None)
     if not callable(execute):
         record("invalid_skill")
@@ -108,8 +180,6 @@ def invoke_registered_skill(
         record("execution_failed")
         return SkillInvocationResult(False, f"Skill invocation failed safely ({type(exc).__name__}).", skill_name, "execution_failed")
 
-    # Legacy skills commonly return a plain string. Normalize that supported
-    # contract explicitly; structured results must still declare ok/message.
     data = None
     if isinstance(result, str):
         ok, message = True, result
@@ -127,6 +197,11 @@ def invoke_registered_skill(
     if not isinstance(message, str):
         message = "Skill returned an invalid result."
         ok, data = False, None
+
+    if data is not None:
+        data, data_truncated = _bounded_result_data(data, max_result_chars)
+        if data_truncated:
+            record("result_data_truncated")
     status = "completed" if ok else "skill_failed"
     record(status)
     return SkillInvocationResult(ok, message[:max_result_chars], skill_name, status, data)
