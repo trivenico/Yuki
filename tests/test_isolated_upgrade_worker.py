@@ -103,5 +103,39 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         with self.assertRaises(ToolInputError):
             self.runner._workspace_digest()
 
+
+    def test_snapshot_is_private_copy_and_original_is_unchanged(self):
+        original = self.source.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "workspace"
+            self.runner._create_workspace_snapshot(snapshot)
+            copied = snapshot / "tests" / "test_sample.py"
+            self.assertEqual(copied.read_bytes(), original)
+            self.assertNotEqual(copied.resolve(), self.source.resolve())
+            self.assertEqual(copied.stat().st_mode & 0o222, 0)
+            self.assertEqual(self.source.read_bytes(), original)
+            for current, _dirs, _files in __import__("os").walk(snapshot, topdown=False):
+                Path(current).chmod(0o700)
+
+    def test_snapshot_rejects_symlink_and_does_not_copy_outside_file(self):
+        outside = self.root.parent / (self.root.name + "-outside.py")
+        outside.write_text("SECRET = True\\n", encoding="utf-8")
+        link = self.root / "tests" / "test_escape.py"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            outside.unlink(missing_ok=True)
+            self.skipTest("symlinks unavailable")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                snapshot = Path(tmp) / "workspace"
+                with self.assertRaises(ToolInputError):
+                    self.runner._create_workspace_snapshot(snapshot)
+                self.assertFalse((snapshot / "tests" / "test_escape.py").exists())
+        finally:
+            outside.unlink(missing_ok=True)
+            if (self.root / "tests").exists():
+                (self.root / "tests").chmod(0o700)
+
 if __name__ == "__main__":
     unittest.main()
