@@ -156,28 +156,47 @@ class PodmanIsolatedTestRunner:
             return True
         return False
 
-    @staticmethod
-    def _open_regular_file(path: Path) -> tuple[BinaryIO, os.stat_result]:
-        """Open one regular file and verify the opened descriptor matches the path.
+    def _open_regular_file(self, path: Path) -> tuple[BinaryIO, os.stat_result]:
+        """Open a regular file through no-follow directory descriptors.
 
-        O_NOFOLLOW blocks final-component symlinks on platforms that support it.
-        The before/after lstat plus fstat identity checks provide a fail-closed
-        fallback against final-component replacement on platforms without it.
-        This does not make untrusted parent directories safe; callers should use a
-        private staged workspace and must not treat this as a complete sandbox.
+        Each path component below the resolved workspace root is opened relative
+        to an already-open directory descriptor with O_NOFOLLOW. This prevents a
+        swapped parent directory or final-component symlink from redirecting the
+        read outside the workspace. Platforms lacking these primitives fail closed.
         """
-        fd = None
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        dir_fd_supported = os.open in getattr(os, "supports_dir_fd", set())
+        if nofollow is None or directory_flag is None or not dir_fd_supported:
+            raise ToolInputError("safe descriptor-based worker file access is unsupported on this platform.")
+        relative = path.relative_to(self.root)
+        parts = relative.parts
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise ToolInputError("worker file path is not a safe relative path.")
+        root_fd = None
+        parent_fd = None
+        file_fd = None
         try:
-            before = path.lstat()
+            root_fd = os.open(self.root, os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0))
+            parent_fd = root_fd
+            for component in parts[:-1]:
+                next_fd = os.open(
+                    component, os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=parent_fd,
+                )
+                if parent_fd != root_fd:
+                    os.close(parent_fd)
+                parent_fd = next_fd
+            leaf = parts[-1]
+            before = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
             if not stat.S_ISREG(before.st_mode):
                 raise ToolInputError("only regular files are allowed in worker input.")
-            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
-            nofollow = getattr(os, "O_NOFOLLOW", 0)
-            if nofollow:
-                flags |= nofollow
-            fd = os.open(path, flags)
-            opened = os.fstat(fd)
-            after = path.lstat()
+            file_fd = os.open(
+                leaf, os.O_RDONLY | nofollow | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent_fd,
+            )
+            opened = os.fstat(file_fd)
+            after = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
             identity_before = (before.st_dev, before.st_ino)
             identity_opened = (opened.st_dev, opened.st_ino)
             identity_after = (after.st_dev, after.st_ino)
@@ -188,16 +207,20 @@ class PodmanIsolatedTestRunner:
                 or identity_opened != identity_after
             ):
                 raise ToolInputError("worker input changed during safe file open.")
-            stream = os.fdopen(fd, "rb")
-            fd = None
+            stream = os.fdopen(file_fd, "rb")
+            file_fd = None
             return stream, opened
         except ToolInputError:
             raise
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, TypeError) as exc:
             raise ToolInputError("unable to safely open worker input file.") from exc
         finally:
-            if fd is not None:
-                os.close(fd)
+            if file_fd is not None:
+                os.close(file_fd)
+            if parent_fd is not None and parent_fd != root_fd:
+                os.close(parent_fd)
+            if root_fd is not None:
+                os.close(root_fd)
 
     def _workspace_digest(self) -> str:
         """Hash a bounded workspace through verified regular-file descriptors."""
