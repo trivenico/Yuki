@@ -97,11 +97,13 @@ def invoke_registered_skill(
         record("execution_failed")
         return SkillInvocationResult(False, f"Skill invocation failed safely ({type(exc).__name__}).", skill_name, "execution_failed")
 
-    # Legacy skills commonly return a plain string; normalize that contract
-    # explicitly while preserving validation for structured result objects.
+    # Legacy skills commonly return a plain string. Normalize that supported
+    # contract explicitly; structured results must still declare ok/message.
     if isinstance(result, str):
-        ok = True
-        message = result
+        ok, message = True, result
+    elif isinstance(result, bool):
+        ok = result
+        message = "Skill completed." if result else "Skill reported failure."
     else:
         ok = bool(getattr(result, "ok", False))
         message = getattr(result, "message", "Skill returned an invalid result.")
