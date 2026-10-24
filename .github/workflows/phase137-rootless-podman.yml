@@ -70,11 +70,11 @@ jobs:
 
       - name: Pull only the approved digest-pinned worker image
         env:
-          WORKER_IMAGE: ${{ inputs.worker_image }}
+          WORKER_IMAGE: ${{ inputs.worker_image || vars.YUKI_TEST_WORKER_IMAGE }}
         run: podman pull "$WORKER_IMAGE"
 
       - name: Run opt-in integration contract
         env:
           YUKI_PODMAN_INTEGRATION: "1"
-          YUKI_TEST_WORKER_IMAGE: ${{ inputs.worker_image }}
+          YUKI_TEST_WORKER_IMAGE: ${{ inputs.worker_image || vars.YUKI_TEST_WORKER_IMAGE }}
         run: python -m unittest tests.integration.test_isolated_upgrade_worker_podman -v
