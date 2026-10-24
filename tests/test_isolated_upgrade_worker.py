@@ -87,6 +87,52 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
             runner.run(principal=self.principal, test_module="tests.test_link")
 
 
+    def test_safe_open_rejects_symlink_file(self):
+        outside = self.root.parent / (self.root.name + "-safe-open-outside.txt")
+        outside.write_text("outside", encoding="utf-8")
+        link = self.root / "tests" / "safe-open-link.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            outside.unlink(missing_ok=True)
+            self.skipTest("symlinks unavailable")
+        try:
+            with self.assertRaises(ToolInputError):
+                self.runner._open_regular_file(link)
+        finally:
+            outside.unlink(missing_ok=True)
+
+    def test_safe_open_detects_path_replaced_with_symlink(self):
+        import os
+
+        target = self.root / "tests" / "replace-me.txt"
+        target.write_text("trusted", encoding="utf-8")
+        outside = self.root.parent / (self.root.name + "-replacement-target.txt")
+        outside.write_text("outside", encoding="utf-8")
+        original_open = os.open
+        replaced = False
+
+        def replace_then_open(path, flags, *args, **kwargs):
+            nonlocal replaced
+            if Path(path) == target and not replaced:
+                replaced = True
+                target.unlink()
+                try:
+                    target.symlink_to(outside)
+                except (OSError, NotImplementedError):
+                    target.write_text("trusted", encoding="utf-8")
+                    self.skipTest("symlinks unavailable")
+            return original_open(path, flags, *args, **kwargs)
+
+        try:
+            with patch("automation.isolated_upgrade_worker.os.open", side_effect=replace_then_open):
+                with self.assertRaises(ToolInputError):
+                    self.runner._open_regular_file(target)
+            self.assertTrue(replaced)
+        finally:
+            target.unlink(missing_ok=True)
+            outside.unlink(missing_ok=True)
+
     def test_workspace_digest_changes_when_any_file_changes(self):
         before = self.runner._workspace_digest()
         (self.root / "README.md").write_text("different staged content", encoding="utf-8")
