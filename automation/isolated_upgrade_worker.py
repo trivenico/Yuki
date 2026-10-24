@@ -371,7 +371,7 @@ class PodmanIsolatedTestRunner:
         """Return controller-owned code that verifies and safely unpacks the artifact."""
         return (
                 "import hashlib,os,pathlib,sys,tarfile,tempfile,unittest\n"
-                "archive=pathlib.Path('/input/workspace.tar')\n"
+                "archive=pathlib.Path('/tmp/workspace.tar')\n"
                 "expected=sys.argv[1]; target=sys.argv[2]\n"
                 "h=hashlib.sha256(archive.read_bytes()).hexdigest()\n"
                 "if h != expected: raise SystemExit('artifact digest mismatch')\n"
@@ -421,9 +421,8 @@ class PodmanIsolatedTestRunner:
             "--entrypoint", "python",
             "--pids-limit", str(self.pids_limit),
             "--memory", self.memory_limit, "--cpus", self.cpu_limit,
-            "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
             "--tmpfs", "/work:rw,nosuid,nodev,size=100m",
-            "--mount", f"type=bind,src={artifact_path.parent},dst=/input,ro",
+            "--mount", f"type=bind,src={artifact_path.parent},dst=/tmp,ro",
             "--env", "PYTHONIOENCODING=utf-8",
             "--env", "PYTHONUNBUFFERED=1",
             "--env", "PYTHONDONTWRITEBYTECODE=1",
