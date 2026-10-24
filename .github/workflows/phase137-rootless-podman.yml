@@ -1,0 +1,75 @@
+name: Phase 137 rootless Podman isolation
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_image:
+        description: "Trusted Python 3.11+ worker image pinned by @sha256:<64 hex chars>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase137-podman-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rootless-podman-integration:
+    name: Rootless Podman isolation contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out selected ref
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate immutable worker image input
+        env:
+          WORKER_IMAGE: ${{ inputs.worker_image }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          image = os.environ["WORKER_IMAGE"].strip()
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:_-]*@sha256:[0-9a-f]{64}", image):
+              raise SystemExit("worker_image must be a valid image reference pinned by a lowercase sha256 digest")
+          if not any(image.startswith(prefix) for prefix in ("docker.io/", "quay.io/", "ghcr.io/")):
+              raise SystemExit("worker_image must come from docker.io, quay.io, or ghcr.io")
+          PY
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes podman
+
+      - name: Verify rootless runtime
+        run: |
+          podman info --format json > podman-info.json
+          python - <<'PY'
+          import json
+          with open("podman-info.json", encoding="utf-8") as stream:
+              info = json.load(stream)
+          rootless = info.get("host", {}).get("security", {}).get("rootless")
+          if rootless is not True:
+              raise SystemExit("Podman is not running rootless; refusing integration test")
+          PY
+
+      - name: Pull only the approved digest-pinned worker image
+        env:
+          WORKER_IMAGE: ${{ inputs.worker_image }}
+        run: podman pull "$WORKER_IMAGE"
+
+      - name: Install project
+        run: python -m pip install --upgrade pip && python -m pip install -e .
+
+      - name: Run opt-in integration contract
+        env:
+          YUKI_PODMAN_INTEGRATION: "1"
+          YUKI_TEST_WORKER_IMAGE: ${{ inputs.worker_image }}
+        run: python -m unittest tests.integration.test_isolated_upgrade_worker_podman -v
