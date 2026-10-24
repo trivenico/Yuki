@@ -1,6 +1,11 @@
 name: Phase 137 rootless Podman isolation
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/phase137-rootless-podman.yml"
+      - "automation/isolated_upgrade_worker.py"
+      - "tests/integration/test_isolated_upgrade_worker_podman.py"
   workflow_dispatch:
     inputs:
       worker_image:
