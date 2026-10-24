@@ -98,6 +98,46 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         third = self.runtime.invoke("weather")
         self.assertEqual(third.status, "approval_required")
 
+    def test_structured_result_data_is_bounded(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        class LargeResultSkill:
+            name = "large"
+            risk = "low"
+            requires_approval = False
+            def execute(self, _argument=""):
+                return {"ok": True, "message": "done", "payload": "x" * 100_000}
+
+        registry = Registry()
+        registry.register(LargeResultSkill())
+        events = []
+        result = invoke_registered_skill(
+            registry, "large", approvals=OneShotSkillApprovals(),
+            audit=lambda action, status: events.append((action, status)),
+            max_result_chars=64,
+        )
+        self.assertTrue(result.ok)
+        self.assertLessEqual(len(result.data["payload"]), 64)
+        self.assertIn(("skill:invoke", "result_data_truncated"), events)
+
+    def test_non_json_result_data_is_not_returned(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        class InvalidDataSkill:
+            name = "invalid-data"
+            risk = "low"
+            requires_approval = False
+            def execute(self, _argument=""):
+                return {"ok": True, "message": "done", "payload": object()}
+
+        registry = Registry()
+        registry.register(InvalidDataSkill())
+        result = invoke_registered_skill(
+            registry, "invalid-data", approvals=OneShotSkillApprovals(),
+        )
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.data)
+
 
 if __name__ == "__main__":
     unittest.main()
