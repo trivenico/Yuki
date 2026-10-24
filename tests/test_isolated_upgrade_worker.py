@@ -187,8 +187,9 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             snapshot = Path(tmp) / "snapshot"
             self.runner._create_workspace_snapshot(snapshot)
-            artifact, _digest = self.runner._create_content_addressed_artifact(
-                Path(tmp) / "workspace.tar", root=snapshot
+            snapshot_runner = self.make_runner(workspace=snapshot)
+            artifact, _digest = snapshot_runner._create_content_addressed_artifact(
+                Path(tmp) / "workspace.tar"
             )
             with tarfile.open(artifact, "r:") as archive:
                 names = {member.name for member in archive.getmembers()}
