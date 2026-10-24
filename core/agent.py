@@ -4,6 +4,7 @@ from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
+from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
 from skills.catalog import SkillCatalog
@@ -32,6 +33,7 @@ class YukiCoreAgent:
             available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
             self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
+        self.invocation_approvals = OneShotSkillApprovals()
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
@@ -76,17 +78,24 @@ class YukiCoreAgent:
         if not approved:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
                                  name, stage="permission_denied")
-        try:
-            result = skill.execute(argument)
-            if isinstance(result, dict):
-                ok = bool(result.get("ok", True))
-                message = str(result.get("message", "Skill completed." if ok else "Skill failed."))
-                data = {key: value for key, value in result.items() if key not in {"ok", "message"}}
-            else:
-                ok = bool(getattr(result, "ok", False))
-                message = str(getattr(result, "message", "Skill returned an unsupported result."))
-                data = getattr(result, "data", None)
-            return AgentResponse(ok, message, name, data, stage="report" if ok else "observe")
-        except Exception:
-            return AgentResponse(False, "Skill failed safely; detailed exception was not exposed.", name,
-                                 stage="observe")
+        risk = str(getattr(skill, "risk", "high")).lower()
+        needs_guard_approval = (
+            bool(getattr(skill, "requires_approval", True))
+            or risk not in {"low", "medium", "high", "critical"}
+            or risk in {"high", "critical"}
+        )
+        if needs_guard_approval:
+            self.invocation_approvals.approve(name)
+        result = invoke_registered_skill(
+            self.registry,
+            name,
+            argument,
+            approvals=self.invocation_approvals,
+        )
+        return AgentResponse(
+            result.ok,
+            result.message,
+            name,
+            result.data,
+            stage="report" if result.ok else "observe",
+        )
