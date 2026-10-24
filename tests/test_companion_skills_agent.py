@@ -62,6 +62,17 @@ class CompanionSkillAgentTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertIn("python", result.data)
 
+    def test_permission_request_is_bound_to_argument_fingerprint(self):
+        seen = []
+        gate = PermissionGate(lambda request: seen.append(request) or True)
+        agent = YukiCoreAgent([TimeSkill()], gate)
+        self.assertTrue(agent.run_skill("time", "first-sensitive-argument").ok)
+        self.assertTrue(agent.run_skill("time", "second-sensitive-argument").ok)
+        self.assertNotEqual(seen[0].action, seen[1].action)
+        self.assertIn(":sha256:", seen[0].action)
+        self.assertNotIn("first-sensitive-argument", seen[0].action)
+        self.assertNotIn("first-sensitive-argument", seen[0].reason)
+
 
 if __name__ == "__main__":
     unittest.main()
