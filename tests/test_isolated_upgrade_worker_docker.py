@@ -83,7 +83,7 @@ class DockerIsolatedTestRunnerTests(unittest.TestCase):
     def test_cleanup_verifies_container_is_gone(self):
         cidfile = self.root / "worker.cid"
         cidfile.write_text("a" * 64, encoding="utf-8")
-        absent = type("Result", (), {"returncode": 1, "stdout": b"", "stderr": b""})()
+        absent = type("Result", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
         with patch("automation.isolated_upgrade_worker_docker.subprocess.run", return_value=absent) as run:
             self.runner._ensure_container_removed("/usr/bin/docker", cidfile)
         self.assertEqual(run.call_count, 1)
