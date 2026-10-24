@@ -115,7 +115,7 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
 
     def test_failed_test_stops_remaining_targets_and_never_promotes(self):
         old = self.file.read_text(encoding="utf-8")
-        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\\n")
+        change = FileChange("src/example.py", hashlib.sha256(old.encode()).hexdigest(), "VALUE = 2\n")
         coordinator = IsolatedUpgradeCoordinator(
             self.root,
             trusted_principal=lambda p: p.actor_id == "test-operator",
