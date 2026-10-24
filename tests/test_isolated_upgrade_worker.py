@@ -170,6 +170,38 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
         self.assertNotIn("--privileged", command)
         self.assertEqual(command.count("--network=none"), 1)
 
+    def test_snapshot_and_artifact_exclude_common_credentials_and_runtime_state(self):
+        secret_files = [
+            self.root / ".env",
+            self.root / ".env.production",
+            self.root / "credentials.json",
+            self.root / "private.key",
+            self.root / ".aws" / "credentials",
+            self.root / ".git" / "config",
+            self.root / ".venv" / "pyvenv.cfg",
+        ]
+        for path in secret_files:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("do-not-package-this", encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "snapshot"
+            self.runner._create_workspace_snapshot(snapshot)
+            artifact, _digest = self.runner._create_content_addressed_artifact(
+                Path(tmp) / "workspace.tar", root=snapshot
+            )
+            with tarfile.open(artifact, "r:") as archive:
+                names = {member.name for member in archive.getmembers()}
+
+            for path in secret_files:
+                relative = path.relative_to(self.root).as_posix()
+                self.assertFalse((snapshot / relative).exists(), relative)
+                self.assertNotIn(relative, names)
+
+            self.assertIn("tests/test_sample.py", names)
+            for current, _dirs, _files in __import__("os").walk(snapshot, topdown=False):
+                Path(current).chmod(0o700)
+
     def test_artifact_is_digest_addressed_and_contains_regular_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             artifact, digest = self.runner._create_content_addressed_artifact(Path(tmp) / "workspace.tar")
