@@ -1,0 +1,261 @@
+"""Rootless Podman adapter for bounded, network-disabled upgrade test execution.
+
+This adapter is a defense-in-depth boundary, not a claim that containers defeat
+all kernel/runtime vulnerabilities. It fails closed unless rootless Podman and an
+immutable image digest are configured. Production use still requires an audited
+host, patched kernel/runtime, monitoring, and adversarial integration tests.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import selectors
+import shutil
+import signal
+import subprocess
+import time
+from typing import Callable, Sequence
+
+from automation.approved_workspace_changes import _MAX_OUTPUT_BYTES
+from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError, ToolPrincipal
+
+_IMAGE_DIGEST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]*@sha256:[0-9a-f]{64}$")
+_SAFE_MODULE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+_MAX_TIMEOUT = 120
+_MAX_OUTPUT = 64 * 1024
+
+
+@dataclass(frozen=True)
+class IsolatedTestRunResult:
+    target: str
+    exit_code: int
+    timed_out: bool
+    duration_seconds: float
+    stdout: str
+    stderr: str
+
+
+class PodmanIsolatedTestRunner:
+    """Execute allow-listed unittest modules in a rootless, hardened Podman container."""
+
+    def __init__(
+        self,
+        workspace: str | Path,
+        *,
+        image: str,
+        trusted_principal: Callable[[ToolPrincipal], bool],
+        approve_run: Callable[[str, str, str], bool],
+        audit: Callable[[dict], None],
+        allowed_test_modules: Sequence[str],
+        timeout_seconds: int = 60,
+        podman_binary: str = "podman",
+        output_limit_bytes: int = _MAX_OUTPUT,
+        memory_limit: str = "512m",
+        cpu_limit: str = "1",
+        pids_limit: int = 64,
+    ) -> None:
+        self.root = Path(workspace).expanduser().resolve()
+        if not self.root.is_dir():
+            raise ValueError("workspace must be an existing directory.")
+        if not isinstance(image, str) or not _IMAGE_DIGEST.fullmatch(image):
+            raise ValueError("worker image must be pinned by immutable sha256 digest.")
+        if not all(callable(fn) for fn in (trusted_principal, approve_run, audit)):
+            raise TypeError("trusted principal, approval and audit callbacks are required.")
+        if not isinstance(allowed_test_modules, (tuple, list)) or not allowed_test_modules:
+            raise ValueError("explicit allowed_test_modules are required.")
+        if any(not isinstance(m, str) or not _SAFE_MODULE.fullmatch(m) for m in allowed_test_modules):
+            raise ValueError("test modules must be simple allow-listed Python module names.")
+        if len(set(allowed_test_modules)) != len(allowed_test_modules):
+            raise ValueError("duplicate test modules are not allowed.")
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= _MAX_TIMEOUT:
+            raise ValueError("timeout_seconds must be an integer from 1 to 120.")
+        if isinstance(output_limit_bytes, bool) or not isinstance(output_limit_bytes, int) or not 1024 <= output_limit_bytes <= _MAX_OUTPUT:
+            raise ValueError("output_limit_bytes must be between 1024 and 65536.")
+        if memory_limit not in {"256m", "512m", "1g"}:
+            raise ValueError("memory_limit must be one of the reviewed fixed limits.")
+        if cpu_limit not in {"0.5", "1", "2"}:
+            raise ValueError("cpu_limit must be one of the reviewed fixed limits.")
+        if isinstance(pids_limit, bool) or pids_limit not in {32, 64, 128}:
+            raise ValueError("pids_limit must be one of the reviewed fixed limits.")
+        if not isinstance(podman_binary, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", podman_binary):
+            raise ValueError("podman_binary must be a simple executable name.")
+        self.image = image
+        self.trusted_principal = trusted_principal
+        self.approve_run = approve_run
+        self.audit = audit
+        self.allowed_test_modules = tuple(allowed_test_modules)
+        self.timeout_seconds = timeout_seconds
+        self.podman_binary = podman_binary
+        self.output_limit_bytes = output_limit_bytes
+        self.memory_limit = memory_limit
+        self.cpu_limit = cpu_limit
+        self.pids_limit = pids_limit
+
+    def _record(self, actor: str, outcome: str, digest: str, target: str, **extra: object) -> None:
+        event = {"actor_id": actor[:200], "action": "isolated_tests.run", "outcome": outcome,
+                 "content_digest": digest, "target": target[:200], "worker_image": self.image}
+        event.update(extra)
+        try:
+            self.audit(event)
+        except Exception as exc:
+            raise RuntimeError("audit unavailable; isolated test operation denied.") from exc
+
+    def _verify_rootless_runtime(self, binary: str) -> None:
+        try:
+            result = subprocess.run(
+                [binary, "info", "--format", "json"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
+                check=False, shell=False, env={"PATH": os.environ.get("PATH", "")},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ToolAuthorizationError("rootless Podman runtime is unavailable.") from exc
+        if result.returncode != 0 or len(result.stdout) > 1024 * 1024:
+            raise ToolAuthorizationError("Podman runtime health check failed.")
+        try:
+            info = json.loads(result.stdout.decode("utf-8"))
+            rootless = info["host"]["security"]["rootless"]
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError) as exc:
+            raise ToolAuthorizationError("unable to verify rootless Podman mode.") from exc
+        if rootless is not True:
+            raise ToolAuthorizationError("isolated test execution requires rootless Podman.")
+
+    def _module_file(self, module: str) -> Path:
+        if module not in self.allowed_test_modules:
+            raise ToolAuthorizationError("test target is not explicitly allow-listed.")
+        relative = Path(*module.split("."))
+        candidate = self.root / relative.with_suffix(".py")
+        package_init = self.root / relative / "__init__.py"
+        source = candidate if candidate.is_file() else package_init
+        try:
+            resolved = source.resolve(strict=True)
+            resolved.relative_to(self.root)
+            cursor = self.root
+            for part in source.relative_to(self.root).parts:
+                cursor = cursor / part
+                if cursor.is_symlink():
+                    raise ToolInputError("symlink test targets are not allowed.")
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ToolInputError("test target must resolve inside the staged workspace.") from exc
+        if not source.is_file() or source.stat().st_size > 1024 * 1024:
+            raise ToolInputError("test target is missing or exceeds the source size limit.")
+        return source
+
+    def run(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
+        if not isinstance(principal, ToolPrincipal):
+            raise ToolAuthorizationError("trusted authenticated principal required.")
+        try:
+            trusted = self.trusted_principal(principal) is True
+        except Exception:
+            trusted = False
+        if not trusted or not isinstance(principal.actor_id, str) or not principal.actor_id.strip():
+            raise ToolAuthorizationError("principal validation failed closed.")
+        if not isinstance(principal.permissions, frozenset) or "tests:execute" not in principal.permissions:
+            raise ToolAuthorizationError("tests:execute permission is required.")
+        source = self._module_file(test_module)
+        source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        run_digest = hashlib.sha256(
+            f"{test_module}:{source_digest}:{self.image}:{self.timeout_seconds}:{self.memory_limit}:{self.cpu_limit}:{self.pids_limit}".encode()
+        ).hexdigest()
+        run_id = "isolated_test_" + run_digest[:24]
+        try:
+            approved = self.approve_run(principal.actor_id, run_id, run_digest) is True
+        except Exception:
+            approved = False
+        if not approved:
+            self._record(principal.actor_id, "denied", run_digest, test_module)
+            raise ToolAuthorizationError("explicit approval for this isolated test digest is required.")
+        self._record(principal.actor_id, "requested", run_digest, test_module)
+        binary = shutil.which(self.podman_binary)
+        if not binary:
+            self._record(principal.actor_id, "runtime_unavailable", run_digest, test_module)
+            raise ToolAuthorizationError("Podman executable is unavailable; isolated tests denied.")
+        self._verify_rootless_runtime(binary)
+
+        command = [
+            binary, "run", "--rm", "--pull=never",
+            "--network=none", "--read-only", "--userns=keep-id",
+            "--user=65532:65532", "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--pids-limit", str(self.pids_limit),
+            "--memory", self.memory_limit, "--cpus", self.cpu_limit,
+            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
+            "--mount", f"type=bind,src={self.root},dst=/workspace,ro",
+            "--workdir", "/workspace",
+            "--env", "PYTHONIOENCODING=utf-8",
+            "--env", "PYTHONUNBUFFERED=1",
+            self.image, "python", "-m", "unittest", test_module, "-v",
+        ]
+        start = time.monotonic()
+        stdout = bytearray()
+        stderr = bytearray()
+        timed_out = False
+        output_exceeded = False
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                shell=False, close_fds=True, start_new_session=True,
+                env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
+            )
+            assert proc.stdout is not None and proc.stderr is not None
+            with selectors.DefaultSelector() as selector:
+                selector.register(proc.stdout, selectors.EVENT_READ, stdout)
+                selector.register(proc.stderr, selectors.EVENT_READ, stderr)
+                while selector.get_map() or proc.poll() is None:
+                    remaining = self.timeout_seconds - (time.monotonic() - start)
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                    for key, _ in selector.select(min(0.1, remaining)):
+                        chunk = os.read(key.fd, 8192)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        sink = key.data
+                        if len(stdout) + len(stderr) + len(chunk) > self.output_limit_bytes:
+                            room = max(0, self.output_limit_bytes - len(stdout) - len(stderr))
+                            sink.extend(chunk[:room])
+                            output_exceeded = True
+                            break
+                        sink.extend(chunk)
+                    if output_exceeded:
+                        break
+                if timed_out or output_exceeded:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        pass
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2)
+        except (OSError, ValueError) as exc:
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
+                proc.wait()
+            self._record(principal.actor_id, "worker_error", run_digest, test_module)
+            raise RuntimeError("isolated worker failed to start or supervise.") from exc
+        duration = round(time.monotonic() - start, 3)
+        if timed_out:
+            exit_code = 124
+            outcome = "timed_out"
+        elif output_exceeded:
+            exit_code = 125
+            outcome = "output_limit_exceeded"
+        else:
+            exit_code = proc.returncode if proc is not None and proc.returncode is not None else 125
+            outcome = "succeeded" if exit_code == 0 else "failed"
+        self._record(principal.actor_id, outcome, run_digest, test_module,
+                     exit_code=exit_code, timed_out=timed_out, output_exceeded=output_exceeded,
+                     duration_seconds=duration, source_digest=source_digest)
+        return IsolatedTestRunResult(test_module, exit_code, timed_out or output_exceeded,
+                                     duration, stdout.decode("utf-8", errors="replace"),
+                                     stderr.decode("utf-8", errors="replace"))
