@@ -16,8 +16,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # This is intentionally a manual release gate that can run against the PR
+  # branch before merge. Keep permissions read-only and require an immutable,
+  # allow-listed worker image digest below.
   rootless-podman-integration:
-    if: github.ref == 'refs/heads/main'
     name: Rootless Podman isolation contract
     runs-on: ubuntu-latest
     timeout-minutes: 15
