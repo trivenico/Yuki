@@ -5,6 +5,7 @@ skill execution belongs in a separate integration test once the manifest runtime
 and subprocess adapter are implemented on the same branch.
 """
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -156,6 +157,46 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual([event["event_type"] for event in events],
                              ["requested", "approved", "executed"])
             self.assertNotIn("persisted", str(events))
+
+
+    def test_concurrent_in_memory_approvals_execute_at_most_once(self):
+        barrier = threading.Barrier(3)
+        outcomes = []
+        outcomes_lock = threading.Lock()
+
+        def attempt():
+            barrier.wait()
+            outcome = self.approve()
+            with outcomes_lock:
+                outcomes.append(outcome.status)
+
+        threads = [threading.Thread(target=attempt) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(self.planner.executed), 1)
+        self.assertEqual(outcomes.count("completed"), 1)
+        self.assertEqual(outcomes.count("pending_not_found"), 1)
+
+    def test_rejects_oversized_action_snapshot(self):
+        with self.assertRaisesRegex(ValueError, "JSON-safe"):
+            self.coordinator.record(
+                self.planner, action_result("x" * (17 * 1024)),
+                actor="owner", session_id="session-a",
+            )
+
+    def test_rejects_unbounded_identity_values(self):
+        with self.assertRaisesRegex(ValueError, "actor identity"):
+            self.coordinator.record(
+                self.planner, action_result(), actor="x" * 257, session_id="session-a"
+            )
+        with self.assertRaisesRegex(ValueError, "session identity"):
+            self.coordinator.record(
+                self.planner, action_result(), actor="owner", session_id="x" * 257
+            )
 
 
 if __name__ == "__main__":
