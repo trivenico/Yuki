@@ -184,7 +184,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
 
     def test_invalid_utf8_argument_is_rejected_without_exception(self):
         self.registry.register(DemoSkill())
-        result = self.runtime.invoke("weather", "\\ud800")
+        result = self.runtime.invoke("weather", chr(0xD800))
         self.assertEqual(result.status, "invalid_argument")
         self.assertFalse(result.ok)
 
