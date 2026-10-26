@@ -251,6 +251,19 @@ class LearningTests(unittest.TestCase):
                 self.assertEqual({item["task"] for item in history},
                                  {f"task-{index}" for index in range(40)})
 
+    def test_valid_legacy_learning_history_is_migrated_and_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "learning.json"
+            db_path = Path(folder) / "learning.sqlite3"
+            legacy = [{"task": "old task", "outcome": "ok", "approach": "simple",
+                       "lesson": "keep backups", "created_at": "2026-01-01T00:00:00Z"}]
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            with patch.object(yuki_learning, "HISTORY_FILE", path), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", db_path):
+                self.assertEqual(yuki_learning.load_history(), legacy)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), legacy)
+                self.assertTrue(db_path.exists())
+
     def test_malformed_legacy_learning_file_is_preserved(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "learning.json"
@@ -267,7 +280,7 @@ class LearningTests(unittest.TestCase):
             with patch.object(yuki_learning, "HISTORY_FILE", path), \
                  patch.object(yuki_learning, "HISTORY_DB_FILE", Path(folder) / "learning.sqlite3"):
                 yuki_learning.record_outcome("test", "api_key=supersecretvalue123")
-                saved = path.read_text(encoding="utf-8")
+                saved = json.dumps(yuki_learning.load_history(), ensure_ascii=False)
                 self.assertNotIn("supersecretvalue123", saved)
                 self.assertIn("[REDACTED]", saved)
 
