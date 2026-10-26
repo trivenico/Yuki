@@ -155,7 +155,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             self.engine,
             SlowRuntime(),
             worker_id="heartbeat-worker",
-            lease_seconds=3,
+            lease_seconds=2,
             heartbeat_interval_seconds=0.05,
         )
         outcomes = []
@@ -166,7 +166,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             # Wait longer than the original lease; heartbeats must keep the
             # task owned and prevent another recovery/claim from stealing it.
             import time
-            time.sleep(0.25)
+            time.sleep(2.2)
             self.assertEqual(self.engine.recover_expired_leases(), 0)
             self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
         finally:
