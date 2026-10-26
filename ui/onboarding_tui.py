@@ -22,7 +22,7 @@ def _yes(prompt: str, default: bool = True) -> bool:
 def run_onboarding(*, path=None, verify_provider=True) -> dict:
     print("\nWelcome to Yuki setup")
     print("Secrets are never written to config.json. Set the displayed environment variable in your shell to persist credentials.")
-    names = list(PROVIDERS)
+    # Prefer a real local runtime; the mock adapter is not offered in production setup.\n    names = ["ollama"] + [name for name in PROVIDERS if name != "ollama"]
     for index, name in enumerate(names, 1):
         print(f"  {index}. {name}")
     while True:
