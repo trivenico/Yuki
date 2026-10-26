@@ -134,6 +134,48 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertNotIn("secret token", str(stored["last_error"]))
         self.assertEqual(stored["attempts"], 1)
 
+    def test_worker_renews_lease_during_long_running_invocation(self):
+        import threading
+        from core.durable_task_engine import TaskConflict
+
+        started = threading.Event()
+        release = threading.Event()
+
+        class SlowRuntime:
+            def invoke(self, _skill_name, _argument):
+                started.set()
+                if not release.wait(timeout=3):
+                    raise RuntimeError("test invocation timed out")
+                return type("Result", (), {
+                    "ok": True, "status": "completed", "message": "done"
+                })()
+
+        task = self.submit("read_demo", "slow", key="lease-heartbeat")
+        worker = DurableSkillWorker(
+            self.engine,
+            SlowRuntime(),
+            worker_id="heartbeat-worker",
+            lease_seconds=3,
+            heartbeat_interval_seconds=0.05,
+        )
+        outcomes = []
+        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=2))
+        try:
+            # Wait longer than the original lease; heartbeats must keep the
+            # task owned and prevent another recovery/claim from stealing it.
+            import time
+            time.sleep(0.25)
+            self.assertEqual(self.engine.recover_expired_leases(), 0)
+            self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
+        finally:
+            release.set()
+        thread.join(timeout=3)
+        self.assertFalse(thread.is_alive(), "worker did not finish after invocation release")
+        self.assertEqual(outcomes[0]["state"], "succeeded")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "succeeded")
+
     def test_worker_reports_committed_success_if_followup_response_fails(self):
         task = self.submit("read_demo", "commit-then-error", key="commit-response-error")
         original_complete = self.engine.complete
