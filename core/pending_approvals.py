@@ -12,7 +12,8 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 
 @dataclass(frozen=True)
@@ -57,10 +58,20 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
-    def _connect(self):
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield a connection and always close it, including on Windows.
+
+        sqlite3.Connection's context manager commits/rolls back but does not close
+        the connection. Leaving connections open can lock temporary SQLite files
+        and prevent directory cleanup on Windows.
+        """
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identity_hash(value: str) -> str:
