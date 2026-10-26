@@ -6,6 +6,7 @@ explicitly; existing JSON files are not changed automatically.
 import json
 import math
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
@@ -30,7 +31,17 @@ class SQLiteJsonStore:
             str(self.path), timeout=self.timeout_seconds, isolation_level=None
         )) as connection:
             connection.execute(f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}")
-            connection.execute("PRAGMA journal_mode = WAL")
+            # journal_mode changes acquire a database lock and can race when
+            # several processes construct the store for a brand-new database.
+            deadline = time.monotonic() + self.timeout_seconds
+            while True:
+                try:
+                    connection.execute("PRAGMA journal_mode = WAL")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
             connection.execute("PRAGMA synchronous = FULL")
             connection.execute(
                 """
