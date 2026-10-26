@@ -36,7 +36,19 @@ def _validate_state(value: Any) -> dict[str, Any]:
                 not isinstance(provider, str) or not provider or len(provider) > 64
             ))):
         return _empty_state()
-    normalized = [s for s in ONBOARDING_STEPS if s in completed]
+    # Persisted progress must be a contiguous prefix. Never let a corrupt or
+    # manually edited file skip a consent/setup gate.
+    normalized = []
+    for expected in ONBOARDING_STEPS:
+        if expected not in completed:
+            break
+        normalized.append(expected)
+    if "provider" not in normalized:
+        provider = None
+    elif provider is not None:
+        provider = provider.strip().lower()
+        if not provider:
+            provider = None
     return {"schema_version": SCHEMA_VERSION, "completed_steps": normalized,
             "selected_provider": provider, "completed": normalized == list(ONBOARDING_STEPS)}
 
