@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationErr
 from automation.self_upgrade_coordinator import IsolatedUpgradeCoordinator
 
 
+@unittest.skipUnless(os.name == "posix", "isolated rootless-Podman staging requires POSIX descriptor-relative file access")
 class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -251,3 +253,15 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(os.name == "posix", "POSIX descriptor-relative staging is supported")
+class UnsupportedPlatformStagingTests(unittest.TestCase):
+    def test_staging_fails_closed_when_descriptor_relative_open_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as root_dir, tempfile.TemporaryDirectory() as destination:
+            root = Path(root_dir)
+            (root / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
+            coordinator = object.__new__(IsolatedUpgradeCoordinator)
+            coordinator.root = root
+            with self.assertRaisesRegex(WorkspaceChangeError, "unsupported on this platform"):
+                coordinator._copy_workspace(Path(destination))
