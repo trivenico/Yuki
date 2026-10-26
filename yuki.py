@@ -236,13 +236,21 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f"Invocation approval: {'required' if requires_approval else 'not required'}"
             )
         if parts[1] == "approve" and len(parts) >= 3:
+            if registry.get(parts[2]) is None:
+                return "Cannot approve an unknown skill."
             try:
-                return _run_audited_action(
+                result = _run_audited_action(
                     "skill:approval",
                     lambda: (runtime.approve_invocation(parts[2])
                              or f"One-shot invocation approval granted for {parts[2]}."),
-                    lambda result: isinstance(result, str) and result.startswith("One-shot invocation approval granted")
+                    lambda value: isinstance(value, str) and value.startswith("One-shot invocation approval granted")
                 )
+                if isinstance(result, str) and result.startswith("Operation may have completed"):
+                    # Do not leave a privilege grant active if its durable outcome
+                    # record could not be written.
+                    runtime.invocation_approvals.consume(parts[2], "")
+                    return "Approval was revoked because audit logging failed."
+                return result
             except ValueError:
                 return "Cannot approve an unknown skill."
         if parts[1] == "invoke" and len(parts) >= 3:
