@@ -4,6 +4,7 @@ This module is a persistence foundation. Callers must still migrate to it
 explicitly; existing JSON files are not changed automatically.
 """
 import json
+import math
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -16,10 +17,14 @@ class SQLiteJsonStore:
     """Store JSON-serializable values with serialized read-modify-write updates."""
 
     def __init__(self, path, *, timeout_seconds: float = 5.0):
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        try:
+            timeout = float(timeout_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("timeout_seconds must be a finite positive number") from exc
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout_seconds must be a finite positive number")
         self.path = Path(path)
-        self.timeout_seconds = float(timeout_seconds)
+        self.timeout_seconds = timeout
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(
             str(self.path), timeout=self.timeout_seconds, isolation_level=None
