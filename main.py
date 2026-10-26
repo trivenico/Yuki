@@ -683,7 +683,7 @@ def main():
             elif command == "/desktop":
                 try:
                     from ui.desktop import run_desktop
-                    run_desktop(agent)
+                    run_desktop(agent, ai=ai, config=config)
                 except RuntimeError as exc:
                     print(f"Yuki > Desktop app unavailable: {exc}")
             elif command == "/dashboard":
