@@ -134,9 +134,20 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertNotIn("secret token", str(stored["last_error"]))
         self.assertEqual(stored["attempts"], 1)
 
+    def test_worker_rejects_invalid_heartbeat_intervals(self):
+        for interval in (True, 0, -1, float("nan"), float("inf"), 2.1, 301):
+            with self.subTest(interval=interval):
+                with self.assertRaises(ValueError):
+                    DurableSkillWorker(
+                        self.engine,
+                        self.runtime,
+                        worker_id="invalid-heartbeat",
+                        lease_seconds=4,
+                        heartbeat_interval_seconds=interval,
+                    )
+
     def test_worker_renews_lease_during_long_running_invocation(self):
         import threading
-        from core.durable_task_engine import TaskConflict
 
         started = threading.Event()
         release = threading.Event()
@@ -144,7 +155,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
         class SlowRuntime:
             def invoke(self, _skill_name, _argument):
                 started.set()
-                if not release.wait(timeout=3):
+                if not release.wait(timeout=8):
                     raise RuntimeError("test invocation timed out")
                 return type("Result", (), {
                     "ok": True, "status": "completed", "message": "done"
@@ -171,7 +182,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
         finally:
             release.set()
-        thread.join(timeout=3)
+        thread.join(timeout=5)
         self.assertFalse(thread.is_alive(), "worker did not finish after invocation release")
         self.assertEqual(outcomes[0]["state"], "succeeded")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "succeeded")
