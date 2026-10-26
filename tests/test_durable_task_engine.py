@@ -233,6 +233,19 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
 
+    def test_completed_goal_cannot_be_cancelled_or_reopened(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="completed-goal-terminal"
+        )
+        self.engine.claim("terminal-worker")
+        self.engine.complete(task["id"], "terminal-worker", {"done": True})
+        self.assertEqual(self.engine.get_goal(self.goal)["state"], "completed")
+        with self.assertRaises(TaskConflict):
+            self.engine.set_goal_state(self.goal, "cancelled")
+        with self.assertRaises(TaskConflict):
+            self.engine.set_goal_state(self.goal, "active")
+        self.assertEqual(self.engine.get_goal(self.goal)["state"], "completed")
+
     def test_goal_cancellation_emits_per_task_audit_events(self):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="goal-cancel-audit"
