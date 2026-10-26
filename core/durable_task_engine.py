@@ -284,8 +284,21 @@ class DurableTaskEngine:
             if g is None: raise TaskNotFound("goal not found")
             if g["state"] in {"completed","cancelled"} and state!="cancelled": raise TaskConflict("terminal goal cannot be resumed")
             c.execute("UPDATE goals SET state=?,updated_at=? WHERE id=?",(state,now,goal_id))
-            if state=="cancelled": c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",(now,goal_id))
-            self._event(c,goal_id,None,"goal."+state,{}); c.commit()
+            cancelled_tasks = []
+            if state=="cancelled":
+                cancelled_tasks = c.execute(
+                    "SELECT id FROM tasks WHERE goal_id=? AND state IN ('queued','running') ORDER BY created_at,id",
+                    (goal_id,),
+                ).fetchall()
+                c.execute(
+                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
+                    (now,goal_id),
+                )
+                for task in cancelled_tasks:
+                    self._event(c,goal_id,task["id"],"task.cancelled",{"reason":"goal_cancelled"})
+                self._fail_blocked_descendants(c,goal_id,now)
+            self._event(c,goal_id,None,"goal."+state,{"cancelled_task_count":len(cancelled_tasks)} if state=="cancelled" else {})
+            c.commit()
         return self.get_goal(goal_id)
 
     def _complete_goal_if_terminal(self,c,goal_id,now):
