@@ -287,6 +287,9 @@ class DurableTaskEngineTests(unittest.TestCase):
             try:
                 barrier.wait(timeout=5)
                 self.engine.set_goal_state(self.goal, "cancelled")
+            except TaskConflict:
+                # Expected if completion commits first and makes the goal terminal.
+                pass
             except Exception as exc:
                 errors.append(exc)
 
