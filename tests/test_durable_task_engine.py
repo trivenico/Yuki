@@ -17,6 +17,21 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_engine_close_is_idempotent_and_blocks_future_operations(self):
+        engine = DurableTaskEngine(":memory:")
+        goal = engine.create_goal()
+        engine.close()
+        engine.close()
+        with self.assertRaises(RuntimeError):
+            engine.get_goal(goal)
+
+    def test_engine_context_manager_closes_resources(self):
+        with DurableTaskEngine(":memory:") as engine:
+            goal = engine.create_goal()
+            self.assertEqual(engine.get_goal(goal)["state"], "active")
+        with self.assertRaises(RuntimeError):
+            engine.get_goal(goal)
+
     def test_in_memory_database_persists_across_engine_connections(self):
         engine = DurableTaskEngine(":memory:")
         goal = engine.create_goal()
