@@ -157,12 +157,94 @@ class SecurityTests(unittest.TestCase):
     def test_audit_log_stores_metadata_only_and_is_bounded(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "audit.json"
-            with patch.object(yuki_security, "AUDIT_FILE", path):
+            db_path = Path(folder) / "audit.sqlite3"
+            with patch.object(yuki_security, "AUDIT_FILE", path), \
+                 patch.object(yuki_security, "AUDIT_DB_FILE", db_path):
                 self.assertTrue(write_audit_event("tool:calculate", "completed"))
-                data = json.loads(path.read_text(encoding="utf-8"))
+                data = yuki_security.load_audit_events()
                 self.assertEqual(data[0]["action"], "tool:calculate")
                 self.assertNotIn("argument", data[0])
                 self.assertNotIn("secret", data[0])
+                self.assertTrue(db_path.exists())
+
+    def test_concurrent_audit_events_are_not_lost(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audit.json"
+            db_path = Path(folder) / "audit.sqlite3"
+            with patch.object(yuki_security, "AUDIT_FILE", path), \
+                 patch.object(yuki_security, "AUDIT_DB_FILE", db_path):
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = list(pool.map(
+                        lambda i: write_audit_event(f"task:{i}", "completed"), range(40)
+                    ))
+                self.assertTrue(all(results))
+                events = yuki_security.load_audit_events()
+                self.assertEqual(len(events), 40)
+                self.assertEqual({item["action"] for item in events},
+                                 {f"task:{i}" for i in range(40)})
+
+    def test_valid_legacy_audit_is_migrated_and_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audit.json"
+            db_path = Path(folder) / "audit.sqlite3"
+            legacy = [{"timestamp": "2026-01-01T00:00:00Z", "action": "old", "outcome": "ok"}]
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            with patch.object(yuki_security, "AUDIT_FILE", path), \
+                 patch.object(yuki_security, "AUDIT_DB_FILE", db_path):
+                self.assertEqual(yuki_security.load_audit_events(), legacy)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), legacy)
+                self.assertTrue(db_path.exists())
+
+    def test_malformed_legacy_audit_is_preserved_without_db_creation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audit.json"
+            path.write_text("{broken", encoding="utf-8")
+            db_path = Path(folder) / "audit.sqlite3"
+            with patch.object(yuki_security, "AUDIT_FILE", path), \
+                 patch.object(yuki_security, "AUDIT_DB_FILE", db_path):
+                self.assertEqual(yuki_security.load_audit_events(), [])
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+                self.assertFalse(db_path.exists())
+
+
+class MemoryTests(unittest.TestCase):
+    def test_memory_migrates_legacy_json_and_preserves_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            db_path = Path(folder) / "memory.sqlite3"
+            legacy = ["first note", "api_key=supersecretvalue123"]
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            with patch("yuki.MEMORY_FILE", path), patch("yuki.MEMORY_DB_FILE", db_path):
+                memory = load_memory()
+                self.assertEqual(memory[0], "first note")
+                self.assertNotIn("supersecretvalue123", json.dumps(memory))
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), legacy)
+                self.assertTrue(db_path.exists())
+
+    def test_concurrent_memory_additions_are_not_lost(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            db_path = Path(folder) / "memory.sqlite3"
+            with patch("yuki.MEMORY_FILE", path), patch("yuki.MEMORY_DB_FILE", db_path):
+                memory = []
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = list(pool.map(
+                        lambda i: add_memory_note(memory, f"note-{i}"), range(40)
+                    ))
+                self.assertTrue(all(results))
+                saved = load_memory()
+                self.assertEqual(len(saved), 40)
+                self.assertEqual(set(saved), {f"note-{i}" for i in range(40)})
+
+    def test_malformed_legacy_memory_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            path.write_text("{broken", encoding="utf-8")
+            db_path = Path(folder) / "memory.sqlite3"
+            with patch("yuki.MEMORY_FILE", path), patch("yuki.MEMORY_DB_FILE", db_path):
+                self.assertEqual(load_memory(), [])
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+                self.assertFalse(db_path.exists())
 
 
 class TaskTests(unittest.TestCase):
