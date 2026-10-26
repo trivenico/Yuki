@@ -247,6 +247,36 @@ class MemoryTests(unittest.TestCase):
                 self.assertFalse(db_path.exists())
 
 
+class CommandAuditTests(unittest.TestCase):
+    def setUp(self):
+        self.providers = ProviderManager()
+        self.agent = YukiAgent(provider=self.providers.create_selected_adapter())
+        self.policy = SecurityPolicy(allowed_tools=TOOLS.keys())
+
+    def test_task_mutation_is_blocked_when_audit_start_fails(self):
+        tasks = []
+        with patch("yuki.write_audit_event", return_value=False):
+            result = handle_command("/task add do not run", [], tasks,
+                                   self.agent, self.providers, self.policy)
+        self.assertIn("blocked", result.lower())
+        self.assertEqual(tasks, [])
+
+    def test_memory_mutation_is_blocked_when_audit_start_fails(self):
+        memory = []
+        with patch("yuki.write_audit_event", return_value=False):
+            result = handle_command("/memory add do not persist", memory, [],
+                                   self.agent, self.providers, self.policy)
+        self.assertIn("blocked", result.lower())
+        self.assertEqual(memory, [])
+
+    def test_learning_mutation_is_blocked_when_audit_start_fails(self):
+        with patch("yuki.write_audit_event", return_value=False), \
+             patch.object(yuki_learning, "HISTORY_DB_FILE", Path(tempfile.gettempdir()) / "unused-learning-test.sqlite3"):
+            result = handle_command("/learn test | success | lesson", [], [],
+                                   self.agent, self.providers, self.policy)
+        self.assertIn("blocked", result.lower())
+
+
 class TaskTests(unittest.TestCase):
     def _patch_task_paths(self, folder):
         path = Path(folder) / "tasks.json"
