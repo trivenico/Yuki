@@ -18,9 +18,16 @@ def create_provider(config=None, *, environ=None):
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "mock")).strip().lower()
+    selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected == "openai":
+        model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
+        return OpenAICompatibleProvider(
+            model,
+            api_key_env="OPENAI_API_KEY",
+            base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
+        )
     if selected == "gemini":
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
@@ -28,7 +35,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: mock, ollama, gemini, hybrid.")
+        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
