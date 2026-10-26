@@ -28,6 +28,7 @@ class DurableTaskEngine:
         self.db_path, self.clock = str(db_path), clock
         self._memory_uri = self.db_path == ":memory:"
         self._anchor = None
+        self._closed = False
         if self._memory_uri:
             # Each SQLite ":memory:" connection is a separate database. Keep
             # an anchor connection alive and share a unique in-memory URI so
@@ -66,7 +67,27 @@ class DurableTaskEngine:
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
 
+    def close(self):
+        """Release engine-owned resources. Safe to call more than once."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._anchor is not None:
+            self._anchor.close()
+            self._anchor = None
+
+    def __enter__(self):
+        if self._closed:
+            raise RuntimeError("task engine is closed")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
+
     def _connect(self):
+        if self._closed:
+            raise RuntimeError("task engine is closed")
         c = sqlite3.connect(
             self.db_path, timeout=10, isolation_level=None, uri=self._memory_uri
         )
