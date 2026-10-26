@@ -12,7 +12,7 @@ from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
-from core.onboarding import load_user_config, onboarding_needed
+from core.onboarding import apply_user_config, load_user_config, onboarding_needed
 from ui.onboarding_tui import run_onboarding
 from core.mcp_registry import MCPRegistry, MCPError
 from core.permissions import ApprovalRequest, PermissionGate
@@ -130,13 +130,7 @@ def main():
         config = load_config()
         user_config = load_user_config(user_config_path)
         if user_config:
-            config["provider"] = user_config["provider"]
-            config["ollama_model"] = user_config.get("model", config.get("ollama_model", ""))
-            config["base_url"] = user_config.get("base_url", "")
-            config["api_key_env"] = user_config.get("api_key_env", "")
-            config["cloud_tasks"] = user_config.get("cloud_tasks", [])
-            config["local_provider"] = user_config.get("local_provider", "ollama")
-            config["cloud_provider"] = user_config.get("cloud_provider", "openai")
+            config = apply_user_config(config, user_config)
             configured_servers = user_config.get("mcp_servers", [])
             config["mcp_servers"] = configured_servers
             configured_hosts = [urlsplit(item["endpoint"]).hostname for item in configured_servers if isinstance(item, dict) and isinstance(item.get("endpoint"), str)]
