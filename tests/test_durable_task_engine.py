@@ -28,6 +28,38 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             self.engine.submit(self.goal, "summarize", {"v": 2}, idempotency_key="same")
 
+    def test_idempotency_rejects_changed_execution_options(self):
+        parent = self.engine.submit(self.goal, "parent", {}, idempotency_key="parent")
+        self.engine.submit(self.goal, "child", {"v": 1}, idempotency_key="child", dependencies=[parent["id"]], max_attempts=2, delay_seconds=3)
+        for kwargs in (
+            {"dependencies": [], "max_attempts": 2, "delay_seconds": 3},
+            {"dependencies": [parent["id"]], "max_attempts": 3, "delay_seconds": 3},
+            {"dependencies": [parent["id"]], "max_attempts": 2, "delay_seconds": 4},
+        ):
+            with self.assertRaises(TaskConflict):
+                self.engine.submit(self.goal, "child", {"v": 1}, idempotency_key="child", **kwargs)
+
+    def test_dependencies_reject_strings_and_malformed_ids(self):
+        with self.assertRaises(ValueError):
+            self.engine.submit(self.goal, "work", {}, idempotency_key="string-deps", dependencies="task-id")
+        with self.assertRaises(ValueError):
+            self.engine.submit(self.goal, "work", {}, idempotency_key="bad-dep", dependencies=[None])
+
+    def test_worker_error_details_are_not_persisted(self):
+        task = self.engine.submit(self.goal, "work", {}, idempotency_key="redact", max_attempts=1)
+        self.engine.claim("worker")
+        secret = "api_key=very-secret-value"
+        self.engine.fail(task["id"], "worker", secret)
+        self.assertNotIn("very-secret-value", self.engine.get_task(task["id"])["last_error"])
+        events = self.engine.list_events(self.goal)
+        self.assertNotIn("very-secret-value", str(events))
+
+    def test_invalid_lease_and_delay_numbers_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.engine.submit(self.goal, "work", {}, idempotency_key="nan", delay_seconds=float("nan"))
+        with self.assertRaises(ValueError):
+            self.engine.claim("worker", lease_seconds=True)
+
     def test_dependencies_gate_claim_until_parent_succeeds(self):
         first = self.engine.submit(self.goal, "collect", {}, idempotency_key="a")
         second = self.engine.submit(self.goal, "analyze", {}, idempotency_key="b", dependencies=[first["id"]])
