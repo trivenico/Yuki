@@ -14,7 +14,7 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
     selected=str(cfg.get("provider","mock")).strip().lower()
     if selected=="mock": return MockProvider()
     model=str(cfg.get("model",cfg.get("ollama_model",env.get("YUKI_OLLAMA_MODEL","")))).strip()
-    if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
+    if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("base_url") or cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
     if selected in {"llama.cpp","llama-cpp","lm-studio"}:
         preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"]
         return _compatible(model,str(cfg.get("base_url") or env.get("YUKI_BASE_URL",preset)),str(cfg.get("api_key_env",key)),environ=env)
