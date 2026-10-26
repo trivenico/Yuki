@@ -66,6 +66,29 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertFalse(status["cloud_confirmation_required"])
         self.assertIn("not executed", status["message"])
 
+    def test_hybrid_general_cloud_route_requires_explicit_confirmation(self):
+        factory = FakeProviderFactory(cloud=True)
+        bridge = DesktopBridge(
+            FakeCoreAgent(), ai=type("AI", (), {"usage_tracker": None})(),
+            config={"provider": "hybrid", "cloud_tasks": ["general"]},
+            provider_factory=factory,
+        )
+        self.assertTrue(bridge.get_status()["cloud_confirmation_required"])
+        result = bridge.ask("Private prompt", cloud_approved=False)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["requires_confirmation"])
+        self.assertEqual(factory.provider.prompts, [])
+
+    def test_hybrid_non_general_cloud_routes_keep_general_chat_local(self):
+        factory = FakeProviderFactory(cloud=False)
+        bridge = DesktopBridge(
+            FakeCoreAgent(), ai=type("AI", (), {"usage_tracker": None})(),
+            config={"provider": "hybrid", "cloud_tasks": ["summarize_public_page"]},
+            provider_factory=factory,
+        )
+        self.assertFalse(bridge.get_status()["cloud_confirmation_required"])
+        self.assertTrue(bridge.ask("Hello")["ok"])
+
     def test_cloud_request_is_not_sent_without_explicit_confirmation(self):
         bridge, factory = self.make_bridge("openai", cloud=True)
         result = bridge.ask("Hello", cloud_approved=False)
