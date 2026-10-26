@@ -73,6 +73,28 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
             self.assertFalse((staged / "linked.txt").exists())
             self.assertEqual((staged / "ordinary.txt").read_text(encoding="utf-8"), "safe")
 
+    def test_staging_rejects_file_swapped_for_external_symlink_at_open_boundary(self):
+        with tempfile.TemporaryDirectory() as external:
+            outside = Path(external) / "outside.txt"
+            outside.write_text("must never be copied", encoding="utf-8")
+            target = self.root / "ordinary-race.txt"
+            target.write_text("initial safe content", encoding="utf-8")
+            original_open_component = IsolatedUpgradeCoordinator._open_component
+
+            def swap_before_leaf_open(name, flags, *, dir_fd):
+                if name == target.name:
+                    target.unlink()
+                    target.symlink_to(outside)
+                return original_open_component(name, flags, dir_fd=dir_fd)
+
+            with tempfile.TemporaryDirectory() as destination:
+                staged = Path(destination) / "workspace"
+                staged.mkdir()
+                with patch.object(IsolatedUpgradeCoordinator, "_open_component", side_effect=swap_before_leaf_open):
+                    self.coordinator._copy_workspace(staged)
+                self.assertFalse((staged / target.name).exists())
+                self.assertNotEqual((staged / target.name).read_text(encoding="utf-8") if (staged / target.name).exists() else "", outside.read_text(encoding="utf-8"))
+
     def test_staging_fails_closed_when_file_cannot_be_inspected(self):
         blocked = self.root / "unreadable.txt"
         blocked.write_text("content", encoding="utf-8")
