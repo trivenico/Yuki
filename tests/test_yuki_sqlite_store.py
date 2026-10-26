@@ -1,10 +1,20 @@
 """Tests for transactional SQLite JSON state storage."""
 import tempfile
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 from yuki_sqlite_store import SQLiteJsonStore
+
+
+def _increment_store_in_process(path, iterations):
+    store = SQLiteJsonStore(path, timeout_seconds=15)
+    for _ in range(iterations):
+        store.update_json(
+            "process-counter",
+            lambda state: {"value": state["value"] + 1},
+            default={"value": 0},
+        )
 
 
 class SQLiteJsonStoreTests(unittest.TestCase):
@@ -50,6 +60,16 @@ class SQLiteJsonStoreTests(unittest.TestCase):
             self.assertEqual(store.read_json("counter"), {"value": 80})
             self.assertEqual(store.revision("counter"), 81)
 
+    def test_concurrent_process_updates_do_not_lose_increments(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = str(Path(folder) / "state.sqlite3")
+            store = SQLiteJsonStore(path, timeout_seconds=15)
+            store.write_json("process-counter", {"value": 0})
+            with ProcessPoolExecutor(max_workers=4) as pool:
+                list(pool.map(_increment_store_in_process, [path] * 4, [12] * 4))
+            self.assertEqual(store.read_json("process-counter"), {"value": 48})
+            self.assertEqual(store.revision("process-counter"), 49)
+
     def test_rejects_empty_keys_and_non_finite_json(self):
         with tempfile.TemporaryDirectory() as folder:
             store = SQLiteJsonStore(Path(folder) / "state.sqlite3")
@@ -61,8 +81,10 @@ class SQLiteJsonStoreTests(unittest.TestCase):
 
     def test_invalid_timeout_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
-            with self.assertRaises(ValueError):
-                SQLiteJsonStore(Path(folder) / "state.sqlite3", timeout_seconds=0)
+            for timeout in (0, -1, float("nan"), float("inf"), "invalid", None):
+                with self.subTest(timeout=timeout):
+                    with self.assertRaises(ValueError):
+                        SQLiteJsonStore(Path(folder) / "state.sqlite3", timeout_seconds=timeout)
 
 
 if __name__ == "__main__":
