@@ -37,7 +37,7 @@ Progress is stored at `$YUKI_HOME/desktop_onboarding.json` when `YUKI_HOME` is s
 Run the focused tests from the repository root:
 
 ```sh
-python -m unittest tests.test_desktop_onboarding tests.test_desktop_service
+python -m unittest discover -s tests -p "test_desktop*.py"
 ```
 
 Then run the repository's full test/CI suite. The app requires a Python build with Tk support; on Linux, the OS may package Tk separately. The desktop app remains an early MVP until the supported OS matrix, packaged-artifact tests, and independent security review are complete.
