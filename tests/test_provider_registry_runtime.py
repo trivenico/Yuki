@@ -36,9 +36,9 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_unimplemented_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
-        message = manager.select("openai")
+        message = manager.select("anthropic")
         self.assertIn("not implemented", message)
-        self.assertEqual(manager.current().name, "mock")
+        self.assertEqual(manager.current().name, "openai")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
