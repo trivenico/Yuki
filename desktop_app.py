@@ -211,7 +211,7 @@ class YukiDesktopApp:
         self.send_button.configure(state="normal" if "permissions" in completed and not self.busy else "disabled")
         if "permissions" not in completed:
             self.status_var.set("Complete provider, privacy, and permission setup to chat.")
-        elif self.service._verified_provider is None:
+        elif not self.service.provider_verified:
             self.status_var.set("Verify the provider again to start a session.")
             self.send_button.configure(state="disabled")
         else:
