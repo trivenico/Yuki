@@ -47,6 +47,23 @@ class DesktopOnboardingTests(unittest.TestCase):
             )
             self.assertEqual(state["selected_provider"], "openai")
 
+    def test_changing_provider_invalidates_later_onboarding_steps(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "onboarding.json"
+            complete_onboarding_step(path, "welcome")
+            complete_onboarding_step(
+                path, "provider", selected_provider="openai", provider_verified=True
+            )
+            for step in ONBOARDING_STEPS[2:]:
+                state = complete_onboarding_step(path, step)
+            self.assertTrue(state["completed"])
+            state = complete_onboarding_step(
+                path, "provider", selected_provider="anthropic", provider_verified=True
+            )
+            self.assertEqual(state["completed_steps"], ["welcome", "provider"])
+            self.assertFalse(state["completed"])
+            self.assertEqual(state["selected_provider"], "anthropic")
+
     def test_provider_step_cannot_be_marked_complete_without_provider_name(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "onboarding.json"
