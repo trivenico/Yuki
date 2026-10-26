@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from yuki_agent import YukiAgent
+from yuki_storage import atomic_write_text
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -35,17 +36,10 @@ def load_memory():
 def save_memory(memory):
     safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
                    if isinstance(item, str) and item.strip()]
-    temp = MEMORY_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(safe_memory, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(MEMORY_FILE)
-        return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+    return atomic_write_text(
+        MEMORY_FILE,
+        json.dumps(safe_memory, indent=2, ensure_ascii=False),
+    )
 
 
 _SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'

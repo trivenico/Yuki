@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from yuki_storage import atomic_write_text
+
 AUDIT_FILE = Path(__file__).with_name("yuki_audit.json")
 MAX_AUDIT_RECORDS = 1000
 _SECRET_PATTERNS = [
@@ -64,14 +66,7 @@ def write_audit_event(action, outcome):
     }
     data = load_audit_events()
     data.append(event)
-    temp = AUDIT_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(AUDIT_FILE)
-        return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+    return atomic_write_text(
+        AUDIT_FILE,
+        json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False),
+    )
