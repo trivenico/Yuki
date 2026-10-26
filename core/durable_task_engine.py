@@ -232,6 +232,35 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
+    def reject(self, task_id, worker_id, reason):
+        """Terminally reject a claimed task without consuming retry attempts.
+
+        Only stable reason codes are accepted; caller-controlled detail is
+        never persisted in task state or event logs.
+        """
+        messages = {
+            "unsupported_task_type": "task type is not supported by this worker",
+            "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
+            "invalid_payload": "skill invocation payload is invalid",
+        }
+        if reason not in messages:
+            raise ValueError("invalid task rejection reason")
+        now = self.clock()
+        safe_error = messages[reason]
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            r = self._owned(c, task_id, worker_id)
+            c.execute(
+                """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
+                   lease_until=NULL,updated_at=? WHERE id=?""",
+                (safe_error, now, task_id),
+            )
+            self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
+            self._fail_blocked_descendants(c, r["goal_id"], now)
+            self._complete_goal_if_terminal(c, r["goal_id"], now)
+            c.commit()
+        return self.get_task(task_id)
+
     def recover_expired_leases(self):
         now,count=self.clock(),0
         with closing(self._connect()) as c:
