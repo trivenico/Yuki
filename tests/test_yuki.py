@@ -270,11 +270,14 @@ class CommandAuditTests(unittest.TestCase):
         self.assertEqual(memory, [])
 
     def test_learning_mutation_is_blocked_when_audit_start_fails(self):
-        with patch("yuki.write_audit_event", return_value=False), \
-             patch.object(yuki_learning, "HISTORY_DB_FILE", Path(tempfile.gettempdir()) / "unused-learning-test.sqlite3"):
-            result = handle_command("/learn test | success | lesson", [], [],
-                                   self.agent, self.providers, self.policy)
-        self.assertIn("blocked", result.lower())
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("yuki.write_audit_event", return_value=False), \
+                 patch.object(yuki_learning, "HISTORY_FILE", Path(folder) / "learning.json"), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", Path(folder) / "learning.sqlite3"):
+                result = handle_command("/learn test | success | lesson", [], [],
+                                       self.agent, self.providers, self.policy)
+            self.assertIn("blocked", result.lower())
+            self.assertFalse((Path(folder) / "learning.sqlite3").exists())
 
 
 class TaskTests(unittest.TestCase):
