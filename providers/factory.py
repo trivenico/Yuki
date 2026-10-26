@@ -11,10 +11,12 @@ from providers.openai_compatible import OpenAICompatibleProvider
 
 
 def create_provider(config=None, *, environ=None):
-    """Build mock, local Ollama, Gemini CLI, or hybrid routing from config.
+    """Build the configured real provider without implicit fallback.
 
-    Cloud routing is opt-in through YUKI_CLOUD_TASKS. The general/default task
-    remains local. No provider API key is read from YAML or committed files.
+    OpenAI is the default. Hybrid routing keeps general tasks local and only
+    routes explicitly allow-listed task names to cloud. API keys are read from
+    the process environment, never from YAML or committed files. The mock
+    adapter remains available only to tests that call this factory explicitly.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
