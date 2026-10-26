@@ -62,7 +62,7 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
-            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
+            result = self.runtime.invoke(skill_name, argument)
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
@@ -119,7 +119,7 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
-            result = self.runtime.invoke(skill_name, argument)
+            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.
