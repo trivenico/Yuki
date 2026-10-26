@@ -110,8 +110,9 @@ class DurableCliIntegrationTests(unittest.TestCase):
         self.assertIn("failed", first)
         self.assertEqual(self.high.calls, [])
 
-        # A fresh task and exact approval are required after the fail-closed first attempt.
-        self.command(f"/durable task submit high-key-2 | {goal_id} | write_demo | approved-value")
+        # The failed task terminally completed its goal; use a new goal for the retry.
+        second_goal_id = self.command("/durable goal create").split(": ", 1)[1]
+        self.command(f"/durable task submit high-key-2 | {second_goal_id} | write_demo | approved-value")
         self.command("/skill approve write_demo approved-value")
         second = self.command("/durable run")
         self.assertIn("succeeded", second)
