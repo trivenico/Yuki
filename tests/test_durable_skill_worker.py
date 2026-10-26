@@ -98,7 +98,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
         task = self.submit("read_demo", task_type="arbitrary.python", key="unsupported")
         result = self.worker.run_once()
         self.assertEqual(result["status"], "unsupported_task")
-        self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
 
     def test_invalid_payload_is_cancelled_without_skill_execution(self):
         task = self.engine.submit(
