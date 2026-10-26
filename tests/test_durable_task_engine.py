@@ -347,6 +347,23 @@ class DurableTaskEngineTests(unittest.TestCase):
         ]
         self.assertEqual(len(events), 1)
 
+    def test_running_task_cannot_be_cancelled_while_side_effect_may_be_active(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="running-cancel-guard"
+        )
+        self.engine.claim("active-worker")
+        with self.assertRaises(TaskConflict):
+            self.engine.cancel_task(task["id"])
+        with self.assertRaises(TaskConflict):
+            self.engine.set_goal_state(self.goal, "cancelled")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
+        self.assertEqual(self.engine.get_goal(self.goal)["state"], "active")
+        # The worker retains ownership and can report its real outcome.
+        self.assertEqual(
+            self.engine.complete(task["id"], "active-worker", {"done": True})["state"],
+            "succeeded",
+        )
+
     def test_pause_cancel_and_reject_new_work_when_goal_not_active(self):
         self.engine.set_goal_state(self.goal, "paused")
         with self.assertRaises(TaskConflict):
