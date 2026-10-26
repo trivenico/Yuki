@@ -1,7 +1,10 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import sqlite3
 from pathlib import Path
+
+from yuki_sqlite_store import SQLiteJsonStore
 
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
@@ -17,34 +20,72 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
+MEMORY_DB_FILE = MEMORY_FILE.with_suffix(".sqlite3")
+_MEMORY_KEY = "saved_memory"
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
 
 
-def load_memory():
-    try:
-        data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+def _normalize_memory(data):
     if not isinstance(data, list):
         return []
     return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]
             if isinstance(item, str) and item.strip()]
 
 
-def save_memory(memory):
-    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
-                   if isinstance(item, str) and item.strip()]
-    temp = MEMORY_FILE.with_suffix(".tmp")
+def _memory_store():
+    return SQLiteJsonStore(MEMORY_DB_FILE)
+
+
+def load_memory():
+    """Load SQLite memory, migrating valid legacy JSON without deleting it."""
     try:
-        temp.write_text(json.dumps(safe_memory, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(MEMORY_FILE)
-        return True
-    except OSError:
+        if MEMORY_DB_FILE.exists():
+            stored = _memory_store().read_json(_MEMORY_KEY, None)
+            if stored is not None:
+                return _normalize_memory(stored)
+        if not MEMORY_FILE.exists():
+            return []
         try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+            legacy = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(legacy, list):
+            return []
+        safe = _normalize_memory(legacy)
+        migrated = _memory_store().update_json(
+            _MEMORY_KEY, lambda current: safe if current is None else current, default=None
+        )
+        return _normalize_memory(migrated)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return []
+
+
+def save_memory(memory):
+    """Replace saved memory transactionally; return False if persistence fails."""
+    safe_memory = _normalize_memory(memory)
+    try:
+        _memory_store().write_json(_MEMORY_KEY, safe_memory)
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return False
+
+
+def add_memory_note(memory, note):
+    """Append a note atomically so concurrent sessions do not overwrite each other."""
+    safe_note = sanitize_text(note, MAX_MEMORY_TEXT)
+    if not safe_note.strip():
+        return False
+    try:
+        store = _memory_store()
+        updated = store.update_json(
+            _MEMORY_KEY,
+            lambda current: (_normalize_memory(current) + [safe_note])[-MAX_MEMORY_ITEMS:],
+            default=load_memory(),
+        )
+        memory[:] = _normalize_memory(updated)
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError):
         return False
 
 
@@ -223,13 +264,9 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
             return "Please provide a note."
-        memory.append(note[:MAX_MEMORY_TEXT])
-        if len(memory) > MAX_MEMORY_ITEMS:
-            del memory[:-MAX_MEMORY_ITEMS]
-        if save_memory(memory):
+        if add_memory_note(memory, note):
             write_audit_event("memory:add", "completed")
             return "Memory saved locally. Avoid storing secrets or sensitive personal data."
-        memory.pop()
         return "Could not save memory."
     if command == "/memory clear":
         old = memory[:]
