@@ -46,8 +46,16 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
 
     def test_tool_exception_does_not_leak_exception(self):
-        runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
+        runtime = GuardedToolRuntime(
+            {"bad": lambda _: 1 / 0}, Policy(), audit=lambda _action, _outcome: True
+        )
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
+
+    def test_missing_audit_sink_blocks_execution(self):
+        calls = []
+        runtime = GuardedToolRuntime({"echo": lambda arg: calls.append(arg) or arg}, Policy())
+        self.assertIn("blocked", runtime.invoke("echo", "ok").lower())
+        self.assertEqual(calls, [])
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
