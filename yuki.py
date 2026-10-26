@@ -67,6 +67,7 @@ Yuki commands:
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
+  /skill inspect NAME             Inspect a registered skill's metadata
   /skill approve NAME             Approve one high-risk invocation
   /skill invoke NAME [argument]   Invoke a registered skill through the guard
   /task add DESCRIPTION           Add a task
@@ -153,6 +154,29 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f'{item["name"]} [{item["risk"]}]: {item["description"]}'
                 for item in registry.describe()
             ) or "No skills registered."
+        if parts[1] == "inspect":
+            if len(parts) < 3:
+                return "Usage: /skill inspect NAME"
+            skill = registry.get(parts[2])
+            if skill is None:
+                return "Unknown skill."
+            try:
+                description = str(getattr(skill, "description", "No description provided."))
+                risk = str(getattr(skill, "risk", "high")).lower()
+                requires_approval = (
+                    bool(getattr(skill, "requires_approval", True))
+                    or risk not in {"low", "medium", "high", "critical"}
+                    or risk in {"high", "critical"}
+                )
+            except Exception:
+                return "Skill metadata is unavailable."
+            description = description.replace("\r", " ").replace("\n", " ")[:500]
+            return (
+                f"Name: {parts[2]}\n"
+                f"Description: {description or 'No description provided.'}\n"
+                f"Risk: {risk[:32]}\n"
+                f"Invocation approval: {'required' if requires_approval else 'not required'}"
+            )
         if parts[1] == "approve" and len(parts) >= 3:
             try:
                 runtime.approve_invocation(parts[2])
