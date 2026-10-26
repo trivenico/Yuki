@@ -112,6 +112,20 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "invalid_payload")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
 
+    def test_worker_reports_committed_success_if_followup_response_fails(self):
+        task = self.submit("read_demo", "commit-then-error", key="commit-response-error")
+        original_complete = self.engine.complete
+
+        def commit_then_raise(task_id, worker_id, result=None):
+            original_complete(task_id, worker_id, result)
+            raise RuntimeError("simulated lost response")
+
+        self.engine.complete = commit_then_raise
+        result = self.worker.run_once()
+        self.assertEqual(result["task_id"], task["id"])
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "succeeded")
+
     def test_worker_never_claims_unregistered_skill_as_success(self):
         task = self.submit("not_registered", key="missing-skill")
         result = self.worker.run_once()
