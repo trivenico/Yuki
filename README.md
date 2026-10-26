@@ -5,6 +5,12 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+## Desktop app and guided onboarding
+
+The desktop product track is being developed separately from the durable-task hardening work. Issue [#347](https://github.com/trivenico/Yuki/issues/347) tracks the desktop shell, Hermes-inspired first-run setup, Stonic-inspired activity/voice experience, packaging and acceptance tests.
+
+The initial onboarding primitives in `core/desktop_onboarding.py` provide ordered, resumable progress and a sanitized readiness report for a future desktop UI. They do not yet constitute a desktop application: no GUI shell, OS keychain integration, provider connectivity wizard, signed installer or packaged-artifact test is claimed. Provider credentials must not be stored in the onboarding state file.
+ 
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
