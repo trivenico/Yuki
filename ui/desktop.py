@@ -117,7 +117,13 @@ def run_desktop(agent, *, ai=None, config=None) -> None:
         ) from exc
     if ai is None or not isinstance(config, dict):
         raise RuntimeError("Desktop chat requires the configured provider runtime.")
-    bridge = DesktopBridge(agent, ai, config)
+    try:
+        bridge = DesktopBridge(agent, ai, config)
+    except Exception as exc:
+        # Provider construction errors can contain configuration details; expose only type.
+        raise RuntimeError(
+            f"Desktop provider initialization failed ({type(exc).__name__}). Check configuration."
+        ) from None
     html = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Yuki</title><style>
