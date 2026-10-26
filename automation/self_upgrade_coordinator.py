@@ -1,5 +1,9 @@
 """Coordinator for separately approved self-upgrade validation in a disposable copy.
 
+Safe workspace staging requires POSIX descriptor-relative open support and O_NOFOLLOW;
+unsupported platforms fail closed. This coordinator is intended for the Linux rootless
+worker path, not direct Windows-host execution.
+
 Important: a temporary directory is not an OS security sandbox. Running proposed
 Python tests can execute arbitrary code. Use a dedicated low-privilege worker with
 no production credentials and restricted network access for untrusted proposals.
