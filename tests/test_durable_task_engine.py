@@ -233,6 +233,69 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
 
+    def test_goal_cancellation_emits_per_task_audit_events(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="goal-cancel-audit"
+        )
+        self.engine.claim("worker")
+        self.engine.set_goal_state(self.goal, "cancelled")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
+        events = self.engine.list_events(self.goal)
+        task_cancel_events = [
+            event for event in events
+            if event["task_id"] == task["id"] and event["event_type"] == "task.cancelled"
+        ]
+        goal_cancel_events = [
+            event for event in events
+            if event["task_id"] is None and event["event_type"] == "goal.cancelled"
+        ]
+        self.assertEqual(len(task_cancel_events), 1)
+        self.assertEqual(goal_cancel_events[-1]["detail"]["cancelled_task_count"], 1)
+
+    def test_goal_cancellation_race_with_completion_has_one_terminal_task_event(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="goal-cancel-race"
+        )
+        self.engine.claim("race-worker")
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def complete():
+            try:
+                barrier.wait(timeout=5)
+                self.engine.complete(task["id"], "race-worker", {"done": True})
+            except TaskConflict:
+                # Expected if goal cancellation invalidates the lease first.
+                pass
+            except Exception as exc:
+                errors.append(exc)
+
+        def cancel_goal():
+            try:
+                barrier.wait(timeout=5)
+                self.engine.set_goal_state(self.goal, "cancelled")
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [
+            threading.Thread(target=complete),
+            threading.Thread(target=cancel_goal),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+        self.assertFalse(any(worker.is_alive() for worker in workers), "race workers timed out")
+        self.assertEqual(errors, [])
+        final_task = self.engine.get_task(task["id"])
+        self.assertIn(final_task["state"], {"succeeded", "cancelled"})
+        events = [
+            event for event in self.engine.list_events(self.goal)
+            if event["task_id"] == task["id"]
+            and event["event_type"] in {"task.succeeded", "task.cancelled"}
+        ]
+        self.assertEqual(len(events), 1)
+
     def test_pause_cancel_and_reject_new_work_when_goal_not_active(self):
         self.engine.set_goal_state(self.goal, "paused")
         with self.assertRaises(TaskConflict):
