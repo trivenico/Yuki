@@ -39,8 +39,10 @@ class GuardedToolRuntime:
 
     def _record(self, name: str, outcome: str) -> bool:
         """Persist metadata and report sink failure without leaking arguments."""
+        # A missing sink cannot prove that a durable audit record exists.
+        # Fail closed before any side-effecting handler runs.
         if self._audit is None:
-            return True
+            return False
         try:
             # Callbacks that historically returned None remain compatible; an
             # explicit False or an exception means durable evidence was not written.
