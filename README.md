@@ -6,11 +6,16 @@ Yuki is an experimental modular personal AI agent for desktop and terminal inter
 
 Requirements: Python 3.10 or newer. Run these commands from the repository root.
 
-```sh
+```powershell
 git clone https://github.com/trivenico/Yuki.git
 cd Yuki
+# PR #349 is still an unmerged draft; fetch its candidate integration tree for testing:
+git fetch origin pull/349/head:pr-349
+git switch pr-349
 python -m venv .venv
 ```
+
+The commands above check out the PR #349 candidate, which includes its prerequisite PR branches in its history. This is for local evaluation only; it is not a released or production-certified version. If the PR has already been merged when you read this, use the default branch instead.
 
 Activate the environment, then install the declared runtime dependency:
 
