@@ -55,7 +55,7 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
         original = self.source.read_text(encoding="utf-8")
         change = FileChange(
             "src/sample.py",
-            hashlib.sha256(original.encode("utf-8")).hexdigest(),
+            hashlib.sha256(self.source.read_bytes()).hexdigest(),
             "VALUE = 2\n",
         )
         coordinator = build_autonomous_upgrade_test_coordinator(
