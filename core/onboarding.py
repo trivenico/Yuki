@@ -34,6 +34,8 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     model = config.get("model", PROVIDERS[provider].get("default_model", ""))
     if not isinstance(model, str) or len(model) > 120:
         raise ValueError("Model must be a string of at most 120 characters.")
+    if not model.strip():
+        raise ValueError("A model name is required before saving provider configuration.")
     base_url = config.get("base_url", PROVIDERS[provider].get("default_url", ""))
     if not isinstance(base_url, str) or len(base_url) > 2048:
         raise ValueError("base_url must be a bounded string.")
@@ -89,6 +91,12 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cloud_tasks, list) or len(cloud_tasks) > 100 or any(not isinstance(item, str) or not item.strip() for item in cloud_tasks):
         raise ValueError("cloud_tasks must be a bounded list of non-empty task names.")
     clean["cloud_tasks"] = list(dict.fromkeys(item.strip() for item in cloud_tasks))
+    if provider == "hybrid":
+        local_model = clean.get("local_model", model)
+        if not isinstance(local_model, str) or not local_model.strip():
+            raise ValueError("Hybrid provider requires a local model name.")
+        if clean["cloud_tasks"] and not clean.get("cloud_model", "").strip():
+            raise ValueError("Cloud tasks require a configured cloud model; leave cloud_tasks empty to stay local-only.")
     return clean
 
 def save_config(config: dict[str, Any], path: str | os.PathLike[str] | None = None) -> Path:
