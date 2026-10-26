@@ -29,8 +29,12 @@ class OnboardingConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config({"mcp_servers":[{"name":"bad","endpoint":"http://example.com","allowed_tools":[]} ]})
 
+    def test_mock_provider_is_not_available_in_production_onboarding(self):
+        with self.assertRaises(ValueError):
+            validate_config({"provider": "mock"})
+
     def test_guardrails_default_to_approval_and_local_first(self):
-        result = validate_config({"provider":"mock"})
+        result = validate_config({"provider":"ollama"})
         self.assertTrue(result["guardrails"]["require_tool_approval"])
         self.assertTrue(result["guardrails"]["require_cloud_approval"])
         self.assertTrue(result["guardrails"]["local_first"])
