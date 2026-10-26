@@ -171,7 +171,9 @@ class DurableTaskEngine:
             c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
-            if not retry: self._complete_goal_if_terminal(c,r["goal_id"],now)
+            if not retry:
+                self._fail_blocked_descendants(c, r["goal_id"], now)
+                self._complete_goal_if_terminal(c,r["goal_id"],now)
             c.commit()
         return self.get_task(task_id)
 
@@ -184,7 +186,9 @@ class DurableTaskEngine:
                 retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
-                if not retry: self._complete_goal_if_terminal(c,r["goal_id"],now)
+                if not retry:
+                    self._fail_blocked_descendants(c, r["goal_id"], now)
+                    self._complete_goal_if_terminal(c,r["goal_id"],now)
                 count+=1
             c.commit()
         return count
@@ -196,9 +200,27 @@ class DurableTaskEngine:
             if r is None: raise TaskNotFound("task not found")
             if r["state"] in TERMINAL: c.commit(); return self._decode(r)
             c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",(now,task_id))
-            self._event(c,r["goal_id"],task_id,"task.cancelled",{}); self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
+            self._event(c,r["goal_id"],task_id,"task.cancelled",{})
+            self._fail_blocked_descendants(c, r["goal_id"], now)
+            self._complete_goal_if_terminal(c,r["goal_id"],now)
+            c.commit()
         return self.get_task(task_id)
 
+    def _fail_blocked_descendants(self, c, goal_id, now):
+        # A task cannot remain queued forever when a prerequisite is terminally unsuccessful.
+        while True:
+            rows = c.execute("""SELECT DISTINCT t.* FROM tasks t
+                JOIN dependencies d ON d.task_id=t.id
+                JOIN tasks p ON p.id=d.depends_on
+                WHERE t.goal_id=? AND t.state='queued' AND p.state IN ('failed','cancelled')""",
+                (goal_id,)).fetchall()
+            if not rows:
+                return
+            for task in rows:
+                c.execute("UPDATE tasks SET state='failed',last_error=?,updated_at=? WHERE id=? AND state='queued'",
+                          ("dependency failed or was cancelled", now, task["id"]))
+                self._event(c, goal_id, task["id"], "task.blocked_dependency", {"dependency": "terminal_unsuccessful"})
+    
     def set_goal_state(self,goal_id,state):
         if state not in {"active","paused","cancelled"}: raise ValueError("invalid goal state")
         now=self.clock()
