@@ -13,6 +13,7 @@ from typing import Callable, Sequence
 from automation.authorized_read_tools import ToolPrincipal, ToolAuthorizationError
 from automation.approved_workspace_changes import FileChange
 from automation.self_upgrade_coordinator import IsolatedUpgradeCoordinator
+from automation.isolated_upgrade_worker import PodmanIsolatedTestRunner
 
 _ENABLE_FLAG = "YUKI_AUTONOMOUS_UPGRADE_TEST_MODE"
 
@@ -24,7 +25,7 @@ def build_autonomous_upgrade_test_coordinator(
     audit: Callable[[dict], None],
     allowed_paths: Sequence[str],
     allowed_test_modules: Sequence[str],
-    isolated_runner_factory: Callable[[Path], object],
+    isolated_runner_factory: Callable[[Path], object] | None = None,
     environ: dict[str, str] | None = None,
 ) -> IsolatedUpgradeCoordinator:
     """Build test-only coordinator when explicitly opted in and isolation is provided.
@@ -38,12 +39,31 @@ def build_autonomous_upgrade_test_coordinator(
         raise ToolAuthorizationError(
             f"autonomous upgrade test mode is disabled; set {_ENABLE_FLAG}=1 to opt in."
         )
-    if not callable(isolated_runner_factory):
-        raise ToolAuthorizationError(
-            "autonomous test mode requires an isolated runner factory; host execution is forbidden."
-        )
     if not callable(trusted_principal) or not callable(audit):
         raise TypeError("trusted principal validation and audit callbacks are required.")
+    if isolated_runner_factory is not None and not callable(isolated_runner_factory):
+        raise ToolAuthorizationError(
+            "isolated_runner_factory must be callable; host execution is forbidden."
+        )
+
+    # Prefer the real rootless Podman adapter by default. An injected factory is
+    # retained for unit tests and controlled deployments with an audited adapter.
+    image = env.get("YUKI_TEST_WORKER_IMAGE", "").strip()
+    if isolated_runner_factory is None:
+        if not image:
+            raise ToolAuthorizationError(
+                "YUKI_TEST_WORKER_IMAGE must contain an approved immutable sha256 image digest."
+            )
+
+        def isolated_runner_factory(staged_root: Path) -> object:
+            return PodmanIsolatedTestRunner(
+                staged_root,
+                image=image,
+                trusted_principal=trusted_principal,
+                approve_run=approve_staged_test,
+                audit=audit_test_mode,
+                allowed_test_modules=allowed_test_modules,
+            )
 
     def approve_staged_change(actor: str, change_id: str, digest: str) -> bool:
         # The coordinator applies this only to its disposable staged workspace.
@@ -51,7 +71,7 @@ def build_autonomous_upgrade_test_coordinator(
 
     def approve_staged_test(actor: str, run_id: str, digest: str) -> bool:
         # The runner remains constrained by the configured module allow-list.
-        return bool(actor and run_id.startswith("test_") and len(digest) == 64)
+        return bool(actor and run_id.startswith("isolated_test_") and len(digest) == 64 and all(c in "0123456789abcdef" for c in digest))
 
     def audit_test_mode(event: dict) -> None:
         enriched = dict(event)
