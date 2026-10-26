@@ -208,7 +208,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             argument = parts[3] if len(parts) == 4 else ""
             result = runtime.invoke(parts[2], argument)
             return result.message if result.ok else f"{result.status}: {result.message}"
-        return "Usage: /skill list | approve NAME | invoke NAME [argument]"
+        return "Usage: /skill list | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
     if command == "/durable" or command.startswith("/durable "):
         durable_command = command[len("/durable"):].strip()
