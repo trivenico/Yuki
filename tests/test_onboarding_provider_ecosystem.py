@@ -9,9 +9,15 @@ from core.onboarding import load_user_config, onboarding_needed, save_config, va
 from providers.factory import create_provider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.anthropic import AnthropicProvider
+from ui.onboarding_tui import provider_choices
 
 
 class OnboardingConfigTests(unittest.TestCase):
+    def test_onboarding_choices_prefer_real_local_provider_and_exclude_mock(self):
+        choices = provider_choices()
+        self.assertEqual(choices[0], "ollama")
+        self.assertNotIn("mock", choices)
+
     def test_atomic_config_round_trip_and_private_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
