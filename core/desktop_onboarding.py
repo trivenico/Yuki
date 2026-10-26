@@ -112,7 +112,14 @@ def complete_onboarding_step(path: str | Path, step: str, *,
             raise ValueError("A configured provider name is required for this step.")
         if provider_verified is not True:
             raise ValueError("Verify provider connectivity before completing this step.")
-        state["selected_provider"] = selected_provider.strip().lower()
+        normalized_provider = selected_provider.strip().lower()
+        previous_provider = state["selected_provider"]
+        if previous_provider is not None and previous_provider != normalized_provider:
+            # Changing the provider invalidates all later onboarding claims,
+            # including the first-conversation smoke test.
+            completed[:] = completed[:index]
+            completed.append(step)
+        state["selected_provider"] = normalized_provider
     elif selected_provider is not None or provider_verified is not False:
         raise ValueError("Provider verification is only accepted on the provider step.")
     state["completed"] = completed == list(ONBOARDING_STEPS)
