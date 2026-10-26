@@ -11,6 +11,12 @@ The desktop product track is being developed separately from the durable-task ha
 
 The initial onboarding primitives in `core/desktop_onboarding.py` provide ordered, resumable progress and a sanitized readiness report for a future desktop UI. They do not yet constitute a desktop application: no GUI shell, OS keychain integration, provider connectivity wizard, signed installer or packaged-artifact test is claimed. Provider credentials must not be stored in the onboarding state file.
  
+## Desktop app (early MVP)
+
+Yuki now has an optional Tkinter desktop client at `desktop_app.py`, with launchers at `scripts/desktop-yuki-windows.bat` and `scripts/desktop-yuki-unix.sh`. It connects to the existing configured provider manager, performs an explicit provider connectivity check, and requires privacy/permission acknowledgement before plain-text chat. It does not invoke skills or shell commands from chat. See [Desktop app setup and safety boundaries](docs/DESKTOP_APP.md).
+
+This is an early MVP, not a production-ready desktop release: native keychain integration, streaming, hard cancellation, voice UI, signed installers, and packaged OS-matrix tests remain outstanding. Provider secrets must be configured through supported environment or official provider login mechanisms and must never be written to YAML or onboarding state.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
