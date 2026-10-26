@@ -52,10 +52,10 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
             )
 
     def test_autonomous_mode_validates_only_a_staged_copy(self):
-        original = self.source.read_text(encoding="utf-8")
+        original = self.source.read_bytes()
         change = FileChange(
             "src/sample.py",
-            hashlib.sha256(self.source.read_bytes()).hexdigest(),
+            hashlib.sha256(original).hexdigest(),
             "VALUE = 2\n",
         )
         coordinator = build_autonomous_upgrade_test_coordinator(
@@ -65,8 +65,30 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "passed")
         self.assertFalse(result["promotion_allowed"])
-        self.assertEqual(self.source.read_text(encoding="utf-8"), original)
+        self.assertEqual(self.source.read_bytes(), original)
         self.assertEqual(self.audit_events[-1]["execution_mode"], "autonomous_isolated_test")
+        self.assertFalse(self.audit_events[-1]["promotion_allowed"])
+
+    def test_failed_isolated_test_is_reported_without_promotion(self):
+        original = self.source.read_bytes()
+        change = FileChange(
+            "src/sample.py",
+            hashlib.sha256(original).hexdigest(),
+            "VALUE = 2\n",
+        )
+        coordinator = build_autonomous_upgrade_test_coordinator(
+            self.root,
+            **self._kwargs(isolated_runner_factory=lambda staged_root: _FailingRunner()),
+        )
+
+        result = coordinator.validate(principal=self.principal, changes=[change])
+
+        self.assertEqual(result["outcome"], "failed")
+        self.assertFalse(result["tests_passed"])
+        self.assertFalse(result["promotion_allowed"])
+        self.assertEqual(result["test_targets"], ["tests.test_sample"])
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertEqual(self.audit_events[-1]["outcome"], "failed")
         self.assertFalse(self.audit_events[-1]["promotion_allowed"])
 
 
@@ -77,6 +99,16 @@ class _PassingRunner:
         return SimpleNamespace(
             target=test_module, exit_code=0, timed_out=False,
             duration_seconds=0.01, stdout="test double passed", stderr="",
+        )
+
+
+class _FailingRunner:
+    """Failure-path test double; it does not execute untrusted code."""
+
+    def run(self, *, principal, test_module):
+        return SimpleNamespace(
+            target=test_module, exit_code=1, timed_out=False,
+            duration_seconds=0.01, stdout="test failure", stderr="assertion failed",
         )
 
 
