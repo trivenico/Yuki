@@ -13,6 +13,8 @@ from skills.registry import SkillRegistry
 from core.guarded_skill_runtime import OneShotSkillApprovals
 from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.durable_task_engine import DurableTaskEngine
+from core.durable_skill_worker import DurableSkillWorker
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -49,6 +51,23 @@ def save_memory(memory):
 
 
 _SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'
+_DURABLE_TASK_DB = Path(__file__).with_name('.yuki') / 'durable_tasks.sqlite3'
+
+
+def _get_durable_task_engine():
+    _DURABLE_TASK_DB.parent.mkdir(parents=True, exist_ok=True)
+    return DurableTaskEngine(_DURABLE_TASK_DB)
+
+
+def _build_approved_skill_runtime():
+    registry = SkillRegistry.defaults(Path.cwd())
+    runtime = ApprovedSkillRuntime(
+        registry,
+        _get_skill_approval_store(),
+        invocation_approvals=_INVOCATION_APPROVALS,
+        audit=lambda action, outcome: write_audit_event(action, outcome),
+    )
+    return registry, runtime
 
 
 def _get_skill_approval_store():
@@ -68,8 +87,13 @@ Yuki commands:
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
   /skill inspect NAME             Inspect a registered skill's metadata
-  /skill approve NAME             Approve one high-risk invocation
+  /skill approve NAME [argument]  Approve one exact high-risk invocation
   /skill invoke NAME [argument]   Invoke a registered skill through the guard
+  /durable goal create             Create a durable task goal
+  /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT
+  /durable task list GOAL_ID       List durable tasks for a goal
+  /durable task cancel TASK_ID     Cancel a durable task
+  /durable run                     Run one approved registered-skill task
   /task add DESCRIPTION           Add a task
   /task list                      List tasks
   /task done ID                   Complete a task
@@ -140,13 +164,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     if command == "/skill" or command.startswith("/skill "):
         parts = command.split(maxsplit=3)
         try:
-            registry = SkillRegistry.defaults(Path.cwd())
-            runtime = ApprovedSkillRuntime(
-                registry,
-                _get_skill_approval_store(),
-                invocation_approvals=_INVOCATION_APPROVALS,
-                audit=lambda action, outcome: write_audit_event(action, outcome),
-            )
+            registry, runtime = _build_approved_skill_runtime()
         except Exception as error:
             return f"Skill runtime unavailable ({type(error).__name__})."
         if len(parts) == 1 or parts[1] == "list":
@@ -178,10 +196,11 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f"Invocation approval: {'required' if requires_approval else 'not required'}"
             )
         if parts[1] == "approve" and len(parts) >= 3:
+            argument = parts[3] if len(parts) == 4 else ""
             try:
-                runtime.approve_invocation(parts[2])
+                runtime.approve_invocation(parts[2], argument)
                 write_audit_event("skill:approval", "granted")
-                return f"One-shot invocation approval granted for {parts[2]}."
+                return f"One-shot invocation approval granted for {parts[2]} and the exact supplied argument."
             except ValueError:
                 write_audit_event("skill:approval", "rejected")
                 return "Cannot approve an unknown skill."
@@ -189,7 +208,90 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             argument = parts[3] if len(parts) == 4 else ""
             result = runtime.invoke(parts[2], argument)
             return result.message if result.ok else f"{result.status}: {result.message}"
-        return "Usage: /skill list | approve NAME | invoke NAME [argument]"
+        return "Usage: /skill list | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
+
+    if command == "/durable" or command.startswith("/durable "):
+        durable_command = command[len("/durable"):].strip()
+        if durable_command == "goal create":
+            try:
+                with _get_durable_task_engine() as engine:
+                    goal_id = engine.create_goal()
+                write_audit_event("durable:goal:create", "completed")
+                return f"Durable goal created: {goal_id}"
+            except Exception as error:
+                return f"Could not create durable goal ({type(error).__name__})."
+
+        if durable_command.startswith("task submit "):
+            encoded = durable_command[len("task submit "):]
+            fields = [part.strip() for part in encoded.split("|", 3)]
+            if len(fields) != 4:
+                return "Usage: /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT"
+            key, goal_id, skill_name, argument = fields
+            if not key or not goal_id or not skill_name or len(argument) > 20000:
+                return "Task key, goal ID, skill name, and a bounded argument are required."
+            try:
+                registry, _runtime = _build_approved_skill_runtime()
+                if registry.get(skill_name) is None:
+                    return "Cannot queue an unregistered skill."
+                with _get_durable_task_engine() as engine:
+                    task = engine.submit(
+                        goal_id,
+                        "skill.invoke",
+                        {"skill_name": skill_name, "argument": argument},
+                        idempotency_key=key,
+                        max_attempts=1,
+                    )
+                write_audit_event("durable:task:submit", "completed")
+                return f"Durable task {task['id']} is {task['state']}. Approve the exact skill argument before running high-risk work."
+            except Exception as error:
+                write_audit_event("durable:task:submit", "rejected")
+                return f"Could not submit durable task ({type(error).__name__})."
+
+        if durable_command.startswith("task list "):
+            goal_id = durable_command[len("task list "):].strip()
+            if not goal_id:
+                return "Usage: /durable task list GOAL_ID"
+            try:
+                with _get_durable_task_engine() as engine:
+                    tasks = engine.list_tasks(goal_id)
+                if not tasks:
+                    return "No durable tasks found."
+                return "\n".join(
+                    f"{task['id']} [{task['state']}] {task['task_type']} attempts={task['attempts']}/{task['max_attempts']}"
+                    for task in tasks
+                )
+            except Exception as error:
+                return f"Could not list durable tasks ({type(error).__name__})."
+
+        if durable_command.startswith("task cancel "):
+            task_id = durable_command[len("task cancel "):].strip()
+            if not task_id:
+                return "Usage: /durable task cancel TASK_ID"
+            try:
+                with _get_durable_task_engine() as engine:
+                    task = engine.cancel_task(task_id)
+                write_audit_event("durable:task:cancel", "completed")
+                return f"Durable task {task_id}: {task['state']}."
+            except Exception as error:
+                return f"Could not cancel durable task ({type(error).__name__})."
+
+        if durable_command == "run":
+            try:
+                registry, runtime = _build_approved_skill_runtime()
+                with _get_durable_task_engine() as engine:
+                    engine.recover_expired_leases()
+                    result = DurableSkillWorker(engine, runtime, worker_id="yuki-cli-worker").run_once()
+                write_audit_event("durable:worker:run", result.get("status", "unknown"))
+                return (
+                    f"Durable worker: {result.get('state', 'unknown')} "
+                    f"({result.get('status', 'unknown')}). "
+                    f"{result.get('message', '')}"
+                ).strip()
+            except Exception as error:
+                write_audit_event("durable:worker:run", "failed")
+                return f"Durable worker unavailable ({type(error).__name__})."
+
+        return "Usage: /durable goal create | task submit KEY | GOAL_ID | SKILL | ARGUMENT | task list GOAL_ID | task cancel TASK_ID | run"
 
     if command == "/tool" or command.startswith("/tool "):
         parts = command.split(maxsplit=2)

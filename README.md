@@ -111,7 +111,9 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 
 ## Runtime commands
 
-- `/help`, `/status`, `/skills`, `/skill NAME [ARG]`
+- `/help`, `/status`, `/providers`, `/provider select NAME`, `/dashboard`
+- `/skill list`, `/skill inspect NAME`, `/skill approve NAME [argument]`, `/skill invoke NAME [argument]`
+- `/durable goal create`, `/durable task submit KEY | GOAL_ID | SKILL | ARGUMENT`, `/durable task list GOAL_ID`, `/durable task cancel TASK_ID`, `/durable run`
 - `/plan GOAL` — proposal only, no automatic execution
 - `/memory add TEXT`, `/memory list`, `/memory search QUERY`, `/memory delete ID`, `/memory clear`
 - `/knowledge index RELATIVE_PATH`
@@ -142,10 +144,11 @@ The provider layer now defaults to the real OpenAI API and includes a local Olla
 - Set `OPENAI_API_KEY` in the process environment; the default model is `gpt-4.1-mini` and can be overridden with `YUKI_OPENAI_MODEL`.
 - Set `YUKI_PROVIDER=ollama` and configure `YUKI_OLLAMA_MODEL` to use a locally running Ollama instance.
 - Set `YUKI_PROVIDER=hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
-- Cloud requests are never an automatic fallback. Use `/ask-cloud TASK | PROMPT` only for a configured task; Yuki asks for approval before sending prompt text to the cloud provider.
-- `/ask PROMPT` is a text-only model request and does not invoke tools. `/task GOAL` uses a bounded JSON-only model loop over registered skills, with a maximum of `max_agent_steps` (1–5) steps. Each skill invocation requires a fresh human approval. Model output cannot run shell commands or arbitrary code; unregistered skills and malformed responses are rejected.
+- Provider selection is exposed through `/providers` and `/provider select NAME`. Ordinary free-text input is sent to the currently selected provider through `YukiAgent.ask()`.
+- The current terminal runtime does **not** expose `/ask-cloud` or a model-directed `/task GOAL` planner command; do not assume those commands are available based on module presence.
+- Durable task execution is explicit and operator initiated: create a goal with `/durable goal create`, submit a registered skill using `/durable task submit KEY | GOAL_ID | SKILL | ARGUMENT`, inspect with `/durable task list GOAL_ID`, cancel with `/durable task cancel TASK_ID`, and execute one task with `/durable run`. For high-risk skills, grant a one-shot approval for the exact argument using `/skill approve NAME ARGUMENT` before running the task.
 
-**Limitations:** this is an initial guarded provider/task-loop integration, not a production-grade general autonomous agent. No native provider tool-calling protocol, durable task queue, retries/cancellation, sandboxed plugin execution, or independent security review is claimed. The Ollama server/model and cloud credentials must be configured by the user. Keep prompts containing private data on the local route unless you explicitly approve disclosure.
+**Limitations:** the local SQLite queue supports a fixed registered-skill invocation task type and is not a distributed queue. Each durable skill task is configured for one attempt to avoid automatically replaying potentially side-effecting skills after an ambiguous failure. Running tasks cannot be force-cancelled: the worker must reach an outcome or its lease must expire, because clearing a live lease could hide an operation that is still changing external state. Skill code still runs in-process; the durable worker is not a sandbox. Native provider tool-calling, autonomous model-driven task creation, distributed worker coordination, and independent security review are not claimed. The Ollama server/model and cloud credentials must be configured by the user.
 
 ## Production phase capability foundations (guarded scaffolds)
 
