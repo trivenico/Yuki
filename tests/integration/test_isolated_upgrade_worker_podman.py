@@ -57,9 +57,9 @@ class RootlessPodmanIntegrationTests(unittest.TestCase):
     def test_failed_candidate_is_reported_without_promotion(self):
         failing = self.root / "tests" / "test_candidate_failure.py"
         failing.write_text(
-            "import unittest\\n"
-            "class CandidateFailure(unittest.TestCase):\\n"
-            " def test_expected_failure(self): self.fail('intentional candidate failure')\\n",
+            "import unittest\n"
+            "class CandidateFailure(unittest.TestCase):\n"
+            " def test_expected_failure(self): self.fail('intentional candidate failure')\n",
             encoding="utf-8",
         )
         runner = PodmanIsolatedTestRunner(
