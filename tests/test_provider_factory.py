@@ -14,6 +14,15 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
 
+    def test_ollama_factory_honors_onboarding_base_url(self):
+        provider = create_provider({
+            "provider": "ollama",
+            "ollama_model": "local-model",
+            "base_url": "http://127.0.0.1:11435",
+        })
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.base_url, "http://127.0.0.1:11435")
+
     def test_hybrid_routes_to_local_without_explicit_cloud_tasks(self):
         provider = create_provider(
             {"provider": "hybrid", "ollama_model": "local-model"},
