@@ -149,15 +149,15 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             goal = c.execute("SELECT state FROM goals WHERE id=?",(goal_id,)).fetchone()
             if goal is None: raise TaskNotFound("goal not found")
-            if goal["state"]!="active": raise TaskConflict("goal is not active")
             old = c.execute("SELECT * FROM tasks WHERE goal_id=? AND idempotency_key=?",(goal_id,idempotency_key)).fetchone()
             if old is not None:
-                # Legacy rows without a fingerprint cannot prove that all
-                # execution-relevant submission options match the replay.
+                # Exact replays stay idempotent even after the goal becomes
+                # terminal; returning an existing task never reopens the goal.
                 if old["submission_fingerprint"] is None or old["submission_fingerprint"] != submission_fingerprint:
                     raise TaskConflict("idempotency key reused with different or unverifiable submission options")
                 c.commit()
                 return self._decode(old)
+            if goal["state"]!="active": raise TaskConflict("goal is not active")
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
                 if d is None or d["goal_id"]!=goal_id: raise TaskConflict("dependency must belong to same goal")
