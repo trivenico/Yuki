@@ -17,15 +17,15 @@ python -m venv .venv
 
 The commands above check out the PR #349 candidate, which includes its prerequisite PR branches in its history. This is for local evaluation only; it is not a released or production-certified version. If the PR has already been merged when you read this, use the default branch instead.
 
-Activate the environment, then install the declared runtime dependency:
+Activate the environment and install Yuki as a package using its `pyproject.toml`:
 
-```sh
-# Linux/macOS
-. .venv/bin/activate
-python -m pip install -r requirements.txt
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead.
+On Linux/macOS, activate with `source .venv/bin/activate` instead.
 
 #### Windows: run the real local Ollama model
 
@@ -41,10 +41,9 @@ ollama run qwen2.5:3b
 
 The 3B model is a lighter starting point than 7B; actual speed and memory requirements depend on your RAM/GPU. Exit the Ollama chat with `/bye` after confirming it answers.
 
-3. In the activated Yuki virtual environment, install dependencies and configure Yuki:
+3. In the activated Yuki virtual environment, configure Yuki:
 
 ```powershell
-python -m pip install -r requirements.txt
 python -m ui.onboarding_tui
 ```
 
@@ -68,7 +67,7 @@ python -m pip install -r requirements-desktop.txt
 python main.py
 ```
 
-The project does not currently define a `pyproject.toml` package or installable `yuki` / `yuki-onboard` console commands. Use the source-tree commands in this guide; do not use `pip install -e .` or `yuki doctor` for this revision.
+The project defines `yuki` and `yuki-onboard` console entry points in `pyproject.toml`. For this smoke-test workflow, use `python main.py` and `python -m ui.onboarding_tui` so the selected checkout is explicit. Use `/doctor` inside Yuki for diagnostics; `yuki doctor` is not a documented subcommand.
 
 ### First-run onboarding and interfaces
 
