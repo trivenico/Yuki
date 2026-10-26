@@ -59,7 +59,7 @@ class SQLiteJsonStore:
     def read_json(self, key: str, default=None):
         if not isinstance(key, str) or not key:
             raise ValueError("key must be a non-empty string")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT value_json FROM yuki_json_state WHERE state_key = ?", (key,)
             ).fetchone()
@@ -70,7 +70,7 @@ class SQLiteJsonStore:
         if not isinstance(key, str) or not key:
             raise ValueError("key must be a non-empty string")
         encoded = self._encode(value)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute(
@@ -99,7 +99,7 @@ class SQLiteJsonStore:
             raise ValueError("key must be a non-empty string")
         if not callable(updater):
             raise TypeError("updater must be callable")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 row = connection.execute(
@@ -128,7 +128,7 @@ class SQLiteJsonStore:
     def revision(self, key: str) -> Optional[int]:
         if not isinstance(key, str) or not key:
             raise ValueError("key must be a non-empty string")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT revision FROM yuki_json_state WHERE state_key = ?", (key,)
             ).fetchone()
