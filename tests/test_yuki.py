@@ -174,6 +174,22 @@ class TaskTests(unittest.TestCase):
                 self.assertEqual(yuki_tasks.complete_task(tasks, 1), "Task completed.")
                 self.assertTrue(yuki_tasks.load_tasks()[0]["completed"])
 
+    def test_task_loader_rejects_invalid_and_duplicate_ids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "tasks.json"
+            path.write_text(json.dumps([
+                {"id": True, "description": "bool id", "completed": False},
+                {"id": 0, "description": "zero id", "completed": False},
+                {"id": -1, "description": "negative id", "completed": False},
+                {"id": 1, "description": "first valid", "completed": False},
+                {"id": 1, "description": "duplicate id", "completed": True},
+                {"id": 2, "description": "second valid", "completed": True},
+            ]), encoding="utf-8")
+            with patch.object(yuki_tasks, "TASKS_FILE", path):
+                loaded = yuki_tasks.load_tasks()
+        self.assertEqual([item["id"] for item in loaded], [1, 2])
+        self.assertEqual([item["description"] for item in loaded], ["first valid", "second valid"])
+
     def test_corrupt_task_file_returns_empty_list(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "tasks.json"
