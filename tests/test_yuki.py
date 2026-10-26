@@ -11,7 +11,7 @@ from providers import MockProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
-from yuki_providers import ProviderManager
+from yuki_providers import ProviderInfo, ProviderManager
 from yuki import handle_command
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
@@ -81,6 +81,30 @@ class ProviderManagerTests(unittest.TestCase):
         manager = ProviderManager()
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, MockProvider)
+
+    def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
+        manager = ProviderManager()
+        created = []
+
+        class FlakyProvider(MockProvider):
+            pass
+
+        def factory():
+            if created:
+                raise RuntimeError("factory must not be called twice")
+            adapter = FlakyProvider()
+            created.append(adapter)
+            return adapter
+
+        manager.register(ProviderInfo("flaky", ("test",), True), factory=factory)
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command("/provider select flaky", [], [], agent, manager,
+                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+
+        self.assertEqual(result, "Selected provider: flaky")
+        self.assertEqual(manager.current().name, "flaky")
+        self.assertIs(agent.provider, created[0])
+        self.assertIs(manager.create_selected_adapter(), created[0])
 
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()

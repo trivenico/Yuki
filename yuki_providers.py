@@ -20,6 +20,7 @@ class ProviderManager:
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {"mock": MockProvider, "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ)}
         self._selected: Optional[str] = "mock"
+        self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("mock", ("none",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -50,6 +51,8 @@ class ProviderManager:
         elif key not in self._factories and key not in {"ollama", "hybrid"}:
             raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
+        if key == self._selected:
+            self._selected_adapter = None
 
     def list_providers(self):
         return [{
@@ -80,14 +83,21 @@ class ProviderManager:
         if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
-            self._build_adapter(key)
+            adapter = self._build_adapter(key)
         except Exception as exc:
             return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
+        # Commit provider selection and its adapter together. A second factory call
+        # could fail after the selected name changed, leaving status and runtime split.
         self._selected = key
+        self._selected_adapter = adapter
         return f"Selected provider: {key}"
 
     def create_selected_adapter(self) -> Optional[BaseProvider]:
-        return self._build_adapter(self._selected) if self._selected else None
+        if not self._selected:
+            return None
+        if self._selected_adapter is None:
+            self._selected_adapter = self._build_adapter(self._selected)
+        return self._selected_adapter
 
     def current(self) -> Optional[ProviderInfo]:
         return self._providers.get(self._selected)
