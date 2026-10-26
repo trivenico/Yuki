@@ -12,6 +12,7 @@ from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderInfo, ProviderManager
+import yuki
 from yuki import handle_command
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
@@ -162,6 +163,27 @@ class SecurityTests(unittest.TestCase):
                 self.assertEqual(data[0]["action"], "tool:calculate")
                 self.assertNotIn("argument", data[0])
                 self.assertNotIn("secret", data[0])
+
+
+class MemoryPersistenceTests(unittest.TestCase):
+    def test_save_memory_uses_atomic_writer_and_sanitizes_notes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            with patch.object(yuki, "MEMORY_FILE", path):
+                self.assertTrue(yuki.save_memory(["hello", "api_key=supersecret"]))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved, ["hello", "[REDACTED]"])
+            self.assertEqual(list(Path(folder).glob(".memory.json.*.tmp")), [])
+
+    def test_save_memory_preserves_existing_data_on_replace_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            path.write_text('["old"]', encoding="utf-8")
+            with patch.object(yuki, "MEMORY_FILE", path), \
+                 patch("yuki_storage.os.replace", side_effect=OSError("replace failed")):
+                self.assertFalse(yuki.save_memory(["new"]))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), ["old"])
+            self.assertEqual(list(Path(folder).glob(".memory.json.*.tmp")), [])
 
 
 class TaskTests(unittest.TestCase):
