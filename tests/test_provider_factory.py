@@ -24,6 +24,27 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_hybrid_passes_cloud_approval_callback_to_underlying_provider(self):
+        def approve(*_args, **_kwargs):
+            return True
+
+        provider = create_provider(
+            {
+                "provider": "hybrid",
+                "local_provider": "ollama",
+                "ollama_model": "local-model",
+                "cloud_provider": "openai",
+                "cloud_model": "cloud-model",
+                "api_key_env": "OPENAI_API_KEY",
+                "cloud_tasks": ["general"],
+            },
+            environ={},
+            cloud_approver=approve,
+        )
+        self.assertIsNotNone(provider.cloud_provider)
+        self.assertIs(provider.cloud_provider.approval_callback, approve)
+        self.assertEqual(provider.cloud_tasks, frozenset({"general"}))
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
