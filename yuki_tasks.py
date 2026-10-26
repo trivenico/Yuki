@@ -47,8 +47,14 @@ def load_tasks():
         if not isinstance(legacy, list):
             return []
         tasks = _valid_tasks(legacy)
-        _store().write_json(_TASKS_KEY, tasks)
-        return tasks
+        # Initialization is serialized so a concurrent task addition cannot be
+        # overwritten by a legacy migration that started from an earlier read.
+        migrated = _store().update_json(
+            _TASKS_KEY,
+            lambda current: tasks if current is None else current,
+            default=None,
+        )
+        return _valid_tasks(migrated)
     except (OSError, sqlite3.Error, ValueError, TypeError):
         return []
 
