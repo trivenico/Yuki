@@ -239,6 +239,19 @@ class DurableTaskEngineTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.engine.set_goal_state(self.goal, invalid_state)
 
+    def test_resume_reconciles_goal_completed_while_paused(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="resume-terminal-reconcile"
+        )
+        self.engine.claim("resume-worker")
+        self.engine.set_goal_state(self.goal, "paused")
+        self.engine.complete(task["id"], "resume-worker", {"done": True})
+        self.assertEqual(self.engine.get_goal(self.goal)["state"], "paused")
+        resumed = self.engine.set_goal_state(self.goal, "active")
+        self.assertEqual(resumed["state"], "completed")
+        event_types = [event["event_type"] for event in self.engine.list_events(self.goal)]
+        self.assertEqual(event_types.count("goal.completed"), 1)
+
     def test_completed_goal_cannot_be_cancelled_or_reopened(self):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="completed-goal-terminal"
