@@ -56,7 +56,8 @@ class YukiAgent:
             self._record_usage(prompt.strip(), result)
             return result
         except Exception as exc:
-            logger.exception("Provider generation failed: %s", exc)
+            # Provider exceptions can contain request URLs or credential metadata.
+            logger.error("Provider generation failed (%s).", type(exc).__name__)
             return "Yuki: The provider encountered an error."
 
     def chat(self, user_text: str, history: list[dict] = None, system_prompt: str = "") -> str:
@@ -84,5 +85,6 @@ class YukiAgent:
             self._record_usage(user_text, result)
             return result
         except Exception as exc:
-            logger.exception("Provider chat failed: %s", exc)
+            # Avoid logging raw provider exceptions, which may include sensitive request data.
+            logger.error("Provider chat failed (%s).", type(exc).__name__)
             return "Yuki: The provider encountered an error."
