@@ -2,19 +2,45 @@
 
 Yuki is an experimental modular personal AI agent for desktop and terminal interfaces (Python 3.10+, stdlib-first, MIT license). It is under active development; do not assume a feature is production-ready solely because a module or CLI command exists.
 
-## Quickstart
+## Quickstart: launch Yuki from source
+
+Requirements: Python 3.10 or newer. Run these commands from the repository root.
 
 ```sh
 git clone https://github.com/trivenico/Yuki.git
 cd Yuki
-python -m pip install -e .
-yuki doctor
-yuki
+python -m venv .venv
 ```
+
+Activate the environment, then install the declared runtime dependency:
+
+```sh
+# Linux/macOS
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1` instead. Configure a provider and launch the terminal assistant:
+
+```sh
+python -m ui.onboarding_tui
+python main.py
+```
+
+On first launch, Yuki may start onboarding automatically if `~/.yuki/config.json` does not exist. In the wizard, choose Ollama for local inference and enter the model name already available in your Ollama installation. Ensure Ollama is running and the model has been downloaded before asking Yuki a question. Then type a normal prompt or use `/ask YOUR_PROMPT`; use `/help` for commands and `/doctor` for diagnostics. The setup wizard does not itself prove the endpoint or model is reachable.
+
+To open the optional desktop window, install its dependency and launch Yuki as above, then enter `/desktop` in the terminal:
+
+```sh
+python -m pip install -r requirements-desktop.txt
+python main.py
+```
+
+The project does not currently define a `pyproject.toml` package or installable `yuki` / `yuki-onboard` console commands. Use the source-tree commands in this guide; do not use `pip install -e .` or `yuki doctor` for this revision.
 
 ### First-run onboarding and interfaces
 
-Run `yuki-onboard` (or `python -m ui.onboarding_tui`) to create a private user configuration at `~/.yuki/config.json`. On an interactive first launch, Yuki starts onboarding automatically when that file is missing. API keys are not written to the JSON file; enter credentials through environment variables named during setup. Existing `config.yaml` settings remain the base configuration, with supported user settings overlaid at startup.
+Run `python -m ui.onboarding_tui` to create a private user configuration at `~/.yuki/config.json`. On an interactive first launch, Yuki starts onboarding automatically when that file is missing. API keys are not written to the JSON file; enter credentials through environment variables named during setup. Existing `config.yaml` settings remain the base configuration, with supported user settings overlaid at startup.
 
 - Supported provider adapters: Ollama, OpenAI-compatible endpoints (OpenAI, DeepSeek, GLM, llama.cpp, LM Studio), and Anthropic. The mock adapter remains for explicit tests only and is not offered by production onboarding.
 - Hybrid routing stays local by default. Only explicitly configured cloud task names can route externally, and CLI cloud prompts require confirmation.
