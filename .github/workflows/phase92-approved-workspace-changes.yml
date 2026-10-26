@@ -30,6 +30,10 @@ jobs:
         run: python -m compileall -q automation/approved_workspace_changes.py automation/authorized_read_tools.py tests/test_approved_workspace_changes.py
       - name: Test approved workspace changes
         run: python -m unittest discover -s tests -p 'test_approved_workspace_changes.py' -v
+      - name: Compile autonomous upgrade test mode
+        run: python -m compileall -q automation/autonomous_upgrade_test_mode.py automation/self_upgrade_coordinator.py tests/test_autonomous_upgrade_test_mode.py
+      - name: Test autonomous upgrade test mode
+        run: python -m unittest discover -s tests -p 'test_autonomous_upgrade_test_mode.py' -v
       - name: Test authorized read tools
         run: python -m unittest discover -s tests -p 'test_authorized_read_tools.py' -v
       - name: Test specialist read-tool adapter
