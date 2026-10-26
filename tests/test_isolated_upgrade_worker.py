@@ -223,6 +223,64 @@ class PodmanIsolatedTestRunnerTests(unittest.TestCase):
 
         self.assertEqual(target.stat().st_mode & 0o777, 0o644)
 
+    def test_cleanup_fails_closed_when_container_id_file_is_missing(self):
+        cidfile = self.root / "missing.cid"
+        with self.assertRaisesRegex(RuntimeError, "ID unavailable"):
+            self.runner._ensure_container_removed("podman", cidfile)
+
+    def test_cleanup_rejects_malformed_container_id_before_runtime_call(self):
+        cidfile = self.root / "container.cid"
+        cidfile.write_text("not-a-container-id; rm -rf /", encoding="utf-8")
+        with patch("automation.isolated_upgrade_worker.subprocess.run") as run:
+            with self.assertRaisesRegex(RuntimeError, "ID is malformed"):
+                self.runner._ensure_container_removed("podman", cidfile)
+        run.assert_not_called()
+
+    def test_cleanup_accepts_container_already_absent(self):
+        cidfile = self.root / "container.cid"
+        cidfile.write_text("abcdef123456", encoding="utf-8")
+        with patch(
+            "automation.isolated_upgrade_worker.subprocess.run",
+            return_value=__import__("subprocess").CompletedProcess(
+                ["podman", "container", "exists", "abcdef123456"], 1
+            ),
+        ) as run:
+            self.runner._ensure_container_removed("podman", cidfile)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0][1:3], ["container", "exists"])
+
+    def test_cleanup_force_removes_and_verifies_container(self):
+        cidfile = self.root / "container.cid"
+        cidfile.write_text("abcdef123456", encoding="utf-8")
+        responses = [
+            __import__("subprocess").CompletedProcess([], 0),
+            __import__("subprocess").CompletedProcess([], 0),
+            __import__("subprocess").CompletedProcess([], 1),
+        ]
+        with patch(
+            "automation.isolated_upgrade_worker.subprocess.run",
+            side_effect=responses,
+        ) as run:
+            self.runner._ensure_container_removed("podman", cidfile)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args_list[1].args[0][1:3], ["rm", "--force"])
+        self.assertEqual(run.call_args_list[2].args[0][1:3], ["container", "exists"])
+
+    def test_cleanup_fails_if_container_remains_after_force_remove(self):
+        cidfile = self.root / "container.cid"
+        cidfile.write_text("abcdef123456", encoding="utf-8")
+        responses = [
+            __import__("subprocess").CompletedProcess([], 0),
+            __import__("subprocess").CompletedProcess([], 0),
+            __import__("subprocess").CompletedProcess([], 0),
+        ]
+        with patch(
+            "automation.isolated_upgrade_worker.subprocess.run",
+            side_effect=responses,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "could not be confirmed"):
+                self.runner._ensure_container_removed("podman", cidfile)
+
     def test_container_command_uses_readonly_artifact_and_bounded_tmpfs(self):
         command = self.runner._build_container_command(
             binary="/usr/bin/podman",
