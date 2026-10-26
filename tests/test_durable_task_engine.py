@@ -45,6 +45,14 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(claimed["attempts"], 2)
         self.assertEqual(self.engine.fail(task["id"], "worker", "permanent")["state"], "failed")
 
+    def test_failed_dependency_marks_descendant_failed_instead_of_stranding_it(self):
+        parent = self.engine.submit(self.goal, "parent", {}, idempotency_key="parent", max_attempts=1)
+        child = self.engine.submit(self.goal, "child", {}, idempotency_key="child", dependencies=[parent["id"]])
+        self.engine.claim("worker")
+        self.engine.fail(parent["id"], "worker", "permanent failure")
+        self.assertEqual(self.engine.get_task(child["id"])["state"], "failed")
+        self.assertIsNone(self.engine.claim("worker"))
+
     def test_expired_lease_recovery_and_stale_worker_rejected(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
