@@ -282,7 +282,8 @@ class DurableTaskEngine:
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); g=c.execute("SELECT * FROM goals WHERE id=?",(goal_id,)).fetchone()
             if g is None: raise TaskNotFound("goal not found")
-            if g["state"] in {"completed","cancelled"} and state!="cancelled": raise TaskConflict("terminal goal cannot be resumed")
+            if g["state"] == "completed": raise TaskConflict("completed goal cannot change state")
+            if g["state"] == "cancelled" and state != "cancelled": raise TaskConflict("cancelled goal cannot be resumed")
             c.execute("UPDATE goals SET state=?,updated_at=? WHERE id=?",(state,now,goal_id))
             cancelled_tasks = []
             if state=="cancelled":
