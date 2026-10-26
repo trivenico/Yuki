@@ -365,8 +365,11 @@ class DurableTaskEngineTests(unittest.TestCase):
         now[0] += 6
         self.assertEqual(engine.recover_expired_leases(), 1)
         self.assertEqual(engine.get_task(task["id"])["state"], "failed")
-        # Once the task is terminal, goal cancellation is safe and explicit.
-        self.assertEqual(engine.set_goal_state(goal, "cancelled")["state"], "cancelled")
+        # Exhausting the only attempt terminally completes the goal.
+        # Terminal goals cannot be reopened or cancelled afterward.
+        self.assertEqual(engine.get_goal(goal)["state"], "completed")
+        with self.assertRaises(TaskConflict):
+            engine.set_goal_state(goal, "cancelled")
 
     def test_running_task_cannot_be_cancelled_while_side_effect_may_be_active(self):
         task = self.engine.submit(
