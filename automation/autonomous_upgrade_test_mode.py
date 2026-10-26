@@ -53,7 +53,7 @@ def build_autonomous_upgrade_test_coordinator(
         import re
 
         if not re.fullmatch(
-            r"docker\\.io/library/python:3\\.11-slim@sha256:[0-9a-f]{64}", image
+            r"docker\.io/library/python:3\.11-slim@sha256:[0-9a-f]{64}", image
         ):
             raise ToolAuthorizationError(
                 "YUKI_TEST_WORKER_IMAGE must be the approved official Python 3.11 slim image pinned by a lowercase sha256 digest."
