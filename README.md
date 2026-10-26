@@ -20,7 +20,7 @@ Run `yuki-onboard` (or `python -m ui.onboarding_tui`) to create a private user c
 - Hybrid routing stays local by default. Only explicitly configured cloud task names can route externally, and CLI cloud prompts require confirmation.
 - Configure MCP servers in onboarding. Use `/mcp discover`, `/mcp tools`, and `/mcp invoke mcp.SERVER.TOOL | {"key":"value"}`. Discovery does not authorize execution; each call requires a fresh approval and an explicit tool allow-list.
 - `/dashboard` opens the optional Textual status UI (`pip install -r requirements-ui.txt`).
-- `/desktop` opens the optional read-only PyWebView shell (`pip install -r requirements-desktop.txt`). It shares the running process state but intentionally exposes no privileged actions.
+- `/desktop` opens the optional PyWebView desktop shell (`pip install -r requirements-desktop.txt`). It provides plain-text provider chat and read-only runtime/skill status. Cloud prompts require a per-message confirmation; desktop chat never invokes skills, shell commands, or workspace writes.
 - Token usage is stored locally under the configured workspace; provider counts are exact when supplied by the provider and otherwise marked as estimates.
 
 These additions are an integration increment, not a claim of production readiness. Run the test suite and review provider/network policies before using real credentials or sensitive data.
