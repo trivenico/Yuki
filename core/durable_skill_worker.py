@@ -96,8 +96,15 @@ class DurableSkillWorker:
                 current = self.engine.get_task(task_id)
                 persisted_state = current.get("state", "unknown")
                 if persisted_state == "running":
-                    current = self.engine.cancel_task(task_id)
-                    persisted_state = current.get("state", "cancelled")
+                    # This worker accepts only max_attempts=1, so record a
+                    # terminal failure without permitting an automatic replay.
+                    current = self.engine.fail(
+                        task_id,
+                        self.worker_id,
+                        "worker invocation raised an exception",
+                        retry_delay_seconds=0,
+                    )
+                    persisted_state = current.get("state", "failed")
             except Exception:
                 pass
             return {
