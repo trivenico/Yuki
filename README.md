@@ -20,14 +20,41 @@ Activate the environment, then install the declared runtime dependency:
 python -m pip install -r requirements.txt
 ```
 
-On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1` instead. Configure a provider and launch the terminal assistant:
+On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1` instead.
 
-```sh
+#### Windows: run the real local Ollama model
+
+1. Install Ollama for Windows from the [official download page](https://ollama.com/download/windows). It runs natively and serves its local API on `http://localhost:11434`.
+2. Open a new PowerShell terminal and verify installation:
+
+```powershell
+ollama --version
+ollama pull qwen2.5:3b
+ollama list
+ollama run qwen2.5:3b
+```
+
+The 3B model is a lighter starting point than 7B; actual speed and memory requirements depend on your RAM/GPU. Exit the Ollama chat with `/bye` after confirming it answers.
+
+3. In the activated Yuki virtual environment, install dependencies and configure Yuki:
+
+```powershell
+python -m pip install -r requirements.txt
 python -m ui.onboarding_tui
+```
+
+Choose `ollama`, keep the URL as `http://127.0.0.1:11434`, and set the model name to exactly `qwen2.5:3b`. Do not configure a cloud provider or API key for this local-only path.
+
+4. Run the actual-provider smoke test, then launch Yuki:
+
+```powershell
+python scripts/smoke_test_ollama.py
 python main.py
 ```
 
-On first launch, Yuki may start onboarding automatically if `~/.yuki/config.json` does not exist. In the wizard, choose Ollama for local inference and enter the model name already available in your Ollama installation. Ensure Ollama is running and the model has been downloaded before asking Yuki a question. Then type a normal prompt or use `/ask YOUR_PROMPT`; use `/help` for commands and `/doctor` for diagnostics. The setup wizard does not itself prove the endpoint or model is reachable.
+The smoke test checks that the configured local endpoint lists the chosen model, then sends one short prompt through Yuki's `YukiAgent` and verifies that a real response contains the expected marker. It exits nonzero on setup, connectivity, model, or inference failure. A passing smoke test is evidence of local inference, not a certification of all Yuki features.
+
+At the Yuki prompt, type a normal message or use `/ask Explain what you can help me with`; use `/help` for commands and `/doctor` for diagnostics. The onboarding wizard validates endpoint syntax but does not itself verify that Ollama or the model is reachable.
 
 To open the optional desktop window, install its dependency and launch Yuki as above, then enter `/desktop` in the terminal:
 
