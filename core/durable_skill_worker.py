@@ -8,18 +8,70 @@ not automatically replayed.
 from __future__ import annotations
 
 from typing import Any
+import threading
 
 
 class DurableSkillWorker:
-    def __init__(self, engine: Any, runtime: Any, *, worker_id: str):
+    def __init__(
+        self,
+        engine: Any,
+        runtime: Any,
+        *,
+        worker_id: str,
+        lease_seconds: int = 60,
+        heartbeat_interval_seconds: float = 20,
+    ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 2 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 2 to 3600")
+        if (
+            isinstance(heartbeat_interval_seconds, bool)
+            or not isinstance(heartbeat_interval_seconds, (int, float))
+            or heartbeat_interval_seconds <= 0
+            or heartbeat_interval_seconds >= lease_seconds
+        ):
+            raise ValueError("heartbeat interval must be positive and shorter than the lease")
         self.engine = engine
         self.runtime = runtime
         self.worker_id = worker_id
+        self.lease_seconds = lease_seconds
+        self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+
+    def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+        stop = threading.Event()
+        heartbeat_errors: list[Exception] = []
+
+        def renew_lease():
+            while not stop.wait(self.heartbeat_interval_seconds):
+                try:
+                    self.engine.heartbeat(
+                        task_id,
+                        self.worker_id,
+                        lease_seconds=self.lease_seconds,
+                    )
+                except Exception as error:
+                    heartbeat_errors.append(error)
+                    stop.set()
+                    return
+
+        heartbeat_thread = threading.Thread(
+            target=renew_lease,
+            name=f"yuki-lease-{task_id[:8]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        try:
+            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
+        finally:
+            stop.set()
+            heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
+        if heartbeat_errors:
+            raise RuntimeError("task lease heartbeat failed") from heartbeat_errors[0]
+        return result
 
     def run_once(self) -> dict[str, Any]:
-        task = self.engine.claim(self.worker_id)
+        task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds)
         if task is None:
             return {"state": "idle", "status": "no_task"}
 
