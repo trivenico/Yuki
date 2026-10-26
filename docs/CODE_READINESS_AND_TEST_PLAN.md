@@ -1,6 +1,6 @@
 # Code Readiness and Test-First Stabilization Plan
 
-**Status:** preparation baseline; this document is not evidence that the full test suite or production acceptance has passed.
+**Status:** baseline plan with an initial CI result recorded below. This is not a claim of production acceptance.
 
 ## Objective
 
@@ -68,3 +68,18 @@ Until independent security review and real isolated-worker acceptance are record
 ## Completion criteria
 
 This baseline is complete only when a maintainer attaches a test report tied to an exact commit and marks each required check as passed, failed, or skipped with a reason. Production readiness is a separate decision and requires runtime evidence and review; it is not a percentage inferred from the number of modules or green workflows.
+
+
+## Initial CI evidence (2026-10-26)
+
+The initial PR head `96bbaab21c09477957ef00809633750ef87b880b` completed all 15 PR-triggered workflow runs successfully. The `Yuki quality gates` workflow completed on all three of these runners using Python 3.11:
+
+| Runner | Unit tests | Result |
+|---|---:|---|
+| Ubuntu latest | 605 | Passed |
+| macOS latest | 605 | Passed |
+| Windows latest | 605 | Passed |
+
+The exact command was `python -m unittest discover -s tests -v`. The quality-gate job also passed dependency consistency validation, Python source compilation, and its project/core-import diagnostic. Logs note that the diagnostic does not validate voice hardware, live AI providers, or browser automation.
+
+This is a useful **core-suite baseline**, not a complete runtime acceptance report. It does not establish rootless Podman isolation, production deployment readiness, external integration behavior, or independent security approval. Because this PR updates the plan, its new head must receive its own CI run; the evidence above refers only to the exact SHA stated here.
