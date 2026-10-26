@@ -233,6 +233,12 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
 
+    def test_goal_state_rejects_non_string_values_with_value_error(self):
+        for invalid_state in (None, [], {}, 1):
+            with self.subTest(state_type=type(invalid_state).__name__):
+                with self.assertRaises(ValueError):
+                    self.engine.set_goal_state(self.goal, invalid_state)
+
     def test_completed_goal_cannot_be_cancelled_or_reopened(self):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="completed-goal-terminal"
