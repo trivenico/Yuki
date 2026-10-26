@@ -180,5 +180,29 @@ class LearningTests(unittest.TestCase):
                 self.assertIn("[REDACTED]", saved)
 
 
+    def test_dashboard_uses_real_line_breaks(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command("/dashboard", [], [], agent, manager,
+                                SecurityPolicy(allowed_tools=TOOLS.keys()))
+        self.assertIn("\nProvider: mock", result)
+        self.assertNotIn("\\nProvider: mock", result)
+
+    def test_skill_list_uses_real_line_breaks(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        with patch("yuki.SkillRegistry.defaults") as defaults:
+            registry = defaults.return_value
+            registry.describe.return_value = [
+                {"name": "first", "risk": "low", "description": "first skill"},
+                {"name": "second", "risk": "low", "description": "second skill"},
+            ]
+            result = handle_command("/skill list", [], [], agent, manager,
+                                    SecurityPolicy(allowed_tools=TOOLS.keys()))
+        self.assertIn("\nsecond [low]", result)
+        self.assertNotIn("\\nsecond [low]", result)
+
+
+
 if __name__ == "__main__":
     unittest.main()
