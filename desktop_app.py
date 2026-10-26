@@ -54,6 +54,7 @@ class YukiDesktopApp:
             values=[p["name"] for p in self.providers], state="readonly", width=22
         )
         self.provider_combo.pack(anchor="w", fill="x", pady=(4, 8))
+        self.provider_combo.bind("<<ComboboxSelected>>", self._provider_selection_changed)
         self.verify_button = ttk.Button(sidebar, text="Verify connection", command=self._verify_provider)
         self.verify_button.pack(fill="x", pady=(0, 16))
 
@@ -132,6 +133,11 @@ class YukiDesktopApp:
                 )
                 self.events.put(("error", safe))
         threading.Thread(target=work, daemon=True).start()
+
+    def _provider_selection_changed(self, _event=None) -> None:
+        self.service.invalidate_provider_verification()
+        self.send_button.configure(state="disabled")
+        self.status_var.set("Provider selection changed. Verify the new provider before chatting.")
 
     def _verify_provider(self) -> None:
         name = self.provider_var.get().strip()
