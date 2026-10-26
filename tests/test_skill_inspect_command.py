@@ -66,7 +66,7 @@ class SkillInspectCommandTests(unittest.TestCase):
         skill.description = "first line" + chr(10) + "second line"
         result = self.invoke("/skill inspect weather", skill)
         self.assertIn("Description: first line second line", result)
-        self.assertNotIn("second line" + chr(10), result)
+        self.assertNotIn("Description: first line" + chr(10) + "second line", result)
 
 
 if __name__ == "__main__":
