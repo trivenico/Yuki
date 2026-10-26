@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,11 +25,12 @@ class ApprovalAuditSecurityTests(unittest.TestCase):
             path = str(Path(tmp) / "audit.sqlite3")
             audit = SQLiteApprovalAuditLog(path)
             audit.record_event("requested", "pending-1", "owner", "session")
-            with sqlite3.connect(path) as db:
-                with self.assertRaises(sqlite3.IntegrityError):
-                    db.execute("UPDATE approval_audit SET event_type='executed' WHERE id=1")
-                with self.assertRaises(sqlite3.IntegrityError):
-                    db.execute("DELETE FROM approval_audit WHERE id=1")
+            with closing(sqlite3.connect(path)) as db:
+                with db:
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        db.execute("UPDATE approval_audit SET event_type='executed' WHERE id=1")
+                    with self.assertRaises(sqlite3.IntegrityError):
+                        db.execute("DELETE FROM approval_audit WHERE id=1")
             self.assertEqual(audit.list_events()[0]["event_type"], "requested")
 
     def test_event_fields_are_bounded(self):
@@ -42,17 +44,18 @@ class ApprovalAuditSecurityTests(unittest.TestCase):
     def test_legacy_raw_identities_are_redacted_on_open(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "audit.sqlite3")
-            with sqlite3.connect(path) as db:
-                db.execute("""CREATE TABLE approval_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_type TEXT NOT NULL,
-                    pending_id TEXT NOT NULL,
-                    actor TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )""")
-                db.execute("INSERT INTO approval_audit(event_type,pending_id,actor,session_id,created_at) VALUES(?,?,?,?,?)",
-                           ("requested", "pending-1", "old-owner", "old-session", "2026-01-01T00:00:00+00:00"))
+            with closing(sqlite3.connect(path)) as db:
+                with db:
+                    db.execute("""CREATE TABLE approval_audit (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        event_type TEXT NOT NULL,
+                        pending_id TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    )""")
+                    db.execute("INSERT INTO approval_audit(event_type,pending_id,actor,session_id,created_at) VALUES(?,?,?,?,?)",
+                               ("requested", "pending-1", "old-owner", "old-session", "2026-01-01T00:00:00+00:00"))
             audit = SQLiteApprovalAuditLog(path)
             row = audit.list_events()[0]
             self.assertNotEqual(row["actor"], "old-owner")
