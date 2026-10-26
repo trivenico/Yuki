@@ -256,7 +256,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                     tasks = engine.list_tasks(goal_id)
                 if not tasks:
                     return "No durable tasks found."
-                return "\\n".join(
+                return "\n".join(
                     f"{task['id']} [{task['state']}] {task['task_type']} attempts={task['attempts']}/{task['max_attempts']}"
                     for task in tasks
                 )
@@ -285,8 +285,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return (
                     f"Durable worker: {result.get('state', 'unknown')} "
                     f"({result.get('status', 'unknown')}). "
-                    f"{result.get('message', '')}".strip()
-                )
+                    f"{result.get('message', '')}"
+                ).strip()
             except Exception as error:
                 write_audit_event("durable:worker:run", "failed")
                 return f"Durable worker unavailable ({type(error).__name__})."
