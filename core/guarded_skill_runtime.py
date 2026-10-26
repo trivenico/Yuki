@@ -221,8 +221,10 @@ def invoke_registered_skill(
     a registry replacement between permission approval and dispatch fails closed.
     """
     def record(status: str) -> bool:
+        # A missing audit sink is not evidence of a successful durable write.
+        # Fail closed for all side-effecting invocations in production paths.
         if audit is None:
-            return True
+            return False
         try:
             # Never include arguments, results, or memory content in audit data.
             # None remains compatible with legacy sinks; False means persistence failed.
