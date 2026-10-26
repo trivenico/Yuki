@@ -8,6 +8,7 @@ not automatically replayed.
 from __future__ import annotations
 
 from typing import Any
+import math
 import threading
 
 
@@ -28,10 +29,11 @@ class DurableSkillWorker:
         if (
             isinstance(heartbeat_interval_seconds, bool)
             or not isinstance(heartbeat_interval_seconds, (int, float))
+            or not math.isfinite(heartbeat_interval_seconds)
             or heartbeat_interval_seconds <= 0
-            or heartbeat_interval_seconds >= lease_seconds
+            or heartbeat_interval_seconds > min(lease_seconds / 2, 300)
         ):
-            raise ValueError("heartbeat interval must be positive and shorter than the lease")
+            raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
         self.engine = engine
         self.runtime = runtime
         self.worker_id = worker_id
