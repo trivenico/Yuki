@@ -95,10 +95,13 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.goal, "work", {}, idempotency_key="invalid-retry-delay"
         )
         self.engine.claim("worker")
-        with self.assertRaises(ValueError):
-            self.engine.fail(
-                task["id"], "worker", "error", retry_delay_seconds=float("inf")
-            )
+        for invalid_retry_delay in (float("inf"), float("nan"), 10 ** 1000, True):
+            with self.subTest(retry_delay_type=type(invalid_retry_delay).__name__):
+                with self.assertRaises(ValueError):
+                    self.engine.fail(
+                        task["id"], "worker", "error",
+                        retry_delay_seconds=invalid_retry_delay,
+                    )
 
     def test_dependencies_gate_claim_until_parent_succeeds(self):
         first = self.engine.submit(self.goal, "collect", {}, idempotency_key="a")
