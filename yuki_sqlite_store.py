@@ -21,7 +21,12 @@ class SQLiteJsonStore:
         self.path = Path(path)
         self.timeout_seconds = float(timeout_seconds)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(self._connect()) as connection:
+        with closing(sqlite3.connect(
+            str(self.path), timeout=self.timeout_seconds, isolation_level=None
+        )) as connection:
+            connection.execute(f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = FULL")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS yuki_json_state (
@@ -40,7 +45,6 @@ class SQLiteJsonStore:
             isolation_level=None,
         )
         connection.execute(f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}")
-        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
         return connection
 
