@@ -45,10 +45,13 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
                 self.root, **self._kwargs(environ={})
             )
 
-    def test_isolated_runner_is_mandatory(self):
-        with self.assertRaisesRegex(ToolAuthorizationError, "requires an isolated runner"):
+    def test_default_podman_runner_requires_pinned_image_digest(self):
+        with self.assertRaisesRegex(ToolAuthorizationError, "immutable sha256 image digest"):
             build_autonomous_upgrade_test_coordinator(
-                self.root, **self._kwargs(isolated_runner_factory=None)
+                self.root,
+                **self._kwargs(isolated_runner_factory=None, environ={
+                    "YUKI_AUTONOMOUS_UPGRADE_TEST_MODE": "1"
+                }),
             )
 
     def test_autonomous_mode_validates_only_a_staged_copy(self):
