@@ -76,40 +76,132 @@ class IsolatedUpgradeCoordinator:
         self.isolated_runner_factory = isolated_runner_factory
         self.proposal_builder = SelfUpgradeProposalBuilder(self.allowed_paths)
 
+    @staticmethod
+    def _open_component(name: str, flags: int, *, dir_fd: int) -> int:
+        """Open one path component relative to a verified directory descriptor."""
+        return os.open(name, flags, dir_fd=dir_fd)
+
+    def _open_workspace_file(self, relative: Path, root_fd: int) -> tuple[int, os.stat_result]:
+        """Open a regular workspace file without following swapped symlinks.
+
+        Parent components and the leaf are opened relative to descriptors with
+        O_NOFOLLOW. Platforms without these primitives fail closed.
+        """
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if nofollow is None or directory_flag is None or os.open not in getattr(os, "supports_dir_fd", set()):
+            raise WorkspaceChangeError("safe descriptor-based workspace staging is unsupported on this platform.")
+        parts = relative.parts
+        if not parts or any(part in ("", ".", "..") for part in parts):
+            raise WorkspaceChangeError("workspace staging denied: unsafe relative path.")
+        parent_fd = root_fd
+        owned_parent_fd = None
+        file_fd = None
+        try:
+            for component in parts[:-1]:
+                next_fd = self._open_component(
+                    component,
+                    os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=parent_fd,
+                )
+                if owned_parent_fd is not None:
+                    os.close(owned_parent_fd)
+                owned_parent_fd = next_fd
+                parent_fd = next_fd
+            leaf = parts[-1]
+            before = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISREG(before.st_mode):
+                raise WorkspaceChangeError("workspace staging denied: only regular files may be copied.")
+            file_fd = self._open_component(
+                leaf,
+                os.O_RDONLY | nofollow | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=parent_fd,
+            )
+            opened = os.fstat(file_fd)
+            after = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            identity = (opened.st_dev, opened.st_ino)
+            if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(after.st_mode)
+                    or identity != (before.st_dev, before.st_ino)
+                    or identity != (after.st_dev, after.st_ino)):
+                raise WorkspaceChangeError("workspace file changed during safe staging open.")
+            result_fd, file_fd = file_fd, None
+            return result_fd, opened
+        except WorkspaceChangeError:
+            raise
+        except (OSError, ValueError, TypeError) as exc:
+            raise WorkspaceChangeError("workspace staging denied: unable to safely open a regular file.") from exc
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if owned_parent_fd is not None:
+                os.close(owned_parent_fd)
+
     def _copy_workspace(self, destination: Path) -> None:
         file_count = 0
         byte_count = 0
-        for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
-            current_path = Path(current)
-            dirs[:] = [
-                name for name in dirs
-                if name not in _BLOCKED_DIRS
-                and not name.lower().startswith(".env")
-                and not (current_path / name).is_symlink()
-            ]
-            relative = current_path.relative_to(self.root)
-            target_dir = destination / relative
-            target_dir.mkdir(parents=True, exist_ok=True)
-            for name in files:
-                source = current_path / name
-                if source.is_symlink() or name.lower().startswith(".env") or _SENSITIVE_FILE.search(name):
-                    continue
-                try:
-                    metadata = source.stat()
-                except OSError as exc:
-                    raise WorkspaceChangeError(
-                        f"workspace staging denied: unable to inspect {source.name!r}."
-                    ) from exc
-                if not stat.S_ISREG(metadata.st_mode):
-                    continue
-                size = metadata.st_size
-                file_count += 1
-                byte_count += size
-                if file_count > _MAX_COPY_FILES or byte_count > _MAX_COPY_BYTES:
-                    raise WorkspaceChangeError("workspace copy exceeded configured safety bounds.")
-                target = target_dir / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, target)
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if nofollow is None or directory_flag is None or os.open not in getattr(os, "supports_dir_fd", set()):
+            raise WorkspaceChangeError("safe descriptor-based workspace staging is unsupported on this platform.")
+        try:
+            root_fd = os.open(self.root, os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0))
+        except OSError as exc:
+            raise WorkspaceChangeError("workspace staging denied: unable to open workspace root safely.") from exc
+        try:
+            for current, dirs, files in os.walk(self.root, topdown=True, followlinks=False):
+                current_path = Path(current)
+                dirs[:] = [
+                    name for name in dirs
+                    if name not in _BLOCKED_DIRS
+                    and not name.lower().startswith(".env")
+                    and not (current_path / name).is_symlink()
+                ]
+                relative_dir = current_path.relative_to(self.root)
+                target_dir = destination / relative_dir
+                target_dir.mkdir(parents=True, exist_ok=True)
+                for name in files:
+                    if name.lower().startswith(".env") or _SENSITIVE_FILE.search(name):
+                        continue
+                    relative = relative_dir / name
+                    try:
+                        file_fd, _metadata = self._open_workspace_file(relative, root_fd)
+                    except WorkspaceChangeError:
+                        # A raced symlink/non-regular entry is excluded. Other
+                        # failures deny staging; never fall back to pathname copy.
+                        try:
+                            if len(relative.parts) == 1:
+                                entry = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                            else:
+                                entry = None
+                        except OSError:
+                            entry = None
+                        if entry is not None and not stat.S_ISREG(entry.st_mode):
+                            continue
+                        raise
+                    file_count += 1
+                    if file_count > _MAX_COPY_FILES:
+                        os.close(file_fd)
+                        raise WorkspaceChangeError("workspace copy exceeded configured safety bounds.")
+                    target = target_dir / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with os.fdopen(file_fd, "rb") as source_stream, target.open("wb") as target_stream:
+                            while True:
+                                chunk = source_stream.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                byte_count += len(chunk)
+                                if byte_count > _MAX_COPY_BYTES:
+                                    raise WorkspaceChangeError("workspace copy exceeded configured safety bounds.")
+                                target_stream.write(chunk)
+                    except WorkspaceChangeError:
+                        target.unlink(missing_ok=True)
+                        raise
+                    except OSError as exc:
+                        target.unlink(missing_ok=True)
+                        raise WorkspaceChangeError("workspace staging denied while copying a verified file.") from exc
+        finally:
+            os.close(root_fd)
 
     def validate(
         self,
