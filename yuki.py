@@ -123,12 +123,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         available_tools = ", ".join(policy.allowed_tools())
         tasks_open = sum(1 for item in tasks if isinstance(item, dict) and not item.get("completed", False))
         return (
-            "Yuki dashboard\\n"
-            f"Provider: {current.name if current else 'none'} ({agent.status()})\\n"
-            f"Allowed tools: {available_tools or 'none'}\\n"
-            f"Open tasks: {tasks_open}\\n"
-            f"Saved notes: {len(memory)}\\n"
-            f"Learning records: {len(load_history())}\\n"
+            "Yuki dashboard\n"
+            f"Provider: {current.name if current else 'none'} ({agent.status()})\n"
+            f"Allowed tools: {available_tools or 'none'}\n"
+            f"Open tasks: {tasks_open}\n"
+            f"Saved notes: {len(memory)}\n"
+            f"Learning records: {len(load_history())}\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
     if command == "/providers":
@@ -150,7 +150,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         except Exception as error:
             return f"Skill runtime unavailable ({type(error).__name__})."
         if len(parts) == 1 or parts[1] == "list":
-            return "\\n".join(
+            return "\n".join(
                 f'{item["name"]} [{item["risk"]}]: {item["description"]}'
                 for item in registry.describe()
             ) or "No skills registered."
