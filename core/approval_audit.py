@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 import sqlite3
+from contextlib import contextmanager
+from typing import Iterator
 
 
 def _identity_fingerprint(value: str) -> str:
@@ -46,12 +48,17 @@ class SQLiteApprovalAuditLog:
                 BEFORE DELETE ON approval_audit
                 BEGIN SELECT RAISE(ABORT, 'approval audit is append-only'); END""")
 
-    def _connect(self):
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield a configured connection and close it deterministically."""
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        db.execute("PRAGMA journal_mode = WAL")
-        db.execute("PRAGMA synchronous = FULL")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            db.execute("PRAGMA journal_mode = WAL")
+            db.execute("PRAGMA synchronous = FULL")
+            yield db
+        finally:
+            db.close()
 
     def record_event(self, event_type: str, pending_id: str, actor: str, session_id: str):
         for label, value, maximum in (
