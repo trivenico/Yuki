@@ -130,7 +130,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         # Simulate the pre-fingerprint schema; opening the engine must migrate
         # additively rather than requiring a destructive database rebuild.
         legacy_db = Path(self.tmp.name) / "legacy.sqlite"
-        with sqlite3.connect(legacy_db) as conn:
+        conn = sqlite3.connect(legacy_db)
+        try:
             conn.executescript("""
                 CREATE TABLE goals(
                     id TEXT PRIMARY KEY, state TEXT NOT NULL,
@@ -146,9 +147,14 @@ class DurableTaskEngineTests(unittest.TestCase):
                     UNIQUE(goal_id,idempotency_key)
                 );
             """)
+        finally:
+            conn.close()
         migrated = DurableTaskEngine(legacy_db)
-        with sqlite3.connect(legacy_db) as conn:
+        conn = sqlite3.connect(legacy_db)
+        try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        finally:
+            conn.close()
         self.assertIn("submission_fingerprint", columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
