@@ -84,7 +84,7 @@ class OnboardingConfigTests(unittest.TestCase):
         self.assertEqual(result["cloud_tasks"], [])
 
     def test_guardrails_default_to_approval_and_local_first(self):
-        result = validate_config({"provider":"ollama"})
+        result = validate_config({"provider":"ollama", "model":"qwen2.5:7b"})
         self.assertTrue(result["guardrails"]["require_tool_approval"])
         self.assertTrue(result["guardrails"]["require_cloud_approval"])
         self.assertTrue(result["guardrails"]["local_first"])
