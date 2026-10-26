@@ -98,6 +98,10 @@ def record_outcome(task, outcome, approach="", lesson=""):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
+        # Migrate before constructing the store: construction creates the DB file.
+        # The conditional transactional migration is safe when callers race.
+        if not HISTORY_DB_FILE.exists() and HISTORY_FILE.exists():
+            load_history()
         store = _store()
 
         def append_record(current):
@@ -106,9 +110,7 @@ def record_outcome(task, outcome, approach="", lesson=""):
             return history[-MAX_RECORDS:]
 
         # Atomic read-modify-write prevents concurrent outcomes from overwriting
-        # each other. The legacy history is loaded first if this is a fresh DB.
-        if not HISTORY_DB_FILE.exists() and HISTORY_FILE.exists():
-            load_history()
+        # each other.
         store.update_json(_HISTORY_KEY, append_record, default=[])
         return "Outcome recorded. Lessons are stored locally; the AI model is not trained or modified."
     except (OSError, sqlite3.Error, ValueError, TypeError):
