@@ -163,6 +163,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         registry.register(InvalidDataSkill())
         result = invoke_registered_skill(
             registry, "invalid-data", approvals=OneShotSkillApprovals(),
+            audit=lambda _action, _status: True,
         )
         self.assertTrue(result.ok)
         self.assertIsNone(result.data)
