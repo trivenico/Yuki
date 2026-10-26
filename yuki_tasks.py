@@ -32,10 +32,10 @@ def _store():
 def load_tasks():
     """Load SQLite state, migrating a valid legacy JSON list once when present."""
     try:
-        store = _store()
-        stored = store.read_json(_TASKS_KEY, None)
-        if stored is not None:
-            return _valid_tasks(stored)
+        if TASKS_DB_FILE.exists():
+            stored = _store().read_json(_TASKS_KEY, None)
+            if stored is not None:
+                return _valid_tasks(stored)
 
         if not TASKS_FILE.exists():
             return []
@@ -47,7 +47,7 @@ def load_tasks():
         if not isinstance(legacy, list):
             return []
         tasks = _valid_tasks(legacy)
-        store.write_json(_TASKS_KEY, tasks)
+        _store().write_json(_TASKS_KEY, tasks)
         return tasks
     except (OSError, sqlite3.Error, ValueError, TypeError):
         return []
