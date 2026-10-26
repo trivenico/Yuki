@@ -10,7 +10,6 @@ from typing import Any
 CONFIG_VERSION = 1
 DEFAULT_CONFIG_PATH = Path("~/.yuki/config.json").expanduser()
 PROVIDERS = {
-    "mock": {"kind": "local", "default_model": "mock"},
     "hybrid": {"kind": "hybrid", "default_model": ""},
     "ollama": {"kind": "local", "default_url": "http://127.0.0.1:11434"},
     "llama.cpp": {"kind": "local", "default_url": "http://127.0.0.1:8080/v1"},
@@ -29,7 +28,7 @@ def config_path(path: str | os.PathLike[str] | None = None) -> Path:
 def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("Configuration must be a JSON object.")
-    provider = config.get("provider", "mock")
+    provider = config.get("provider", "ollama")
     if provider not in PROVIDERS:
         raise ValueError("Unsupported provider.")
     model = config.get("model", PROVIDERS[provider].get("default_model", ""))
