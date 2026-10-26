@@ -36,6 +36,21 @@ class DesktopOnboardingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 complete_onboarding_step(path, "provider")
 
+    def test_corrupt_out_of_order_state_cannot_skip_setup_gates(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "onboarding.json"
+            path.write_text(json.dumps({
+                "schema_version": 1,
+                "completed_steps": ["permissions", "welcome", "first_conversation"],
+                "selected_provider": "OPENAI",
+                "completed": True,
+            }), encoding="utf-8")
+            state = load_onboarding_state(path)
+            self.assertEqual(state["completed_steps"], ["welcome"])
+            self.assertIsNone(state["selected_provider"])
+            with self.assertRaises(ValueError):
+                complete_onboarding_step(path, "permissions")
+
     def test_state_never_persists_credentials_or_arbitrary_fields(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "onboarding.json"
