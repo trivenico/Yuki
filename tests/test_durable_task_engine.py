@@ -17,6 +17,18 @@ class DurableTaskEngineTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_in_memory_database_persists_across_engine_connections(self):
+        engine = DurableTaskEngine(":memory:")
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "work", {"ok": True}, idempotency_key="memory-task"
+        )
+        claimed = engine.claim("memory-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        completed = engine.complete(task["id"], "memory-worker", {"done": True})
+        self.assertEqual(completed["state"], "succeeded")
+        self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
+
     def test_task_survives_engine_restart_and_emits_events(self):
         task = self.engine.submit(self.goal, "summarize", {"text": "hello"}, idempotency_key="one")
         again = DurableTaskEngine(self.db)
