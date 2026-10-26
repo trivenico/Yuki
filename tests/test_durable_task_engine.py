@@ -30,6 +30,15 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             self.engine.submit(self.goal, "summarize", {"v": 2}, idempotency_key="same")
 
+    def test_idempotency_canonicalizes_payload_key_order(self):
+        first = self.engine.submit(
+            self.goal, "work", {"a": 1, "b": 2}, idempotency_key="canonical"
+        )
+        replay = self.engine.submit(
+            self.goal, "work", {"b": 2, "a": 1}, idempotency_key="canonical"
+        )
+        self.assertEqual(first["id"], replay["id"])
+
     def test_idempotency_rejects_changed_execution_options(self):
         parent = self.engine.submit(self.goal, "parent", {}, idempotency_key="parent")
         self.engine.submit(self.goal, "child", {"v": 1}, idempotency_key="child", dependencies=[parent["id"]], max_attempts=2, delay_seconds=3)
@@ -57,10 +66,27 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertNotIn("very-secret-value", str(events))
 
     def test_invalid_lease_and_delay_numbers_are_rejected(self):
-        with self.assertRaises(ValueError):
-            self.engine.submit(self.goal, "work", {}, idempotency_key="nan", delay_seconds=float("nan"))
+        for invalid_delay in (float("nan"), float("inf"), True):
+            with self.subTest(delay=invalid_delay):
+                with self.assertRaises(ValueError):
+                    self.engine.submit(
+                        self.goal, "work", {},
+                        idempotency_key=f"invalid-delay-{str(invalid_delay)}",
+                        delay_seconds=invalid_delay,
+                    )
         with self.assertRaises(ValueError):
             self.engine.claim("worker", lease_seconds=True)
+        with self.assertRaises(ValueError):
+            self.engine.heartbeat("missing", "worker", lease_seconds=True)
+
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="invalid-retry-delay"
+        )
+        self.engine.claim("worker")
+        with self.assertRaises(ValueError):
+            self.engine.fail(
+                task["id"], "worker", "error", retry_delay_seconds=float("inf")
+            )
 
     def test_dependencies_gate_claim_until_parent_succeeds(self):
         first = self.engine.submit(self.goal, "collect", {}, idempotency_key="a")
