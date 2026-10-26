@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yuki
 
@@ -40,7 +40,7 @@ class SkillInspectCommandTests(unittest.TestCase):
 
     def test_inspect_returns_metadata_without_invoking_skill(self):
         skill = FakeSkill()
-        skill.execute = unittest.mock.Mock(return_value="must not run")
+        skill.execute = Mock(return_value="must not run")
         result = self.invoke("/skill inspect weather", skill)
         self.assertIn("Name: weather", result)
         self.assertIn("Description: Current weather lookup", result)
