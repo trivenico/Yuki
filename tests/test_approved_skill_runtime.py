@@ -211,6 +211,51 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(outcomes.count(True), 1)
         self.assertEqual(outcomes.count(False), 1)
 
+    def test_audit_failure_blocks_skill_before_execution(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        calls = []
+        class SideEffectSkill:
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                calls.append(argument)
+                return "done"
+
+        registry = Registry()
+        registry.register(type("RegisteredSkill", (SideEffectSkill,), {"name": "side-effect"})())
+        result = invoke_registered_skill(
+            registry, "side-effect", "private input",
+            approvals=OneShotSkillApprovals(),
+            audit=lambda _action, _status: False,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "audit_unavailable")
+        self.assertEqual(calls, [])
+
+    def test_final_skill_audit_failure_warns_after_possible_execution(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        calls = []
+        class SideEffectSkill:
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                calls.append(argument)
+                return "done"
+
+        registry = Registry()
+        registry.register(type("RegisteredSkill", (SideEffectSkill,), {"name": "side-effect"})())
+        result = invoke_registered_skill(
+            registry, "side-effect", "private input",
+            approvals=OneShotSkillApprovals(),
+            audit=lambda _action, status: status != "completed",
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "audit_failed")
+        self.assertIn("before retrying", result.message)
+        self.assertEqual(calls, ["private input"])
+
     def test_invalid_utf8_argument_is_rejected_without_exception(self):
         self.registry.register(DemoSkill())
         result = self.runtime.invoke("weather", chr(0xD800))
