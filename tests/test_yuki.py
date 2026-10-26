@@ -224,7 +224,8 @@ class LearningTests(unittest.TestCase):
     def test_outcome_is_saved_and_matching_lesson_found(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "learning.json"
-            with patch.object(yuki_learning, "HISTORY_FILE", path):
+            with patch.object(yuki_learning, "HISTORY_FILE", path), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", Path(folder) / "learning.sqlite3"):
                 result = yuki_learning.record_outcome(
                     "Organize project files", "success",
                     "Group files by type", "Group related files before reviewing them"
@@ -232,10 +233,39 @@ class LearningTests(unittest.TestCase):
                 self.assertIn("recorded", result.lower())
                 self.assertTrue(yuki_learning.suggest_lessons("Organize project files"))
 
+    def test_concurrent_outcomes_are_not_lost(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "learning.json"
+            db_path = Path(folder) / "learning.sqlite3"
+            with patch.object(yuki_learning, "HISTORY_FILE", path), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", db_path):
+                def record(index):
+                    return yuki_learning.record_outcome(
+                        f"task-{index}", "success", lesson=f"lesson-{index}"
+                    )
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = list(pool.map(record, range(40)))
+                self.assertTrue(all("recorded" in result.lower() for result in results))
+                history = yuki_learning.load_history()
+                self.assertEqual(len(history), 40)
+                self.assertEqual({item["task"] for item in history},
+                                 {f"task-{index}" for index in range(40)})
+
+    def test_malformed_legacy_learning_file_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "learning.json"
+            path.write_text("{broken", encoding="utf-8")
+            with patch.object(yuki_learning, "HISTORY_FILE", path), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", Path(folder) / "learning.sqlite3"):
+                self.assertEqual(yuki_learning.load_history(), [])
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+                self.assertFalse((Path(folder) / "learning.sqlite3").exists())
+
     def test_learning_redacts_key_like_text(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "learning.json"
-            with patch.object(yuki_learning, "HISTORY_FILE", path):
+            with patch.object(yuki_learning, "HISTORY_FILE", path), \
+                 patch.object(yuki_learning, "HISTORY_DB_FILE", Path(folder) / "learning.sqlite3"):
                 yuki_learning.record_outcome("test", "api_key=supersecretvalue123")
                 saved = path.read_text(encoding="utf-8")
                 self.assertNotIn("supersecretvalue123", saved)
