@@ -277,7 +277,7 @@ class DurableTaskEngine:
                 self._event(c, goal_id, task["id"], "task.blocked_dependency", {"dependency": "terminal_unsuccessful"})
     
     def set_goal_state(self,goal_id,state):
-        if state not in {"active","paused","cancelled"}: raise ValueError("invalid goal state")
+        if not isinstance(state, str) or state not in {"active","paused","cancelled"}: raise ValueError("invalid goal state")
         now=self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); g=c.execute("SELECT * FROM goals WHERE id=?",(goal_id,)).fetchone()
