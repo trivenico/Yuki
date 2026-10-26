@@ -20,11 +20,19 @@ def setup_logger(workspace_path: Path) -> logging.Logger:
 
     logger = logging.getLogger("yuki")
     logger.setLevel(logging.DEBUG)
-    has_file_handler = any(
-        isinstance(h, RotatingFileHandler)
-        and getattr(h, "baseFilename", None) == str(log_file.resolve())
-        for h in logger.handlers
-    )
+    target_file = str(log_file.resolve())
+    has_file_handler = False
+    # Yuki uses one workspace log destination per process. Replace handlers
+    # targeting a previous workspace instead of keeping deleted paths open.
+    for existing in list(logger.handlers):
+        if not isinstance(existing, RotatingFileHandler):
+            continue
+        if getattr(existing, "baseFilename", None) == target_file:
+            has_file_handler = True
+            continue
+        logger.removeHandler(existing)
+        existing.flush()
+        existing.close()
     if not has_file_handler:
         handler = RotatingFileHandler(
             log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"

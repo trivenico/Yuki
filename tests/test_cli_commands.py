@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from logging.handlers import RotatingFileHandler
+import logging
 from pathlib import Path
 
 from main import build_agent, load_config
@@ -16,6 +18,11 @@ class CLICommandTests(unittest.TestCase):
         self.agent.permission_gate = PermissionGate(lambda _: True, workspace=self.workspace)
 
     def tearDown(self):
+        logger = logging.getLogger("yuki")
+        for handler in list(logger.handlers):
+            if isinstance(handler, RotatingFileHandler):
+                logger.removeHandler(handler)
+                handler.close()
         self.tmp_dir.cleanup()
 
     def test_registered_skills_execution(self):

@@ -19,10 +19,15 @@ def _yes(prompt: str, default: bool = True) -> bool:
         return default
     return value in {"y", "yes"}
 
+def provider_choices() -> list[str]:
+    """Return production onboarding choices, preferring a real local provider."""
+    return ["ollama"] + [name for name in PROVIDERS if name != "ollama"]
+
+
 def run_onboarding(*, path=None, verify_provider=True) -> dict:
     print("\nWelcome to Yuki setup")
     print("Secrets are never written to config.json. Set the displayed environment variable in your shell to persist credentials.")
-    names = list(PROVIDERS)
+    names = provider_choices()
     for index, name in enumerate(names, 1):
         print(f"  {index}. {name}")
     while True:
@@ -44,12 +49,20 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
             if secret:
                 os.environ[key_env] = secret
                 print("Credential loaded for this process only. Export it in your shell to use it on future launches.")
-    if verify_provider and provider != "mock":
+    if verify_provider and provider not in {"mock", "hybrid"}:
         parsed = urlsplit(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("Provider URL must include http(s) scheme and a host.")
-        if meta["kind"] == "cloud" and parsed.scheme != "https":
+        if meta["kind"] in {"cloud", "custom"} and parsed.scheme != "https":
             raise ValueError("Cloud providers must use HTTPS.")
+        if meta["kind"] == "local" and parsed.scheme == "http":
+            import ipaddress
+            try:
+                loopback = parsed.hostname == "localhost" or ipaddress.ip_address(parsed.hostname).is_loopback
+            except ValueError:
+                loopback = False
+            if not loopback:
+                raise ValueError("Local providers must use loopback HTTP or HTTPS.")
         print("Endpoint syntax validated. Live provider verification is adapter-specific and has not been run by this wizard.")
     servers = []
     if _yes("Configure an MCP server now?", False):

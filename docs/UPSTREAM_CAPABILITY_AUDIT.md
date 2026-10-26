@@ -9,10 +9,14 @@ Audit date: 2026-10-17. This is an architecture and feature review of the public
 - [OpenClaw](https://github.com/openclaw/openclaw) — README, root and LICENSE. It emphasizes cross-device assistant operation, messaging channels, provider configuration, extensions/skills, gateway and device nodes. Its LICENSE is MIT.
 - [OpenJarvis](https://github.com/open-jarvis/OpenJarvis) — README, root and LICENSE. It emphasizes personal-device/local AI, selectable agents, skill packages, deep research, scheduled monitoring, model/runtime evaluation and deployment presets. Its LICENSE is Apache-2.0.
 
+- Stonic AI — product-pattern reference supplied for desktop-first companion interaction and visible activity. This is a product UX reference only, not a source-code or license audit.
+
 ## Feature decisions for Yuki
 
 | Pattern | Existing Yuki baseline | Recommended next action |
 |---|---|---|
+| Guided first-run onboarding | PR #32 provides a terminal wizard and private user config; provider endpoint syntax is checked but live inference is not verified during setup | Add a real, bounded provider connectivity/model check, resumable desktop steps, clear privacy disclosure, and safe retry/recovery |
+| Desktop companion experience | Optional PyWebView shell provides runtime/skill status and plain-text provider chat; cloud prompts require explicit per-message confirmation and a provider-side approval callback | Add visible task activity, reliable stop/cancel semantics, session history controls, opt-in voice, accessibility, and signed installers; keep skill execution outside desktop chat until an authenticated approval API exists |
 | Provider abstraction and local/offline model | Provider scaffold/config exists; no production LLM tool loop | Build a tested provider contract and explicit capability/readiness report before adding autonomy |
 | Procedural skills | Skill registry and approval gate exist | Define a versioned portable skill manifest; reject unknown permissions and dependencies by default |
 | Persistent memory and learning | Local notes and opt-in evolution review exist | Add export/import, schema versions, retention controls and backup/restore tests |

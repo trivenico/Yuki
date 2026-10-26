@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
+from contextlib import closing
 from pathlib import Path
 
 
@@ -13,20 +14,22 @@ class HeartbeatStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as db:
-            db.execute("""CREATE TABLE IF NOT EXISTS heartbeat_state (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )""")
+        with closing(sqlite3.connect(self.db_path)) as db:
+            with db:
+                db.execute("""CREATE TABLE IF NOT EXISTS heartbeat_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )""")
 
     def get(self, key: str) -> str | None:
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db:
             row = db.execute("SELECT value FROM heartbeat_state WHERE key = ?", (key,)).fetchone()
             return row[0] if row else None
 
     def set(self, key: str, value: str):
-        with sqlite3.connect(self.db_path) as db:
-            db.execute("INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES (?, ?)", (key, value))
+        with closing(sqlite3.connect(self.db_path)) as db:
+            with db:
+                db.execute("INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES (?, ?)", (key, value))
 
 
 class HeartbeatRunner(threading.Thread):

@@ -1,7 +1,9 @@
 import hashlib
 import json
+import logging
 import tempfile
 import unittest
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from core.logging_config import setup_logger, log_approval_audit
@@ -13,11 +15,17 @@ class LoggingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             logger = setup_logger(workspace)
-            logger.info("Test log line")
             log_file = workspace / "logs" / "yuki.log"
-            self.assertTrue(log_file.exists())
-            content = log_file.read_text(encoding="utf-8")
-            self.assertIn("Test log line", content)
+            try:
+                logger.info("Test log line")
+                self.assertTrue(log_file.exists())
+                content = log_file.read_text(encoding="utf-8")
+                self.assertIn("Test log line", content)
+            finally:
+                for handler in list(logger.handlers):
+                    if isinstance(handler, RotatingFileHandler):
+                        logger.removeHandler(handler)
+                        handler.close()
 
     def test_log_approval_audit_writes_jsonl(self):
         with tempfile.TemporaryDirectory() as tmp:

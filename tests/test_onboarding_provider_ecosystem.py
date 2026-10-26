@@ -5,13 +5,43 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.onboarding import load_user_config, onboarding_needed, save_config, validate_config
+from core.onboarding import apply_user_config, load_user_config, onboarding_needed, save_config, validate_config
 from providers.factory import create_provider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.anthropic import AnthropicProvider
+from ui.onboarding_tui import provider_choices
 
 
 class OnboardingConfigTests(unittest.TestCase):
+    def test_hybrid_onboarding_settings_reach_runtime_provider_factory_config(self):
+        runtime = apply_user_config(
+            {"workspace": "/tmp/yuki"},
+            {
+                "provider": "hybrid", "model": "local-model",
+                "base_url": "", "api_key_env": "",
+                "local_provider": "ollama", "local_model": "local-model",
+                "cloud_provider": "openai", "cloud_model": "cloud-model",
+                "cloud_api_key_env": "OPENAI_API_KEY", "cloud_tasks": ["general"],
+                "mcp_servers": [],
+            },
+        )
+        self.assertEqual(runtime["local_model"], "local-model")
+        self.assertEqual(runtime["cloud_model"], "cloud-model")
+        self.assertEqual(runtime["cloud_api_key_env"], "OPENAI_API_KEY")
+        self.assertEqual(runtime["cloud_tasks"], ["general"])
+
+    def test_ollama_onboarding_url_maps_to_factory_setting(self):
+        runtime = apply_user_config(
+            {}, {"provider": "ollama", "model": "local-model",
+                 "base_url": "http://127.0.0.1:11434", "api_key_env": ""},
+        )
+        self.assertEqual(runtime["ollama_base_url"], "http://127.0.0.1:11434")
+
+    def test_onboarding_choices_prefer_real_local_provider_and_exclude_mock(self):
+        choices = provider_choices()
+        self.assertEqual(choices[0], "ollama")
+        self.assertNotIn("mock", choices)
+
     def test_atomic_config_round_trip_and_private_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
@@ -29,8 +59,32 @@ class OnboardingConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config({"mcp_servers":[{"name":"bad","endpoint":"http://example.com","allowed_tools":[]} ]})
 
+    def test_mock_provider_is_not_available_in_production_onboarding(self):
+        with self.assertRaises(ValueError):
+            validate_config({"provider": "mock"})
+
+    def test_rejects_empty_model_before_saving_config(self):
+        with self.assertRaisesRegex(ValueError, "model name is required"):
+            validate_config({"provider": "ollama", "model": ""})
+
+    def test_hybrid_cloud_tasks_require_cloud_model(self):
+        with self.assertRaisesRegex(ValueError, "Cloud tasks require"):
+            validate_config({
+                "provider": "hybrid", "model": "local-model",
+                "local_provider": "ollama", "local_model": "local-model",
+                "cloud_tasks": ["general"], "cloud_model": "",
+            })
+
+    def test_hybrid_local_only_configuration_is_valid(self):
+        result = validate_config({
+            "provider": "hybrid", "model": "local-model",
+            "local_provider": "ollama", "local_model": "local-model",
+            "cloud_tasks": [], "cloud_model": "",
+        })
+        self.assertEqual(result["cloud_tasks"], [])
+
     def test_guardrails_default_to_approval_and_local_first(self):
-        result = validate_config({"provider":"mock"})
+        result = validate_config({"provider":"ollama", "model":"qwen2.5:7b"})
         self.assertTrue(result["guardrails"]["require_tool_approval"])
         self.assertTrue(result["guardrails"]["require_cloud_approval"])
         self.assertTrue(result["guardrails"]["local_first"])

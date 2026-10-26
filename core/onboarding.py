@@ -10,7 +10,6 @@ from typing import Any
 CONFIG_VERSION = 1
 DEFAULT_CONFIG_PATH = Path("~/.yuki/config.json").expanduser()
 PROVIDERS = {
-    "mock": {"kind": "local", "default_model": "mock"},
     "hybrid": {"kind": "hybrid", "default_model": ""},
     "ollama": {"kind": "local", "default_url": "http://127.0.0.1:11434"},
     "llama.cpp": {"kind": "local", "default_url": "http://127.0.0.1:8080/v1"},
@@ -29,12 +28,14 @@ def config_path(path: str | os.PathLike[str] | None = None) -> Path:
 def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("Configuration must be a JSON object.")
-    provider = config.get("provider", "mock")
+    provider = config.get("provider", "ollama")
     if provider not in PROVIDERS:
         raise ValueError("Unsupported provider.")
     model = config.get("model", PROVIDERS[provider].get("default_model", ""))
     if not isinstance(model, str) or len(model) > 120:
         raise ValueError("Model must be a string of at most 120 characters.")
+    if not model.strip():
+        raise ValueError("A model name is required before saving provider configuration.")
     base_url = config.get("base_url", PROVIDERS[provider].get("default_url", ""))
     if not isinstance(base_url, str) or len(base_url) > 2048:
         raise ValueError("base_url must be a bounded string.")
@@ -90,6 +91,12 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cloud_tasks, list) or len(cloud_tasks) > 100 or any(not isinstance(item, str) or not item.strip() for item in cloud_tasks):
         raise ValueError("cloud_tasks must be a bounded list of non-empty task names.")
     clean["cloud_tasks"] = list(dict.fromkeys(item.strip() for item in cloud_tasks))
+    if provider == "hybrid":
+        local_model = clean.get("local_model", model)
+        if not isinstance(local_model, str) or not local_model.strip():
+            raise ValueError("Hybrid provider requires a local model name.")
+        if clean["cloud_tasks"] and not clean.get("cloud_model", "").strip():
+            raise ValueError("Cloud tasks require a configured cloud model; leave cloud_tasks empty to stay local-only.")
     return clean
 
 def save_config(config: dict[str, Any], path: str | os.PathLike[str] | None = None) -> Path:
@@ -136,3 +143,27 @@ def load_user_config(path: str | os.PathLike[str] | None = None) -> dict[str, An
 
 def onboarding_needed(path: str | os.PathLike[str] | None = None) -> bool:
     return not config_path(path).is_file()
+
+
+def apply_user_config(runtime_config: dict[str, Any], user_config: dict[str, Any]) -> dict[str, Any]:
+    """Apply validated first-run settings to the runtime provider configuration."""
+    if not isinstance(runtime_config, dict) or not isinstance(user_config, dict):
+        raise ValueError("Runtime and user configuration must be objects.")
+    result = dict(runtime_config)
+    result.update({
+        "provider": user_config["provider"],
+        "model": user_config.get("model", ""),
+        "ollama_model": user_config.get("model", result.get("ollama_model", "")),
+        "base_url": user_config.get("base_url", ""),
+        "api_key_env": user_config.get("api_key_env", ""),
+        "cloud_tasks": user_config.get("cloud_tasks", []),
+        "local_provider": user_config.get("local_provider", "ollama"),
+        "local_model": user_config.get("local_model", user_config.get("model", "")),
+        "cloud_provider": user_config.get("cloud_provider", "openai"),
+        "cloud_model": user_config.get("cloud_model", ""),
+        "cloud_api_key_env": user_config.get("cloud_api_key_env", ""),
+        "mcp_servers": user_config.get("mcp_servers", []),
+    })
+    if result["provider"] == "ollama":
+        result["ollama_base_url"] = user_config.get("base_url", "http://127.0.0.1:11434")
+    return result
