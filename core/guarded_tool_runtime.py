@@ -37,13 +37,18 @@ class GuardedToolRuntime:
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
 
-    def _record(self, name: str, outcome: str) -> None:
-        if self._audit is not None:
-            try:
-                self._audit("tool:" + name[:128], outcome)
-            except Exception:
-                # Telemetry failure must not bypass or broaden authorization.
-                pass
+    def _record(self, name: str, outcome: str) -> bool:
+        """Persist metadata and report sink failure without leaking arguments."""
+        # A missing sink cannot prove that a durable audit record exists.
+        # Fail closed before any side-effecting handler runs.
+        if self._audit is None:
+            return False
+        try:
+            # Callbacks that historically returned None remain compatible; an
+            # explicit False or an exception means durable evidence was not written.
+            return self._audit("tool:" + name[:128], outcome) is not False
+        except Exception:
+            return False
 
     def invoke(self, name: str, argument: str = "") -> str:
         if not isinstance(name, str) or not name or len(name) > 128:
@@ -62,12 +67,19 @@ class GuardedToolRuntime:
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
+        # Fail closed before a side effect when the configured audit sink is
+        # unavailable. Do not include arguments or results in audit metadata.
+        if not self._record(name, "started"):
+            return "Tool blocked because audit logging is unavailable."
+
         try:
             result = str(self._tools[name](argument))
         except Exception:
-            self._record(name, "failed")
+            if not self._record(name, "failed"):
+                return "Tool failed, and audit logging is unavailable."
             return "The tool failed. Check the input and try again."
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
-        self._record(name, "completed")
+        if not self._record(name, "completed"):
+            return "Tool executed, but audit logging failed. Verify the outcome before retrying."
         return result

@@ -1,55 +1,108 @@
-"""Local task list stored as JSON beside the application."""
+"""Local task list with transactional SQLite storage and legacy JSON migration."""
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from yuki_sqlite_store import SQLiteJsonStore
+
 TASKS_FILE = Path(__file__).with_name("yuki_tasks.json")
+TASKS_DB_FILE = TASKS_FILE.with_suffix(".sqlite3")
+_TASKS_KEY = "tasks"
+
+
+def _valid_tasks(value):
+    if not isinstance(value, list):
+        return []
+    return [
+        item for item in value
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), int)
+        and not isinstance(item.get("id"), bool)
+        and isinstance(item.get("description"), str)
+        and isinstance(item.get("completed"), bool)
+    ]
+
+
+def _store():
+    return SQLiteJsonStore(TASKS_DB_FILE)
 
 
 def load_tasks():
-    if not TASKS_FILE.exists():
-        return []
+    """Load SQLite state, migrating a valid legacy JSON list once when present."""
     try:
-        data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
-        if not isinstance(data, list):
+        if TASKS_DB_FILE.exists():
+            stored = _store().read_json(_TASKS_KEY, None)
+            if stored is not None:
+                return _valid_tasks(stored)
+
+        if not TASKS_FILE.exists():
             return []
-        return [x for x in data if isinstance(x, dict) and isinstance(x.get("id"), int)
-                and isinstance(x.get("description"), str) and isinstance(x.get("completed"), bool)]
-    except (OSError, json.JSONDecodeError):
+        try:
+            legacy = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # Do not overwrite or delete malformed legacy data automatically.
+            return []
+        if not isinstance(legacy, list):
+            return []
+        tasks = _valid_tasks(legacy)
+        # Initialization is serialized so a concurrent task addition cannot be
+        # overwritten by a legacy migration that started from an earlier read.
+        migrated = _store().update_json(
+            _TASKS_KEY,
+            lambda current: tasks if current is None else current,
+            default=None,
+        )
+        return _valid_tasks(migrated)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
         return []
 
 
 def save_tasks(tasks):
-    temp = TASKS_FILE.with_suffix(".tmp")
+    """Replace the task list transactionally; return False on storage failure."""
     try:
-        temp.write_text(json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(TASKS_FILE)
+        _store().write_json(_TASKS_KEY, _valid_tasks(tasks))
         return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except (OSError, sqlite3.Error, ValueError, TypeError):
         return False
+
+
+def _sync_tasks(target, updated):
+    target[:] = updated
 
 
 def add_task(tasks, description):
     if not isinstance(description, str) or not description.strip():
         return "Please provide a task description."
-    next_id = max((x["id"] for x in tasks), default=0) + 1
-    tasks.append({"id": next_id, "description": description.strip()[:500], "completed": False,
-                  "created_at": datetime.now(timezone.utc).isoformat()})
-    if save_tasks(tasks):
+    new_task = {
+        "description": description.strip()[:500],
+        "completed": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        store = _store()
+
+        def append_task(current):
+            current = _valid_tasks(current)
+            next_id = max((item["id"] for item in current), default=0) + 1
+            current.append({"id": next_id, **new_task})
+            return current
+
+        updated = store.update_json(_TASKS_KEY, append_task, default=load_tasks())
+        _sync_tasks(tasks, updated)
         return "Task added."
-    tasks.pop()
-    return "Could not save the task."
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return "Could not save the task."
 
 
 def list_tasks(tasks):
     if not tasks:
         return "No tasks yet. Add one with /task add <description>."
-    return "\n".join(f'{x["id"]}. [{"x" if x["completed"] else " "}] {x["description"]}' for x in tasks)
+    return "\n".join(
+        f'{item["id"]}. [{"x" if item["completed"] else " "}] {item["description"]}'
+        for item in tasks
+    )
 
 
 def complete_task(tasks, task_id):
@@ -57,15 +110,25 @@ def complete_task(tasks, task_id):
         task_id = int(task_id)
     except (TypeError, ValueError):
         return "Provide a numeric task ID."
-    for item in tasks:
-        if item["id"] == task_id:
-            old = item["completed"]
-            item["completed"] = True
-            if save_tasks(tasks):
-                return "Task completed."
-            item["completed"] = old
-            return "Could not save the task."
-    return "Task ID not found."
+    found = False
+    try:
+        store = _store()
+
+        def mark_completed(current):
+            nonlocal found
+            current = _valid_tasks(current)
+            for item in current:
+                if item["id"] == task_id:
+                    found = True
+                    item["completed"] = True
+                    break
+            return current
+
+        updated = store.update_json(_TASKS_KEY, mark_completed, default=load_tasks())
+        _sync_tasks(tasks, updated)
+        return "Task completed." if found else "Task ID not found."
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return "Could not save the task."
 
 
 def delete_task(tasks, task_id):
@@ -73,11 +136,23 @@ def delete_task(tasks, task_id):
         task_id = int(task_id)
     except (TypeError, ValueError):
         return "Provide a numeric task ID."
-    index = next((i for i, x in enumerate(tasks) if x["id"] == task_id), None)
-    if index is None:
-        return "Task ID not found."
-    removed = tasks.pop(index)
-    if save_tasks(tasks):
-        return "Task deleted."
-    tasks.insert(index, removed)
-    return "Could not save the task list."
+    removed = False
+    try:
+        store = _store()
+
+        def remove_task(current):
+            nonlocal removed
+            current = _valid_tasks(current)
+            updated = []
+            for item in current:
+                if item["id"] == task_id and not removed:
+                    removed = True
+                    continue
+                updated.append(item)
+            return updated
+
+        updated = store.update_json(_TASKS_KEY, remove_task, default=load_tasks())
+        _sync_tasks(tasks, updated)
+        return "Task deleted." if removed else "Task ID not found."
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return "Could not save the task list."

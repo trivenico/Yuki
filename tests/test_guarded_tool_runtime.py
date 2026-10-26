@@ -46,8 +46,16 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
 
     def test_tool_exception_does_not_leak_exception(self):
-        runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
+        runtime = GuardedToolRuntime(
+            {"bad": lambda _: 1 / 0}, Policy(), audit=lambda _action, _outcome: True
+        )
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
+
+    def test_missing_audit_sink_blocks_execution(self):
+        calls = []
+        runtime = GuardedToolRuntime({"echo": lambda arg: calls.append(arg) or arg}, Policy())
+        self.assertIn("blocked", runtime.invoke("echo", "ok").lower())
+        self.assertEqual(calls, [])
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
@@ -77,13 +85,39 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             with self.subTest(result_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_result_chars=value)
 
-    def test_audit_failure_does_not_change_authorization_or_result(self):
+    def test_audit_failure_blocks_tool_before_execution(self):
+        calls = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda argument: calls.append(argument) or argument},
+            Policy(),
+            audit=lambda *_: False,
+        )
+        self.assertIn("blocked", runtime.invoke("echo", "ok").lower())
+        self.assertEqual(calls, [])
+
+    def test_completion_audit_failure_warns_that_tool_may_have_run(self):
+        calls = []
+        def audit(_action, outcome):
+            return outcome != "completed"
+        runtime = GuardedToolRuntime(
+            {"echo": lambda argument: calls.append(argument) or argument},
+            Policy(),
+            audit=audit,
+        )
+        result = runtime.invoke("echo", "ok")
+        self.assertIn("audit logging failed", result.lower())
+        self.assertEqual(calls, ["ok"])
+
+    def test_audit_events_bracket_execution_without_arguments(self):
+        events = []
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: argument},
             Policy(),
-            audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
+            audit=lambda action, outcome: events.append((action, outcome)),
         )
-        self.assertEqual(runtime.invoke("echo", "ok"), "ok")
+        self.assertEqual(runtime.invoke("echo", "private input"), "private input")
+        self.assertEqual(events, [("tool:echo", "started"), ("tool:echo", "completed")])
+        self.assertNotIn("private input", repr(events))
 
 
 if __name__ == "__main__":

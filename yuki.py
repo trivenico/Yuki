@@ -1,7 +1,10 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import sqlite3
 from pathlib import Path
+
+from yuki_sqlite_store import SQLiteJsonStore
 
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
@@ -17,34 +20,88 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
+MEMORY_DB_FILE = MEMORY_FILE.with_suffix(".sqlite3")
+_MEMORY_KEY = "saved_memory"
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
 
 
-def load_memory():
-    try:
-        data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+def _normalize_memory(data):
     if not isinstance(data, list):
         return []
     return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]
             if isinstance(item, str) and item.strip()]
 
 
-def save_memory(memory):
-    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
-                   if isinstance(item, str) and item.strip()]
-    temp = MEMORY_FILE.with_suffix(".tmp")
+def _memory_store():
+    return SQLiteJsonStore(MEMORY_DB_FILE)
+
+
+def load_memory():
+    """Load SQLite memory, migrating valid legacy JSON without deleting it."""
     try:
-        temp.write_text(json.dumps(safe_memory, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(MEMORY_FILE)
-        return True
-    except OSError:
+        if MEMORY_DB_FILE.exists():
+            stored = _memory_store().read_json(_MEMORY_KEY, None)
+            if stored is not None:
+                return _normalize_memory(stored)
+        if not MEMORY_FILE.exists():
+            return []
         try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+            legacy = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(legacy, list):
+            return []
+        safe = _normalize_memory(legacy)
+        migrated = _memory_store().update_json(
+            _MEMORY_KEY, lambda current: safe if current is None else current, default=None
+        )
+        return _normalize_memory(migrated)
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return []
+
+
+def save_memory(memory):
+    """Replace saved memory transactionally; return False if persistence fails."""
+    safe_memory = _normalize_memory(memory)
+    try:
+        _memory_store().write_json(_MEMORY_KEY, safe_memory)
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        return False
+
+
+def _run_audited_action(action, operation, is_success):
+    """Require a durable start event before a CLI mutation and record its result."""
+    if not write_audit_event(action, "started"):
+        return "Operation blocked because audit logging is unavailable."
+    try:
+        result = operation()
+    except Exception:
+        if not write_audit_event(action, "failed"):
+            return "Operation failed, and audit logging is unavailable."
+        return "Operation failed safely."
+    outcome = "completed" if is_success(result) else "failed"
+    if not write_audit_event(action, outcome):
+        return "Operation may have completed, but audit logging failed. Verify the outcome before retrying."
+    return result
+
+
+def add_memory_note(memory, note):
+    """Append a note atomically so concurrent sessions do not overwrite each other."""
+    safe_note = sanitize_text(note, MAX_MEMORY_TEXT)
+    if not safe_note.strip():
+        return False
+    try:
+        store = _memory_store()
+        updated = store.update_json(
+            _MEMORY_KEY,
+            lambda current: (_normalize_memory(current) + [safe_note])[-MAX_MEMORY_ITEMS:],
+            default=load_memory(),
+        )
+        memory[:] = _normalize_memory(updated)
+        return True
+    except (OSError, sqlite3.Error, ValueError, TypeError):
         return False
 
 
@@ -107,17 +164,18 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /provider select NAME"
-        result = providers.select(parts[2])
-        if result.startswith("Selected provider:"):
-            try:
+        def select_provider():
+            result = providers.select(parts[2])
+            if result.startswith("Selected provider:"):
                 adapter = providers.create_selected_adapter()
                 if adapter is None:
                     return "Provider selection failed: no adapter is available."
                 agent.set_provider(adapter)
-            except Exception:
-                return "Provider selection failed. The previous provider remains active."
-        write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
-        return result
+            return result
+        return _run_audited_action(
+            "provider:select", select_provider,
+            lambda result: isinstance(result, str) and result.startswith("Selected provider:")
+        )
     if command == "/dashboard":
         current = providers.current()
         available_tools = ", ".join(policy.allowed_tools())
@@ -178,12 +236,22 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f"Invocation approval: {'required' if requires_approval else 'not required'}"
             )
         if parts[1] == "approve" and len(parts) >= 3:
+            if registry.get(parts[2]) is None:
+                return "Cannot approve an unknown skill."
             try:
-                runtime.approve_invocation(parts[2])
-                write_audit_event("skill:approval", "granted")
-                return f"One-shot invocation approval granted for {parts[2]}."
+                result = _run_audited_action(
+                    "skill:approval",
+                    lambda: (runtime.approve_invocation(parts[2])
+                             or f"One-shot invocation approval granted for {parts[2]}."),
+                    lambda value: isinstance(value, str) and value.startswith("One-shot invocation approval granted")
+                )
+                if isinstance(result, str) and result.startswith("Operation may have completed"):
+                    # Do not leave a privilege grant active if its durable outcome
+                    # record could not be written.
+                    runtime.invocation_approvals.consume(parts[2], "")
+                    return "Approval was revoked because audit logging failed."
+                return result
             except ValueError:
-                write_audit_event("skill:approval", "rejected")
                 return "Cannot approve an unknown skill."
         if parts[1] == "invoke" and len(parts) >= 3:
             argument = parts[3] if len(parts) == 4 else ""
@@ -207,15 +275,20 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if len(parts) < 2 or parts[1] == "list":
             return list_tasks(tasks)
         if parts[1] == "add":
-            result = add_task(tasks, parts[2] if len(parts) > 2 else "")
-            write_audit_event("task:add", "completed" if result == "Task added." else "failed")
-            return result
+            return _run_audited_action(
+                "task:add",
+                lambda: add_task(tasks, parts[2] if len(parts) > 2 else ""),
+                lambda result: result == "Task added."
+            )
         if parts[1] in ("done", "delete"):
             if len(parts) < 3:
                 return f"Usage: /task {parts[1]} ID"
-            result = complete_task(tasks, parts[2]) if parts[1] == "done" else delete_task(tasks, parts[2])
-            write_audit_event("task:" + parts[1], "completed" if result in ("Task completed.", "Task deleted.") else "failed")
-            return result
+            operation = complete_task if parts[1] == "done" else delete_task
+            expected = "Task completed." if parts[1] == "done" else "Task deleted."
+            return _run_audited_action(
+                "task:" + parts[1], lambda: operation(tasks, parts[2]),
+                lambda result: result == expected
+            )
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
     if command == "/memory":
         return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
@@ -223,30 +296,34 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
             return "Please provide a note."
-        memory.append(note[:MAX_MEMORY_TEXT])
-        if len(memory) > MAX_MEMORY_ITEMS:
-            del memory[:-MAX_MEMORY_ITEMS]
-        if save_memory(memory):
-            write_audit_event("memory:add", "completed")
-            return "Memory saved locally. Avoid storing secrets or sensitive personal data."
-        memory.pop()
-        return "Could not save memory."
+        return _run_audited_action(
+            "memory:add",
+            lambda: ("Memory saved locally. Avoid storing secrets or sensitive personal data."
+                     if add_memory_note(memory, note) else "Could not save memory."),
+            lambda result: isinstance(result, str) and result.startswith("Memory saved locally.")
+        )
     if command == "/memory clear":
-        old = memory[:]
-        memory.clear()
-        if save_memory(memory):
-            write_audit_event("memory:clear", "completed")
-            return "Saved memory cleared."
-        memory.extend(old)
-        return "Could not clear memory."
+        def clear_saved_memory():
+            old = memory[:]
+            memory.clear()
+            if save_memory(memory):
+                return "Saved memory cleared."
+            memory.extend(old)
+            return "Could not clear memory."
+        return _run_audited_action(
+            "memory:clear", clear_saved_memory,
+            lambda result: result == "Saved memory cleared."
+        )
     if command.startswith("/learn "):
         parts = command[len("/learn "):].split("|", 2)
         if len(parts) < 2:
             return "Usage: /learn TASK | OUTCOME | LESSON"
-        result = record_outcome(parts[0].strip(), parts[1].strip(),
-                                "Recorded through terminal", parts[2].strip() if len(parts) > 2 else "")
-        write_audit_event("learning:record", "completed" if result.startswith("Outcome recorded") else "failed")
-        return result
+        return _run_audited_action(
+            "learning:record",
+            lambda: record_outcome(parts[0].strip(), parts[1].strip(),
+                                   "Recorded through terminal", parts[2].strip() if len(parts) > 2 else ""),
+            lambda result: isinstance(result, str) and result.startswith("Outcome recorded")
+        )
     if command.startswith("/lessons"):
         task = command[len("/lessons"):].strip()
         lessons = suggest_lessons(task)
@@ -258,9 +335,10 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         return "\n".join(f'{item.get("created_at", "")[:10]} — {item.get("task", "")}: {item.get("outcome", "")}'
                          for item in history[-10:])
     if command == "/learning clear":
-        result = clear_history()
-        write_audit_event("learning:clear", "completed" if result == "Learning history cleared." else "failed")
-        return result
+        return _run_audited_action(
+            "learning:clear", clear_history,
+            lambda result: result == "Learning history cleared."
+        )
     if command == "/audit":
         events = load_audit_events()[-10:]
         if not events:

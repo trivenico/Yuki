@@ -220,14 +220,17 @@ def invoke_registered_skill(
     When expected_skill is supplied, execute only that exact registered object;
     a registry replacement between permission approval and dispatch fails closed.
     """
-    def record(status: str) -> None:
-        if audit is not None:
-            try:
-                # Never include arguments, results, or memory content in audit data.
-                audit("skill:invoke", status)
-            except Exception:
-                # Audit sink failure must not change authorization semantics.
-                pass
+    def record(status: str) -> bool:
+        # A missing audit sink is not evidence of a successful durable write.
+        # Fail closed for all side-effecting invocations in production paths.
+        if audit is None:
+            return False
+        try:
+            # Never include arguments, results, or memory content in audit data.
+            # None remains compatible with legacy sinks; False means persistence failed.
+            return audit("skill:invoke", status) is not False
+        except Exception:
+            return False
 
     if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
         record("invalid_name")
@@ -279,10 +282,20 @@ def invoke_registered_skill(
         record("invalid_skill")
         return SkillInvocationResult(False, "Registered skill has no supported run()/execute() interface.", skill_name, "invalid_skill")
 
+    if not record("started"):
+        return SkillInvocationResult(
+            False, "Skill invocation blocked because audit logging is unavailable.",
+            skill_name, "audit_unavailable"
+        )
+
     try:
         result = execute(argument)
     except Exception as exc:
-        record("execution_failed")
+        if not record("execution_failed"):
+            return SkillInvocationResult(
+                False, "Skill failed, and audit logging is unavailable.",
+                skill_name, "audit_failed"
+            )
         return SkillInvocationResult(False, f"Skill invocation failed safely ({type(exc).__name__}).", skill_name, "execution_failed")
 
     data = None
@@ -308,5 +321,9 @@ def invoke_registered_skill(
         if data_truncated:
             record("result_data_truncated")
     status = "completed" if ok else "skill_failed"
-    record(status)
+    if not record(status):
+        return SkillInvocationResult(
+            False, "Skill may have executed, but audit logging failed. Verify the outcome before retrying.",
+            skill_name, "audit_failed"
+        )
     return SkillInvocationResult(ok, message[:max_result_chars], skill_name, status, data)
