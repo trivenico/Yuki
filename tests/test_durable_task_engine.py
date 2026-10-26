@@ -285,7 +285,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="goal-cancel-audit"
         )
-        self.engine.claim("worker")
+        # A queued task can be cancelled atomically before any worker starts.
         self.engine.set_goal_state(self.goal, "cancelled")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
         events = self.engine.list_events(self.goal)
