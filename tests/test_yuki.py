@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import yuki_learning
@@ -165,21 +166,58 @@ class SecurityTests(unittest.TestCase):
 
 
 class TaskTests(unittest.TestCase):
+    def _patch_task_paths(self, folder):
+        path = Path(folder) / "tasks.json"
+        db_path = Path(folder) / "tasks.sqlite3"
+        return path, db_path
+
     def test_tasks_persist_and_complete(self):
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "tasks.json"
-            with patch.object(yuki_tasks, "TASKS_FILE", path):
+            path, db_path = self._patch_task_paths(folder)
+            with patch.object(yuki_tasks, "TASKS_FILE", path), \
+                 patch.object(yuki_tasks, "TASKS_DB_FILE", db_path):
                 tasks = []
                 self.assertEqual(yuki_tasks.add_task(tasks, "Test task"), "Task added.")
                 self.assertEqual(yuki_tasks.complete_task(tasks, 1), "Task completed.")
                 self.assertTrue(yuki_tasks.load_tasks()[0]["completed"])
+                self.assertTrue(db_path.exists())
 
-    def test_corrupt_task_file_returns_empty_list(self):
+    def test_valid_legacy_json_is_migrated_without_deleting_source(self):
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / "tasks.json"
+            path, db_path = self._patch_task_paths(folder)
+            legacy = [{"id": 7, "description": "old task", "completed": False}]
+            path.write_text(json.dumps(legacy), encoding="utf-8")
+            with patch.object(yuki_tasks, "TASKS_FILE", path), \
+                 patch.object(yuki_tasks, "TASKS_DB_FILE", db_path):
+                self.assertEqual(yuki_tasks.load_tasks(), legacy)
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), legacy)
+                self.assertEqual(yuki_tasks.load_tasks(), legacy)
+
+    def test_corrupt_task_file_returns_empty_list_and_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path, db_path = self._patch_task_paths(folder)
             path.write_text("{broken", encoding="utf-8")
-            with patch.object(yuki_tasks, "TASKS_FILE", path):
+            with patch.object(yuki_tasks, "TASKS_FILE", path), \
+                 patch.object(yuki_tasks, "TASKS_DB_FILE", db_path):
                 self.assertEqual(yuki_tasks.load_tasks(), [])
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+                self.assertFalse(db_path.exists())
+
+    def test_concurrent_task_additions_allocate_unique_ids(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path, db_path = self._patch_task_paths(folder)
+            with patch.object(yuki_tasks, "TASKS_FILE", path), \
+                 patch.object(yuki_tasks, "TASKS_DB_FILE", db_path):
+                def add(index):
+                    local_tasks = yuki_tasks.load_tasks()
+                    return yuki_tasks.add_task(local_tasks, f"task-{index}")
+
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = list(pool.map(add, range(40)))
+                self.assertTrue(all(result == "Task added." for result in results))
+                stored = yuki_tasks.load_tasks()
+                self.assertEqual(len(stored), 40)
+                self.assertEqual(len({item["id"] for item in stored}), 40)
 
 
 class LearningTests(unittest.TestCase):
