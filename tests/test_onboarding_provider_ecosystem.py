@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.onboarding import load_user_config, onboarding_needed, save_config, validate_config
+from core.onboarding import apply_user_config, load_user_config, onboarding_needed, save_config, validate_config
 from providers.factory import create_provider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.anthropic import AnthropicProvider
@@ -13,6 +13,30 @@ from ui.onboarding_tui import provider_choices
 
 
 class OnboardingConfigTests(unittest.TestCase):
+    def test_hybrid_onboarding_settings_reach_runtime_provider_factory_config(self):
+        runtime = apply_user_config(
+            {"workspace": "/tmp/yuki"},
+            {
+                "provider": "hybrid", "model": "local-model",
+                "base_url": "", "api_key_env": "",
+                "local_provider": "ollama", "local_model": "local-model",
+                "cloud_provider": "openai", "cloud_model": "cloud-model",
+                "cloud_api_key_env": "OPENAI_API_KEY", "cloud_tasks": ["general"],
+                "mcp_servers": [],
+            },
+        )
+        self.assertEqual(runtime["local_model"], "local-model")
+        self.assertEqual(runtime["cloud_model"], "cloud-model")
+        self.assertEqual(runtime["cloud_api_key_env"], "OPENAI_API_KEY")
+        self.assertEqual(runtime["cloud_tasks"], ["general"])
+
+    def test_ollama_onboarding_url_maps_to_factory_setting(self):
+        runtime = apply_user_config(
+            {}, {"provider": "ollama", "model": "local-model",
+                 "base_url": "http://127.0.0.1:11434", "api_key_env": ""},
+        )
+        self.assertEqual(runtime["ollama_base_url"], "http://127.0.0.1:11434")
+
     def test_onboarding_choices_prefer_real_local_provider_and_exclude_mock(self):
         choices = provider_choices()
         self.assertEqual(choices[0], "ollama")
