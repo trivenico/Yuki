@@ -95,6 +95,12 @@ class DesktopBridge:
             self._approval_context.allowed = False
         if not isinstance(answer, str) or not answer.strip():
             return {"ok": False, "message": "The provider returned an empty response."}
+        if answer in {
+            "Yuki: The provider encountered an error.",
+            "Yuki: The AI provider is unavailable.",
+            "Yuki: The provider returned an unsupported response.",
+        }:
+            return {"ok": False, "message": answer}
         # Avoid reflecting oversized or structured provider output directly into the UI.
         answer = answer.strip()
         if len(answer) > 12_000:
