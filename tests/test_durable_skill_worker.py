@@ -112,6 +112,22 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "invalid_payload")
         self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
 
+    def test_worker_exception_marks_single_attempt_task_failed(self):
+        class RaisingRuntime:
+            def invoke(self, _skill_name, _argument):
+                raise RuntimeError("secret token should not be persisted")
+
+        task = self.submit("read_demo", "raises", key="worker-exception")
+        worker = DurableSkillWorker(
+            self.engine, RaisingRuntime(), worker_id="raising-worker"
+        )
+        result = worker.run_once()
+        self.assertEqual(result["state"], "failed")
+        stored = self.engine.get_task(task["id"])
+        self.assertEqual(stored["state"], "failed")
+        self.assertNotIn("secret token", str(stored["last_error"]))
+        self.assertEqual(stored["attempts"], 1)
+
     def test_worker_reports_committed_success_if_followup_response_fails(self):
         task = self.submit("read_demo", "commit-then-error", key="commit-response-error")
         original_complete = self.engine.complete
