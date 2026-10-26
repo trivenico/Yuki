@@ -39,6 +39,16 @@ class DesktopBridge:
         )
         self.ai = agent_factory(provider, usage_tracker=getattr(ai, "usage_tracker", None))
         self.provider_name = str(self.config.get("provider", "mock")).strip().lower()
+        cloud_tasks = self.config.get("cloud_tasks", [])
+        if not isinstance(cloud_tasks, (list, tuple, set, frozenset)):
+            cloud_tasks = []
+        self.cloud_confirmation_required = (
+            self.provider_name in CLOUD_PROVIDERS
+            or (
+                self.provider_name == "hybrid"
+                and any(isinstance(task, str) and task.strip().lower() == "general" for task in cloud_tasks)
+            )
+        )
 
     def _cloud_approval_callback(self, *_args, **_kwargs) -> bool:
         return getattr(self._approval_context, "allowed", False) is True
@@ -55,7 +65,7 @@ class DesktopBridge:
                 "ready": True,
                 "provider": self.provider_name,
                 "provider_status": str(provider_status)[:160],
-                "cloud_confirmation_required": self.provider_name in CLOUD_PROVIDERS,
+                "cloud_confirmation_required": self.cloud_confirmation_required,
                 "skills": [str(name)[:100] for name in names if isinstance(name, str)][:200],
                 "skill_count": min(len(skills), 200) if isinstance(skills, list) else 0,
                 "message": (
@@ -66,9 +76,7 @@ class DesktopBridge:
         except Exception:
             return {
                 "ready": False, "provider": self.provider_name,
-                "provider_status": "Unknown", "cloud_confirmation_required": (
-                    self.provider_name in CLOUD_PROVIDERS
-                ), "skills": [], "skill_count": 0,
+                "provider_status": "Unknown", "cloud_confirmation_required": self.cloud_confirmation_required, "skills": [], "skill_count": 0,
                 "message": "Runtime status unavailable.",
             }
 
@@ -77,7 +85,7 @@ class DesktopBridge:
             return {"ok": False, "message": "Enter a message before sending."}
         if len(prompt) > MAX_DESKTOP_PROMPT_CHARS:
             return {"ok": False, "message": f"Messages are limited to {MAX_DESKTOP_PROMPT_CHARS} characters."}
-        is_cloud = self.provider_name in CLOUD_PROVIDERS
+        is_cloud = self.cloud_confirmation_required
         if is_cloud and cloud_approved is not True:
             return {
                 "ok": False,
