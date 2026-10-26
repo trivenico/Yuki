@@ -18,7 +18,7 @@ class DesktopOnboardingTests(unittest.TestCase):
             path = Path(folder) / "state" / "onboarding.json"
             state = complete_onboarding_step(path, "welcome")
             self.assertEqual(state["completed_steps"], ["welcome"])
-            state = complete_onboarding_step(path, "provider", selected_provider="OpenAI")
+            state = complete_onboarding_step(path, "provider", selected_provider="OpenAI", provider_verified=True)
             self.assertEqual(state["selected_provider"], "openai")
             self.assertEqual(load_onboarding_state(path), state)
             for step in ONBOARDING_STEPS[2:]:
@@ -34,7 +34,25 @@ class DesktopOnboardingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 complete_onboarding_step(path, "unknown")
             with self.assertRaises(ValueError):
-                complete_onboarding_step(path, "provider")
+                complete_onboarding_step(path, "provider", selected_provider="openai")
+
+    def test_provider_step_requires_verified_connectivity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "onboarding.json"
+            complete_onboarding_step(path, "welcome")
+            with self.assertRaises(ValueError):
+                complete_onboarding_step(path, "provider", selected_provider="openai")
+            state = complete_onboarding_step(
+                path, "provider", selected_provider="openai", provider_verified=True
+            )
+            self.assertEqual(state["selected_provider"], "openai")
+
+    def test_provider_step_cannot_be_marked_complete_without_provider_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "onboarding.json"
+            complete_onboarding_step(path, "welcome")
+            with self.assertRaises(ValueError):
+                complete_onboarding_step(path, "provider", provider_verified=True)
 
     def test_corrupt_out_of_order_state_cannot_skip_setup_gates(self):
         with tempfile.TemporaryDirectory() as folder:
