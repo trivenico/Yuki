@@ -16,7 +16,7 @@ from core.desktop_onboarding import (
     complete_onboarding_step,
     load_onboarding_state,
 )
-from providers import ProviderManager
+from yuki_providers import ProviderManager
 
 
 MAX_PROMPT_CHARS = 8_000
