@@ -46,7 +46,7 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
             )
 
     def test_default_podman_runner_requires_pinned_image_digest(self):
-        with self.assertRaisesRegex(ToolAuthorizationError, "immutable sha256 image digest"):
+        with self.assertRaisesRegex(ToolAuthorizationError, "official Python 3.11 slim image pinned by a lowercase sha256 digest"):
             build_autonomous_upgrade_test_coordinator(
                 self.root,
                 **self._kwargs(isolated_runner_factory=None, environ={
