@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from automation.approved_workspace_changes import FileChange
@@ -53,6 +54,32 @@ class AutonomousUpgradeTestModeTests(unittest.TestCase):
                     "YUKI_AUTONOMOUS_UPGRADE_TEST_MODE": "1"
                 }),
             )
+
+    def test_default_factory_constructs_podman_adapter_with_digest_and_allowlist(self):
+        image = "docker.io/library/python:3.11-slim@sha256:" + "a" * 64
+        coordinator = build_autonomous_upgrade_test_coordinator(
+            self.root,
+            **self._kwargs(
+                isolated_runner_factory=None,
+                environ={
+                    "YUKI_AUTONOMOUS_UPGRADE_TEST_MODE": "1",
+                    "YUKI_TEST_WORKER_IMAGE": image,
+                },
+            ),
+        )
+        staged = self.root / "staged"
+        staged.mkdir()
+        with patch(
+            "automation.autonomous_upgrade_test_mode.PodmanIsolatedTestRunner"
+        ) as runner:
+            coordinator.isolated_runner_factory(staged)
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.args[0], staged)
+        self.assertEqual(runner.call_args.kwargs["image"], image)
+        self.assertEqual(
+            runner.call_args.kwargs["allowed_test_modules"], ["tests.test_sample"]
+        )
+        self.assertTrue(callable(runner.call_args.kwargs["approve_run"]))
 
     def test_autonomous_mode_validates_only_a_staged_copy(self):
         original = self.source.read_bytes()
