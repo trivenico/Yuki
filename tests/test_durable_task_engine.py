@@ -57,6 +57,22 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             self.engine.submit(self.goal, "summarize", {"v": 2}, idempotency_key="same")
 
+    def test_idempotent_replay_after_goal_completion_returns_original_task(self):
+        task = self.engine.submit(
+            self.goal, "work", {"value": 1}, idempotency_key="terminal-replay"
+        )
+        self.engine.claim("terminal-replay-worker")
+        self.engine.complete(task["id"], "terminal-replay-worker", {"done": True})
+        self.assertEqual(self.engine.get_goal(self.goal)["state"], "completed")
+        replay = self.engine.submit(
+            self.goal, "work", {"value": 1}, idempotency_key="terminal-replay"
+        )
+        self.assertEqual(replay["id"], task["id"])
+        with self.assertRaises(TaskConflict):
+            self.engine.submit(
+                self.goal, "work", {"value": 2}, idempotency_key="terminal-replay"
+            )
+
     def test_idempotency_canonicalizes_payload_key_order(self):
         first = self.engine.submit(
             self.goal, "work", {"a": 1, "b": 2}, idempotency_key="canonical"
