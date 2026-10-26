@@ -26,7 +26,17 @@ class DurableTaskEngine:
     """
     def __init__(self, db_path: str | Path, *, clock=time.time):
         self.db_path, self.clock = str(db_path), clock
-        if self.db_path != ":memory:":
+        self._memory_uri = self.db_path == ":memory:"
+        self._anchor = None
+        if self._memory_uri:
+            # Each SQLite ":memory:" connection is a separate database. Keep
+            # an anchor connection alive and share a unique in-memory URI so
+            # the engine's per-operation connections see the same schema/data.
+            self.db_path = f"file:yuki_tasks_{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._anchor = sqlite3.connect(
+                self.db_path, timeout=10, isolation_level=None, uri=True
+            )
+        else:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as c:
             c.executescript("""
@@ -57,7 +67,9 @@ class DurableTaskEngine:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
 
     def _connect(self):
-        c = sqlite3.connect(self.db_path, timeout=10, isolation_level=None)
+        c = sqlite3.connect(
+            self.db_path, timeout=10, isolation_level=None, uri=self._memory_uri
+        )
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA foreign_keys=ON")
         c.execute("PRAGMA busy_timeout=10000")
