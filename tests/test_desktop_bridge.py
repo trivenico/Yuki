@@ -101,9 +101,11 @@ class DesktopBridgeTests(unittest.TestCase):
 
     def test_provider_error_details_are_not_returned_to_ui(self):
         bridge, factory = self.make_bridge(fail=True)
-        result = bridge.ask("Hello")
+        with self.assertLogs("yuki", level="ERROR") as captured:
+            result = bridge.ask("Hello")
         self.assertFalse(result["ok"])
         self.assertNotIn("secret-value", result["message"])
+        self.assertNotIn("secret-value", "\\n".join(captured.output))
         self.assertEqual(factory.provider.prompts, ["Hello"])
 
 
