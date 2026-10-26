@@ -5,6 +5,7 @@ explicitly; existing JSON files are not changed automatically.
 """
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
 
@@ -20,7 +21,7 @@ class SQLiteJsonStore:
         self.path = Path(path)
         self.timeout_seconds = float(timeout_seconds)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS yuki_json_state (
