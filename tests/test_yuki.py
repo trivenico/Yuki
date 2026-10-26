@@ -13,7 +13,7 @@ from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderInfo, ProviderManager
-from yuki import handle_command
+from yuki import add_memory_note, handle_command, load_memory
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
 from yuki_approvals import ApprovalGate
