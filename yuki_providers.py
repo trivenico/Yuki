@@ -29,7 +29,6 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("openai", ("official_api_key_flow_planned",)),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
