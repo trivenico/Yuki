@@ -27,10 +27,15 @@ class DurableSkillWorker:
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke" or task.get("max_attempts") != 1:
-            self.engine.cancel_task(task_id)
+            rejected = self.engine.fail(
+                task_id,
+                self.worker_id,
+                "unsupported task type or retry policy",
+                retry_delay_seconds=0,
+            )
             return {
                 "task_id": task_id,
-                "state": "cancelled",
+                "state": rejected["state"],
                 "status": "unsupported_task",
             }
 
@@ -44,10 +49,15 @@ class DurableSkillWorker:
             or not isinstance(payload.get("argument"), str)
             or len(payload["argument"]) > 20000
         ):
-            self.engine.cancel_task(task_id)
+            rejected = self.engine.fail(
+                task_id,
+                self.worker_id,
+                "invalid skill invocation payload",
+                retry_delay_seconds=0,
+            )
             return {
                 "task_id": task_id,
-                "state": "cancelled",
+                "state": rejected["state"],
                 "status": "invalid_payload",
             }
 
