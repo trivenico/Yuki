@@ -102,6 +102,14 @@ class DesktopServiceTests(unittest.TestCase):
             with self.assertRaises(DesktopServiceError):
                 service.chat("Hello")
 
+    def test_provider_change_requires_a_new_live_check(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = self.make_service(folder)
+            self.complete_setup(service)
+            service.invalidate_provider_verification()
+            with self.assertRaises(DesktopServiceError):
+                service.chat("Hello")
+
     def test_chat_does_not_dispatch_skills_and_rejects_oversized_input(self):
         with tempfile.TemporaryDirectory() as folder:
             manager = FakeProviderManager()
