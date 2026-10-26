@@ -339,13 +339,34 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(any(worker.is_alive() for worker in workers), "race workers timed out")
         self.assertEqual(errors, [])
         final_task = self.engine.get_task(task["id"])
-        self.assertIn(final_task["state"], {"succeeded", "cancelled"})
+        # The engine refuses goal cancellation while a task is running, so
+        # completion must win this race without a task-cancelled event.
+        self.assertEqual(final_task["state"], "succeeded")
         events = [
             event for event in self.engine.list_events(self.goal)
             if event["task_id"] == task["id"]
             and event["event_type"] in {"task.succeeded", "task.cancelled"}
         ]
         self.assertEqual(len(events), 1)
+
+    def test_running_task_can_only_be_recovered_after_lease_expiry(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "work", {}, idempotency_key="expiry-cancel",
+            max_attempts=1,
+        )
+        engine.claim("expiry-worker", lease_seconds=5)
+        with self.assertRaises(TaskConflict):
+            engine.cancel_task(task["id"])
+        with self.assertRaises(TaskConflict):
+            engine.set_goal_state(goal, "cancelled")
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        self.assertEqual(engine.get_task(task["id"])["state"], "failed")
+        # Once the task is terminal, goal cancellation is safe and explicit.
+        self.assertEqual(engine.set_goal_state(goal, "cancelled")["state"], "cancelled")
 
     def test_running_task_cannot_be_cancelled_while_side_effect_may_be_active(self):
         task = self.engine.submit(
