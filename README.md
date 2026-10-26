@@ -4,6 +4,42 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
+## Run Yuki with a real local Ollama model (Windows)
+
+1. Install [Ollama for Windows](https://ollama.com/download/windows), then open PowerShell and run:
+
+   ```powershell
+   ollama pull qwen2.5:3b
+   ollama run qwen2.5:3b
+   ```
+
+   Confirm the model answers, then type `/bye` to exit Ollama's interactive session.
+
+2. From the Yuki repository root, install the declared dependency:
+
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+
+3. In `config.yaml`, set the provider and model to the local Ollama values:
+
+   ```yaml
+   provider: ollama
+   ollama_base_url: http://127.0.0.1:11434
+   ollama_model: qwen2.5:3b
+   ```
+
+   Keep `ollama_base_url` on loopback for a local-only setup. No cloud API key is required for this route.
+
+4. Verify the configured provider performs a real inference:
+
+   ```powershell
+   python scripts/smoke_test_ollama.py
+   ```
+
+   A pass prints `PASS: YukiAgent completed a real local Ollama inference.` Then start the terminal runtime with `python yuki.py`. Use `python main.py` for the integrated guarded runtime. This smoke test validates local provider connectivity and one answer; it does not certify all agent skills or production readiness.
+
+
 
 ## External SSD portability
 
