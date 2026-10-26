@@ -160,6 +160,23 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
 
+        # A pre-migration row has no verifiable fingerprint and must not be
+        # silently accepted as an idempotent replay with unknown options.
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.execute(
+                """INSERT INTO tasks(
+                    id, goal_id, task_type, payload_json, state, idempotency_key,
+                    attempts, max_attempts, available_at, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                ("legacy-task", goal, "work", "{}", "queued", "legacy-key", 0, 3, 0, 0, 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        with self.assertRaises(TaskConflict):
+            migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
+
     def test_pause_cancel_and_reject_new_work_when_goal_not_active(self):
         self.engine.set_goal_state(self.goal, "paused")
         with self.assertRaises(TaskConflict):
