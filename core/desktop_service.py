@@ -76,6 +76,10 @@ class DesktopService:
     def readiness(self) -> dict[str, Any]:
         return build_desktop_readiness(self.providers, workspace=self.config["workspace"])
 
+    def invalidate_provider_verification(self) -> None:
+        """Require a fresh live check after the user changes provider selection."""
+        self._verified_provider = None
+
     def mark_welcome_seen(self) -> dict[str, Any]:
         state = load_onboarding_state(self.state_path)
         if not state["completed_steps"]:
