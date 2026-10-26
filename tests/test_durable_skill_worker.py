@@ -94,11 +94,17 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(self.high_risk.calls, 1)
         self.assertEqual(self.engine.get_task(task["id"])["result"]["skill_name"], "write_demo")
 
-    def test_unsupported_task_type_is_cancelled_without_execution(self):
-        task = self.submit("read_demo", task_type="arbitrary.python", key="unsupported")
+    def test_unsupported_task_type_is_terminally_rejected_without_execution(self):
+        task = self.submit(
+            "read_demo", task_type="arbitrary.python",
+            max_attempts=5, key="unsupported"
+        )
         result = self.worker.run_once()
         self.assertEqual(result["status"], "unsupported_task")
-        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+        stored = self.engine.get_task(task["id"])
+        self.assertEqual(stored["state"], "failed")
+        self.assertEqual(stored["attempts"], 1)
+        self.assertIn("not supported", stored["last_error"])
 
     def test_invalid_payload_is_cancelled_without_skill_execution(self):
         task = self.engine.submit(
