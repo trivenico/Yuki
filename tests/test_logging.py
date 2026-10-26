@@ -23,7 +23,7 @@ class LoggingTests(unittest.TestCase):
                 self.assertIn("Test log line", content)
             finally:
                 for handler in list(logger.handlers):
-                    if isinstance(handler, RotatingFileHandler) and handler.baseFilename == str(log_file.resolve()):
+                    if isinstance(handler, RotatingFileHandler):
                         logger.removeHandler(handler)
                         handler.close()
 
