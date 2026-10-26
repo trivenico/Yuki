@@ -9,7 +9,7 @@ Audit date: 2026-10-17. This is an architecture and feature review of the public
 - [OpenClaw](https://github.com/openclaw/openclaw) — README, root and LICENSE. It emphasizes cross-device assistant operation, messaging channels, provider configuration, extensions/skills, gateway and device nodes. Its LICENSE is MIT.
 - [OpenJarvis](https://github.com/open-jarvis/OpenJarvis) — README, root and LICENSE. It emphasizes personal-device/local AI, selectable agents, skill packages, deep research, scheduled monitoring, model/runtime evaluation and deployment presets. Its LICENSE is Apache-2.0.
 
-- [Stonic AI](https://stonic.ai/) — product-pattern reference supplied for desktop-first companion interaction and visible activity. This is a product UX reference only, not a source-code or license audit.
+- Stonic AI — product-pattern reference supplied for desktop-first companion interaction and visible activity. This is a product UX reference only, not a source-code or license audit.
 
 ## Feature decisions for Yuki
 
