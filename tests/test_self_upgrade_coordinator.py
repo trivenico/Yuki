@@ -98,26 +98,18 @@ class IsolatedUpgradeCoordinatorTests(unittest.TestCase):
     def test_staging_fails_closed_when_file_cannot_be_inspected(self):
         blocked = self.root / "unreadable.txt"
         blocked.write_text("content", encoding="utf-8")
-        original_stat = Path.stat
-        original_is_symlink = Path.is_symlink
+        original_open_component = IsolatedUpgradeCoordinator._open_component
 
-        def stat_with_failure(path_obj, *args, **kwargs):
-            if path_obj.name == blocked.name:
-                raise OSError("simulated metadata failure")
-            return original_stat(path_obj, *args, **kwargs)
-
-        def is_symlink_without_stat(path_obj):
-            if path_obj.name == blocked.name:
-                return False
-            return original_is_symlink(path_obj)
+        def fail_open(path_name, flags, *, dir_fd):
+            if path_name == blocked.name:
+                raise OSError("simulated descriptor open failure")
+            return original_open_component(path_name, flags, dir_fd=dir_fd)
 
         with tempfile.TemporaryDirectory() as destination:
             staged = Path(destination) / "workspace"
             staged.mkdir()
-            with patch("pathlib.Path.stat", new=stat_with_failure), patch(
-                "pathlib.Path.is_symlink", new=is_symlink_without_stat
-            ):
-                with self.assertRaisesRegex(WorkspaceChangeError, "unable to inspect"):
+            with patch.object(IsolatedUpgradeCoordinator, "_open_component", side_effect=fail_open):
+                with self.assertRaisesRegex(WorkspaceChangeError, "unable to safely open"):
                     self.coordinator._copy_workspace(staged)
 
     def test_validation_uses_approved_services_and_never_promotes(self):
