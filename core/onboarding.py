@@ -135,3 +135,27 @@ def load_user_config(path: str | os.PathLike[str] | None = None) -> dict[str, An
 
 def onboarding_needed(path: str | os.PathLike[str] | None = None) -> bool:
     return not config_path(path).is_file()
+
+
+def apply_user_config(runtime_config: dict[str, Any], user_config: dict[str, Any]) -> dict[str, Any]:
+    """Apply validated first-run settings to the runtime provider configuration."""
+    if not isinstance(runtime_config, dict) or not isinstance(user_config, dict):
+        raise ValueError("Runtime and user configuration must be objects.")
+    result = dict(runtime_config)
+    result.update({
+        "provider": user_config["provider"],
+        "model": user_config.get("model", ""),
+        "ollama_model": user_config.get("model", result.get("ollama_model", "")),
+        "base_url": user_config.get("base_url", ""),
+        "api_key_env": user_config.get("api_key_env", ""),
+        "cloud_tasks": user_config.get("cloud_tasks", []),
+        "local_provider": user_config.get("local_provider", "ollama"),
+        "local_model": user_config.get("local_model", user_config.get("model", "")),
+        "cloud_provider": user_config.get("cloud_provider", "openai"),
+        "cloud_model": user_config.get("cloud_model", ""),
+        "cloud_api_key_env": user_config.get("cloud_api_key_env", ""),
+        "mcp_servers": user_config.get("mcp_servers", []),
+    })
+    if result["provider"] == "ollama":
+        result["ollama_base_url"] = user_config.get("base_url", "http://127.0.0.1:11434")
+    return result
