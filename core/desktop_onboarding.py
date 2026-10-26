@@ -45,10 +45,13 @@ def _validate_state(value: Any) -> dict[str, Any]:
         normalized.append(expected)
     if "provider" not in normalized:
         provider = None
-    elif provider is not None:
+    elif provider is None or not provider.strip():
+        # Provider setup cannot be considered complete without a selected,
+        # validated provider. Drop this step and every later step.
+        normalized = normalized[:normalized.index("provider")]
+        provider = None
+    else:
         provider = provider.strip().lower()
-        if not provider:
-            provider = None
     return {"schema_version": SCHEMA_VERSION, "completed_steps": normalized,
             "selected_provider": provider, "completed": normalized == list(ONBOARDING_STEPS)}
 
@@ -87,8 +90,13 @@ def save_onboarding_state(path: str | Path, state: dict[str, Any]) -> dict[str, 
 
 
 def complete_onboarding_step(path: str | Path, step: str, *,
-                             selected_provider: str | None = None) -> dict[str, Any]:
-    """Record an ordered step; credentials and arbitrary metadata are never accepted."""
+                             selected_provider: str | None = None,
+                             provider_verified: bool = False) -> dict[str, Any]:
+    """Record an ordered step; provider completion requires a successful live check.
+
+    The caller must perform a real provider connectivity/model check before setting
+    provider_verified=True. This module deliberately never receives credentials.
+    """
     if not isinstance(step, str) or step not in _ALLOWED_STEPS:
         raise ValueError("Unknown onboarding step.")
     state = load_onboarding_state(path)
@@ -102,9 +110,11 @@ def complete_onboarding_step(path: str | Path, step: str, *,
         if (not isinstance(selected_provider, str) or not selected_provider.strip()
                 or len(selected_provider.strip()) > 64):
             raise ValueError("A configured provider name is required for this step.")
+        if provider_verified is not True:
+            raise ValueError("Verify provider connectivity before completing this step.")
         state["selected_provider"] = selected_provider.strip().lower()
-    elif selected_provider is not None:
-        raise ValueError("Provider selection is only accepted on the provider step.")
+    elif selected_provider is not None or provider_verified is not False:
+        raise ValueError("Provider verification is only accepted on the provider step.")
     state["completed"] = completed == list(ONBOARDING_STEPS)
     return save_onboarding_state(path, state)
 
