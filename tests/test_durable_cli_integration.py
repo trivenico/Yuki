@@ -70,14 +70,23 @@ class DurableCliIntegrationTests(unittest.TestCase):
         self.high = HighRiskSkill()
         self.registry = Registry(self.low, self.high)
         self.approvals = OneShotSkillApprovals()
-        self.runtime = ApprovedSkillRuntime(
-            self.registry,
-            SkillApprovalStore(root / "approvals.sqlite"),
-            invocation_approvals=self.approvals,
-        )
+        self.approval_store = SkillApprovalStore(root / "approvals.sqlite")
+
+        # Mirror the real CLI lifecycle: each command rebuilds the registry
+        # and runtime facade, while one-shot approvals are shared process state.
+        # This catches accidental reliance on retaining one runtime instance
+        # between the /skill approve and /durable run commands.
+        def build_runtime():
+            runtime = ApprovedSkillRuntime(
+                self.registry,
+                self.approval_store,
+                invocation_approvals=self.approvals,
+            )
+            return self.registry, runtime
+
         self.patches = [
             patch.object(yuki, "_DURABLE_TASK_DB", self.db),
-            patch.object(yuki, "_build_approved_skill_runtime", lambda: (self.registry, self.runtime)),
+            patch.object(yuki, "_build_approved_skill_runtime", build_runtime),
         ]
         for item in self.patches:
             item.start()
