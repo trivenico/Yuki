@@ -1,4 +1,6 @@
+import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -96,6 +98,60 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             engine.complete(task["id"], "worker-a", {})
         self.assertEqual(engine.claim("worker-b")["id"], task["id"])
+
+    def test_concurrent_workers_claim_distinct_tasks(self):
+        first = self.engine.submit(self.goal, "work", {"n": 1}, idempotency_key="concurrent-1")
+        second = self.engine.submit(self.goal, "work", {"n": 2}, idempotency_key="concurrent-2")
+        barrier = threading.Barrier(2)
+        claimed = []
+        errors = []
+
+        def claim(worker):
+            try:
+                barrier.wait(timeout=5)
+                claimed.append(self.engine.claim(worker)["id"])
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [
+            threading.Thread(target=claim, args=("worker-a",)),
+            threading.Thread(target=claim, args=("worker-b",)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=10)
+        self.assertFalse(any(worker.is_alive() for worker in workers), "claim workers timed out")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(claimed), 2)
+        self.assertEqual(set(claimed), {first["id"], second["id"]})
+
+    def test_existing_database_gets_fingerprint_migration(self):
+        # Simulate the pre-fingerprint schema; opening the engine must migrate
+        # additively rather than requiring a destructive database rebuild.
+        with sqlite3.connect(self.db) as conn:
+            conn.executescript("""
+                CREATE TABLE goals(
+                    id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+                CREATE TABLE tasks(
+                    id TEXT PRIMARY KEY, goal_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
+                    state TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+                    available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL,
+                    last_error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    UNIQUE(goal_id,idempotency_key)
+                );
+            """)
+        migrated = DurableTaskEngine(self.db)
+        with sqlite3.connect(self.db) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+        self.assertIn("submission_fingerprint", columns)
+        goal = migrated.create_goal("migrated-goal")
+        task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
+        self.assertIsNotNone(task["submission_fingerprint"])
 
     def test_pause_cancel_and_reject_new_work_when_goal_not_active(self):
         self.engine.set_goal_state(self.goal, "paused")
