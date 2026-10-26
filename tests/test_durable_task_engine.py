@@ -66,12 +66,12 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertNotIn("very-secret-value", str(events))
 
     def test_invalid_lease_and_delay_numbers_are_rejected(self):
-        for invalid_delay in (float("nan"), float("inf"), True, 10 ** 1000):
-            with self.subTest(delay=invalid_delay):
+        for index, invalid_delay in enumerate((float("nan"), float("inf"), True, 10 ** 1000)):
+            with self.subTest(delay_type=type(invalid_delay).__name__, index=index):
                 with self.assertRaises(ValueError):
                     self.engine.submit(
                         self.goal, "work", {},
-                        idempotency_key=f"invalid-delay-{str(invalid_delay)}",
+                        idempotency_key=f"invalid-delay-{index}",
                         delay_seconds=invalid_delay,
                     )
         with self.assertRaises(ValueError):
