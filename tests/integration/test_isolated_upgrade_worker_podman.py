@@ -54,6 +54,33 @@ class RootlessPodmanIntegrationTests(unittest.TestCase):
         self.principal = ToolPrincipal("podman-integration", frozenset({"tests:execute"}))
         self.events = []
 
+    def test_failed_candidate_is_reported_without_promotion(self):
+        failing = self.root / "tests" / "test_candidate_failure.py"
+        failing.write_text(
+            "import unittest\\n"
+            "class CandidateFailure(unittest.TestCase):\\n"
+            " def test_expected_failure(self): self.fail('intentional candidate failure')\\n",
+            encoding="utf-8",
+        )
+        runner = PodmanIsolatedTestRunner(
+            self.root,
+            image=IMAGE,
+            trusted_principal=lambda principal: principal.actor_id == "podman-integration",
+            approve_run=lambda actor, run_id, digest: True,
+            audit=self.events.append,
+            allowed_test_modules=("tests.test_isolation_contract", "tests.test_candidate_failure"),
+            timeout_seconds=20,
+        )
+        result = runner.run(principal=self.principal, test_module="tests.test_candidate_failure")
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(result.timed_out)
+        self.assertTrue(any(
+            event.get("outcome") == "failed"
+            and event.get("target") == "tests.test_candidate_failure"
+            for event in self.events
+        ), msg=f"expected audited failure, got {self.events!r}")
+        self.assertFalse(any(event.get("promotion_allowed") is True for event in self.events))
+
     def test_runtime_enforces_basic_isolation_contract(self):
         runner = PodmanIsolatedTestRunner(
             self.root,
