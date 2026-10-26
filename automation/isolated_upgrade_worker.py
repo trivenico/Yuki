@@ -107,12 +107,16 @@ class PodmanIsolatedTestRunner:
         except Exception as exc:
             raise RuntimeError("audit unavailable; isolated test operation denied.") from exc
 
+    def _runtime_env(self) -> dict[str, str]:
+        """Return the minimal environment required by the selected container CLI."""
+        return {"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"}
+
     def _verify_rootless_runtime(self, binary: str) -> None:
         try:
             result = subprocess.run(
                 [binary, "info", "--format", "json"], stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
-                check=False, shell=False, env={"PATH": os.environ.get("PATH", "")},
+                check=False, shell=False, env=self._runtime_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ToolAuthorizationError("rootless Podman runtime is unavailable.") from exc
@@ -356,7 +360,7 @@ class PodmanIsolatedTestRunner:
             exists = subprocess.run(
                 [binary, "container", "exists", container_id], stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
-                env={"PATH": os.environ.get("PATH", "")},
+                env=self._runtime_env(),
             )
             if exists.returncode == 1:
                 return
@@ -365,14 +369,14 @@ class PodmanIsolatedTestRunner:
             removed = subprocess.run(
                 [binary, "rm", "--force", container_id], stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10, check=False, shell=False,
-                env={"PATH": os.environ.get("PATH", "")},
+                env=self._runtime_env(),
             )
             if removed.returncode != 0:
                 raise RuntimeError("worker container removal failed.")
             verify = subprocess.run(
                 [binary, "container", "exists", container_id], stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
-                env={"PATH": os.environ.get("PATH", "")},
+                env=self._runtime_env(),
             )
             if verify.returncode != 1:
                 raise RuntimeError("worker container cleanup could not be confirmed.")
@@ -429,26 +433,30 @@ class PodmanIsolatedTestRunner:
         destination.chmod(0o500)
         return destination
 
+    def _runner_for_snapshot(self, snapshot: Path) -> "PodmanIsolatedTestRunner":
+        """Create the backend runner over the private snapshot."""
+        return PodmanIsolatedTestRunner(
+            snapshot,
+            image=self.image,
+            trusted_principal=self.trusted_principal,
+            approve_run=self.approve_run,
+            audit=self.audit,
+            allowed_test_modules=self.allowed_test_modules,
+            timeout_seconds=self.timeout_seconds,
+            podman_binary=self.podman_binary,
+            output_limit_bytes=self.output_limit_bytes,
+            memory_limit=self.memory_limit,
+            cpu_limit=self.cpu_limit,
+            pids_limit=self.pids_limit,
+        )
+
     def run(self, *, principal: ToolPrincipal, test_module: str) -> IsolatedTestRunResult:
         """Run against a private snapshot so the original workspace cannot race approval."""
         with tempfile.TemporaryDirectory(prefix="yuki-worker-snapshot-") as temporary:
             snapshot = Path(temporary) / "workspace"
             try:
                 self._create_workspace_snapshot(snapshot)
-                runner = PodmanIsolatedTestRunner(
-                    snapshot,
-                    image=self.image,
-                    trusted_principal=self.trusted_principal,
-                    approve_run=self.approve_run,
-                    audit=self.audit,
-                    allowed_test_modules=self.allowed_test_modules,
-                    timeout_seconds=self.timeout_seconds,
-                    podman_binary=self.podman_binary,
-                    output_limit_bytes=self.output_limit_bytes,
-                    memory_limit=self.memory_limit,
-                    cpu_limit=self.cpu_limit,
-                    pids_limit=self.pids_limit,
-                )
+                runner = self._runner_for_snapshot(snapshot)
                 return runner._run_snapshot(principal=principal, test_module=test_module)
             finally:
                 # TemporaryDirectory must be able to remove read-only snapshot dirs.
@@ -624,7 +632,7 @@ class PodmanIsolatedTestRunner:
                 proc = subprocess.Popen(
                     command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     shell=False, close_fds=True, start_new_session=True,
-                    env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
+                    env=self._runtime_env(),
                 )
                 assert proc.stdout is not None and proc.stderr is not None
                 with selectors.DefaultSelector() as selector:
