@@ -63,6 +63,26 @@ class OnboardingConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_config({"provider": "mock"})
 
+    def test_rejects_empty_model_before_saving_config(self):
+        with self.assertRaisesRegex(ValueError, "model name is required"):
+            validate_config({"provider": "ollama", "model": ""})
+
+    def test_hybrid_cloud_tasks_require_cloud_model(self):
+        with self.assertRaisesRegex(ValueError, "Cloud tasks require"):
+            validate_config({
+                "provider": "hybrid", "model": "local-model",
+                "local_provider": "ollama", "local_model": "local-model",
+                "cloud_tasks": ["general"], "cloud_model": "",
+            })
+
+    def test_hybrid_local_only_configuration_is_valid(self):
+        result = validate_config({
+            "provider": "hybrid", "model": "local-model",
+            "local_provider": "ollama", "local_model": "local-model",
+            "cloud_tasks": [], "cloud_model": "",
+        })
+        self.assertEqual(result["cloud_tasks"], [])
+
     def test_guardrails_default_to_approval_and_local_first(self):
         result = validate_config({"provider":"ollama"})
         self.assertTrue(result["guardrails"]["require_tool_approval"])
