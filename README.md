@@ -25,7 +25,7 @@ Activate the environment, then install the declared runtime dependency:
 python -m pip install -r requirements.txt
 ```
 
-On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1` instead.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1` instead.
 
 #### Windows: run the real local Ollama model
 
