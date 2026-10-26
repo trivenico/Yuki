@@ -49,7 +49,8 @@ def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
 class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
-                 base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None):
+                 base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None,
+                 environ=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
@@ -60,14 +61,17 @@ class OpenAICompatibleProvider:
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
+        # Injectable environment mapping keeps provider construction deterministic in
+        # tests while production defaults to the real process environment.
+        self._environ = os.environ if environ is None else environ
 
     def is_available(self):
-        return bool(os.environ.get(self.api_key_env, "").strip())
+        return bool(self._environ.get(self.api_key_env, "").strip())
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        api_key = os.environ.get(self.api_key_env, "").strip()
+        api_key = self._environ.get(self.api_key_env, "").strip()
         if not api_key:
             raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
         payload = json.dumps({

@@ -137,11 +137,11 @@ Yuki is still under active engineering. Passing CI verifies tested code paths, n
 
 ## Real provider and approved task-loop milestone
 
-The provider layer now includes a local Ollama adapter, an OpenAI-compatible HTTPS adapter, and an explicit hybrid router. Provider selection is opt-in:
+The provider layer now defaults to the real OpenAI API and includes a local Ollama adapter, official Gemini CLI adapter, and explicit hybrid router. The mock adapter is retained only for automated tests and is not exposed by the runtime provider registry.
 
-- Keep `provider: mock` for offline tests.
-- Set `provider: ollama` and configure `ollama_model` (or `YUKI_OLLAMA_MODEL`) to use a locally running Ollama instance.
-- Set `provider: hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
+- Set `OPENAI_API_KEY` in the process environment; the default model is `gpt-4.1-mini` and can be overridden with `YUKI_OPENAI_MODEL`.
+- Set `YUKI_PROVIDER=ollama` and configure `YUKI_OLLAMA_MODEL` to use a locally running Ollama instance.
+- Set `YUKI_PROVIDER=hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
 - Cloud requests are never an automatic fallback. Use `/ask-cloud TASK | PROMPT` only for a configured task; Yuki asks for approval before sending prompt text to the cloud provider.
 - `/ask PROMPT` is a text-only model request and does not invoke tools. `/task GOAL` uses a bounded JSON-only model loop over registered skills, with a maximum of `max_agent_steps` (1–5) steps. Each skill invocation requires a fresh human approval. Model output cannot run shell commands or arbitrary code; unregistered skills and malformed responses are rejected.
 

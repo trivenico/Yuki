@@ -84,7 +84,7 @@ Yuki commands:
   /audit                          Show recent metadata-only audit events
   /quit                           Exit Yuki
 
-The default mock provider makes no network calls. Provider registry entries are not live integrations.
+The runtime defaults to the real OpenAI API. The mock adapter is reserved for automated tests and is not available in the runtime provider registry.
 """)
 
 

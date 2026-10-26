@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Callable, Optional
-from providers import BaseProvider, MockProvider, create_provider
+from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
 
 @dataclass(frozen=True)
@@ -18,15 +18,17 @@ class ProviderManager:
         self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
-        self._factories: dict[str, Callable] = {"mock": MockProvider, "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ)}
-        self._selected: Optional[str] = "mock"
+        self._factories: dict[str, Callable] = {
+            "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
+            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+        }
+        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
-            ProviderInfo("mock", ("none",), True),
+            ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("openai", ("official_api_key_flow_planned",)),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
@@ -62,7 +64,7 @@ class ProviderManager:
         } for name, p in sorted(self._providers.items())]
 
     def _build_adapter(self, name: str):
-        if name in {"mock", "ollama", "hybrid"}:
+        if name in {"ollama", "hybrid"}:
             adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
         else:
             factory = self._factories.get(name)
