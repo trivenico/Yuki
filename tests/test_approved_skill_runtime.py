@@ -212,6 +212,28 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(outcomes.count(True), 1)
         self.assertEqual(outcomes.count(False), 1)
 
+    def test_missing_audit_sink_blocks_skill_execution(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        calls = []
+        class SideEffectSkill:
+            name = "side-effect"
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                calls.append(argument)
+                return "done"
+
+        registry = Registry()
+        registry.register(SideEffectSkill())
+        result = invoke_registered_skill(
+            registry, "side-effect", "private input",
+            approvals=OneShotSkillApprovals(),
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "audit_unavailable")
+        self.assertEqual(calls, [])
+
     def test_audit_failure_blocks_skill_before_execution(self):
         from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
 
