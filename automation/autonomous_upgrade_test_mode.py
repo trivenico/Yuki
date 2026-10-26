@@ -50,9 +50,13 @@ def build_autonomous_upgrade_test_coordinator(
     # retained for unit tests and controlled deployments with an audited adapter.
     image = env.get("YUKI_TEST_WORKER_IMAGE", "").strip()
     if isolated_runner_factory is None:
-        if not image:
+        import re
+
+        if not re.fullmatch(
+            r"docker\\.io/library/python:3\\.11-slim@sha256:[0-9a-f]{64}", image
+        ):
             raise ToolAuthorizationError(
-                "YUKI_TEST_WORKER_IMAGE must contain an approved immutable sha256 image digest."
+                "YUKI_TEST_WORKER_IMAGE must be the approved official Python 3.11 slim image pinned by a lowercase sha256 digest."
             )
 
         def isolated_runner_factory(staged_root: Path) -> object:
