@@ -243,7 +243,7 @@ class DurableTaskEngine:
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
         }
-        if reason not in messages:
+        if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
         now = self.clock()
         safe_error = messages[reason]
