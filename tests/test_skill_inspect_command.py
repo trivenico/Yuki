@@ -63,10 +63,10 @@ class SkillInspectCommandTests(unittest.TestCase):
 
     def test_description_newlines_are_flattened_and_bounded(self):
         skill = FakeSkill()
-        skill.description = "first line\\nsecond line"
+                skill.description = "first line" + chr(10) + "second line"
         result = self.invoke("/skill inspect weather", skill)
         self.assertIn("Description: first line second line", result)
-        self.assertNotIn("second line\\n", result)
+                self.assertNotIn("second line" + chr(10), result)
 
 
 if __name__ == "__main__":
