@@ -76,6 +76,11 @@ class DesktopService:
     def readiness(self) -> dict[str, Any]:
         return build_desktop_readiness(self.providers, workspace=self.config["workspace"])
 
+    @property
+    def provider_verified(self) -> bool:
+        """Whether this process has completed a live provider check."""
+        return self._verified_provider is not None
+
     def invalidate_provider_verification(self) -> None:
         """Require a fresh live check after the user changes provider selection."""
         self._verified_provider = None
