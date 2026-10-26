@@ -254,6 +254,10 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE"); r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
             if r is None: raise TaskNotFound("task not found")
             if r["state"] in TERMINAL: c.commit(); return self._decode(r)
+            if r["state"] == "running":
+                raise TaskConflict(
+                    "running task cannot be cancelled safely; wait for the worker to finish"
+                )
             c.execute("UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",(now,task_id))
             self._event(c,r["goal_id"],task_id,"task.cancelled",{})
             self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -284,6 +288,15 @@ class DurableTaskEngine:
             if g is None: raise TaskNotFound("goal not found")
             if g["state"] == "completed": raise TaskConflict("completed goal cannot change state")
             if g["state"] == "cancelled" and state != "cancelled": raise TaskConflict("cancelled goal cannot be resumed")
+            if state == "cancelled":
+                running = c.execute(
+                    "SELECT 1 FROM tasks WHERE goal_id=? AND state='running' LIMIT 1",
+                    (goal_id,),
+                ).fetchone()
+                if running is not None:
+                    raise TaskConflict(
+                        "goal has running tasks; wait for them to finish before cancelling"
+                    )
             c.execute("UPDATE goals SET state=?,updated_at=? WHERE id=?",(state,now,goal_id))
             cancelled_tasks = []
             if state=="cancelled":
