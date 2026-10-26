@@ -19,11 +19,15 @@ def _yes(prompt: str, default: bool = True) -> bool:
         return default
     return value in {"y", "yes"}
 
+def provider_choices() -> list[str]:
+    """Return production onboarding choices, preferring a real local provider."""
+    return ["ollama"] + [name for name in PROVIDERS if name != "ollama"]
+
+
 def run_onboarding(*, path=None, verify_provider=True) -> dict:
     print("\nWelcome to Yuki setup")
     print("Secrets are never written to config.json. Set the displayed environment variable in your shell to persist credentials.")
-    # Prefer a real local runtime; the mock adapter is not offered in production setup.
-    names = ["ollama"] + [name for name in PROVIDERS if name != "ollama"]
+    names = provider_choices()
     for index, name in enumerate(names, 1):
         print(f"  {index}. {name}")
     while True:
