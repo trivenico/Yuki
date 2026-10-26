@@ -96,7 +96,7 @@ class DurableTaskEngine:
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
-        if isinstance(delay_seconds, bool) or not isinstance(delay_seconds,(int,float)) or not math.isfinite(delay_seconds) or not 0 <= delay_seconds <= 86400: raise ValueError("delay_seconds must be finite and 0..86400")
+        if isinstance(delay_seconds, bool) or not isinstance(delay_seconds,(int,float)) or not 0 <= delay_seconds <= 86400 or not math.isfinite(delay_seconds): raise ValueError("delay_seconds must be finite and 0..86400")
         if not isinstance(dependencies, (list, tuple)):
             raise ValueError("dependencies must be a list or tuple of task IDs")
         if len(dependencies) > 100:
@@ -183,7 +183,7 @@ class DurableTaskEngine:
 
     def fail(self,task_id,worker_id,error,*,retry_delay_seconds=0):
         if not isinstance(error,str) or not error.strip(): raise ValueError("error must be non-empty")
-        if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not math.isfinite(retry_delay_seconds) or not 0<=retry_delay_seconds<=86400: raise ValueError("retry delay must be finite and 0..86400")
+        if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not 0<=retry_delay_seconds<=86400 or not math.isfinite(retry_delay_seconds): raise ValueError("retry delay must be finite and 0..86400")
         # Worker exception text can contain credentials, prompts, or customer data.
         # Persist a stable safe marker rather than raw exception text.
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
