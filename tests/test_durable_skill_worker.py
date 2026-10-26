@@ -106,7 +106,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(stored["attempts"], 1)
         self.assertIn("not supported", stored["last_error"])
 
-    def test_invalid_payload_is_cancelled_without_skill_execution(self):
+    def test_invalid_payload_is_rejected_without_skill_execution(self):
         task = self.engine.submit(
             self.goal,
             "skill.invoke",
@@ -116,7 +116,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
         )
         result = self.worker.run_once()
         self.assertEqual(result["status"], "invalid_payload")
-        self.assertEqual(self.engine.get_task(task["id"])["state"], "cancelled")
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
 
     def test_worker_exception_marks_single_attempt_task_failed(self):
         class RaisingRuntime:
