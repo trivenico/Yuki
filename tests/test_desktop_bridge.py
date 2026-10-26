@@ -102,7 +102,7 @@ class DesktopBridgeTests(unittest.TestCase):
     def test_provider_error_details_are_not_returned_to_ui(self):
         bridge, factory = self.make_bridge(fail=True)
         result = bridge.ask("Hello")
-        self.assertTrue(result["ok"])  # YukiAgent returns its generic safe error message.
+        self.assertFalse(result["ok"])
         self.assertNotIn("secret-value", result["message"])
         self.assertEqual(factory.provider.prompts, ["Hello"])
 
