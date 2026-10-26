@@ -88,16 +88,21 @@ class DurableSkillWorker:
             }
         except Exception:
             # If a provider/skill or persistence operation fails after a side
-            # effect may have occurred, cancel instead of blindly replaying.
+            # effect may have occurred, cancel only if the durable task is still
+            # running. If commit succeeded but its response failed, report the
+            # persisted terminal state rather than inventing a cancellation.
+            persisted_state = "unknown"
             try:
                 current = self.engine.get_task(task_id)
-                if current.get("state") == "running":
-                    self.engine.cancel_task(task_id)
+                persisted_state = current.get("state", "unknown")
+                if persisted_state == "running":
+                    current = self.engine.cancel_task(task_id)
+                    persisted_state = current.get("state", "cancelled")
             except Exception:
                 pass
             return {
                 "task_id": task_id,
-                "state": "cancelled",
+                "state": persisted_state,
                 "status": "worker_error",
-                "message": "Worker failed safely; inspect the audit events before resubmitting.",
+                "message": "Worker encountered an error; inspect durable state and audit events before resubmitting.",
             }
