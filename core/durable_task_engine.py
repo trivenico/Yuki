@@ -4,6 +4,7 @@ This module persists state but never executes task code or authorizes side effec
 """
 from __future__ import annotations
 import json
+import math
 import sqlite3
 from contextlib import closing
 import time
@@ -36,7 +37,7 @@ class DurableTaskEngine:
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
-              idempotency_key TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+              idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
               available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
@@ -49,6 +50,11 @@ class DurableTaskEngine:
               event_type TEXT NOT NULL, detail_json TEXT NOT NULL, created_at REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_goal_idx ON run_events(goal_id,id);
             """)
+            # Existing databases need an additive migration. Old rows have no
+            # trustworthy fingerprint, so replaying them is rejected safely.
+            task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
+            if "submission_fingerprint" not in task_columns:
+                c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
 
     def _connect(self):
         c = sqlite3.connect(self.db_path, timeout=10, isolation_level=None)
@@ -59,7 +65,7 @@ class DurableTaskEngine:
 
     @staticmethod
     def _json(value):
-        raw = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        raw = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False)
         if len(raw.encode("utf-8")) > MAX_JSON_BYTES:
             raise ValueError("JSON exceeds 1 MB limit")
         return raw
@@ -90,9 +96,21 @@ class DurableTaskEngine:
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
-        if not isinstance(delay_seconds,(int,float)) or not 0 <= delay_seconds <= 86400: raise ValueError("delay_seconds must be 0..86400")
-        payload_json, deps, now = self._json(payload), tuple(dict.fromkeys(dependencies)), self.clock()
-        if len(deps)>100: raise ValueError("at most 100 dependencies allowed")
+        if isinstance(delay_seconds, bool) or not isinstance(delay_seconds,(int,float)) or not math.isfinite(delay_seconds) or not 0 <= delay_seconds <= 86400: raise ValueError("delay_seconds must be finite and 0..86400")
+        if not isinstance(dependencies, (list, tuple)):
+            raise ValueError("dependencies must be a list or tuple of task IDs")
+        if len(dependencies) > 100:
+            raise ValueError("at most 100 dependencies allowed")
+        if any(not isinstance(dep, str) or not 1 <= len(dep) <= 256 for dep in dependencies):
+            raise ValueError("each dependency must be a non-empty task ID string of at most 256 characters")
+        payload_json, deps, now = self._json(payload), tuple(sorted(set(dependencies))), self.clock()
+        submission_fingerprint = self._json({
+            "task_type": task_type,
+            "payload_json": payload_json,
+            "dependencies": list(deps),
+            "max_attempts": max_attempts,
+            "delay_seconds": float(delay_seconds),
+        })
         task_id = str(uuid.uuid4())
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
@@ -101,15 +119,17 @@ class DurableTaskEngine:
             if goal["state"]!="active": raise TaskConflict("goal is not active")
             old = c.execute("SELECT * FROM tasks WHERE goal_id=? AND idempotency_key=?",(goal_id,idempotency_key)).fetchone()
             if old is not None:
-                # Idempotency keys must not silently alias a different request.
-                if old["task_type"] != task_type or old["payload_json"] != payload_json: raise TaskConflict("idempotency key reused with different task data")
+                # Legacy rows without a fingerprint cannot prove that all
+                # execution-relevant submission options match the replay.
+                if old["submission_fingerprint"] is None or old["submission_fingerprint"] != submission_fingerprint:
+                    raise TaskConflict("idempotency key reused with different or unverifiable submission options")
                 c.commit()
                 return self._decode(old)
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
                 if d is None or d["goal_id"]!=goal_id: raise TaskConflict("dependency must belong to same goal")
-            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,max_attempts,now+delay_seconds,now,now))
+            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,now,now))
             for dep in deps: c.execute("INSERT INTO dependencies VALUES(?,?)",(task_id,dep))
             c.execute("UPDATE goals SET updated_at=? WHERE id=?",(now,goal_id))
             self._event(c,goal_id,task_id,"task.queued",{"task_type":task_type,"dependencies":list(deps)})
@@ -118,7 +138,7 @@ class DurableTaskEngine:
 
     def claim(self, worker_id, *, lease_seconds=60):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
-        if not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be 1..3600")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
@@ -144,7 +164,7 @@ class DurableTaskEngine:
         return r
 
     def heartbeat(self,task_id,worker_id,*,lease_seconds=60):
-        if not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be 1..3600")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id); until=now+lease_seconds
@@ -163,8 +183,10 @@ class DurableTaskEngine:
 
     def fail(self,task_id,worker_id,error,*,retry_delay_seconds=0):
         if not isinstance(error,str) or not error.strip(): raise ValueError("error must be non-empty")
-        if not 0<=retry_delay_seconds<=86400: raise ValueError("retry delay must be 0..86400")
-        now,safe_error=self.clock(),error[:2000]
+        if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not math.isfinite(retry_delay_seconds) or not 0<=retry_delay_seconds<=86400: raise ValueError("retry delay must be finite and 0..86400")
+        # Worker exception text can contain credentials, prompts, or customer data.
+        # Persist a stable safe marker rather than raw exception text.
+        now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
             retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
