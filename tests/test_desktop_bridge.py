@@ -37,9 +37,12 @@ class FakeProviderFactory:
         self.fail = fail
         self.provider = None
         self.configs = []
+        self.raise_on_call = False
 
     def __call__(self, config):
         self.configs.append(dict(config))
+        if self.raise_on_call:
+            raise RuntimeError("provider configuration invalid")
         self.provider = FakeProvider(fail=self.fail)
         return self.provider
 
@@ -159,7 +162,7 @@ class DesktopBridgeTests(unittest.TestCase):
 
     def test_provider_factory_failure_does_not_persist_or_activate(self):
         bridge, factory = self.make_bridge()
-        factory.fail = True
+        factory.raise_on_call = True
         with patch("core.model_selection.persist_model_selection") as persist:
             result = bridge.select_model({
                 "provider": "ollama",
