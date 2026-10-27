@@ -21,7 +21,7 @@ Model size and performance depend on available RAM/VRAM. Use a model already ins
 
 ## 2. Configure Yuki for Ollama
 
-In Yuki's configuration, set:
+Yuki defaults to local Ollama. Confirm the configured model is installed; if needed, set:
 
 ```yaml
 provider: ollama
