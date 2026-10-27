@@ -7,6 +7,7 @@ This script never falls back to a mock or cloud provider and does not change con
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -17,12 +18,21 @@ from core.config import load_config
 from providers.factory import create_provider
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", help="Installed Ollama model ID; overrides config for this run only.")
+    parser.add_argument("--base-url", help="Ollama endpoint; must be HTTPS or loopback HTTP.")
+    args = parser.parse_args(argv)
     try:
         config = load_config()
     except Exception as exc:
         print(f"FAIL: Yuki configuration could not be loaded ({type(exc).__name__}).")
         return 1
+
+    if args.model:
+        config["ollama_model"] = args.model
+    if args.base_url:
+        config["ollama_base_url"] = args.base_url
 
     provider_name = str(config.get("provider", "")).strip().lower()
     if provider_name != "ollama":
@@ -44,7 +54,7 @@ def main() -> int:
         print(f"FAIL: Ollama provider configuration is invalid ({type(exc).__name__}).")
         return 3
 
-    print(f"Checking local Ollama endpoint for configured model: {model}")
+    print(f"Checking Ollama endpoint for model: {model}")
     if not provider.is_available():
         print("FAIL: Ollama is unreachable or the configured model is not installed.")
         print("Start Ollama, run 'ollama list', and verify ollama_base_url and ollama_model.")
