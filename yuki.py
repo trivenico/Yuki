@@ -5,6 +5,7 @@ from pathlib import Path
 
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
+from companion.evolution import DailyEvolutionCycle
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
@@ -17,6 +18,10 @@ from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
+_EVOLUTION_DIR = Path(__file__).with_name(".yuki") / "evolution"
+
+def _evolution_cycle():
+    return DailyEvolutionCycle(_EVOLUTION_DIR)
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
