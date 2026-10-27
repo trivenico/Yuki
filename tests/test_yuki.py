@@ -52,6 +52,21 @@ class EvolutionCommandTests(unittest.TestCase):
         cycle_factory.return_value.review.assert_called_once_with("proposal-1", "accepted_for_manual_followup")
 
 
+    def test_successful_learning_record_adds_local_evolution_observation(self):
+        with patch("yuki.record_outcome", return_value="Outcome recorded successfully"), \
+             patch("yuki._evolution_cycle") as cycle_factory, \
+             patch("yuki.write_audit_event"):
+            result = handle_command(
+                "/learn deploy service | passed | add a rollback check",
+                [], [], None, None
+            )
+        self.assertEqual(result, "Outcome recorded successfully")
+        cycle_factory.return_value.record.assert_called_once_with(
+            "lesson",
+            "Task: deploy service; outcome: passed; lesson: add a rollback check",
+        )
+
+
 class PlannerTests(unittest.TestCase):
     def test_plan_is_bounded_and_does_not_execute(self):
         plan = create_plan("Review repository", ["Inspect files", "Run tests"])
