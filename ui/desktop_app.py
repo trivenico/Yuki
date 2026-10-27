@@ -193,7 +193,6 @@ def run_desktop() -> None:
     for label, action in nav_items:
         ttk.Button(sidebar, text=label, command=action).pack(fill="x", pady=2)
     ttk.Separator(sidebar).pack(fill="x", pady=8)
-    ttk.Button(sidebar, text="Settings", command=open_settings).pack(fill="x", pady=2)
     ttk.Label(
         sidebar,
         text="Commands and approvals run through the shared guarded runtime.",
@@ -345,6 +344,7 @@ def run_desktop() -> None:
         ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right")
         ttk.Button(actions, text="Save Settings", command=save_settings).pack(side="right", padx=(0, 8))
 
+    ttk.Button(sidebar, text="Settings", command=open_settings).pack(fill="x", pady=2)
     ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Install Plugin", command=lambda: choose_manifest("plugin")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="right", padx=(6, 0))
