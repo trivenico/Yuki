@@ -26,7 +26,7 @@ if not exist ".venv\Scripts\python.exe" (
   python -m venv .venv
   if errorlevel 1 exit /b 1
 ) else (
-  echo [1/5] Existing virtual environment found.
+  echo [1/4] Existing virtual environment found.
 )
 
 echo [2/4] Updating pip...
