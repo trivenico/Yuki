@@ -30,7 +30,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -108,3 +108,12 @@ jobs:
             dist/Yuki-Setup.exe
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish tagged Windows release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" dist/Yuki-Windows-x64.zip dist/Yuki-Setup.exe --generate-notes --title "Yuki $env:GITHUB_REF_NAME"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
