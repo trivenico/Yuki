@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ui.desktop_app import ROOT, build_runtime_command
+from ui.desktop_app import CommandHistory, ROOT, build_runtime_command
 
 
 class DesktopAppTests(unittest.TestCase):
@@ -45,6 +45,32 @@ class DesktopAppTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "not found in the adjacent"):
                     build_runtime_command()
+
+    def test_command_history_moves_backward_and_forward(self):
+        history = CommandHistory()
+        self.assertEqual(history.move(-1), "")
+        history.add("/help")
+        history.add("/status")
+        self.assertEqual(history.move(-1), "/status")
+        self.assertEqual(history.move(-1), "/help")
+        self.assertEqual(history.move(1), "/status")
+        self.assertEqual(history.move(1), "")
+
+    def test_command_history_deduplicates_adjacent_commands_and_is_bounded(self):
+        history = CommandHistory(limit=2)
+        history.add("/help")
+        history.add("/help")
+        history.add("/status")
+        history.add("/readiness")
+        self.assertEqual(history.move(-1), "/readiness")
+        self.assertEqual(history.move(-1), "/status")
+        self.assertEqual(history.move(-1), "")
+
+    def test_command_history_rejects_invalid_direction_and_limit(self):
+        with self.assertRaisesRegex(ValueError, "positive"):
+            CommandHistory(limit=0)
+        with self.assertRaisesRegex(ValueError, "direction"):
+            CommandHistory().move(0)
 
     def test_desktop_root_is_the_repository_root(self):
         self.assertTrue((ROOT / "main.py").is_file())
