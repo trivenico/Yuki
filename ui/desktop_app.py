@@ -148,8 +148,7 @@ def run_desktop() -> None:
             return
         root.after(35, drain_output)
 
-    def send_command(_event=None) -> None:
-        command = command_entry.get()
+    def send_text(command: str) -> None:
         if not command.strip():
             return
         if process.poll() is not None or process.stdin is None:
@@ -161,9 +160,31 @@ def run_desktop() -> None:
         except (BrokenPipeError, OSError):
             append_output("\n[Could not send input to the Yuki runtime.]\n")
             return
-        command_entry.delete(0, "end")
         # A pipe does not echo terminal input, so echo it here for visibility.
         append_output(command + "\n")
+
+    def send_command(_event=None) -> None:
+        command = command_entry.get()
+        if not command.strip():
+            return
+        send_text(command)
+        command_entry.delete(0, "end")
+
+    def choose_manifest(kind: str) -> None:
+        path = filedialog.askopenfilename(
+            parent=root,
+            title="Choose a Yuki skill manifest" if kind == "skill" else "Choose a Yuki MCP plugin manifest",
+            filetypes=[("JSON manifests", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        command_group = "skills" if kind == "skill" else "plugins"
+        send_text(f'/{command_group} install "{path}"')
+
+    ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="left")
+    ttk.Button(extension_row, text="Install MCP Plugin", command=lambda: choose_manifest("plugin")).pack(side="left", padx=(8, 0))
+    ttk.Button(extension_row, text="List Skills", command=lambda: send_text("/skills")).pack(side="left", padx=(8, 0))
+    ttk.Button(extension_row, text="List Plugins", command=lambda: send_text("/plugins")).pack(side="left", padx=(8, 0))
 
     def close_window() -> None:
         if process.poll() is None:
