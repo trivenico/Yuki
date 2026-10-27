@@ -106,7 +106,7 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
-def main():
+def main(*, open_dashboard=False):
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
@@ -159,6 +159,14 @@ def main():
         return "Safe commands: /help, /status, /skills. Sensitive actions remain in the approval-gated terminal."
     
     print(DEFAULT_PERSONA.greeting)
+    if open_dashboard:
+        try:
+            from ui.dashboard import run_dashboard
+            run_dashboard(agent, command_handler=dashboard_command)
+        except RuntimeError as exc:
+            print(f"Yuki > Dashboard unavailable: {exc}")
+            raise
+        return
     print("Yuki guarded core is ready. Type /help for commands.")
     while True:
         try:
