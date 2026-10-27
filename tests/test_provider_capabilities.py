@@ -75,9 +75,11 @@ class CapabilityRegistryTests(unittest.TestCase):
     def test_provider_manager_exposes_registry_from_real_catalog(self):
         manager = ProviderManager(environ={})
         registry = manager.routing_registry()
-        self.assertEqual(registry.route(required=("text",)).provider, "mock")
-        self.assertIsNone(registry.get("openai").configured_model)
-        self.assertFalse(registry.get("openai").implemented)
+        self.assertEqual(registry.route(required=("text",)).provider, "ollama")
+        self.assertEqual(registry.get("ollama").configured_model, "llama3.2:3b")
+        self.assertEqual(registry.get("openai").configured_model, "gpt-4.1-mini")
+        self.assertTrue(registry.get("openai").implemented)
+        self.assertFalse(registry.get("openai").ready)
 
 
 if __name__ == "__main__":
