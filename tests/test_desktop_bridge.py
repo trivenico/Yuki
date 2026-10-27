@@ -157,6 +157,19 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("api_key", persist.call_args.args[0])
         self.assertEqual(factory.configs[-1]["ollama_model"], "qwen2.5:7b")
 
+    def test_provider_factory_failure_does_not_persist_or_activate(self):
+        bridge, factory = self.make_bridge()
+        factory.fail = True
+        with patch("core.model_selection.persist_model_selection") as persist:
+            result = bridge.select_model({
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://127.0.0.1:11434",
+            })
+        self.assertFalse(result["ok"])
+        persist.assert_not_called()
+        self.assertEqual(bridge.config["ollama_model"], "llama3.2:3b")
+
     def test_cloud_model_switch_persists_only_after_confirmation(self):
         bridge, factory = self.make_bridge()
         with patch("core.model_selection.persist_model_selection") as persist:
