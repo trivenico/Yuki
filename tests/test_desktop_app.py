@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -23,13 +24,14 @@ class DesktopAppTests(unittest.TestCase):
             desktop_dir.mkdir()
             runtime_dir.mkdir()
             desktop = desktop_dir / "YukiDesktop.exe"
-            runtime = runtime_dir / "YukiRuntime.exe"
+            runtime_name = "YukiRuntime.exe" if os.name == "nt" else "YukiRuntime"
+            runtime = runtime_dir / runtime_name
             desktop.touch()
             runtime.touch()
             with patch.object(sys, "frozen", True, create=True), patch.object(
                 sys, "executable", str(desktop)
             ):
-                self.assertEqual(build_runtime_command(), [str(runtime)])
+                self.assertEqual(build_runtime_command(), [str(runtime.resolve())])
 
     def test_packaged_desktop_reports_missing_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
