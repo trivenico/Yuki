@@ -144,6 +144,68 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
     return {"id": value["id"], "name": value["name"], "path": str(destination)}
 
 
+def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
+    """Import an Agent Skills-style SKILL.md as a declarative, non-executable prompt skill.
+
+    Only the SKILL.md document is imported. Sibling scripts, tools, and other files
+    are deliberately ignored; imported instructions never grant policy permissions.
+    """
+    source = Path(skill_file).expanduser().resolve()
+    if source.name.lower() != "skill.md":
+        raise ValueError("Import an Agent Skills document named SKILL.md.")
+    try:
+        if source.stat().st_size > MAX_MANIFEST_BYTES:
+            raise ValueError("SKILL.md exceeds 64 KiB.")
+        document = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("SKILL.md could not be read as UTF-8 text.") from exc
+    if not document.startswith("---\\n"):
+        raise ValueError("SKILL.md must begin with YAML frontmatter.")
+    _, separator, remainder = document[4:].partition("\\n---\\n")
+    if not separator:
+        raise ValueError("SKILL.md frontmatter is not closed.")
+    try:
+        metadata = __import__("yaml").safe_load(remainder.split("\\n", 1)[0] if False else document[4:4 + len(document[4:]) - len(remainder) - len("\\n---\\n")]) or {}
+    except Exception as exc:
+        raise ValueError("SKILL.md frontmatter must be valid YAML.") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("SKILL.md frontmatter must be a YAML mapping.")
+    allowed = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
+    if set(metadata) - allowed or not {"name", "description"}.issubset(metadata):
+        raise ValueError("SKILL.md must have name and description and no unsupported frontmatter fields.")
+    name = metadata["name"]
+    description = metadata["description"]
+    instructions = remainder.strip()
+    if not isinstance(name, str) or not _SKILL_NAME.fullmatch(name):
+        raise ValueError("Skill name must be a lowercase identifier (2-48 characters).")
+    if not isinstance(description, str) or not description.strip() or len(description) > 500:
+        raise ValueError("Skill description must be non-empty and at most 500 characters.")
+    if not instructions or len(instructions) > 12000:
+        raise ValueError("Skill instructions must be non-empty and at most 12000 characters.")
+    manifest = validate_skill_manifest({
+        "type": "yuki_skill",
+        "id": name.replace("-", "_"),
+        "version": "1",
+        "name": name.replace("-", "_"),
+        "description": description.strip(),
+        "instructions": instructions,
+    })
+    destination = _extension_root("skill", root) / f"{manifest['id']}.json"
+    if destination.exists():
+        raise ValueError(f"An extension with id '{manifest['id']}' is already installed; remove it before replacing.")
+    folder = destination.parent
+    if folder.exists():
+        for existing_path in folder.glob("*.json"):
+            try:
+                existing = validate_skill_manifest(_read_json(existing_path))
+            except ValueError:
+                continue
+            if existing.get("name") == manifest["name"]:
+                raise ValueError(f"An extension named '{manifest['name']}' is already installed.")
+    _atomic_json(destination, manifest)
+    return {"id": manifest["id"], "name": manifest["name"], "path": str(destination), "source_format": "agentskills_md"}
+
+
 def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
     folder = _extension_root(kind, root)
     if not folder.exists():
