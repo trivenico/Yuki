@@ -12,6 +12,14 @@ import yaml
 from core.portable_paths import config_path as resolve_config_path
 from core.model_catalog import get_provider, list_providers
 
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Prevent a loopback discovery request from redirecting to a remote host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def list_installed_ollama_models(base_url: str = "http://127.0.0.1:11434", *, timeout: float = 2.0) -> list[dict[str, str]]:
     """Discover locally installed Ollama models from a loopback server only."""
     if not isinstance(base_url, str) or len(base_url) > 2048:
@@ -32,7 +40,10 @@ def list_installed_ollama_models(base_url: str = "http://127.0.0.1:11434", *, ti
         raise ValueError("Model discovery only permits loopback HTTP Ollama endpoints.")
     request = urllib.request.Request(base_url.rstrip("/") + "/api/tags", headers={"Accept": "application/json"}, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=max(0.5, min(float(timeout), 5.0))) as response:
+        # urlopen follows redirects by default. Never allow a loopback URL to
+        # redirect discovery traffic to an arbitrary host.
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        with opener.open(request, timeout=max(0.5, min(float(timeout), 5.0))) as response:
             raw = response.read(500_001)
     except (urllib.error.URLError, TimeoutError, OSError):
         return []
@@ -88,6 +99,7 @@ def validate_model_selection(selection: dict) -> dict:
     if meta["kind"] == "cloud":
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("Cloud providers must use HTTPS without embedded credentials.")
+        # The runtime adapter enforces its trusted-host allowlist and blocks redirects.
     else:
         host = (parsed.hostname or "").lower()
         loopback = host == "localhost"
@@ -98,6 +110,7 @@ def validate_model_selection(selection: dict) -> dict:
                 pass
         if parsed.scheme not in {"http", "https"} or not loopback:
             raise ValueError("Local provider endpoints must use a loopback host (localhost or 127.0.0.1).")
+
     return {"provider": provider_id, "model": model.strip(), "base_url": base_url.strip(), "api_key_env": key_env}
 
 
