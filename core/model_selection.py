@@ -91,3 +91,27 @@ def validate_model_selection(selection: dict) -> dict:
         if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Local endpoint URL is invalid.")
     return {"provider": provider_id, "model": model.strip(), "base_url": base_url.strip(), "api_key_env": key_env}
+
+
+def apply_model_selection(config: dict, selection: dict) -> dict:
+    """Return a new runtime config for a supported selection; never mutate input.
+
+    Catalog entries can describe future providers, but selection cannot enable
+    an adapter until the runtime factory implements it.
+    """
+    validated = validate_model_selection(selection)
+    meta = get_provider(validated["provider"])
+    if not meta.get("runtime_supported", False):
+        raise ValueError("This provider is listed in the catalog but is not yet supported by the runtime.")
+    result = dict(config)
+    provider = validated["provider"]
+    result["provider"] = provider
+    if provider == "ollama":
+        result["ollama_model"] = validated["model"]
+        result["ollama_base_url"] = validated["base_url"].rstrip("/")
+    elif provider == "openai":
+        result["openai_model"] = validated["model"]
+        result["openai_base_url"] = validated["base_url"].rstrip("/")
+    else:
+        raise ValueError("This provider selection has no runtime configuration mapping.")
+    return result
