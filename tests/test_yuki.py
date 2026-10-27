@@ -8,6 +8,7 @@ import yuki_learning
 import yuki_tasks
 import yuki_security
 from providers import MockProvider
+from providers.ollama import OllamaProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
@@ -87,7 +88,7 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
     def test_selected_adapter_is_created(self):
         from providers.ollama import OllamaProvider
@@ -126,7 +127,6 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
-        from providers.openai_compatible import OpenAICompatibleProvider
         self.assertIsInstance(agent.provider, OllamaProvider)
 
     def test_dashboard_reports_core_status(self):
