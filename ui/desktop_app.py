@@ -250,6 +250,7 @@ def run_desktop() -> None:
     add_shortcut("Plan task", "/plan ")
     add_shortcut("Task command", "/task ")
     add_shortcut("Reminders", "/reminders")
+    add_shortcut("Add reminder", "/reminder add ")
     add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
