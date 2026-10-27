@@ -103,5 +103,6 @@ def get_provider(provider_id: str) -> dict[str, Any]:
         "id": provider_id, "label": meta["label"], "kind": meta["kind"],
         "base_url": meta["base_url"], "key_env": meta["key_env"],
         "models": [dict(model) for model in meta["models"]],
-        "custom_model_allowed": True,\n        "runtime_supported": bool(meta.get("runtime_supported", False)),
+        "custom_model_allowed": True,
+        "runtime_supported": bool(meta.get("runtime_supported", False)),
     }
