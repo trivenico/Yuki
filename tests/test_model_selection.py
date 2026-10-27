@@ -5,6 +5,7 @@ from urllib.error import URLError
 
 from core.model_catalog import get_provider, list_providers
 from core.model_selection import list_installed_ollama_models, validate_model_selection
+from core.onboarding import validate_config
 from providers.factory import create_provider
 from providers.gemini_api import GeminiAPIProvider
 from providers.nvidia_nim import NvidiaNIMProvider
@@ -46,6 +47,15 @@ class ModelSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
             validate_model_selection({"provider": "openai", "model": "gpt-4.1-mini", "api_key": "do-not-accept"})
 
+    def test_onboarding_accepts_gemini_and_nvidia_provider_configs(self):
+        gemini = validate_config({"provider": "gemini_api", "model": "gemini-2.5-flash"})
+        nvidia = validate_config({"provider": "nvidia", "model": "openai/gpt-oss-20b"})
+        self.assertEqual(gemini["api_key_env"], "GEMINI_API_KEY")
+        self.assertEqual(nvidia["api_key_env"], "NVIDIA_API_KEY")
+
+    def test_hybrid_onboarding_rejects_cloud_provider_in_local_slot(self):
+        with self.assertRaisesRegex(ValueError, "local provider"):
+            validate_config({"provider": "hybrid", "model": "local-model", "local_model": "local-model", "local_provider": "gemini_api"})
     def test_custom_model_id_is_preserved(self):
         selected = validate_model_selection({"provider": "gemini_api", "model": "my-enabled-model"})
         self.assertEqual(selected["model"], "my-enabled-model")
