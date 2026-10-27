@@ -2,9 +2,14 @@
 from __future__ import annotations
 import json
 import ipaddress
+import os
+import tempfile
+from pathlib import Path
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
+import yaml
+from core.portable_paths import config_path as resolve_config_path
 from core.model_catalog import get_provider, list_providers
 
 def list_installed_ollama_models(base_url: str = "http://127.0.0.1:11434", *, timeout: float = 2.0) -> list[dict[str, str]]:
@@ -115,3 +120,50 @@ def apply_model_selection(config: dict, selection: dict) -> dict:
     else:
         raise ValueError("This provider selection has no runtime configuration mapping.")
     return result
+
+
+
+def persist_model_selection(selection: dict, path=None) -> dict:
+    """Validate and atomically persist a supported model selection.
+
+    API key values are never accepted or written. Only the environment-variable
+    name from the provider catalog is retained in the returned normalized choice.
+    """
+    validated = validate_model_selection(selection)
+    updated = apply_model_selection({}, validated)
+    target = Path(path) if path is not None else Path(resolve_config_path())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    raw = {}
+    if target.exists():
+        try:
+            loaded = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise RuntimeError("Cannot safely read existing Yuki configuration.") from exc
+        if not isinstance(loaded, dict):
+            raise RuntimeError("Existing Yuki configuration must be a YAML mapping.")
+        raw = loaded
+    raw.update(updated)
+    fd, temporary_name = tempfile.mkstemp(prefix=".yuki-config-", suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            yaml.safe_dump(raw, stream, allow_unicode=True, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.chmod(temporary_name, 0o600)
+        except OSError:
+            # Windows ACLs govern access; chmod is best-effort there.
+            pass
+        os.replace(temporary_name, target)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
+    return {
+        "provider": updated["provider"],
+        "model": updated.get("ollama_model", updated.get("openai_model", "")),
+        "base_url": updated.get("ollama_base_url", updated.get("openai_base_url", "")),
+        "api_key_env": validated["api_key_env"],
+    }
