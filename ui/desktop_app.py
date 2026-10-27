@@ -26,7 +26,7 @@ def build_runtime_command() -> list[str]:
                 f"Packaged runtime was not found beside the desktop app: {runtime_name}. "
                 "Reinstall Yuki or launch the CLI runtime directly."
             )
-        return [str(runtime), "-u"] if os.name != "nt" else [str(runtime)]
+        return [str(runtime)]
     return [sys.executable, "-u", str(ROOT / "main.py")]
 
 
