@@ -13,19 +13,19 @@ class SettingsStoreTests(unittest.TestCase):
         self.temp.cleanup()
     def test_safe_defaults(self):
         settings = read_user_settings(self.path)
-        self.assertEqual(settings["ollama_model"], "llama3.2:3b")
+        self.assertEqual(settings["provider"], "ollama")\n        self.assertEqual(settings["ollama_model"], "llama3.2:3b")
         self.assertFalse(settings["voice_enabled"])
         self.assertTrue(settings["firewall_dry_run"])
     def test_allowlisted_update_preserves_unrelated_settings(self):
-        saved = save_user_settings({"ollama_model": "qwen2.5:3b", "voice_enabled": True}, self.path)
+        saved = save_user_settings({"provider": "openai", "ollama_model": "qwen2.5:3b", "openai_model": "gpt-4.1-mini", "voice_enabled": True}, self.path)
         raw = yaml.safe_load(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(saved["ollama_model"], "qwen2.5:3b")
+        self.assertEqual(saved["provider"], "openai")\n        self.assertEqual(saved["openai_model"], "gpt-4.1-mini")\n        self.assertEqual(saved["ollama_model"], "qwen2.5:3b")
         self.assertTrue(saved["voice_enabled"])
         self.assertEqual(raw["provider"], "ollama")
         self.assertEqual(raw["custom_setting"], "keep-me")
     def test_invalid_changes_do_not_mutate_file(self):
         before = self.path.read_text(encoding="utf-8")
-        for change in ({"ollama_model": "../../unsafe"}, {"arbitrary_command": "run"}, {"voice_enabled": "yes"}):
+        for change in ({"ollama_model": "../../unsafe"}, {"provider": "mock"}, {"arbitrary_command": "run"}, {"voice_enabled": "yes"}):
             with self.assertRaises(ValueError):
                 save_user_settings(change, self.path)
             self.assertEqual(self.path.read_text(encoding="utf-8"), before)
