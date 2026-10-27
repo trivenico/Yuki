@@ -220,7 +220,7 @@ def run_desktop() -> None:
 
     nav_items = (
         ("Interactive Session", focus_composer),
-        ("Tasks & Plans", lambda: insert_command("/plan ")),
+        ("Tasks & Plans", lambda: send_text("/tasks")),
         ("Automation", lambda: send_text("/reminders")),
         ("Developer Workflows", lambda: insert_command("/knowledge index ")),
         ("Memory", lambda: send_text("/memory list")),
@@ -254,7 +254,6 @@ def run_desktop() -> None:
     add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Morning briefing", "/briefing")
     add_shortcut("Task history", "/tasks")
-    add_shortcut("New task", "/task ")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
 
