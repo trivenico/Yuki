@@ -57,20 +57,20 @@ jobs:
       - name: Build console runtime
         shell: pwsh
         run: |
-          pyinstaller --clean --noconfirm --onefile --name YukiRuntime --console --add-data "config.yaml;." --collect-submodules core --collect-submodules providers --collect-submodules skills --collect-submodules companion --collect-submodules voice --collect-submodules defense --collect-submodules hackback --collect-submodules knowledge main.py
+          pyinstaller --clean --noconfirm --name YukiRuntime --console --add-data "config.yaml;." --collect-submodules core --collect-submodules providers --collect-submodules skills --collect-submodules companion --collect-submodules voice --collect-submodules defense --collect-submodules hackback --collect-submodules knowledge main.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build desktop GUI
         shell: pwsh
         run: |
-          pyinstaller --clean --noconfirm --onefile --name YukiDesktop --windowed --add-data "config.yaml;." ui/desktop_app.py
+          pyinstaller --clean --noconfirm --name YukiDesktop --windowed --add-data "config.yaml;." ui/desktop_app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Smoke-test packaged console runtime
         shell: pwsh
         run: |
           $env:YUKI_HOME = Join-Path $env:RUNNER_TEMP "yuki-package-smoke"
-          $runtimeOutput = "/quit" | & .\dist\YukiRuntime.exe
+          $runtimeOutput = "/quit" | & .\dist\YukiRuntime\YukiRuntime.exe
           if ($LASTEXITCODE -ne 0) { throw "Packaged runtime exited with code $LASTEXITCODE" }
           if (($runtimeOutput -join "\n") -notmatch "guarded core is ready") {
             throw "Packaged runtime did not reach its interactive ready state."
@@ -83,7 +83,7 @@ jobs:
           Copy-Item README.md dist/README.md
           New-Item -ItemType Directory -Force dist/docs | Out-Null
           Copy-Item docs/INSTALLATION.md dist/docs/INSTALLATION.md
-          Compress-Archive -Path dist/YukiDesktop.exe,dist/YukiRuntime.exe,dist/config.yaml,dist/README.md,dist/docs/INSTALLATION.md -DestinationPath dist/Yuki-Windows-x64.zip -Force
+          Compress-Archive -Path dist/YukiDesktop,dist/YukiRuntime,dist/config.yaml,dist/README.md,dist/docs/INSTALLATION.md -DestinationPath dist/Yuki-Windows-x64.zip -Force
           $candidateRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyInstall\lib\innosetup")
           $iscc = Get-ChildItem -Path $candidateRoots -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if (-not $iscc) {
