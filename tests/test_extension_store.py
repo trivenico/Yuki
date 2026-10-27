@@ -79,6 +79,17 @@ class ExtensionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "instructions"):
             validate_skill_manifest(value)
 
+    def test_duplicate_json_keys_are_rejected(self):
+        path = self.source / "duplicate.json"
+        path.write_text(
+            '{"type":"yuki_skill","id":"first_skill","id":"other_skill",'
+            '"version":"1","name":"writing_helper","description":"desc",'
+            '"instructions":"instructions"}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "Duplicate JSON key"):
+            install_extension(str(path), "skill", root=self.data)
+
     def test_plugin_endpoint_must_be_https_and_match_allowlisted_host(self):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             validate_plugin_manifest(self.plugin_manifest(endpoint="http://mcp.example.com/api"))
