@@ -1,8 +1,8 @@
 """Thin CLI entry point for Yuki's shared provider and readiness services.
 
-Use `yuki start` for the full guarded runtime. `yuki desktop` opens the optional
-Textual supervision dashboard; that dashboard currently exposes safe status and
-skill listing, while operational commands remain in the full CLI runtime.
+Use `yuki start` for the full guarded runtime. `yuki desktop` opens a Tk desktop
+console that forwards commands to the same guarded runtime, including its existing
+approval prompts. The legacy Textual dashboard remains an optional CLI feature.
 """
 from __future__ import annotations
 
@@ -61,13 +61,22 @@ def run_cli(
 ) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.command in {"start", "desktop"}:
+    if args.command == "start":
         try:
             import main as integrated_runtime
-            integrated_runtime.main(open_dashboard=args.command == "desktop")
+            integrated_runtime.main()
             return 0
         except Exception as exc:
             output_fn(f"Yuki runtime failed to start ({type(exc).__name__}).")
+            return 2
+
+    if args.command == "desktop":
+        try:
+            from ui.desktop_app import run_desktop
+            run_desktop()
+            return 0
+        except Exception as exc:
+            output_fn(f"Yuki desktop failed to start ({type(exc).__name__}).")
             return 2
 
     if args.command == "doctor":
