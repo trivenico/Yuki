@@ -44,6 +44,21 @@ class ProviderDefaultTests(unittest.TestCase):
             self.assertEqual(smoke_test_ollama.main(), 2)
         self.assertTrue(any("No request was sent" in str(call) for call in output.call_args_list))
 
+    def test_ollama_smoke_test_rejects_non_sentinel_response(self):
+        from scripts import smoke_test_ollama
+
+        config = {"provider": "ollama", "ollama_model": "test-model"}
+        provider = Mock()
+        provider.is_available.return_value = True
+        provider.generate.return_value = "I could not follow that instruction."
+        with (
+            patch.object(smoke_test_ollama, "load_config", return_value=config),
+            patch.object(smoke_test_ollama, "create_provider", return_value=provider),
+            patch("builtins.print"),
+        ):
+            self.assertEqual(smoke_test_ollama.main(), 7)
+        provider.generate.assert_called_once()
+
     def test_ollama_smoke_test_runs_provider_contract(self):
         from scripts import smoke_test_ollama
 
