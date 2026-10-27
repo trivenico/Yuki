@@ -14,6 +14,7 @@ on:
       - "hackback/**"
       - "knowledge/**"
       - "installer/**"
+      - "tests/**"
       - "requirements*.txt"
       - "config.yaml"
       - ".github/workflows/desktop-package.yml"
