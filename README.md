@@ -218,3 +218,17 @@ python main.py
 Inside Yuki, run `/desktop` to open the PyWebView companion window. The desktop bridge provides text chat, runtime status, and model selection. It does not execute registered skills or shell commands from chat. Cloud model selection and each cloud chat request require explicit confirmation. Model choices are limited to adapters marked as runtime-supported; catalog-only providers are rejected until their adapters are implemented.
 
 The desktop UI is optional and currently requires a working Python desktop/webview environment. Windows packaging and real Ollama inference are still acceptance tasks; this is not yet a signed standalone installer.
+
+### Verify real Ollama inference on Windows
+
+Start Ollama and confirm the model is installed:
+
+```powershell
+ollama list
+$env:YUKI_PROVIDER = "ollama"
+python scripts/smoke_test_ollama.py --model llama3.2:3b
+```
+
+Replace `llama3.2:3b` with an exact model ID shown by `ollama list`. The `--model` override applies only to the smoke test and does not rewrite Yuki's saved configuration. You can also supply `--base-url http://127.0.0.1:11434` when using the default local endpoint. Only HTTPS or loopback HTTP endpoints are allowed.
+
+A successful result confirms that the configured real Ollama adapter can reach the server and complete one inference request. It does not by itself validate desktop model persistence, the full conversation loop, or packaged-app behavior. The smoke test never falls back to a mock or cloud provider.
