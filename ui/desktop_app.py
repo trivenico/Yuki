@@ -42,9 +42,11 @@ def run_desktop() -> None:
         text="Yuki Desktop · commands and approvals run through the guarded CLI runtime",
     ).pack(anchor="w", pady=(0, 8))
 
-    transcript = tk.Text(frame, wrap="word", state="disabled", undo=False)
-    transcript.pack(side="top", fill="both", expand=True)
-    scrollbar = ttk.Scrollbar(transcript, orient="vertical", command=transcript.yview)
+    output_frame = ttk.Frame(frame)
+    output_frame.pack(side="top", fill="both", expand=True)
+    transcript = tk.Text(output_frame, wrap="word", state="disabled", undo=False)
+    transcript.pack(side="left", fill="both", expand=True)
+    scrollbar = ttk.Scrollbar(output_frame, orient="vertical", command=transcript.yview)
     transcript.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
 
