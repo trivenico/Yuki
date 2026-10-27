@@ -13,7 +13,7 @@ from yuki_agent import YukiAgent
 
 MAX_DESKTOP_PROMPT_CHARS = 8_000
 CLOUD_PROVIDERS = frozenset({
-    "openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
+    "openai", "gemini_api", "nvidia", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
 })
 
 
@@ -29,10 +29,14 @@ class DesktopBridge:
     ) -> None:
         self.agent = agent
         self.config = dict(config or {})
+        self._provider_factory = provider_factory
+        self._agent_factory = agent_factory
         self._approval_context = threading.local()
         if provider_factory is None:
             from providers.factory import create_provider
             provider_factory = create_provider
+        self._provider_factory = provider_factory
+        self._agent_factory = agent_factory
         provider = provider_factory(
             self.config,
             cloud_approver=self._cloud_approval_callback,
@@ -53,6 +57,49 @@ class DesktopBridge:
     def _cloud_approval_callback(self, *_args, **_kwargs) -> bool:
         return getattr(self._approval_context, "allowed", False) is True
 
+    def get_model_options(self, kind: str | None = None) -> dict[str, Any]:
+        """Return provider/model choices for the same catalog used by onboarding."""
+        from core.model_selection import model_selection_options, list_installed_ollama_models
+        result = model_selection_options(kind)
+        for provider in result["providers"]:
+            if provider["id"] == "ollama":
+                installed = list_installed_ollama_models(provider["base_url"])
+                provider["installed_models"] = installed
+                if installed:
+                    provider["models"] = installed
+        return result
+
+    def select_model(self, selection: dict[str, Any], cloud_approved: bool = False) -> dict[str, Any]:
+        """Validate, persist, and activate a user-selected provider/model."""
+        from core.model_selection import validate_model_selection
+        from core.model_catalog import get_provider
+        from core.onboarding import save_config
+        try:
+            clean = validate_model_selection(selection)
+            meta = get_provider(clean["provider"])
+            if meta["kind"] == "cloud" and cloud_approved is not True:
+                return {"ok": False, "requires_confirmation": True, "message": "No model changed. Confirm cloud-provider use first."}
+            # Persist only non-secret settings; API keys remain in environment variables.
+            user_config = {
+                "provider": clean["provider"], "model": clean["model"],
+                "base_url": clean["base_url"], "api_key_env": clean["api_key_env"],
+                "mcp_servers": self.config.get("mcp_servers", []),
+                "guardrails": {"require_tool_approval": True, "require_cloud_approval": True, "local_first": True},
+            }
+            save_config(user_config)
+            runtime_config = dict(self.config)
+            runtime_config.update(clean)
+            if clean["provider"] == "ollama":
+                runtime_config["ollama_model"] = clean["model"]
+                runtime_config["ollama_base_url"] = clean["base_url"]
+            self.config = runtime_config
+            provider = self._provider_factory(runtime_config)
+            self.ai = self._agent_factory(provider, usage_tracker=getattr(self.ai, "usage_tracker", None))
+            self.provider_name = clean["provider"]
+            self.cloud_confirmation_required = meta["kind"] == "cloud"
+            return {"ok": True, "provider": self.provider_name, "model": clean["model"], "message": "Model selection saved. Restart Yuki if another runtime is already active."}
+        except (ValueError, OSError, RuntimeError) as exc:
+            return {"ok": False, "message": str(exc)[:240]}
     def get_status(self) -> dict[str, Any]:
         try:
             registry = getattr(self.agent, "registry", None)
