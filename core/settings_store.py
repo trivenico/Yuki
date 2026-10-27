@@ -9,7 +9,8 @@ import yaml
 from core.portable_paths import config_path
 
 BOOLEAN_SETTINGS = ("voice_enabled", "security_lab_enabled", "sandbox_enabled", "gmail_enabled", "firewall_enabled", "firewall_dry_run", "wakeword_enabled", "plugin_discovery_enabled")
-ALLOWED_SETTINGS = {"ollama_model", *BOOLEAN_SETTINGS}
+PROVIDERS = ("ollama", "openai", "gemini", "hybrid")
+ALLOWED_SETTINGS = {"provider", "ollama_model", "openai_model", *BOOLEAN_SETTINGS}
 
 
 def read_user_settings(path=None):
@@ -24,7 +25,7 @@ def read_user_settings(path=None):
         raise RuntimeError("Could not read Yuki settings.") from exc
     if not isinstance(raw, dict):
         raise RuntimeError("Configuration must be a YAML mapping.")
-    result = {"ollama_model": raw.get("ollama_model", "llama3.2:3b")}
+    result = {\n        "provider": raw.get("provider", "ollama"),\n        "ollama_model": raw.get("ollama_model", "llama3.2:3b"),\n        "openai_model": raw.get("openai_model", "gpt-4.1-mini"),\n    }\n    if result["provider"] not in PROVIDERS:\n        raise RuntimeError("Configured provider must be one of: " + ", ".join(PROVIDERS) + ".")\n    for model_key in ("ollama_model", "openai_model"):\n        if not isinstance(result[model_key], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", result[model_key]):\n            raise RuntimeError(f"Configured {model_key} is invalid.")
     for key in BOOLEAN_SETTINGS:
         result[key] = raw.get(key, key == "firewall_dry_run")
     if not isinstance(result["ollama_model"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", result["ollama_model"]):
