@@ -74,12 +74,16 @@ def run_desktop() -> None:
     transcript.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
 
+    workflow_bar = ttk.LabelFrame(main_panel, text="Workflow shortcuts", padding=(8, 5))
+    workflow_bar.pack(fill="x", pady=(8, 0))
+
     entry_row = ttk.Frame(main_panel)
-    entry_row.pack(fill="x", pady=(8, 0))
+    entry_row.pack(fill="x", pady=(6, 0))
     command_entry = ttk.Entry(entry_row)
     command_entry.pack(side="left", fill="x", expand=True)
-    send_button = ttk.Button(entry_row, text="Send")
+    send_button = ttk.Button(entry_row, text="Run / Send")
     send_button.pack(side="left", padx=(8, 0))
+    ttk.Label(main_panel, text="Enter to send · ↑/↓ command history · Ctrl+L clears the visible transcript").pack(anchor="w", pady=(4, 0))
 
     output_queue: queue.Queue[str | None] = queue.Queue(maxsize=100_000)
     try:
@@ -181,8 +185,10 @@ def run_desktop() -> None:
         command_entry.focus_set()
 
     nav_items = (
-        ("Chat", focus_composer),
+        ("Interactive Session", focus_composer),
         ("Tasks & Plans", lambda: insert_command("/plan ")),
+        ("Automation", lambda: send_text("/reminders")),
+        ("Scripting & Developer", lambda: insert_command("/knowledge index ")),
         ("Memory", lambda: send_text("/memory list")),
         ("Skills", lambda: send_text("/skills")),
         ("Plugins", lambda: send_text("/plugins")),
@@ -200,10 +206,60 @@ def run_desktop() -> None:
         justify="left",
     ).pack(anchor="w", pady=(14, 0))
 
+    def add_shortcut(label: str, command: str) -> None:
+        ttk.Button(
+            workflow_bar,
+            text=label,
+            command=lambda value=command: insert_command(value),
+        ).pack(side="left", padx=(0, 5), pady=1)
+
+    add_shortcut("Plan task", "/plan ")
+    add_shortcut("Task command", "/task ")
+    add_shortcut("Reminders", "/reminders")
+    add_shortcut("Index project", "/knowledge index ")
+    add_shortcut("Runtime status", "/status")
+    add_shortcut("Help / commands", "/help")
+
+    command_history: list[str] = []
+    history_position: int | None = None
+
+    def navigate_history(direction: int) -> str:
+        nonlocal history_position
+        if not command_history:
+            return "break"
+        if history_position is None:
+            history_position = len(command_history)
+        history_position = max(0, min(len(command_history), history_position + direction))
+        value = command_history[history_position] if history_position < len(command_history) else ""
+        command_entry.delete(0, "end")
+        command_entry.insert(0, value)
+        command_entry.icursor("end")
+        return "break"
+
+    def history_up(_event=None) -> str:
+        return navigate_history(-1)
+
+    def history_down(_event=None) -> str:
+        return navigate_history(1)
+
+    def clear_visible_transcript(_event=None) -> str:
+        transcript.configure(state="normal")
+        transcript.delete("1.0", "end")
+        transcript.configure(state="disabled")
+        return "break"
+
+    command_entry.bind("<Up>", history_up)
+    command_entry.bind("<Down>", history_down)
+    root.bind("<Control-l>", clear_visible_transcript)
+    root.bind("<Control-L>", clear_visible_transcript)
+
     def send_command(_event=None) -> None:
         command = command_entry.get()
         if not command.strip():
             return
+        if not command_history or command_history[-1] != command:
+            command_history.append(command)
+        history_position = None
         send_text(command)
         command_entry.delete(0, "end")
 
