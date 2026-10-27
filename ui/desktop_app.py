@@ -12,6 +12,8 @@ import sys
 import threading
 from pathlib import Path
 
+from core.settings_store import BOOLEAN_SETTINGS, read_user_settings, save_user_settings
+
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRANSCRIPT_CHARS = 1_000_000
 
@@ -181,6 +183,80 @@ def run_desktop() -> None:
         command_group = "skills" if kind == "skill" else "plugins"
         send_text(f'/{command_group} install "{path}"')
 
+    def open_settings() -> None:
+        window = tk.Toplevel(root)
+        window.title("Yuki Settings")
+        window.transient(root)
+        window.resizable(False, False)
+        panel = ttk.Frame(window, padding=16)
+        panel.pack(fill="both", expand=True)
+        try:
+            current = read_user_settings()
+        except Exception as exc:
+            messagebox.showerror("Settings unavailable", str(exc), parent=window)
+            window.destroy()
+            return
+
+        ttk.Label(panel, text="Local AI model", font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        )
+        model_value = tk.StringVar(value=current["ollama_model"])
+        ttk.Entry(panel, textvariable=model_value, width=34).grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(0, 4)
+        )
+        ttk.Label(
+            panel,
+            text="Example: llama3.2:3b. Changing this does not download the model.",
+            wraplength=360,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
+        labels = {
+            "voice_enabled": "Enable optional voice features",
+            "security_lab_enabled": "Enable security lab tools",
+            "sandbox_enabled": "Enable container sandbox",
+            "gmail_enabled": "Enable Gmail integration",
+            "firewall_enabled": "Enable firewall controls",
+            "firewall_dry_run": "Firewall dry-run mode (recommended)",
+            "wakeword_enabled": "Enable wake-word feature",
+            "plugin_discovery_enabled": "Enable plugin discovery",
+        }
+        variables = {}
+        for row, key in enumerate(BOOLEAN_SETTINGS, start=3):
+            variable = tk.BooleanVar(value=current[key])
+            variables[key] = variable
+            ttk.Checkbutton(panel, text=labels[key], variable=variable).grid(
+                row=row, column=0, columnspan=2, sticky="w", pady=2
+            )
+
+        ttk.Label(
+            panel,
+            text="Optional integrations may need extra dependencies or credentials. "
+                 "Environment variables can override saved settings.",
+            wraplength=360,
+        ).grid(row=3 + len(BOOLEAN_SETTINGS), column=0, columnspan=2, sticky="w", pady=(10, 12))
+
+        def save_settings() -> None:
+            changes = {"ollama_model": model_value.get()}
+            changes.update({key: variable.get() for key, variable in variables.items()})
+            try:
+                save_user_settings(changes)
+            except (ValueError, RuntimeError, OSError) as exc:
+                messagebox.showerror("Could not save settings", str(exc), parent=window)
+                return
+            messagebox.showinfo(
+                "Settings saved",
+                "Settings were saved to your user configuration. Restart Yuki to apply changes. "
+                "Model downloads and sensitive actions still require explicit confirmation.",
+                parent=window,
+            )
+            window.destroy()
+
+        actions = ttk.Frame(panel)
+        actions.grid(row=4 + len(BOOLEAN_SETTINGS), column=0, columnspan=2, sticky="e")
+        ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right")
+        ttk.Button(actions, text="Save Settings", command=save_settings).pack(side="right", padx=(0, 8))
+
+    ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="left", padx=(8, 0))
     ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="left")
     ttk.Button(extension_row, text="Status", command=lambda: send_text("/status")).pack(side="left", padx=(8, 0))
     ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="left", padx=(8, 0))
