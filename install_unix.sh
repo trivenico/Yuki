@@ -29,7 +29,7 @@ if [ ! -x ".venv/bin/python" ]; then
   echo "[1/5] Creating isolated virtual environment..."
   "$PYTHON" -m venv .venv
 else
-  echo "[1/4] Existing virtual environment found."
+  echo "[1/5] Existing virtual environment found."
 fi
 
 echo "[2/5] Updating pip..."
