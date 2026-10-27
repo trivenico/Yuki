@@ -66,6 +66,16 @@ jobs:
           pyinstaller --clean --noconfirm --onefile --name YukiDesktop --windowed --add-data "config.yaml;." ui/desktop_app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Smoke-test packaged console runtime
+        shell: pwsh
+        run: |
+          $env:YUKI_HOME = Join-Path $env:RUNNER_TEMP "yuki-package-smoke"
+          $runtimeOutput = "/quit" | & .\dist\YukiRuntime.exe
+          if ($LASTEXITCODE -ne 0) { throw "Packaged runtime exited with code $LASTEXITCODE" }
+          if (($runtimeOutput -join "\n") -notmatch "guarded core is ready") {
+            throw "Packaged runtime did not reach its interactive ready state."
+          }
+
       - name: Assemble portable bundle and installer
         shell: pwsh
         run: |
