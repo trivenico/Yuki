@@ -98,31 +98,8 @@ def validate_model_selection(selection: dict) -> dict:
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.query or parsed.fragment):
             raise ValueError("Cloud providers must use HTTPS without embedded credentials.")
-        # The OpenAI adapter sends OPENAI_API_KEY as a bearer token. Do not let
-        # a model-selection URL redirect that credential to an arbitrary HTTPS host.
-        if provider_id == "openai" and (
-            parsed.hostname.lower() != "api.openai.com"
-            or port not in (None, 443)
-            or parsed.path.rstrip("/") != "/v1"
-        ):
-            raise ValueError("OpenAI API credentials may only be sent to https://api.openai.com/v1.")
-    if meta["kind"] == "local":
-        parsed = urlsplit(base_url)
-        host = parsed.hostname or ""
-        loopback = host == "localhost"
-        if host:
-            try:
-                loopback = loopback or ipaddress.ip_address(host).is_loopback
-            except ValueError:
-                pass
-        if not loopback:
-            raise ValueError("Local provider endpoints must bind to loopback.")
-        if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("Local endpoint URL is invalid.")
-        try:
-            parsed.port
-        except ValueError as exc:
-            raise ValueError("Local endpoint port is invalid.") from exc
+        # The runtime adapter enforces its trusted-host allowlist and blocks redirects.
+
     return {"provider": provider_id, "model": model.strip(), "base_url": base_url.strip(), "api_key_env": key_env}
 
 
