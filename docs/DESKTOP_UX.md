@@ -41,7 +41,7 @@ Navigation must not pretend a page exists when only a runtime command is availab
 - Add a review panel for proposed file changes, approvals, and execution logs.
 - Improve chat transcript rendering, markdown/code presentation, message grouping, and copy controls.
 - Keep interactive command history bounded, deduplicate adjacent repeats, and cover navigation with unit tests.
-- Track guarded `/task` runs in a durable SQLite ledger and expose `/tasks`, `/task show ID`, plus desktop task-history/new-task shortcuts. Active execution cancellation is explicitly not claimed; only queued task records can currently be cancelled. Successful model responses remain `awaiting_verification`; the CLI does not mark a task `completed` until an independent acceptance check exists.
+- Track guarded `/task` runs in a durable SQLite ledger and expose `/tasks`, `/task show ID`, plus desktop task-history/new-task shortcuts. Active execution cancellation is explicitly not claimed; only queued task records can currently be cancelled. Successful model responses remain `awaiting_verification`. The `/task verify ID --file PATH` command records file-presence/hash evidence only and deliberately does not mark the task `completed`; completion requires a task-level acceptance check, not just an artifact existing.
 - Add automated headless UI construction tests and hosted Windows package smoke tests.
 - Evaluate a richer UI toolkit (for example, PySide6 or the existing optional webview approach) after comparing accessibility, packaging size, maintenance, and Windows reliability. Do not introduce a second frontend runtime until the current shared-runtime contract remains covered.
 
