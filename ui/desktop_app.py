@@ -16,6 +16,40 @@ from core.settings_store import BOOLEAN_SETTINGS, read_user_settings, save_user_
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRANSCRIPT_CHARS = 1_000_000
+MAX_COMMAND_HISTORY = 500
+
+
+class CommandHistory:
+    """Bounded in-memory command history with familiar Up/Down navigation."""
+
+    def __init__(self, limit: int = MAX_COMMAND_HISTORY) -> None:
+        if limit < 1:
+            raise ValueError("Command history limit must be positive.")
+        self._limit = limit
+        self._commands: list[str] = []
+        self._position: int | None = None
+
+    def add(self, command: str) -> None:
+        value = command.strip()
+        if not value:
+            return
+        if not self._commands or self._commands[-1] != value:
+            self._commands.append(value)
+            if len(self._commands) > self._limit:
+                del self._commands[:-self._limit]
+        self._position = None
+
+    def move(self, direction: int) -> str:
+        if direction not in (-1, 1):
+            raise ValueError("History direction must be -1 or 1.")
+        if not self._commands:
+            return ""
+        if self._position is None:
+            self._position = len(self._commands)
+        self._position = max(0, min(len(self._commands), self._position + direction))
+        if self._position == len(self._commands):
+            return ""
+        return self._commands[self._position]
 
 
 def build_runtime_command() -> list[str]:
@@ -220,17 +254,10 @@ def run_desktop() -> None:
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
 
-    command_history: list[str] = []
-    history_position: int | None = None
+    command_history = CommandHistory()
 
     def navigate_history(direction: int) -> str:
-        nonlocal history_position
-        if not command_history:
-            return "break"
-        if history_position is None:
-            history_position = len(command_history)
-        history_position = max(0, min(len(command_history), history_position + direction))
-        value = command_history[history_position] if history_position < len(command_history) else ""
+        value = command_history.move(direction)
         command_entry.delete(0, "end")
         command_entry.insert(0, value)
         command_entry.icursor("end")
@@ -254,15 +281,10 @@ def run_desktop() -> None:
     root.bind("<Control-L>", clear_visible_transcript)
 
     def send_command(_event=None) -> None:
-        nonlocal history_position
         command = command_entry.get()
         if not command.strip():
             return
-        if not command_history or command_history[-1] != command:
-            command_history.append(command)
-            if len(command_history) > 500:
-                del command_history[:-500]
-        history_position = None
+        command_history.add(command)
         send_text(command)
         command_entry.delete(0, "end")
 
