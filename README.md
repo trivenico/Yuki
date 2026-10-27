@@ -4,6 +4,11 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
+## First run
+
+Install with `install_windows.bat` on Windows or `sh install_unix.sh` on macOS/Linux. Start the integrated guarded runtime with `python yuki_cli.py start` (or the platform launcher); use `python yuki_cli.py doctor` for read-only diagnostics and `python yuki_cli.py desktop` for the optional Textual supervision dashboard. New installs default to local Ollama (`llama3.2:3b`); install Ollama and pull that model before asking Yuki to generate answers. Cloud providers require explicit configuration. The desktop dashboard is currently a safe supervision surface for status and skill listing, not yet feature-parity with the full CLI.
+
+
 
 
 ## Minimal project structure and navigation
