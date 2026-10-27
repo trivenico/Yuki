@@ -63,6 +63,32 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output[0])["operating_system"], "TestOS")
 
+    def test_ask_returns_nonzero_when_provider_generation_fails(self):
+        class FailingProvider(FakeProvider):
+            def generate(self, prompt):
+                raise RuntimeError("private payload")
+
+        output = []
+        code = run_cli(
+            ["ask", "hello"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: FailingProvider(),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 4)
+        self.assertNotIn("private payload", output[0])
+
+    def test_ask_returns_unavailable_exit_code(self):
+        output = []
+        code = run_cli(
+            ["ask", "hello"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: FakeProvider(available=False),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 3)
+        self.assertIn("unavailable", output[0].lower())
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
