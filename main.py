@@ -49,14 +49,26 @@ def _confirm(action, reason, risk="medium"):
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
+def _all_mcp_servers(config):
+    configured = list(config.get("mcp_servers", []))
+    configured_names = {item.get("name") for item in configured}
+    installed = [item for item in load_installed_mcp_servers()
+                 if item.get("name") not in configured_names]
+    return configured + installed
+
+
+def _refresh_plugin_skills(agent, config):
+    servers = _all_mcp_servers(config)
+    for name, cls in (("mcp_plugin", MCPPluginSkill), ("connector_management", ConnectorManagementSkill)):
+        skill = agent.registry.get(name)
+        if skill is not None:
+            skill.servers = cls(servers=servers).servers
+
+
 def build_agent(config):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
-    configured_servers = list(config.get("mcp_servers", []))
-    configured_names = {item.get("name") for item in configured_servers}
-    installed_servers = [item for item in load_installed_mcp_servers()
-                         if item.get("name") not in configured_names]
-    all_servers = configured_servers + installed_servers
+    all_servers = _all_mcp_servers(config)
     registry = SkillRegistry.defaults(
         workspace, gmail_enabled=config["gmail_enabled"],
         gmail_credentials=workspace / "google_oauth_client.json",
@@ -241,8 +253,6 @@ def main():
         elif command.startswith("/skills install "):
             try:
                 installed = install_extension(command[len("/skills install "):].strip(), "skill")
-                manifest_path = Path(installed["path"])
-                import json
                 skill = next((item for item in load_installed_skills()
                               if item.manifest["id"] == installed["id"]), None)
                 if skill is None:
@@ -254,8 +264,11 @@ def main():
         elif command.startswith("/skills remove "):
             extension_id = command[len("/skills remove "):].strip()
             try:
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == extension_id), None)
                 removed = remove_extension(extension_id, "skill")
-                agent.registry.unregister("custom_" + extension_id.replace("-", "_"))
+                if skill is not None:
+                    agent.registry.unregister(skill.name)
                 print("Yuki > Skill pack removed." if removed else "Yuki > Skill pack was not installed.")
             except Exception as exc:
                 print(f"Yuki > Skill removal failed safely ({type(exc).__name__}).")
@@ -268,15 +281,7 @@ def main():
         elif command.startswith("/plugins install "):
             try:
                 installed = install_extension(command[len("/plugins install "):].strip(), "plugin")
-                servers = load_installed_mcp_servers()
-                for skill_name, cls in (("mcp_plugin", MCPPluginSkill), ("connector_management", ConnectorManagementSkill)):
-                    skill = agent.registry.get(skill_name)
-                    if skill is not None:
-                        skill.servers = {item["name"]: {
-                            "endpoint": item["endpoint"],
-                            "allowed_hosts": tuple(item["allowed_hosts"]),
-                            "allowed_tools": tuple(item["allowed_tools"]),
-                        } for item in servers}
+                _refresh_plugin_skills(agent, config)
                 print(f"Yuki > Installed MCP plugin '{installed['id']}'. Remote tool execution still requires explicit allow-listing and exact confirmation.")
             except Exception as exc:
                 print(f"Yuki > Plugin installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
@@ -284,15 +289,7 @@ def main():
             extension_id = command[len("/plugins remove "):].strip()
             try:
                 removed = remove_extension(extension_id, "plugin")
-                servers = load_installed_mcp_servers()
-                for skill_name in ("mcp_plugin", "connector_management"):
-                    skill = agent.registry.get(skill_name)
-                    if skill is not None:
-                        skill.servers = {item["name"]: {
-                            "endpoint": item["endpoint"],
-                            "allowed_hosts": tuple(item["allowed_hosts"]),
-                            "allowed_tools": tuple(item["allowed_tools"]),
-                        } for item in servers}
+                _refresh_plugin_skills(agent, config)
                 print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
             except Exception as exc:
                 print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
