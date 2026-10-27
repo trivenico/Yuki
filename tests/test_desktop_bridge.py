@@ -86,6 +86,13 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertTrue(result["requires_confirmation"])
         self.assertEqual(factory.provider.prompts, [])
 
+    def test_gemini_cli_provider_is_treated_as_cloud(self):
+        bridge, factory = self.make_bridge("gemini")
+        result = bridge.ask("Private prompt", cloud_approved=False)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["requires_confirmation"])
+        self.assertEqual(factory.provider.prompts, [])
+
     def test_confirmed_cloud_request_is_sent_once(self):
         bridge, factory = self.make_bridge("openai")
         result = bridge.ask("Hello", cloud_approved=True)
