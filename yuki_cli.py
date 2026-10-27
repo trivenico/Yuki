@@ -1,7 +1,8 @@
 """Thin CLI entry point for Yuki's shared provider and readiness services.
 
-This first CLI slice intentionally offers chat and diagnostics only. It does not
-execute tools; task execution remains in the guarded interactive runtime.
+Use `yuki start` for the full guarded runtime. `yuki desktop` opens the optional
+Textual supervision dashboard; that dashboard currently exposes safe status and
+skill listing, while operational commands remain in the full CLI runtime.
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yuki", description="Yuki AI assistant")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("start", help="Start the full guarded Yuki CLI runtime")
+    sub.add_parser("desktop", help="Open the optional supervision dashboard")
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
 
@@ -57,6 +60,15 @@ def run_cli(
     output_fn: Callable[[str], object] = print,
 ) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command in {"start", "desktop"}:
+        try:
+            import main as integrated_runtime
+            integrated_runtime.main(open_dashboard=args.command == "desktop")
+            return 0
+        except Exception as exc:
+            output_fn(f"Yuki runtime failed to start ({type(exc).__name__}).")
+            return 2
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
