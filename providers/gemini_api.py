@@ -12,7 +12,7 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
 
 
 class GeminiAPIProvider:
-    def __init__(self, model="gemini-2.5-flash", *, api_key_env="GEMINI_API_KEY", timeout=45, environ=None):
+    def __init__(self, model="gemini-2.5-flash", *, api_key_env="GEMINI_API_KEY", timeout=45, environ=None, approval_callback=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid Gemini model name.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
@@ -23,6 +23,7 @@ class GeminiAPIProvider:
         self.api_key_env = api_key_env
         self.timeout = timeout
         self._environ = os.environ if environ is None else environ
+        self.approval_callback = approval_callback
 
     def is_available(self):
         return bool(self._environ.get(self.api_key_env, "").strip())
@@ -30,9 +31,11 @@ class GeminiAPIProvider:
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
-        key = self._environ.get("GEMINI_API_KEY", "").strip()
+        key = self._environ.get(self.api_key_env, "").strip()
         if not key:
-            raise RuntimeError("Gemini API is not configured; set GEMINI_API_KEY.")
+            raise RuntimeError(f"Gemini API is not configured; set {self.api_key_env}.")
+        if self.approval_callback is None or self.approval_callback(prompt.strip()) is not True:
+            raise RuntimeError("External provider transmission was not explicitly approved.")
         payload = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt.strip()[:20000]}]}], "generationConfig": {"maxOutputTokens": 2048}}).encode("utf-8")
         url = "https://generativelanguage.googleapis.com/v1beta/models/" + quote(self.model, safe="-._") + ":generateContent"
         request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "Accept": "application/json", "x-goog-api-key": key}, method="POST")
