@@ -5,6 +5,23 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+
+## Learning and supervised evolution
+
+Yuki's learning features are available from the CLI from the first launch:
+
+- `/learn TASK | OUTCOME | LESSON` records a task outcome in local learning history.
+- `/lessons TASK` retrieves relevant saved lessons for future prompts.
+- `/learning` lists recent records; `/learning clear` clears that history.
+- `/evolve status` shows local observations and pending proposals.
+- `/evolve record CATEGORY | TEXT` records a bounded `task`, `feedback`, `lesson`, `failure`, or `preference` observation.
+- `/evolve run` analyzes recent observations and creates review proposals.
+- `/evolve review ID accept|reject` records a human review decision only.
+
+Evolution data is stored under the local `.yuki/evolution/` directory and should remain untracked/private. Secret-like strings are redacted on recording, but users should still avoid putting credentials or sensitive personal data into observations.
+
+**What this does and does not mean:** task learning is persistent local history and lesson retrieval, not model-weight training. Evolution is a bounded local review loop, not autonomous code modification. Accepted proposals are for manual follow-up only; they do not alter code, configuration, permissions, or execute tools. Any future self-upgrade system must add isolated workspaces, regression/security tests, human approval, auditable promotion and rollback before it can modify a running installation.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
