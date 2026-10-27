@@ -37,6 +37,25 @@ class TaskLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "transition"):
             self.ledger.transition(task["id"], "running")
 
+    def test_artifact_observation_does_not_complete_task(self):
+        task = self.ledger.create("Create a report")
+        self.ledger.transition(task["id"], "running")
+        self.ledger.transition(task["id"], "awaiting_verification", result="Model reported success")
+        updated = self.ledger.record_verification_evidence(
+            task["id"], "report.md exists; SHA-256=abc; presence only"
+        )
+        self.assertEqual(updated["status"], "awaiting_verification")
+        self.assertIn("presence only", updated["verification_evidence"])
+        with self.assertRaisesRegex(ValueError, "verification evidence"):
+            self.ledger.transition(task["id"], "completed", result="done")
+
+    def test_evidence_recording_is_limited_to_awaiting_verification(self):
+        task = self.ledger.create("Not ready")
+        with self.assertRaisesRegex(ValueError, "awaiting verification"):
+            self.ledger.record_verification_evidence(task["id"], "some evidence")
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            self.ledger.record_verification_evidence(task["id"], " ")
+
     def test_failure_and_cancel_are_terminal(self):
         failed = self.ledger.create("Fail task")
         self.ledger.transition(failed["id"], "failed", error_code="provider_error")
