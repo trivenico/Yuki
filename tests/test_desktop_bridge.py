@@ -210,6 +210,21 @@ class DesktopBridgeTests(unittest.TestCase):
         persist.assert_not_called()
         self.assertEqual(bridge.config["ollama_model"], "llama3.2:3b")
 
+    def test_persistence_failure_does_not_activate_candidate_runtime(self):
+        bridge, factory = self.make_bridge()
+        original_ai = bridge.ai
+        with patch("core.model_selection.persist_model_selection", side_effect=OSError("write failed")):
+            result = bridge.select_model({
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://127.0.0.1:11434",
+            })
+        self.assertFalse(result["ok"])
+        self.assertIn("failed safely", result["message"])
+        self.assertIs(bridge.ai, original_ai)
+        self.assertEqual(bridge.config["ollama_model"], "llama3.2:3b")
+        self.assertEqual(len(factory.configs), 2)
+
     def test_cloud_model_switch_persists_only_after_confirmation(self):
         bridge, factory = self.make_bridge()
         with patch("core.model_selection.persist_model_selection") as persist:
