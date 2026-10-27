@@ -30,11 +30,21 @@ def _extension_root(kind: str, root: Path | None = None) -> Path:
     return base / folder
 
 
+def _unique_object(pairs):
+    """Reject duplicate JSON keys instead of silently accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key in extension manifest: {key!r}.")
+        result[key] = value
+    return result
+
+
 def _read_json(path: Path) -> dict:
     try:
         if path.stat().st_size > MAX_MANIFEST_BYTES:
             raise ValueError("Manifest exceeds 64 KiB.")
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Manifest could not be read as valid UTF-8 JSON.") from exc
     if not isinstance(value, dict):
