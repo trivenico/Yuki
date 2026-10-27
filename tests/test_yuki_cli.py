@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from yuki_cli import run_cli
 
@@ -24,6 +25,16 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_start_routes_to_integrated_guarded_runtime(self):
+        with patch("main.main") as integrated_main:
+            self.assertEqual(run_cli(["start"], output_fn=lambda _: None), 0)
+        integrated_main.assert_called_once_with(open_dashboard=False)
+
+    def test_desktop_routes_to_shared_runtime_dashboard(self):
+        with patch("main.main") as integrated_main:
+            self.assertEqual(run_cli(["desktop"], output_fn=lambda _: None), 0)
+        integrated_main.assert_called_once_with(open_dashboard=True)
+
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
