@@ -38,6 +38,13 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertIn("nvidia", cloud_ids)
         self.assertTrue(all(item["custom_model_allowed"] for item in list_providers()))
 
+    def test_catalog_distinguishes_runtime_supported_providers(self):
+        providers = {item["id"]: item for item in list_providers()}
+        self.assertTrue(providers["ollama"]["runtime_supported"])
+        self.assertTrue(providers["openai"]["runtime_supported"])
+        self.assertFalse(providers["gemini_api"]["runtime_supported"])
+        self.assertFalse(providers["nvidia"]["runtime_supported"])
+
     def test_model_options_default_to_local(self):
         self.assertEqual(model_selection_options()["default_kind"], "local")
         self.assertTrue(model_selection_options("cloud")["providers"])
