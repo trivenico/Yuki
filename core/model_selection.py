@@ -89,16 +89,27 @@ def validate_model_selection(selection: dict) -> dict:
     key_env = selection.get("api_key_env", meta["key_env"])
     if not isinstance(key_env, str) or (key_env and not key_env.isidentifier()):
         raise ValueError("API key environment variable name is invalid.")
+    parsed = urlsplit(base_url)
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("Provider endpoint port is invalid.") from exc
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("Provider endpoints cannot contain credentials, queries, or fragments.")
     if meta["kind"] == "cloud":
-        parsed = urlsplit(base_url)
-        try:
-            port = parsed.port
-        except ValueError as exc:
-            raise ValueError("Cloud provider endpoint port is invalid.") from exc
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                or parsed.query or parsed.fragment):
+        if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("Cloud providers must use HTTPS without embedded credentials.")
         # The runtime adapter enforces its trusted-host allowlist and blocks redirects.
+    else:
+        host = (parsed.hostname or "").lower()
+        loopback = host == "localhost"
+        if host:
+            try:
+                loopback = loopback or ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                pass
+        if parsed.scheme not in {"http", "https"} or not loopback:
+            raise ValueError("Local provider endpoints must use a loopback host (localhost or 127.0.0.1).")
 
     return {"provider": provider_id, "model": model.strip(), "base_url": base_url.strip(), "api_key_env": key_env}
 
