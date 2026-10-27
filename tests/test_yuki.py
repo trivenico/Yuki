@@ -70,6 +70,18 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
+    def test_main_loads_user_config_and_passes_it_to_provider_manager(self):
+        from yuki import main
+        with patch("yuki.load_config", return_value={"provider": "ollama", "ollama_model": "qwen2.5:7b"}) as load_config, \\
+             patch("yuki.ProviderManager") as manager_cls, \\
+             patch("yuki.YukiAgent") as agent_cls, \\
+             patch("builtins.input", side_effect=EOFError), \\
+             patch("builtins.print"):
+            main()
+        load_config.assert_called_once_with()
+        manager_cls.assert_called_once_with(config={"provider": "ollama", "ollama_model": "qwen2.5:7b"})
+        manager_cls.return_value.create_selected_adapter.assert_called_once_with()
+        agent_cls.assert_called_once_with(provider=manager_cls.return_value.create_selected_adapter.return_value)
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
         manager = ProviderManager(environ={})
         self.assertEqual(manager.current().name, "openai")
