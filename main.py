@@ -105,6 +105,7 @@ def print_help():
   /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
   /skills install PATH           Install a declarative skill pack (JSON)
+  /skills import PATH            Import a declarative Agent Skills SKILL.md file
   /skills remove ID              Remove an installed skill pack
   /plugins                       List installed MCP plugin manifests
   /plugins install PATH          Install an allow-listed HTTPS MCP plugin (JSON)
