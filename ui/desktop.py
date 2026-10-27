@@ -1,12 +1,11 @@
 """PyWebView desktop chat and status bridge.
 
 The bridge exposes only text chat and read-only status. It never dispatches skills,
-shell commands, or workspace writes. Cloud chat requires a per-message UI confirmation
-and the provider's approval callback must agree before the request is sent.
+shell commands, or workspace writes. Cloud chat is gated by explicit per-request
+confirmation in the desktop bridge.
 """
 from __future__ import annotations
 
-import threading
 from typing import Any, Callable
 
 from yuki_agent import YukiAgent
@@ -31,7 +30,6 @@ class DesktopBridge:
         self.config = dict(config or {})
         self._provider_factory = provider_factory
         self._agent_factory = agent_factory
-        self._approval_context = threading.local()
         if provider_factory is None:
             from providers.factory import create_provider
             provider_factory = create_provider
@@ -50,9 +48,6 @@ class DesktopBridge:
                 and any(isinstance(task, str) and task.strip().lower() == "general" for task in cloud_tasks)
             )
         )
-
-    def _cloud_approval_callback(self, *_args, **_kwargs) -> bool:
-        return getattr(self._approval_context, "allowed", False) is True
 
     def get_model_options(self, kind: str | None = None) -> dict[str, Any]:
         """Return provider/model choices for the same catalog used by onboarding."""
@@ -130,13 +125,10 @@ class DesktopBridge:
             }
         if not isinstance(cloud_approved, bool):
             return {"ok": False, "message": "Invalid approval value; no data sent."}
-        self._approval_context.allowed = is_cloud and cloud_approved
         try:
             answer = self.ai.ask(prompt.strip())
         except Exception:
             return {"ok": False, "message": "The provider request failed safely. Check provider setup and retry."}
-        finally:
-            self._approval_context.allowed = False
         if not isinstance(answer, str) or not answer.strip():
             return {"ok": False, "message": "The provider returned an empty response."}
         if answer in {
