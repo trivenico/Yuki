@@ -11,7 +11,7 @@ Install with `install_windows.bat` on Windows or `sh install_unix.sh` on macOS/L
 
 
 
-See [installation instructions](docs/INSTALLATION.md) for setup details and the Windows installer workflow.
+See [installation instructions](docs/INSTALLATION.md) for setup details and the Windows installer workflow. For user-installed declarative skills, allow-listed MCP plugins, and supervised evolution, see [extension installation](docs/EXTENSIONS.md).
 
 ## Minimal project structure and navigation
 
