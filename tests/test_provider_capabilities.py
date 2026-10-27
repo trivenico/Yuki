@@ -72,6 +72,20 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual([item["provider"] for item in items], ["mock", "ollama"])
         self.assertNotIn("secret", repr(items))
 
+    def test_remote_ollama_endpoint_is_not_routed_as_local(self):
+        manager = ProviderManager(
+            config={
+                "provider": "ollama",
+                "ollama_base_url": "https://remote.example",
+                "ollama_model": "qwen3",
+            },
+            environ={},
+        )
+        registry = manager.routing_registry()
+        self.assertEqual(registry.get("ollama").privacy, "configured_remote_endpoint")
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+
     def test_provider_manager_exposes_registry_from_real_catalog(self):
         manager = ProviderManager(environ={})
         registry = manager.routing_registry()
