@@ -49,6 +49,19 @@ def _confirm(action, reason, risk="medium"):
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
+def _one_path_argument(raw):
+    """Parse one quoted manifest path without treating Windows backslashes as escapes."""
+    tokens = shlex.split(raw, posix=False)
+    if len(tokens) != 1:
+        raise ValueError("Use quotes around a manifest path containing spaces.")
+    value = tokens[0]
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    if not value:
+        raise ValueError("Manifest path must not be empty.")
+    return value
+
+
 def _all_mcp_servers(config):
     configured = list(config.get("mcp_servers", []))
     configured_names = {item.get("name") for item in configured}
@@ -252,10 +265,8 @@ def main():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
         elif command.startswith("/skills install "):
             try:
-                paths = shlex.split(command[len("/skills install "):].strip())
-                if len(paths) != 1:
-                    raise ValueError("Use quotes around a skill manifest path containing spaces.")
-                installed = install_extension(paths[0], "skill")
+                manifest_path = _one_path_argument(command[len("/skills install "):].strip())
+                installed = install_extension(manifest_path, "skill")
                 skill = next((item for item in load_installed_skills()
                               if item.manifest["id"] == installed["id"]), None)
                 if skill is None:
@@ -288,10 +299,8 @@ def main():
                 print("No user-installed MCP plugins. Plugin install registers an allow-listed HTTPS endpoint; it never installs Python code.")
         elif command.startswith("/plugins install "):
             try:
-                paths = shlex.split(command[len("/plugins install "):].strip())
-                if len(paths) != 1:
-                    raise ValueError("Use quotes around a plugin manifest path containing spaces.")
-                installed = install_extension(paths[0], "plugin")
+                manifest_path = _one_path_argument(command[len("/plugins install "):].strip())
+                installed = install_extension(manifest_path, "plugin")
                 if any(item.get("name") == installed["name"] for item in config.get("mcp_servers", [])):
                     remove_extension(installed["id"], "plugin")
                     raise ValueError("A configured MCP server already uses that name.")
