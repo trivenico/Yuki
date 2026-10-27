@@ -31,6 +31,10 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_mock_provider_is_rejected_by_application_factory(self):
+        with self.assertRaisesRegex(ValueError, "test-only"):
+            create_provider({"provider": "mock"})
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
