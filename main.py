@@ -371,8 +371,14 @@ def main():
         elif command.startswith("/task cancel "):
             task_id = command[len("/task cancel "):].strip()
             try:
-                item = task_ledger.cancel(task_id)
-                print(f"Yuki > Task {item['id']} cancelled.")
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                elif item["status"] != "queued":
+                    print("Yuki > This task is not queued. Live interruption is not supported yet; no status was changed.")
+                else:
+                    item = task_ledger.cancel(task_id)
+                    print(f"Yuki > Queued task {item['id']} cancelled.")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Cannot cancel task: {exc}")
         elif command.startswith("/task "):
