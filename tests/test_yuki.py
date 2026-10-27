@@ -83,18 +83,18 @@ class ProviderManagerTests(unittest.TestCase):
         agent_cls.assert_called_once_with(provider=manager_cls.return_value.create_selected_adapter.return_value)
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
-        self.assertEqual(manager.select("openai"), "Selected provider: openai")
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
         self.assertEqual(manager.current().name, "openai")
 
     def test_selected_adapter_is_created(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
+        from providers.ollama import OllamaProvider
         manager = ProviderManager(environ={})
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
         manager = ProviderManager()
@@ -127,7 +127,7 @@ class ProviderManagerTests(unittest.TestCase):
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
         from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertIsInstance(agent.provider, OllamaProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -135,7 +135,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: ollama", result)
 
 
 class ToolTests(unittest.TestCase):
@@ -225,7 +225,7 @@ class LearningTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertNotIn("\\nProvider: ollama", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()
