@@ -37,10 +37,12 @@ if ! .venv/bin/python -m pip install --upgrade pip; then
   echo "WARNING: pip upgrade failed; continuing because Yuki has no third-party dependencies."
 fi
 
-echo "[3/4] Checking declared dependencies..."
+echo "[3/5] Checking core dependencies..."
 .venv/bin/python -m pip install -r requirements.txt
 
-echo "[4/4] Running Yuki test suite..."
+echo "[4/5] Installing the desktop supervision UI..."
+.venv/bin/python -m pip install -r requirements-ui.txt
+echo "[5/5] Running Yuki test suite..."
 .venv/bin/python -m unittest discover -s tests -v
 
 echo
