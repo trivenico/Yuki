@@ -24,8 +24,11 @@ class TaskLedgerTests(unittest.TestCase):
         self.assertEqual(self.ledger.transition(task["id"], "running")["status"], "running")
         self.assertEqual(self.ledger.transition(task["id"], "awaiting_approval")["status"], "awaiting_approval")
         self.assertEqual(self.ledger.transition(task["id"], "running")["status"], "running")
-        completed = self.ledger.transition(task["id"], "completed", result="Tests passed")
-        self.assertEqual(completed["result"], "Tests passed")
+        awaiting = self.ledger.transition(task["id"], "awaiting_verification", result="Runner returned success")
+        self.assertEqual(awaiting["status"], "awaiting_verification")
+        self.assertNotIn(awaiting["status"], {"completed", "failed", "cancelled"})
+        completed = self.ledger.transition(task["id"], "completed", result="Independent acceptance check passed")
+        self.assertEqual(completed["result"], "Independent acceptance check passed")
         with self.assertRaisesRegex(ValueError, "transition"):
             self.ledger.transition(task["id"], "running")
 
@@ -65,7 +68,8 @@ class TaskLedgerTests(unittest.TestCase):
 
     def test_status_set_is_explicit(self):
         self.assertEqual(TASK_STATUSES, {
-            "queued", "running", "awaiting_approval", "completed", "failed", "cancelled"
+            "queued", "running", "awaiting_approval", "awaiting_verification",
+            "completed", "failed", "cancelled"
         })
 
 
