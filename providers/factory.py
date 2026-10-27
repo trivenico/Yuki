@@ -6,18 +6,24 @@ from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.anthropic import AnthropicProvider
+from providers.gemini_api import GeminiAPIProvider
+from providers.nvidia_nim import NvidiaNIMProvider
 _PRESETS={"openai":("https://api.openai.com/v1","OPENAI_API_KEY"),"deepseek":("https://api.deepseek.com/v1","DEEPSEEK_API_KEY"),"glm":("https://open.bigmodel.cn/api/paas/v4","ZHIPUAI_API_KEY"),"llama.cpp":("http://127.0.0.1:8080/v1",""),"lm-studio":("http://127.0.0.1:1234/v1","")}
 def _compatible(model,url,key_env,*,environ,approval_callback=None):
     return OpenAICompatibleProvider(model,api_key_env=key_env or "YUKI_LOCAL_DUMMY_KEY",base_url=url,allow_http_loopback=True,environ=environ,approval_callback=approval_callback)
 def create_provider(config=None,*,environ=None,cloud_approver=None):
     cfg=dict(config or {}); env=os.environ if environ is None else environ
-    selected=str(cfg.get("provider","mock")).strip().lower()
+    selected=str(cfg.get("provider","ollama")).strip().lower()
     if selected=="mock": return MockProvider()
     model=str(cfg.get("model",cfg.get("ollama_model",env.get("YUKI_OLLAMA_MODEL","")))).strip()
     if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("base_url") or cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
     if selected in {"llama.cpp","llama-cpp","lm-studio"}:
         preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"]
         return _compatible(model,str(cfg.get("base_url") or env.get("YUKI_BASE_URL",preset)),str(cfg.get("api_key_env",key)),environ=env)
+    if selected == "gemini_api":
+        return GeminiAPIProvider(model or "gemini-2.5-flash", api_key_env=str(cfg.get("api_key_env") or "GEMINI_API_KEY"), timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env, approval_callback=cloud_approver)
+    if selected == "nvidia":
+        return NvidiaNIMProvider(model or "openai/gpt-oss-20b", api_key_env=str(cfg.get("api_key_env") or "NVIDIA_API_KEY"), environ=env, timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), approval_callback=cloud_approver)
     if selected=="anthropic": return AnthropicProvider(model,api_key_env=str(cfg.get("api_key_env") or "ANTHROPIC_API_KEY"),base_url=str(cfg.get("base_url") or "https://api.anthropic.com"),approval_callback=cloud_approver)
     if selected in {"openai","deepseek","glm","openai-compatible","custom"}:
         preset,key=_PRESETS.get(selected,("https://api.openai.com/v1","OPENAI_API_KEY"))
@@ -40,4 +46,4 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
         if isinstance(tasks,str): tasks=[v.strip() for v in tasks.split(",") if v.strip()]
         if not isinstance(tasks,(list,tuple,set)): raise ValueError("cloud_tasks must be a list of task names.")
         return HybridProvider(local,cloud,cloud_tasks=tasks,cloud_approver=cloud_approver)
-    raise ValueError("provider must be one of: mock, ollama, llama.cpp, lm-studio, openai, anthropic, deepseek, glm, openai-compatible, hybrid.")
+    raise ValueError("provider must be one of: mock, ollama, llama.cpp, lm-studio, openai, gemini_api, nvidia, anthropic, deepseek, glm, openai-compatible, hybrid.")

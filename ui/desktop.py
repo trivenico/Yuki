@@ -13,7 +13,7 @@ from yuki_agent import YukiAgent
 
 MAX_DESKTOP_PROMPT_CHARS = 8_000
 CLOUD_PROVIDERS = frozenset({
-    "openai", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
+    "openai", "gemini_api", "nvidia", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
 })
 
 
@@ -29,16 +29,20 @@ class DesktopBridge:
     ) -> None:
         self.agent = agent
         self.config = dict(config or {})
+        self._provider_factory = provider_factory
+        self._agent_factory = agent_factory
         self._approval_context = threading.local()
         if provider_factory is None:
             from providers.factory import create_provider
             provider_factory = create_provider
+        self._provider_factory = provider_factory
+        self._agent_factory = agent_factory
         provider = provider_factory(
             self.config,
             cloud_approver=self._cloud_approval_callback,
         )
         self.ai = agent_factory(provider, usage_tracker=getattr(ai, "usage_tracker", None))
-        self.provider_name = str(self.config.get("provider", "mock")).strip().lower()
+        self.provider_name = str(self.config.get("provider", "ollama")).strip().lower()
         cloud_tasks = self.config.get("cloud_tasks", [])
         if not isinstance(cloud_tasks, (list, tuple, set, frozenset)):
             cloud_tasks = []
@@ -53,6 +57,49 @@ class DesktopBridge:
     def _cloud_approval_callback(self, *_args, **_kwargs) -> bool:
         return getattr(self._approval_context, "allowed", False) is True
 
+    def get_model_options(self, kind: str | None = None) -> dict[str, Any]:
+        """Return provider/model choices for the same catalog used by onboarding."""
+        from core.model_selection import model_selection_options, list_installed_ollama_models
+        result = model_selection_options(kind)
+        for provider in result["providers"]:
+            if provider["id"] == "ollama":
+                installed = list_installed_ollama_models(provider["base_url"])
+                provider["installed_models"] = installed
+                if installed:
+                    provider["models"] = installed
+        return result
+
+    def select_model(self, selection: dict[str, Any], cloud_approved: bool = False) -> dict[str, Any]:
+        """Validate, persist, and activate a user-selected provider/model."""
+        from core.model_selection import validate_model_selection
+        from core.model_catalog import get_provider
+        from core.onboarding import save_config
+        try:
+            clean = validate_model_selection(selection)
+            meta = get_provider(clean["provider"])
+            if meta["kind"] == "cloud" and cloud_approved is not True:
+                return {"ok": False, "requires_confirmation": True, "message": "No model changed. Confirm cloud-provider use first."}
+            # Persist only non-secret settings; API keys remain in environment variables.
+            user_config = {
+                "provider": clean["provider"], "model": clean["model"],
+                "base_url": clean["base_url"], "api_key_env": clean["api_key_env"],
+                "mcp_servers": self.config.get("mcp_servers", []),
+                "guardrails": {"require_tool_approval": True, "require_cloud_approval": True, "local_first": True},
+            }
+            save_config(user_config)
+            runtime_config = dict(self.config)
+            runtime_config.update(clean)
+            if clean["provider"] == "ollama":
+                runtime_config["ollama_model"] = clean["model"]
+                runtime_config["ollama_base_url"] = clean["base_url"]
+            self.config = runtime_config
+            provider = self._provider_factory(runtime_config, cloud_approver=self._cloud_approval_callback)
+            self.ai = self._agent_factory(provider, usage_tracker=getattr(self.ai, "usage_tracker", None))
+            self.provider_name = clean["provider"]
+            self.cloud_confirmation_required = meta["kind"] == "cloud"
+            return {"ok": True, "provider": self.provider_name, "model": clean["model"], "message": "Model selection saved. Restart Yuki if another runtime is already active."}
+        except (ValueError, OSError, RuntimeError) as exc:
+            return {"ok": False, "message": str(exc)[:240]}
     def get_status(self) -> dict[str, Any]:
         try:
             registry = getattr(self.agent, "registry", None)
@@ -152,7 +199,15 @@ button{background:#b8d1ff;color:#10131a;border:0;border-radius:10px;padding:11px
 <h2>Registered skills</h2><ul id="skills"></ul>
 <p class="muted">Skills are visible here but are not executed from desktop chat. Consequential actions remain behind Yuki's guarded approval flow.</p>
 <p class="muted" id="privacy">Cloud requests require confirmation before sending. Never submit passwords, API keys, or sensitive information.</p>
-<button onclick="refreshStatus()">Refresh status</button></aside>
+<button onclick="refreshStatus()">Refresh status</button>
+<section aria-label="Model settings"><h2>Model settings</h2>
+<label for="model-kind">Use</label><select id="model-kind" onchange="loadModelProviders()"><option value="local">Local model</option><option value="cloud">Cloud API</option></select>
+<label for="model-provider">Provider</label><select id="model-provider" onchange="loadProviderModels()"></select>
+<label for="model-choice">Suggested / installed model</label><select id="model-choice" onchange="syncModelChoice()"></select>
+<label for="model-id">Model ID (editable)</label><input id="model-id" maxlength="120" placeholder="Select a model or type a model ID">
+<label for="model-base-url">Endpoint</label><input id="model-base-url" maxlength="2048" placeholder="Provider endpoint">
+<button type="button" onclick="saveModelSelection()">Save model</button><div id="model-feedback" class="muted" role="status"></div>
+<p class="muted">Cloud model access and free quotas vary. API keys must be configured in environment variables; they are never saved here.</p></section></aside>
 <section id="chat"><h2>Conversation</h2><div id="messages" aria-live="polite"><div class="bubble system">Welcome to Yuki. Ask a question to begin.</div></div>
 <form id="composer"><input id="prompt" maxlength="8000" autocomplete="off" aria-label="Message to Yuki" placeholder="Message Yuki…" /><button id="send" type="submit">Send</button></form>
 <div class="muted" id="feedback" role="status"></div></section></main>
@@ -163,7 +218,12 @@ function bubble(text,kind){const node=document.createElement("div");node.classNa
 async function refreshStatus(){try{statusData=await window.pywebview.api.get_status();document.getElementById("status").textContent="Provider: "+statusData.provider+"\n"+statusData.provider_status+"\n"+statusData.message;const list=document.getElementById("skills");list.replaceChildren();for(const name of statusData.skills||[]){const li=document.createElement("li");li.textContent=name;list.appendChild(li)}}catch(e){document.getElementById("status").textContent="Runtime status unavailable."}}
 document.getElementById("composer").addEventListener("submit",async event=>{event.preventDefault();const text=promptBox.value.trim();if(!text||send.disabled)return;let approved=false;if(statusData.cloud_confirmation_required){approved=window.confirm("Send this message to the configured cloud provider ("+statusData.provider+")? The prompt will leave this computer and may incur a charge. Continue?");if(!approved){document.getElementById("feedback").textContent="Cancelled. No data sent.";return}}
 bubble(text,"user");promptBox.value="";send.disabled=true;document.getElementById("feedback").textContent="Waiting for provider…";try{const result=await window.pywebview.api.ask(text,approved);bubble(result.message,result.ok?"assistant":"system");document.getElementById("feedback").textContent=result.ok?"Response received.":"Request not completed."}catch(e){bubble("Request failed safely. Check provider configuration and retry.","system")}finally{send.disabled=false;promptBox.focus()}});
-window.addEventListener("pywebviewready",refreshStatus);
+let modelOptions={providers:[]};
+async function loadModelProviders(){try{const kind=document.getElementById("model-kind").value;modelOptions=await window.pywebview.api.get_model_options(kind);const sel=document.getElementById("model-provider");sel.replaceChildren();for(const p of modelOptions.providers){const opt=document.createElement("option");opt.value=p.id;opt.textContent=p.label;sel.appendChild(opt)}await loadProviderModels()}catch(e){document.getElementById("model-feedback").textContent="Could not load model catalog."}}
+async function loadProviderModels(){const p=(modelOptions.providers||[]).find(x=>x.id===document.getElementById("model-provider").value);const model=document.getElementById("model-choice");model.replaceChildren();if(!p)return;document.getElementById("model-base-url").value=p.base_url||"";const choices=[...(p.models||[])];if(p.installed_models&&p.installed_models.length){choices.splice(0,choices.length,...p.installed_models)}for(const item of choices){const opt=document.createElement("option");opt.value=item.id;opt.textContent=item.label+" — "+item.id;model.appendChild(opt)}const custom=document.createElement("option");custom.value="__custom__";custom.textContent="Enter custom model ID";model.appendChild(custom);if(choices.length){document.getElementById("model-id").value=choices[0].id}else{document.getElementById("model-id").value=""}}
+function syncModelChoice(){const sel=document.getElementById("model-choice");if(sel.value&&sel.value!=="__custom__")document.getElementById("model-id").value=sel.value;else if(sel.value==="__custom__")document.getElementById("model-id").value=""}
+async function saveModelSelection(){const provider=document.getElementById("model-provider").value;const model=document.getElementById("model-id").value.trim();const base_url=document.getElementById("model-base-url").value.trim();const kind=document.getElementById("model-kind").value;let approved=false;if(kind==="cloud"){approved=window.confirm("Switch Yuki to a cloud model? Prompts may leave this device and usage may incur charges. Continue?");if(!approved){document.getElementById("model-feedback").textContent="Cancelled. No settings changed.";return}}document.getElementById("model-feedback").textContent="Saving model selection…";try{const result=await window.pywebview.api.select_model({provider,model,base_url},approved);document.getElementById("model-feedback").textContent=result.message||"Selection update complete.";if(result.ok){statusData.provider=result.provider;await refreshStatus()}}catch(e){document.getElementById("model-feedback").textContent="Could not save model selection. Check provider settings."}}
+window.addEventListener("pywebviewready",()=>{refreshStatus();loadModelProviders()});
 </script></body></html>"""
     webview.create_window(
         "Yuki", html=html, js_api=bridge, width=1180, height=780, min_size=(760, 560)

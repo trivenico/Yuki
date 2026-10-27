@@ -6,6 +6,8 @@ import os
 from urllib.parse import urlsplit
 
 from core.onboarding import PROVIDERS, save_config
+from core.model_catalog import get_provider, list_providers
+from core.model_selection import list_installed_ollama_models
 
 def _ask(prompt: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
@@ -27,19 +29,50 @@ def provider_choices() -> list[str]:
 def run_onboarding(*, path=None, verify_provider=True) -> dict:
     print("\nWelcome to Yuki setup")
     print("Secrets are never written to config.json. Set the displayed environment variable in your shell to persist credentials.")
-    names = provider_choices()
-    for index, name in enumerate(names, 1):
-        print(f"  {index}. {name}")
-    while True:
-        raw = _ask("Choose provider number", "1")
-        try:
-            provider = names[int(raw) - 1]
-            break
-        except (ValueError, IndexError):
-            print("Choose a number from the list.")
-    meta = PROVIDERS[provider]
-    base_url = _ask("Provider base URL", meta.get("default_url", ""))
-    model = _ask("Model name", meta.get("default_model", ""))
+    kind = _ask("Choose model hosting: 1) local  2) cloud  3) hybrid", "1")
+    if kind not in {"1", "2", "3"}:
+        raise ValueError("Choose 1 for local, 2 for cloud, or 3 for hybrid.")
+    if kind == "3":
+        provider = "hybrid"
+        meta = PROVIDERS[provider]
+        base_url = meta.get("default_url", "")
+        model = "local-model"
+    else:
+        provider_kind = "local" if kind == "1" else "cloud"
+        choices = [item for item in list_providers(provider_kind) if item["id"] in PROVIDERS]
+        names = [item["id"] for item in choices]
+        for index, item in enumerate(choices, 1):
+            print(f"  {index}. {item['label']} ({item['id']})")
+        while True:
+            raw = _ask("Choose provider number", "1")
+            try:
+                provider = names[int(raw) - 1]
+                break
+            except (ValueError, IndexError):
+                print("Choose a number from the list.")
+        meta = PROVIDERS[provider]
+        catalog_entry = get_provider(provider)
+        base_url = _ask("Provider base URL", meta.get("default_url", ""))
+        models = catalog_entry["models"]
+        if provider == "ollama":
+            installed = list_installed_ollama_models(base_url)
+            if installed:
+                models = installed
+                print("Installed Ollama models:")
+            else:
+                print("No installed Ollama models discovered; enter a model ID or install one with ollama pull.")
+        if models:
+            for index, item in enumerate(models, 1):
+                print(f"  {index}. {item['label']} — {item['id']} ({item['note']})")
+            print(f"  {len(models) + 1}. Enter a custom model ID")
+            raw_model = _ask("Choose model number or custom ID", "1")
+            try:
+                index = int(raw_model)
+                model = models[index - 1]["id"] if 1 <= index <= len(models) else _ask("Custom model ID")
+            except ValueError:
+                model = raw_model
+        else:
+            model = _ask("Model ID (custom IDs are supported)")
     key_env = meta.get("key_env", "")
     if meta["kind"] in {"cloud", "custom"}:
         key_env = _ask("Environment variable name for API key", key_env)
@@ -92,8 +125,8 @@ def run_onboarding(*, path=None, verify_provider=True) -> dict:
     if provider == "hybrid":
         config["local_provider"] = _ask("Local provider (ollama, llama.cpp, lm-studio)", "ollama").lower()
         config["local_model"] = _ask("Local model name", model)
-        config["cloud_provider"] = _ask("Cloud provider (openai, anthropic, deepseek, glm, openai-compatible)", "openai").lower()
-        default_key_env = {"openai":"OPENAI_API_KEY","anthropic":"ANTHROPIC_API_KEY","deepseek":"DEEPSEEK_API_KEY","glm":"ZHIPUAI_API_KEY"}.get(config["cloud_provider"], "YUKI_CUSTOM_API_KEY")
+        config["cloud_provider"] = _ask("Cloud provider (openai, gemini_api, nvidia, anthropic, deepseek, glm, openai-compatible)", "gemini_api").lower()
+        default_key_env = {"openai":"OPENAI_API_KEY","gemini_api":"GEMINI_API_KEY","nvidia":"NVIDIA_API_KEY","anthropic":"ANTHROPIC_API_KEY","deepseek":"DEEPSEEK_API_KEY","glm":"ZHIPUAI_API_KEY"}.get(config["cloud_provider"], "YUKI_CUSTOM_API_KEY")
         config["cloud_api_key_env"] = _ask("Environment variable name for cloud API key", default_key_env)
         config["cloud_model"] = _ask("Cloud model name", "")
         config["cloud_tasks"] = [x.strip() for x in _ask("Tasks allowed to route to cloud (comma-separated; empty disables cloud routing)", "").split(",") if x.strip()]

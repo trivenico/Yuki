@@ -36,6 +36,16 @@ class Response:
         return self.body[:size]
 
 
+class FakeOpener:
+    def __init__(self, response):
+        self.response = response
+        self.request = None
+        self.timeout = None
+    def open(self, request, timeout=0):
+        self.request = request
+        self.timeout = timeout
+        return self.response
+
 class HybridProviderTests(unittest.TestCase):
     def test_defaults_to_local_and_only_named_tasks_route_to_cloud(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
@@ -89,13 +99,15 @@ class HybridProviderTests(unittest.TestCase):
 
     def test_cloud_provider_uses_env_key_and_parses_response(self):
         provider = OpenAICompatibleProvider("cloud-model", approval_callback=lambda prompt: True)
+        opener = FakeOpener(Response(
+            json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
+        ))
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret"}):
-            with patch("urllib.request.urlopen", return_value=Response(
-                json.dumps({"choices": [{"message": {"content": "answer"}}]}).encode()
-            )) as mocked:
+            with patch("urllib.request.build_opener", return_value=opener):
                 self.assertTrue(provider.is_available())
                 self.assertEqual(provider.generate("question"), "answer")
-        self.assertIn("Bearer test-secret", mocked.call_args.args[0].get_header("Authorization"))
+        self.assertIn("Bearer test-secret", opener.request.get_header("Authorization"))
+        self.assertEqual(opener.timeout, 45)
 
     def test_cloud_provider_missing_key_fails_closed(self):
         provider = OpenAICompatibleProvider("cloud-model", api_key_env="YUKI_TEST_MISSING_KEY")

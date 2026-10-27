@@ -4,11 +4,18 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
+from providers.openai_compatible import OpenAICompatibleProvider
 
 
 class ProviderFactoryTests(unittest.TestCase):
-    def test_default_factory_keeps_mock_provider(self):
-        self.assertIsInstance(create_provider({}), MockProvider)
+    def test_unconfigured_factory_never_silently_selects_mock(self):
+        with self.assertRaisesRegex(ValueError, "model"):
+            create_provider({})
+
+    def test_explicit_real_cloud_provider_is_constructible_without_credentials(self):
+        provider = create_provider({"provider": "openai", "model": "gpt-4.1-mini"}, environ={})
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+        self.assertFalse(provider.is_available())
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
