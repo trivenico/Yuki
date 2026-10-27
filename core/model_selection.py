@@ -102,10 +102,14 @@ def validate_model_selection(selection: dict) -> dict:
                 loopback = loopback or ipaddress.ip_address(host).is_loopback
             except ValueError:
                 pass
-        if parsed.scheme == "http" and not loopback:
-            raise ValueError("Local HTTP endpoints must bind to loopback.")
+        if not loopback:
+            raise ValueError("Local provider endpoints must bind to loopback.")
         if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Local endpoint URL is invalid.")
+        try:
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("Local endpoint port is invalid.") from exc
     return {"provider": provider_id, "model": model.strip(), "base_url": base_url.strip(), "api_key_env": key_env}
 
 
