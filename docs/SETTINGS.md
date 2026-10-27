@@ -20,3 +20,16 @@ Restart Yuki after saving settings. Environment variables take precedence over c
 Enabling a setting does not install optional dependencies, provision credentials, or prove that the feature is available. Firewall dry-run is enabled by default and should remain enabled unless the operator understands the effect of changing it. Sensitive operations retain the runtime's existing authorization and confirmation checks. Plugin discovery should be enabled only when configured Python modules are trusted.
 
 This settings interface is an initial configuration surface, not a production-readiness claim. Provider switching, secure credential management, per-integration connection tests, and restart-free configuration reloads require separate implementations and tests.
+
+## Manual AI provider selection
+
+The desktop Settings window lets the user explicitly select one of the providers currently implemented by the runtime:
+
+- **Ollama** — local by default; requires the Ollama service and selected model to be installed.
+- **OpenAI** — cloud API; reads `OPENAI_API_KEY` from the process environment and never stores the key in YAML.
+- **Gemini CLI** — uses the separately installed Gemini CLI and its authentication setup.
+- **Hybrid** — local Ollama by default; cloud routing requires explicit environment configuration and allow-listed task names.
+
+The provider readiness button calls the configured provider's `is_available()` check and does not send a prompt or download a model. A successful readiness result is not a guarantee that a future generation request will succeed. The user must restart Yuki after saving the selected provider.
+
+This is the runtime's current supported provider list, not a claim that every provider in a model catalog has a working adapter. Other providers should be added only with a real adapter, documented credential handling, capability tests, and an explicit selection entry.
