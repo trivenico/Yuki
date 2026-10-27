@@ -24,7 +24,12 @@ def main(argv=None) -> int:
     parser.add_argument("--base-url", help="Ollama endpoint; must be HTTPS or loopback HTTP.")
     args = parser.parse_args([] if argv is None else argv)
     try:
-        config = load_config()
+        loaded_config = load_config()
+        if not isinstance(loaded_config, dict):
+            print("FAIL: Yuki configuration must be a mapping.")
+            return 1
+        # CLI overrides are ephemeral: never mutate the object returned by config loading.
+        config = dict(loaded_config)
     except Exception as exc:
         print(f"FAIL: Yuki configuration could not be loaded ({type(exc).__name__}).")
         return 1
