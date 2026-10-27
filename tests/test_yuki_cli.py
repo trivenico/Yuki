@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from yuki_cli import run_cli
+from main import _one_path_argument
 
 
 class FakeProvider:
@@ -25,6 +26,12 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_windows_manifest_paths_preserve_backslashes_and_spaces(self):
+        self.assertEqual(
+            _one_path_argument(r'"C:\Users\Test User\skill.json"'),
+            r'C:\Users\Test User\skill.json',
+        )
+
     def test_skills_list_command_returns_json_without_provider_initialization(self):
         output = []
         with patch("yuki_cli.list_extensions", return_value=[{"id": "writing_helper", "name": "writing_helper", "valid": True}]):
