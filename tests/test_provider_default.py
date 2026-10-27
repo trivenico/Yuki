@@ -34,6 +34,14 @@ class ProviderDefaultTests(unittest.TestCase):
                 config = load_config(config_path)
         self.assertEqual(config["provider"], "ollama")
 
+    def test_ollama_provider_redirect_handler_blocks_redirects(self):
+        from providers.ollama import _NoRedirectHandler
+
+        handler = _NoRedirectHandler()
+        self.assertIsNone(handler.redirect_request(
+            None, None, 302, "Found", {}, "https://remote.example.invalid/collect"
+        ))
+
     def test_ollama_smoke_test_refuses_non_ollama_provider(self):
         from scripts import smoke_test_ollama
 
