@@ -84,7 +84,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/docs | Out-Null
           Copy-Item docs/INSTALLATION.md dist/docs/INSTALLATION.md
           Compress-Archive -Path dist/YukiDesktop.exe,dist/YukiRuntime.exe,dist/config.yaml,dist/README.md,dist/docs/INSTALLATION.md -DestinationPath dist/Yuki-Windows-x64.zip -Force
-          $iscc = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not installed." }
           $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.1.0" }
           & $iscc "/DAppVersion=$version" installer/yuki.iss
