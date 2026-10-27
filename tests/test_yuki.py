@@ -19,6 +19,39 @@ from yuki_approvals import ApprovalGate
 
 
 
+class EvolutionCommandTests(unittest.TestCase):
+    def test_evolution_status_command_reports_local_state(self):
+        from yuki import handle_command
+        from unittest.mock import patch
+        with patch("yuki._evolution_cycle") as cycle_factory:
+            cycle_factory.return_value.status.return_value = {
+                "observations": 3, "pending_proposals": 2, "last_report_at": None
+            }
+            result = handle_command("/evolve status", [], [], None, None)
+        self.assertIn("3 observations", result)
+        self.assertIn("2 pending proposals", result)
+
+    def test_evolution_record_command_persists_observation(self):
+        from yuki import handle_command
+        from unittest.mock import patch
+        with patch("yuki._evolution_cycle") as cycle_factory, patch("yuki.write_audit_event"):
+            cycle_factory.return_value.record.return_value = {"category": "feedback", "id": "abc123"}
+            result = handle_command("/evolve record feedback | prefer concise reports", [], [], None, None)
+        self.assertIn("Recorded local feedback observation abc123", result)
+        cycle_factory.return_value.record.assert_called_once_with("feedback", "prefer concise reports")
+
+    def test_evolution_review_command_never_claims_to_apply_changes(self):
+        from yuki import handle_command
+        from unittest.mock import patch
+        with patch("yuki._evolution_cycle") as cycle_factory, patch("yuki.write_audit_event"):
+            cycle_factory.return_value.review.return_value = {
+                "id": "proposal-1", "status": "accepted_for_manual_followup"
+            }
+            result = handle_command("/evolve review proposal-1 accept", [], [], None, None)
+        self.assertIn("no changes were applied", result)
+        cycle_factory.return_value.review.assert_called_once_with("proposal-1", "accepted_for_manual_followup")
+
+
 class PlannerTests(unittest.TestCase):
     def test_plan_is_bounded_and_does_not_execute(self):
         plan = create_plan("Review repository", ["Inspect files", "Run tests"])
