@@ -117,7 +117,7 @@ def print_help():
   /task GOAL                      Bounded model-guided task; approve each skill call
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
-  /task cancel ID                 Cancel a queued/active task record
+  /task cancel ID                 Cancel a queued task record (running-task interruption is not implemented)
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
