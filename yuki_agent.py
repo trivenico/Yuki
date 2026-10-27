@@ -1,13 +1,22 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
+from __future__ import annotations
 
-from providers import MockProvider
+import os
+
+from providers.factory import create_provider
 
 
 class YukiAgent:
-    """Send prompts to a selected provider without exposing provider exceptions."""
+    """Send prompts to a configured real provider without implicit mock replies.
 
-    def __init__(self, provider=None):
-        self.provider = provider if provider is not None else MockProvider()
+    Tests and callers may inject a provider explicitly. Runtime callers that do
+    not inject one get the configured real provider; an unavailable provider is
+    reported as unavailable rather than replaced by fabricated model output.
+    """
+
+    def __init__(self, provider=None, *, config=None, environ=None):
+        env = os.environ if environ is None else environ
+        self.provider = provider if provider is not None else create_provider(config, environ=env)
 
     def set_provider(self, provider):
         """Replace the active adapter after validating its interface."""
@@ -28,10 +37,11 @@ class YukiAgent:
             return "Yuki: Please enter a message."
         try:
             if not self.provider.is_available():
-                return "Yuki: The AI provider is unavailable."
+                return "Yuki: The AI provider is unavailable. Configure the selected provider; no mock fallback was used."
             result = self.provider.generate(prompt.strip())
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
             return result
-        except Exception:
-            return "Yuki: The provider encountered an error."
+        except Exception as exc:
+            # Avoid leaking credentials, request bodies, or provider error payloads.
+            return f"Yuki: The provider encountered an error ({type(exc).__name__})."

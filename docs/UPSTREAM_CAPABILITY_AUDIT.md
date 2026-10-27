@@ -36,3 +36,41 @@ Do not wholesale-copy files simply because a feature looks useful. Reimplement t
 - Secrets, health data, tokens, browser profiles and personal memory are never committed.
 - Tool execution remains approval-gated and bounded.
 - Windows and Linux path/launch tests run in CI before claiming portable support.
+
+
+## Yuki product architecture: desktop, CLI, and learning loop
+
+### Product direction
+
+Yuki should have one shared runtime with multiple thin interfaces, not separate assistants with separate memories or permissions:
+
+- **Core runtime**: provider contract, conversation/session service, bounded task planner, skill registry, policy/approval engine, durable task queue, audit log, memory and evaluation.
+- **CLI**: interactive chat, one-shot prompts, task planning/execution, provider status, skill discovery, memory search, approvals, diagnostics, logs, and scripted/headless operation.
+- **Desktop**: chat, task inbox and approvals, activity/audit timeline, provider and model selection, memory/learning review, settings, voice controls, and system readiness. The UI must call the same core services as the CLI.
+- **Learning loop**: capture explicit feedback and verified task outcomes; redact secrets and minimize data; retrieve relevant lessons; evaluate proposed changes on a fixed regression set; create a reviewable proposal. It must not silently rewrite its own source, grant itself permissions, or promote an update without tests and approval.
+
+### Main files and ownership boundaries
+
+| Area | Existing main files | Required next step |
+|---|---|---|
+| Provider entry | `providers/base.py`, `providers/factory.py`, `yuki_agent.py` | Make real configured provider the runtime default; inject mocks only in tests |
+| Tool-using task loop | `core/task_agent.py`, `core/agent.py`, `core/guarded_skill_runtime.py` | One shared task service, strict schemas, budgets, approvals, audit and cancellation |
+| Persistent memory | `companion/memory.py`, `core/vector_memory.py` | Schema/versioning, source attribution, retention, export/import, backup/restore tests |
+| Learning and upgrades | `companion/evolution.py`, `core/self_healing.py` | Feedback → lesson proposal → offline evaluation → human-approved merge; no self-modifying runtime |
+| Runtime health | `core/readiness.py`, `core/resilience.py`, `core/recovery_audit.py` | Machine-readable readiness and real smoke tests for every claimed integration |
+| CLI | `main.py`, `yuki.py` | Consolidate duplicate entrypoints behind one CLI command surface and shared application services |
+| Desktop | PR #32 and stacked PR #349 | Merge/rebase only after checks; keep desktop as a client of shared services, not a parallel agent |
+| Storage / queue | durable task engine and SQLite state work in open PRs | Resolve audit/idempotency reviews and cross-platform concurrency tests before autonomous scheduling |
+
+### Incremental delivery gates
+
+1. **Runtime truthfulness**: no implicit mock provider in a user-facing default; no feature marked available just because its module imports.
+2. **Unified CLI**: one entrypoint, provider status, chat, plan, approve/deny, tasks, memory, doctor and test commands; consistent exit codes and structured output.
+3. **Desktop MVP**: onboarding, chat, model/provider selection, tasks/approvals, logs and settings; local loopback bridge only if needed, authenticated local IPC, strict origin/CSRF boundaries, no exposed arbitrary shell endpoint.
+4. **Learning MVP**: opt-in feedback/outcome capture, redaction, bounded local lesson store, retrieval, explainable proposals and offline regression evaluation.
+5. **Supervised engineering agent**: repository allow-list, isolated worktree, scoped file diffs, tests/lint/type/security checks, patch review, branch/PR creation, human merge approval, rollback path.
+6. **Release gate**: Windows CI plus Linux CI, backup/restore and migration tests, provider smoke tests, prompt-injection tests, dependency/license review, security review and release artifacts.
+
+### Inspiration and non-goals
+
+Use Hermes/OpenJarvis patterns for CLI ergonomics, persistent procedural skills, evaluation and local-first operation; use OpenClaw-style gateway/device architecture only when a real channel is implemented; use a polished desktop shell with a clear task/activity model rather than duplicating the agent inside the UI. Do not wholesale-copy upstream code without checking the exact file license and dependencies. Avoid unattended shell execution, hidden persistence, unreviewed self-upgrades and permission escalation.
