@@ -181,7 +181,10 @@ def run_desktop() -> None:
         command_group = "skills" if kind == "skill" else "plugins"
         send_text(f'/{command_group} install "{path}"')
 
-    ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="left")
+    ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="left")
+    ttk.Button(extension_row, text="Status", command=lambda: send_text("/status")).pack(side="left", padx=(8, 0))
+    ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="left", padx=(8, 0))
+    ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="left", padx=(8, 0))
     ttk.Button(extension_row, text="Install MCP Plugin", command=lambda: choose_manifest("plugin")).pack(side="left", padx=(8, 0))
     ttk.Button(extension_row, text="List Skills", command=lambda: send_text("/skills")).pack(side="left", padx=(8, 0))
     ttk.Button(extension_row, text="List Plugins", command=lambda: send_text("/plugins")).pack(side="left", padx=(8, 0))
