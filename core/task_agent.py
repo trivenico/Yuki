@@ -92,7 +92,7 @@ class ApprovedTaskAgent:
                                   step_number, "invalid_model_output")
             try:
                 proposal = _parse_proposal(raw)
-            except (json.JSONDecodeError, ValueError, TypeError):
+            except (json.JSONDecodeError, ValueError, TypeError, RecursionError):
                 return TaskResult(False, "AI response did not match the strict action schema; no action was executed.",
                                   step_number, "invalid_model_output")
             kind = proposal["type"]
