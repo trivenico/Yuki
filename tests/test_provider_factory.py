@@ -3,7 +3,6 @@ import unittest
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
 
