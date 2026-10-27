@@ -37,7 +37,8 @@ def data_root() -> Path:
     if configured:
         root = Path(configured).expanduser()
         if not root.is_absolute():
-            root = (REPOSITORY_ROOT / root).resolve()
+            anchor = Path.home() if is_frozen() else REPOSITORY_ROOT
+            root = (anchor / root).resolve()
         return root.resolve()
     if is_frozen():
         return _default_user_root().resolve()
@@ -49,7 +50,8 @@ def config_path() -> Path:
     if configured:
         path = Path(configured).expanduser()
         if not path.is_absolute():
-            path = (REPOSITORY_ROOT / path).resolve()
+            anchor = data_root() if is_frozen() else REPOSITORY_ROOT
+            path = (anchor / path).resolve()
         return path.resolve()
     if not is_frozen():
         return (REPOSITORY_ROOT / "config.yaml").resolve()
