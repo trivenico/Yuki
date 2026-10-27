@@ -110,6 +110,10 @@ Yuki commands:
   /lessons TASK                   Find relevant saved lessons
   /learning                       Show recent learning history
   /learning clear                 Clear learning history
+  /evolve status                  Show local learning-review status
+  /evolve run                     Analyze recent explicit observations
+  /evolve record CATEGORY | TEXT  Record an observation locally
+  /evolve review ID accept|reject Review a proposal without applying it
   /audit                          Show recent metadata-only audit events
   /quit                           Exit Yuki
 
@@ -346,6 +350,45 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             return "Saved memory cleared."
         memory.extend(old)
         return "Could not clear memory."
+    if command == "/evolve status":
+        try:
+            status = _evolution_cycle().status()
+            return (f"Local evolution: {status['observations']} observations; "
+                    f"{status['pending_proposals']} pending proposals; "
+                    f"last report: {status['last_report_at'] or 'not run'}.")
+        except Exception as error:
+            return f"Evolution subsystem unavailable ({type(error).__name__})."
+    if command == "/evolve run":
+        try:
+            report = _evolution_cycle().run_cycle()
+            write_audit_event("evolution:run", "completed")
+            return (f"Reviewed {report['observations_reviewed']} observations; "
+                    f"{len(report['proposals'])} proposals await review. No changes were applied.")
+        except Exception as error:
+            return f"Evolution review failed safely ({type(error).__name__})."
+    if command.startswith("/evolve record "):
+        payload = command[len("/evolve record "):]
+        category, separator, summary = payload.partition("|")
+        if not separator:
+            return "Usage: /evolve record CATEGORY | TEXT"
+        try:
+            item = _evolution_cycle().record(category.strip(), summary.strip())
+            write_audit_event("evolution:record", "completed")
+            return f"Recorded local {item['category']} observation {item['id']}."
+        except Exception as error:
+            return f"Observation rejected ({type(error).__name__}): {error}"
+    if command.startswith("/evolve review "):
+        parts = command.split(maxsplit=3)
+        if len(parts) != 4 or parts[3] not in {"accept", "reject"}:
+            return "Usage: /evolve review ID accept|reject"
+        decision = "accepted_for_manual_followup" if parts[3] == "accept" else "rejected"
+        try:
+            result = _evolution_cycle().review(parts[2], decision)
+            write_audit_event("evolution:review", decision)
+            return f"Proposal {result['id']} marked {result['status']}; no changes were applied."
+        except Exception as error:
+            return f"Proposal review rejected ({type(error).__name__}): {error}"
+
     if command.startswith("/learn "):
         parts = command[len("/learn "):].split("|", 2)
         if len(parts) < 2:
