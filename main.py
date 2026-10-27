@@ -368,6 +368,10 @@ def main():
                     print("Result: " + item["result"])
                 if item["error_code"]:
                     print("Error code: " + item["error_code"])
+                if item.get("verification_evidence"):
+                    print("Verification evidence: " + item["verification_evidence"])
+                elif item["status"] == "awaiting_verification":
+                    print("Verification: required; a model response alone is not proof of success.")
         elif command.startswith("/task cancel "):
             task_id = command[len("/task cancel "):].strip()
             try:
