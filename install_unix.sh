@@ -26,23 +26,21 @@ fi
 
 "$PYTHON" --version
 if [ ! -x ".venv/bin/python" ]; then
-  echo "[1/5] Creating isolated virtual environment..."
+  echo "[1/4] Creating isolated virtual environment..."
   "$PYTHON" -m venv .venv
 else
-  echo "[1/5] Existing virtual environment found."
+  echo "[1/4] Existing virtual environment found."
 fi
 
-echo "[2/5] Updating pip..."
+echo "[2/4] Updating pip..."
 if ! .venv/bin/python -m pip install --upgrade pip; then
   echo "WARNING: pip upgrade failed; continuing after pip self-upgrade failure; dependency installation below must still succeed."
 fi
 
-echo "[3/5] Checking core dependencies..."
+echo "[3/4] Checking core dependencies..."
 .venv/bin/python -m pip install -r requirements.txt
 
-echo "[4/5] Installing the desktop supervision UI..."
-.venv/bin/python -m pip install -r requirements-ui.txt
-echo "[5/5] Running Yuki test suite..."
+echo "[4/4] Running Yuki test suite..."
 .venv/bin/python -m unittest discover -s tests -v
 
 echo
