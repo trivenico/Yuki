@@ -15,9 +15,9 @@ class ProviderInfo:
 class ProviderManager:
     """Provider capability registry; availability is checked separately from construction."""
     def __init__(self, config=None, *, environ=None):
+        self._environ = os.environ if environ is None else environ
         self._config = dict(config or {})
         self._config.setdefault("ollama_model", self._environ.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"))
-        self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
