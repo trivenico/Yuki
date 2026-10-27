@@ -86,6 +86,22 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertTrue(result["requires_confirmation"])
         self.assertEqual(factory.provider.prompts, [])
 
+    def test_hybrid_env_general_route_requires_confirmation(self):
+        with patch.dict("os.environ", {"YUKI_CLOUD_TASKS": "general,summarize_public_page"}):
+            factory = FakeProviderFactory()
+            bridge = DesktopBridge(
+                FakeCoreAgent(),
+                ai=type("AI", (), {"usage_tracker": None})(),
+                config={"provider": "hybrid"},
+                provider_factory=factory,
+                agent_factory=FakeAI,
+            )
+        self.assertTrue(bridge.get_status()["cloud_confirmation_required"])
+        result = bridge.ask("Private prompt", cloud_approved=False)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["requires_confirmation"])
+        self.assertEqual(factory.provider.prompts, [])
+
     def test_gemini_cli_provider_is_treated_as_cloud(self):
         bridge, factory = self.make_bridge("gemini")
         result = bridge.ask("Private prompt", cloud_approved=False)
