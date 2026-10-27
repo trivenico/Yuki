@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_TRANSCRIPT_CHARS = 1_000_000
 
 
 def build_runtime_command() -> list[str]:
@@ -95,6 +96,10 @@ def run_desktop() -> None:
     def append_output(value: str) -> None:
         transcript.configure(state="normal")
         transcript.insert("end", value)
+        current_count = transcript.count("1.0", "end-1c", "chars")
+        if current_count and current_count[0] > MAX_TRANSCRIPT_CHARS:
+            excess = current_count[0] - MAX_TRANSCRIPT_CHARS
+            transcript.delete("1.0", f"1.0+{excess}c")
         transcript.see("end")
         transcript.configure(state="disabled")
 
