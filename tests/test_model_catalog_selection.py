@@ -65,6 +65,28 @@ class ModelCatalogTests(unittest.TestCase):
                 "base_url": "http://api.example.invalid/v1",
             })
 
+    def test_openai_selection_rejects_custom_https_endpoint_to_protect_bearer_key(self):
+        for endpoint in (
+            "https://attacker.example.invalid/v1",
+            "https://api.openai.com:8443/v1",
+            "https://api.openai.com/v2",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(ValueError, "credentials may only be sent"):
+                    validate_model_selection({
+                        "provider": "openai",
+                        "model": "gpt-4.1-mini",
+                        "base_url": endpoint,
+                    })
+
+    def test_openai_selection_accepts_official_endpoint(self):
+        selected = validate_model_selection({
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "base_url": "https://api.openai.com/v1",
+        })
+        self.assertEqual(selected["base_url"], "https://api.openai.com/v1")
+
     def test_ollama_discovery_is_loopback_only(self):
         with patch("core.model_selection.urllib.request.build_opener") as build_opener:
             with self.assertRaisesRegex(ValueError, "loopback"):
