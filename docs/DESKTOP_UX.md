@@ -34,6 +34,7 @@ Navigation must not pretend a page exists when only a runtime command is availab
 - Add a provider status indicator sourced from the same provider readiness service.
 - Replace command-only task navigation with a real task inbox backed by the durable workflow/task APIs.
 - Add project/workspace selection only after workspace containment and persistence are wired end to end.
+- Keep the CLI and desktop as the only supported user interfaces; share application services rather than introducing a browser frontend.
 - Add a review panel for proposed file changes, approvals, and execution logs.
 - Improve chat transcript rendering, markdown/code presentation, message grouping, and copy controls.
 - Add automated headless UI construction tests and hosted Windows package smoke tests.
