@@ -395,13 +395,17 @@ def main():
             print(f"Yuki > Task {tracked['id']} created. Preparing a bounded plan; each skill call requires fresh approval.")
             try:
                 result = task_agent.run(goal)
-                final_status = "completed" if result.ok else "failed"
+                # A model's final response is not independent proof that the user's goal
+                # was achieved. Keep successful runs awaiting verification until an
+                # acceptance check can confirm the actual outcome.
+                final_status = "awaiting_verification" if result.ok else "failed"
                 task_ledger.transition(
                     tracked["id"], final_status,
                     result=result.message,
                     error_code="" if result.ok else result.status,
                 )
-                print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}, task_id={tracked['id']}]")
+                display_status = "awaiting_verification" if result.ok else result.status
+                print(f"Yuki > {result.message} [status={display_status}, steps={result.steps}, task_id={tracked['id']}]")
             except KeyboardInterrupt:
                 try:
                     task_ledger.transition(tracked["id"], "cancelled")
