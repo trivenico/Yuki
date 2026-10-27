@@ -25,6 +25,21 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_skills_list_command_returns_json_without_provider_initialization(self):
+        output = []
+        with patch("yuki_cli.list_extensions", return_value=[{"id": "writing_helper", "name": "writing_helper", "valid": True}]):
+            code = run_cli(["skills", "list"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output[0])["installed"][0]["id"], "writing_helper")
+
+    def test_plugin_install_command_uses_validated_extension_store(self):
+        output = []
+        with patch("yuki_cli.install_extension", return_value={"id": "docs", "name": "docs", "path": "/tmp/docs.json"}) as install:
+            code = run_cli(["plugins", "install", "/tmp/docs.json"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        install.assert_called_once_with("/tmp/docs.json", "plugin")
+        self.assertIn("no third-party code was executed", output[0])
+
     def test_start_routes_to_integrated_guarded_runtime(self):
         with patch("main.main") as integrated_main:
             self.assertEqual(run_cli(["start"], output_fn=lambda _: None), 0)
