@@ -12,7 +12,7 @@ from yuki_agent import YukiAgent
 
 MAX_DESKTOP_PROMPT_CHARS = 8_000
 CLOUD_PROVIDERS = frozenset({
-    "openai", "gemini_api", "nvidia", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
+    "openai", "gemini", "gemini_api", "nvidia", "anthropic", "deepseek", "glm", "openai-compatible", "custom",
 })
 
 
