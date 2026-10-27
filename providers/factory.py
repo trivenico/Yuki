@@ -13,14 +13,14 @@ from providers.openai_compatible import OpenAICompatibleProvider
 def create_provider(config=None, *, environ=None):
     """Build the configured real provider without implicit fallback.
 
-    OpenAI is the default. Hybrid routing keeps general tasks local and only
+    Ollama is the default so prompts stay local unless a cloud provider is explicitly selected. Hybrid routing keeps general tasks local and only
     routes explicitly allow-listed task names to cloud. API keys are read from
     the process environment, never from YAML or committed files. The mock
     adapter remains available only to tests that call this factory explicitly.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "openai")).strip().lower()
+    selected = str(cfg.get("provider", "ollama")).strip().lower()
     if selected == "mock":
         return MockProvider()
     if selected == "openai":
@@ -41,7 +41,7 @@ def create_provider(config=None, *, environ=None):
         raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
-        model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"))),
     )
     if selected == "ollama":
         return local
