@@ -254,6 +254,7 @@ def run_desktop() -> None:
     root.bind("<Control-L>", clear_visible_transcript)
 
     def send_command(_event=None) -> None:
+        nonlocal history_position
         command = command_entry.get()
         if not command.strip():
             return
