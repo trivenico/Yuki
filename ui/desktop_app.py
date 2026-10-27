@@ -46,20 +46,28 @@ def run_desktop() -> None:
 
     root = tk.Tk()
     root.title("Yuki — Desktop")
-    root.geometry("980x680")
-    root.minsize(680, 420)
+    root.geometry("1180x760")
+    root.minsize(820, 560)
 
     frame = ttk.Frame(root, padding=10)
     frame.pack(fill="both", expand=True)
-    ttk.Label(
-        frame,
-        text="Yuki Desktop · commands and approvals run through the guarded CLI runtime",
-    ).pack(anchor="w", pady=(0, 8))
+    header = ttk.Frame(frame)
+    header.pack(fill="x", pady=(0, 10))
+    ttk.Label(header, text="Yuki", font=("TkDefaultFont", 16, "bold")).pack(side="left")
+    ttk.Label(header, text="Your AI workspace · local-first, approval-aware").pack(side="left", padx=(12, 0))
+    extension_row = ttk.Frame(header)
+    extension_row.pack(side="right")
 
-    extension_row = ttk.Frame(frame)
-    extension_row.pack(fill="x", pady=(0, 8))
+    workspace = ttk.Frame(frame)
+    workspace.pack(fill="both", expand=True)
+    sidebar = ttk.Frame(workspace, padding=(0, 0, 10, 0), width=170)
+    sidebar.pack(side="left", fill="y")
+    sidebar.pack_propagate(False)
+    ttk.Label(sidebar, text="WORKSPACE", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(2, 8))
+    main_panel = ttk.Frame(workspace)
+    main_panel.pack(side="left", fill="both", expand=True)
 
-    output_frame = ttk.Frame(frame)
+    output_frame = ttk.Frame(main_panel)
     output_frame.pack(side="top", fill="both", expand=True)
     transcript = tk.Text(output_frame, wrap="word", state="disabled", undo=False)
     transcript.pack(side="left", fill="both", expand=True)
@@ -67,7 +75,7 @@ def run_desktop() -> None:
     transcript.configure(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
 
-    entry_row = ttk.Frame(frame)
+    entry_row = ttk.Frame(main_panel)
     entry_row.pack(fill="x", pady=(8, 0))
     command_entry = ttk.Entry(entry_row)
     command_entry.pack(side="left", fill="x", expand=True)
@@ -164,6 +172,30 @@ def run_desktop() -> None:
             return
         # A pipe does not echo terminal input, so echo it here for visibility.
         append_output(command + "\n")
+
+    def focus_composer() -> None:
+        command_entry.focus_set()
+
+    nav_items = (
+        ("Chat", focus_composer),
+        ("Tasks & Plans", lambda: send_text("/help")),
+        ("Memory", lambda: send_text("/memory list")),
+        ("Skills", lambda: send_text("/skills")),
+        ("Plugins", lambda: send_text("/plugins")),
+        ("Voice", lambda: send_text("/voice status")),
+        ("Security", lambda: send_text("/security status")),
+        ("System Readiness", lambda: send_text("/readiness")),
+    )
+    for label, action in nav_items:
+        ttk.Button(sidebar, text=label, command=action).pack(fill="x", pady=2)
+    ttk.Separator(sidebar).pack(fill="x", pady=8)
+    ttk.Button(sidebar, text="Settings", command=open_settings).pack(fill="x", pady=2)
+    ttk.Label(
+        sidebar,
+        text="Commands and approvals run through the shared guarded runtime.",
+        wraplength=145,
+        justify="left",
+    ).pack(anchor="w", pady=(14, 0))
 
     def send_command(_event=None) -> None:
         command = command_entry.get()
