@@ -1,10 +1,13 @@
 """Focused tests for shared model catalog and safe selection validation."""
 import json
+import tempfile
 import unittest
+from pathlib import Path
+import yaml
 from unittest.mock import patch
 
 from core.model_catalog import get_provider, list_providers
-from core.model_selection import apply_model_selection, list_installed_ollama_models, model_selection_options, validate_model_selection
+from core.model_selection import apply_model_selection, list_installed_ollama_models, model_selection_options, persist_model_selection, validate_model_selection
 
 
 class _Response:
@@ -94,6 +97,33 @@ class ModelCatalogTests(unittest.TestCase):
         })
         self.assertEqual(selected["openai_model"], "gpt-4.1-mini")
         self.assertEqual(selected["openai_base_url"], "https://api.openai.com/v1")
+
+    def test_selection_is_persisted_without_secret_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            path.write_text("workspace: ./workspace\\n", encoding="utf-8")
+            result = persist_model_selection({
+                "provider": "ollama",
+                "model": "llama3.2:3b",
+                "base_url": "http://127.0.0.1:11434",
+            }, path=path)
+            saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+        self.assertEqual(result["provider"], "ollama")
+        self.assertEqual(saved["ollama_model"], "llama3.2:3b")
+        self.assertEqual(saved["workspace"], "./workspace")
+        self.assertNotIn("api_key", saved)
+        self.assertNotIn("api_key_env", saved)
+
+    def test_persistence_rejects_unsupported_provider_without_writing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            with self.assertRaisesRegex(ValueError, "not yet supported"):
+                persist_model_selection({
+                    "provider": "gemini_api",
+                    "model": "gemini-2.5-flash",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                }, path=path)
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":
