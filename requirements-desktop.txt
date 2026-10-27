@@ -1,0 +1,2 @@
+# Optional native desktop wrapper (PyWebView)
+pywebview>=5.0,<7.0

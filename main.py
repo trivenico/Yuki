@@ -103,6 +103,7 @@ def print_help():
   /defense remove RULE_ID        Remove a Yuki-created rule (approval required)
   /metasploit status             Execution is not implemented
   /dashboard                     Open optional Textual supervision dashboard
+  /desktop                       Open optional desktop companion window
   /quit
 
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
@@ -543,6 +544,12 @@ def main():
                 print(f"Yuki > Firewall removal blocked/unavailable: {exc}")
         elif command == "/metasploit status":
             print(exploit_runner.status()["message"])
+        elif command == "/desktop":
+            try:
+                from ui.desktop import run_desktop
+                run_desktop(agent, ai=ai, config=config)
+            except RuntimeError as exc:
+                print(f"Yuki > Desktop unavailable: {exc}")
         elif command == "/dashboard":
             try:
                 from ui.dashboard import run_dashboard
