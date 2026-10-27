@@ -35,6 +35,64 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(run_cli(["desktop"], output_fn=lambda _: None), 0)
         run_desktop.assert_called_once_with()
 
+    def test_setup_never_downloads_model_without_explicit_confirmation(self):
+        output = []
+        with patch("yuki_cli.shutil.which", return_value="/usr/bin/ollama"), patch(
+            "yuki_cli.subprocess.run", return_value=type("Result", (), {
+                "returncode": 0, "stdout": "NAME ID SIZE MODIFIED\\nother:latest abc 1GB today\\n"
+            })()
+        ) as run:
+            code = run_cli(
+                ["setup"],
+                config_loader=lambda: {"provider": "ollama", "ollama_model": "llama3.2:3b"},
+                input_fn=lambda _: "n",
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][-1], "list")
+        self.assertIn("ollama pull llama3.2:3b", output[-1])
+
+    def test_setup_only_pulls_after_yes_confirmation(self):
+        output = []
+        results = [
+            type("Result", (), {"returncode": 0, "stdout": "NAME ID SIZE MODIFIED\\nother:latest abc 1GB today\\n"})(),
+            type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+        ]
+        with patch("yuki_cli.shutil.which", return_value="/usr/bin/ollama"), patch(
+            "yuki_cli.subprocess.run", side_effect=results
+        ) as run:
+            code = run_cli(
+                ["setup"],
+                config_loader=lambda: {"provider": "ollama", "ollama_model": "llama3.2:3b"},
+                input_fn=lambda _: "yes",
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.args[0][-2:], ["pull", "llama3.2:3b"])
+        self.assertIn("inference is not yet verified", output[-1])
+
+    def test_setup_rejects_untrusted_model_command_characters(self):
+        output = []
+        code = run_cli(
+            ["setup"],
+            config_loader=lambda: {"provider": "ollama", "ollama_model": "model;del files"},
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("invalid", output[-1].lower())
+
+    def test_setup_preserves_explicit_cloud_provider_selection(self):
+        output = []
+        code = run_cli(
+            ["setup"],
+            config_loader=lambda: {"provider": "openai"},
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(any("No provider or cloud setting was changed." in line for line in output))
+
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
