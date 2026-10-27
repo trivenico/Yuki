@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
-from yuki_agent import YukiAgent
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +30,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
     output_fn(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _safe_ask(provider, prompt: str) -> tuple[str, int]:
+    """Return a sanitized response and non-zero status for provider failures."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return "Yuki: Please enter a message.", 2
+    try:
+        if not provider.is_available():
+            return "Yuki: The configured provider is unavailable.", 3
+        answer = provider.generate(prompt.strip())
+    except Exception as exc:
+        return f"Yuki: Provider request failed ({type(exc).__name__}).", 4
+    if not isinstance(answer, str) or not answer.strip():
+        return "Yuki: Provider returned an invalid response.", 4
+    return answer, 0
 
 
 def run_cli(
@@ -53,7 +66,6 @@ def run_cli(
     try:
         config = config_loader()
         provider = provider_factory(config)
-        agent = YukiAgent(provider)
     except Exception as exc:
         output_fn(f"Yuki could not initialize the configured provider ({type(exc).__name__}).")
         return 2
@@ -72,8 +84,9 @@ def run_cli(
         return 0 if available else 3
 
     if args.command == "ask":
-        output_fn(agent.ask(args.prompt))
-        return 0 if agent.status() == "Provider is ready." else 3
+        answer, status = _safe_ask(provider, args.prompt)
+        output_fn(answer)
+        return status
 
     if args.command == "chat":
         output_fn("Yuki chat. Type /quit to exit. Tool execution is disabled in this CLI mode.")
@@ -87,7 +100,10 @@ def run_cli(
                 return 0
             if not message.strip():
                 continue
-            output_fn("Yuki> " + agent.ask(message))
+            answer, status = _safe_ask(provider, message)
+            output_fn("Yuki> " + answer)
+            if status in {3, 4}:
+                return status
 
 
 def main() -> int:
