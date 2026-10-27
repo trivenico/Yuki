@@ -35,7 +35,7 @@ def run_desktop() -> None:
     """Run the desktop console; operational commands retain CLI approval gates."""
     try:
         import tkinter as tk
-        from tkinter import messagebox, ttk
+        from tkinter import filedialog, messagebox, ttk
     except ImportError as exc:
         raise RuntimeError(
             "Tkinter is unavailable. Install your operating system's Python Tk support, "
@@ -53,6 +53,9 @@ def run_desktop() -> None:
         frame,
         text="Yuki Desktop · commands and approvals run through the guarded CLI runtime",
     ).pack(anchor="w", pady=(0, 8))
+
+    extension_row = ttk.Frame(frame)
+    extension_row.pack(fill="x", pady=(0, 8))
 
     output_frame = ttk.Frame(frame)
     output_frame.pack(side="top", fill="both", expand=True)
