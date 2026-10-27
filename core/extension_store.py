@@ -10,6 +10,8 @@ import os
 import re
 import tempfile
 from pathlib import Path
+
+import yaml
 from urllib.parse import urlsplit
 
 from core.portable_paths import data_root
@@ -147,8 +149,8 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
 def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
     """Import an Agent Skills-style SKILL.md as a declarative, non-executable prompt skill.
 
-    Only the SKILL.md document is imported. Sibling scripts, tools, and other files
-    are deliberately ignored; imported instructions never grant policy permissions.
+    Only the SKILL.md document is imported. Sibling scripts and tools are ignored.
+    Imported instructions never grant policy permissions.
     """
     source = Path(skill_file).expanduser().resolve()
     if source.name.lower() != "skill.md":
@@ -159,34 +161,37 @@ def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
         document = source.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise ValueError("SKILL.md could not be read as UTF-8 text.") from exc
-    if not document.startswith("---\\n"):
+
+    if not document.startswith("---\n"):
         raise ValueError("SKILL.md must begin with YAML frontmatter.")
-    _, separator, remainder = document[4:].partition("\\n---\\n")
+    frontmatter, separator, instructions = document[4:].partition("\n---\n")
     if not separator:
         raise ValueError("SKILL.md frontmatter is not closed.")
     try:
-        metadata = __import__("yaml").safe_load(remainder.split("\\n", 1)[0] if False else document[4:4 + len(document[4:]) - len(remainder) - len("\\n---\\n")]) or {}
-    except Exception as exc:
+        metadata = yaml.safe_load(frontmatter) or {}
+    except yaml.YAMLError as exc:
         raise ValueError("SKILL.md frontmatter must be valid YAML.") from exc
     if not isinstance(metadata, dict):
         raise ValueError("SKILL.md frontmatter must be a YAML mapping.")
+
     allowed = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
     if set(metadata) - allowed or not {"name", "description"}.issubset(metadata):
         raise ValueError("SKILL.md must have name and description and no unsupported frontmatter fields.")
-    name = metadata["name"]
-    description = metadata["description"]
-    instructions = remainder.strip()
+    name, description = metadata["name"], metadata["description"]
+    instructions = instructions.strip()
     if not isinstance(name, str) or not _SKILL_NAME.fullmatch(name):
         raise ValueError("Skill name must be a lowercase identifier (2-48 characters).")
     if not isinstance(description, str) or not description.strip() or len(description) > 500:
         raise ValueError("Skill description must be non-empty and at most 500 characters.")
     if not instructions or len(instructions) > 12000:
         raise ValueError("Skill instructions must be non-empty and at most 12000 characters.")
+
+    normalized_name = name.replace("-", "_")
     manifest = validate_skill_manifest({
         "type": "yuki_skill",
-        "id": name.replace("-", "_"),
+        "id": normalized_name,
         "version": "1",
-        "name": name.replace("-", "_"),
+        "name": normalized_name,
         "description": description.strip(),
         "instructions": instructions,
     })
