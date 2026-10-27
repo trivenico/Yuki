@@ -197,18 +197,12 @@ def run_desktop() -> None:
             window.destroy()
             return
 
-        ttk.Label(panel, text="Local AI model", font=("TkDefaultFont", 10, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
-        )
+        ai_group = ttk.LabelFrame(panel, text="General & AI", padding=10)
+        ai_group.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(ai_group, text="Local Ollama model").grid(row=0, column=0, sticky="w")
         model_value = tk.StringVar(value=current["ollama_model"])
-        ttk.Entry(panel, textvariable=model_value, width=34).grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(0, 4)
-        )
-        ttk.Label(
-            panel,
-            text="Example: llama3.2:3b. Changing this does not download the model.",
-            wraplength=360,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=1, column=0, sticky="ew", pady=4)
+        ttk.Label(ai_group, text="Default: llama3.2:3b. Saving does not download a model.", wraplength=360).grid(row=2, column=0, sticky="w")
 
         labels = {
             "voice_enabled": "Enable optional voice features",
@@ -220,20 +214,24 @@ def run_desktop() -> None:
             "wakeword_enabled": "Enable wake-word feature",
             "plugin_discovery_enabled": "Enable plugin discovery",
         }
+        groups = (
+            ("Voice", ("voice_enabled", "wakeword_enabled")),
+            ("Privacy & Security", ("security_lab_enabled", "sandbox_enabled", "firewall_enabled", "firewall_dry_run")),
+            ("Integrations", ("gmail_enabled", "plugin_discovery_enabled")),
+        )
         variables = {}
-        for row, key in enumerate(BOOLEAN_SETTINGS, start=3):
-            variable = tk.BooleanVar(value=current[key])
-            variables[key] = variable
-            ttk.Checkbutton(panel, text=labels[key], variable=variable).grid(
-                row=row, column=0, columnspan=2, sticky="w", pady=2
-            )
-
+        for row, (title, keys) in enumerate(groups, start=1):
+            group = ttk.LabelFrame(panel, text=title, padding=10)
+            group.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+            for key in keys:
+                variable = tk.BooleanVar(value=current[key])
+                variables[key] = variable
+                ttk.Checkbutton(group, text=labels[key], variable=variable).pack(anchor="w", pady=2)
         ttk.Label(
             panel,
-            text="Optional integrations may need extra dependencies or credentials. "
-                 "Environment variables can override saved settings.",
-            wraplength=360,
-        ).grid(row=3 + len(BOOLEAN_SETTINGS), column=0, columnspan=2, sticky="w", pady=(10, 12))
+            text="Optional features may need extra dependencies or credentials. Environment variables can override saved settings. Restart Yuki after saving.",
+            wraplength=430,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         def save_settings() -> None:
             changes = {"ollama_model": model_value.get()}
@@ -252,7 +250,7 @@ def run_desktop() -> None:
             window.destroy()
 
         actions = ttk.Frame(panel)
-        actions.grid(row=4 + len(BOOLEAN_SETTINGS), column=0, columnspan=2, sticky="e")
+        actions.grid(row=5, column=0, columnspan=2, sticky="e")
         ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right")
         ttk.Button(actions, text="Save Settings", command=save_settings).pack(side="right", padx=(0, 8))
 
