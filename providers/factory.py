@@ -21,9 +21,9 @@ def create_provider(config=None,*,environ=None,cloud_approver=None):
         preset,key=_PRESETS["llama.cpp" if selected in {"llama.cpp","llama-cpp"} else "lm-studio"]
         return _compatible(model,str(cfg.get("base_url") or env.get("YUKI_BASE_URL",preset)),str(cfg.get("api_key_env",key)),environ=env)
     if selected == "gemini_api":
-        return GeminiAPIProvider(model or "gemini-2.5-flash", api_key_env=str(cfg.get("api_key_env") or "GEMINI_API_KEY"), timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env)
+        return GeminiAPIProvider(model or "gemini-2.5-flash", api_key_env=str(cfg.get("api_key_env") or "GEMINI_API_KEY"), timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env, approval_callback=cloud_approver)
     if selected == "nvidia":
-        return NvidiaNIMProvider(model or "openai/gpt-oss-20b", api_key_env=str(cfg.get("api_key_env") or "NVIDIA_API_KEY"), environ=env, timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)))
+        return NvidiaNIMProvider(model or "openai/gpt-oss-20b", api_key_env=str(cfg.get("api_key_env") or "NVIDIA_API_KEY"), environ=env, timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), approval_callback=cloud_approver)
     if selected=="anthropic": return AnthropicProvider(model,api_key_env=str(cfg.get("api_key_env") or "ANTHROPIC_API_KEY"),base_url=str(cfg.get("base_url") or "https://api.anthropic.com"),approval_callback=cloud_approver)
     if selected in {"openai","deepseek","glm","openai-compatible","custom"}:
         preset,key=_PRESETS.get(selected,("https://api.openai.com/v1","OPENAI_API_KEY"))
