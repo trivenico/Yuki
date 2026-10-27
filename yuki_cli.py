@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -102,7 +103,7 @@ def run_cli(
             output_fn(f"Configured provider: {selected}. Run 'python yuki_cli.py doctor' to review local readiness.")
             output_fn("No provider or cloud setting was changed.")
             return 0
-        model = str(config.get("ollama_model", "llama3.2:3b")).strip()
+        model = str(os.environ.get("YUKI_OLLAMA_MODEL", config.get("ollama_model", "llama3.2:3b"))).strip()
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model):
             output_fn("The configured Ollama model name is invalid. Use letters, numbers, dots, underscores, colons, slashes, or hyphens.")
             return 2
