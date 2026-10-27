@@ -31,7 +31,7 @@ from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
-from core.extension_store import install_extension, list_extensions, remove_extension, load_installed_skills, load_installed_mcp_servers
+from core.extension_store import install_extension, install_skill_file, list_extensions, remove_extension, load_installed_skills, load_installed_mcp_servers
 from skills.mcp_plugin import MCPPluginSkill
 from skills.connector_management import ConnectorManagementSkill
 
@@ -263,6 +263,23 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/skills import "):
+            try:
+                skill_path = _one_path_argument(command[len("/skills import "):].strip())
+                installed = install_skill_file(skill_path)
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == installed["id"]), None)
+                if skill is None:
+                    remove_extension(installed["id"], "skill")
+                    raise ValueError("Imported skill failed validation.")
+                try:
+                    agent.registry.register(skill)
+                except Exception:
+                    remove_extension(installed["id"], "skill")
+                    raise
+                print(f"Yuki > Imported Agent Skill '{installed['id']}' as declarative guidance for this session.")
+            except Exception as exc:
+                print(f"Yuki > Agent Skill import failed safely ({type(exc).__name__}): {str(exc)[:240]}")
         elif command.startswith("/skills install "):
             try:
                 manifest_path = _one_path_argument(command[len("/skills install "):].strip())
