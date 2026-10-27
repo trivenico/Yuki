@@ -55,6 +55,27 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertEqual(skills.calls, [("time", "")])
         self.assertEqual(provider.calls, 2)
 
+    def test_duplicate_json_keys_are_rejected(self):
+        skills = FakeSkillAgent()
+        raw = '{"type":"final","type":"tool_call","skill":"time","argument":""}'
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Do a task")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
+    def test_unknown_fields_are_rejected(self):
+        skills = FakeSkillAgent()
+        raw = json.dumps({"type": "tool_call", "skill": "time", "argument": "", "shell": "ignored"})
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Do a task")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
+    def test_final_schema_requires_exact_fields(self):
+        skills = FakeSkillAgent()
+        raw = json.dumps({"type": "final", "message": "ok", "skill": "time"})
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Say hello")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
         result = ApprovedTaskAgent(FakeProvider(["not JSON"]), skills).run("Do a task")
