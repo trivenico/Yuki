@@ -28,7 +28,7 @@ def create_provider(config=None, *, environ=None):
         return OpenAICompatibleProvider(
             model,
             api_key_env="OPENAI_API_KEY",
-            base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
+            base_url=str(env.get("YUKI_OPENAI_BASE_URL", cfg.get("openai_base_url", "https://api.openai.com/v1"))),
             environ=env,
         )
     if selected == "gemini":
