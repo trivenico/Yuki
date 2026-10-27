@@ -13,7 +13,7 @@ def _compatible(model,url,key_env,*,environ,approval_callback=None):
     return OpenAICompatibleProvider(model,api_key_env=key_env or "YUKI_LOCAL_DUMMY_KEY",base_url=url,allow_http_loopback=True,environ=environ,approval_callback=approval_callback)
 def create_provider(config=None,*,environ=None,cloud_approver=None):
     cfg=dict(config or {}); env=os.environ if environ is None else environ
-    selected=str(cfg.get("provider","mock")).strip().lower()
+    selected=str(cfg.get("provider","ollama")).strip().lower()
     if selected=="mock": return MockProvider()
     model=str(cfg.get("model",cfg.get("ollama_model",env.get("YUKI_OLLAMA_MODEL","")))).strip()
     if selected=="ollama": return OllamaProvider(base_url=str(cfg.get("base_url") or cfg.get("ollama_base_url","http://127.0.0.1:11434")),model=model)
