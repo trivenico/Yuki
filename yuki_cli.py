@@ -128,7 +128,7 @@ def run_cli(
             fields = line.split()
             if fields:
                 installed.add(fields[0])
-        if model in installed or any(name.split(":")[0] == model.split(":")[0] for name in installed):
+        if model in installed:
             output_fn(f"Configured model appears installed: {model}. Run 'python yuki_cli.py doctor' to check local readiness.")
             return 0
         output_fn(f"Configured local model is not listed: {model}.")
