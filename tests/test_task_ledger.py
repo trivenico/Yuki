@@ -27,7 +27,12 @@ class TaskLedgerTests(unittest.TestCase):
         awaiting = self.ledger.transition(task["id"], "awaiting_verification", result="Runner returned success")
         self.assertEqual(awaiting["status"], "awaiting_verification")
         self.assertNotIn(awaiting["status"], {"completed", "failed", "cancelled"})
-        completed = self.ledger.transition(task["id"], "completed", result="Independent acceptance check passed")
+        with self.assertRaisesRegex(ValueError, "verification evidence"):
+            self.ledger.transition(task["id"], "completed", result="Model says it worked")
+        completed = self.ledger.transition(
+            task["id"], "completed", result="Independent acceptance check passed",
+            verification_evidence="Expected output matched the test assertion.",
+        )
         self.assertEqual(completed["result"], "Independent acceptance check passed")
         with self.assertRaisesRegex(ValueError, "transition"):
             self.ledger.transition(task["id"], "running")
@@ -65,6 +70,15 @@ class TaskLedgerTests(unittest.TestCase):
             self.ledger.transition("missing", "running")
         with self.assertRaisesRegex(ValueError, "JSON-serializable"):
             self.ledger.create("Bad metadata", metadata={"value": object()})
+
+
+    def test_existing_database_schema_is_migrated(self):
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.execute("ALTER TABLE tasks DROP COLUMN verification_evidence")
+        reopened = TaskLedger(self.path)
+        task = reopened.create("After migration")
+        self.assertEqual(task["verification_evidence"], "")
 
     def test_status_set_is_explicit(self):
         self.assertEqual(TASK_STATUSES, {
