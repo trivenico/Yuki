@@ -5,6 +5,7 @@ from pathlib import Path
 
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
+from companion.evolution import DailyEvolutionCycle
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
 from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
@@ -17,6 +18,10 @@ from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
+_EVOLUTION_DIR = Path(__file__).with_name(".yuki") / "evolution"
+
+def _evolution_cycle():
+    return DailyEvolutionCycle(_EVOLUTION_DIR)
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -105,6 +110,10 @@ Yuki commands:
   /lessons TASK                   Find relevant saved lessons
   /learning                       Show recent learning history
   /learning clear                 Clear learning history
+  /evolve status                  Show local learning-review status
+  /evolve run                     Analyze recent explicit observations
+  /evolve record CATEGORY | TEXT  Record an observation locally
+  /evolve review ID accept|reject Review a proposal without applying it
   /audit                          Show recent metadata-only audit events
   /quit                           Exit Yuki
 
@@ -341,13 +350,65 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             return "Saved memory cleared."
         memory.extend(old)
         return "Could not clear memory."
+    if command == "/evolve status":
+        try:
+            status = _evolution_cycle().status()
+            return (f"Local evolution: {status['observations']} observations; "
+                    f"{status['pending_proposals']} pending proposals; "
+                    f"last report: {status['last_report_at'] or 'not run'}.")
+        except Exception as error:
+            return f"Evolution subsystem unavailable ({type(error).__name__})."
+    if command == "/evolve run":
+        try:
+            report = _evolution_cycle().run_cycle()
+            write_audit_event("evolution:run", "completed")
+            return (f"Reviewed {report['observations_reviewed']} observations; "
+                    f"{len(report['proposals'])} proposals await review. No changes were applied.")
+        except Exception as error:
+            return f"Evolution review failed safely ({type(error).__name__})."
+    if command.startswith("/evolve record "):
+        payload = command[len("/evolve record "):]
+        category, separator, summary = payload.partition("|")
+        if not separator:
+            return "Usage: /evolve record CATEGORY | TEXT"
+        try:
+            item = _evolution_cycle().record(category.strip(), summary.strip())
+            write_audit_event("evolution:record", "completed")
+            return f"Recorded local {item['category']} observation {item['id']}."
+        except Exception as error:
+            return f"Observation rejected ({type(error).__name__}): {error}"
+    if command.startswith("/evolve review "):
+        parts = command.split(maxsplit=3)
+        if len(parts) != 4 or parts[3] not in {"accept", "reject"}:
+            return "Usage: /evolve review ID accept|reject"
+        decision = "accepted_for_manual_followup" if parts[3] == "accept" else "rejected"
+        try:
+            result = _evolution_cycle().review(parts[2], decision)
+            write_audit_event("evolution:review", decision)
+            return f"Proposal {result['id']} marked {result['status']}; no changes were applied."
+        except Exception as error:
+            return f"Proposal review rejected ({type(error).__name__}): {error}"
+
     if command.startswith("/learn "):
         parts = command[len("/learn "):].split("|", 2)
         if len(parts) < 2:
             return "Usage: /learn TASK | OUTCOME | LESSON"
         result = record_outcome(parts[0].strip(), parts[1].strip(),
                                 "Recorded through terminal", parts[2].strip() if len(parts) > 2 else "")
-        write_audit_event("learning:record", "completed" if result.startswith("Outcome recorded") else "failed")
+        succeeded = result.startswith("Outcome recorded")
+        write_audit_event("learning:record", "completed" if succeeded else "failed")
+        if succeeded:
+            # Mirror the explicit learning outcome into the local evolution review log.
+            # This is an observation only; the evolution cycle never changes code or settings.
+            try:
+                lesson = parts[2].strip() if len(parts) > 2 else ""
+                summary = f"Task: {parts[0].strip()}; outcome: {parts[1].strip()}"
+                if lesson:
+                    summary += f"; lesson: {lesson}"
+                _evolution_cycle().record("lesson", summary[:1200])
+            except Exception:
+                # The existing learning flow must remain usable if evolution storage is unavailable.
+                pass
         return result
     if command.startswith("/lessons"):
         task = command[len("/lessons"):].strip()
