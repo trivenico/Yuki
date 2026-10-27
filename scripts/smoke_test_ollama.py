@@ -64,7 +64,14 @@ def main() -> int:
         print("FAIL: Ollama returned an empty response.")
         return 6
 
-    print("PASS: real Ollama inference returned a non-empty response.")
+    # A non-empty response can still be unrelated or an error-like answer.
+    # Require the requested sentinel before reporting a successful smoke test.
+    if "YUKI_OLLAMA_SMOKE_OK" not in response:
+        print("FAIL: Ollama responded, but the expected smoke-test sentinel was absent.")
+        print("The model may have ignored the instruction; no fallback was attempted.")
+        return 7
+
+    print("PASS: real Ollama inference returned the expected smoke-test sentinel.")
     print("Response preview:")
     print(response.strip()[:500])
     print("This confirms provider connectivity and inference only; it is not a full application acceptance test.")
