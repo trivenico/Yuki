@@ -7,7 +7,7 @@ import yaml
 from unittest.mock import patch
 
 from core.model_catalog import get_provider, list_providers
-from core.model_selection import apply_model_selection, list_installed_ollama_models, model_selection_options, persist_model_selection, validate_model_selection
+from core.model_selection import _NoRedirectHandler, apply_model_selection, list_installed_ollama_models, model_selection_options, persist_model_selection, validate_model_selection
 
 
 class _Response:
@@ -65,17 +65,41 @@ class ModelCatalogTests(unittest.TestCase):
                 "base_url": "http://api.example.invalid/v1",
             })
 
+    def test_openai_selection_accepts_custom_https_endpoint(self):
+        selected = validate_model_selection({
+            "provider": "openai",
+            "model": "custom-compatible-model",
+            "base_url": "https://api.example.invalid/v1",
+        })
+        self.assertEqual(selected["base_url"], "https://api.example.invalid/v1")
+
     def test_ollama_discovery_is_loopback_only(self):
-        with patch("core.model_selection.urllib.request.urlopen") as open_url:
+        with patch("core.model_selection.urllib.request.build_opener") as build_opener:
             with self.assertRaisesRegex(ValueError, "loopback"):
                 list_installed_ollama_models("http://192.0.2.10:11434")
-        open_url.assert_not_called()
+        build_opener.assert_not_called()
 
     def test_ollama_discovery_bounds_and_deduplicates_models(self):
         payload = json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "llama3.2:3b"}, {"name": ""}]}).encode()
-        with patch("core.model_selection.urllib.request.urlopen", return_value=_Response(payload)):
+        with patch("core.model_selection.urllib.request.build_opener") as build_opener:
+            build_opener.return_value.open.return_value = _Response(payload)
             models = list_installed_ollama_models()
         self.assertEqual([item["id"] for item in models], ["llama3.2:3b"])
+
+    def test_local_provider_rejects_remote_https_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            validate_model_selection({
+                "provider": "ollama",
+                "model": "llama3.2:3b",
+                "base_url": "https://remote.example.invalid:11434",
+            })
+
+    def test_ollama_discovery_disables_http_redirects(self):
+        handler = _NoRedirectHandler()
+        # urllib's default redirect behavior is disabled by returning None.
+        self.assertIsNone(handler.redirect_request(
+            None, None, 302, "Found", {}, "http://example.invalid/steal"
+        ))
 
     def test_supported_selection_maps_to_runtime_config_without_mutation(self):
         original = {"workspace": "./workspace", "provider": "ollama"}
