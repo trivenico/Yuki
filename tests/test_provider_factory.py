@@ -13,6 +13,17 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_explicit_environment_overrides_local_model_and_endpoint(self):
+        provider = create_provider(
+            {"provider": "ollama", "ollama_model": "configured-model"},
+            environ={
+                "YUKI_OLLAMA_MODEL": "environment-model",
+                "YUKI_OLLAMA_BASE_URL": "http://127.0.0.1:11435",
+            },
+        )
+        self.assertEqual(provider.model, "environment-model")
+        self.assertEqual(provider.base_url, "http://127.0.0.1:11435")
+
     def test_mock_provider_is_rejected_by_runtime_factory(self):
         with self.assertRaisesRegex(ValueError, "test-only"):
             create_provider({"provider": "mock"}, environ={})
