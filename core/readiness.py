@@ -88,6 +88,14 @@ def build_readiness_report(
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
+    configured_model = str(env.get("YUKI_OLLAMA_MODEL", "")).strip()
+    if not configured_model and environ is None:
+        try:
+            from core.config import load_config
+            configured_model = str(load_config().get("ollama_model", "")).strip()
+        except Exception:
+            configured_model = ""
+
     capabilities: dict[str, Capability] = {
         "python_runtime": Capability("detected", sys.version.split()[0]),
         "ollama_cli": (
@@ -102,8 +110,8 @@ def build_readiness_report(
         ),
         "ollama_model_config": (
             Capability("configured", "A local model name is configured; model availability not verified.")
-            if str(env.get("YUKI_OLLAMA_MODEL", "")).strip()
-            else Capability("unconfigured", "Set YUKI_OLLAMA_MODEL to select a local model.")
+            if configured_model
+            else Capability("unconfigured", "Set YUKI_OLLAMA_MODEL or configure ollama_model to select a local model.")
         ),
         "pytorch": (
             Capability("detected", "PyTorch is import-discoverable; accelerator availability not verified.")
