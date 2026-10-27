@@ -12,17 +12,20 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
 
 
 class GeminiAPIProvider:
-    def __init__(self, model="gemini-2.5-flash", *, timeout=45, environ=None):
+    def __init__(self, model="gemini-2.5-flash", *, api_key_env="GEMINI_API_KEY", timeout=45, environ=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid Gemini model name.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
+        if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
+            raise ValueError("API key environment variable name is invalid.")
         self.model = model.strip()
+        self.api_key_env = api_key_env
         self.timeout = timeout
         self._environ = os.environ if environ is None else environ
 
     def is_available(self):
-        return bool(self._environ.get("GEMINI_API_KEY", "").strip())
+        return bool(self._environ.get(self.api_key_env, "").strip())
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
