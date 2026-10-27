@@ -85,8 +85,12 @@ class DesktopBridge:
             self.provider_name = clean["provider"]
             self.cloud_confirmation_required = meta["kind"] == "cloud"
             return {"ok": True, "provider": self.provider_name, "model": clean["model"], "message": "Model selection saved and activated."}
-        except (ValueError, OSError, RuntimeError) as exc:
+        except ValueError as exc:
+            # Validation messages are intentionally bounded and do not contain secrets.
             return {"ok": False, "message": str(exc)[:240]}
+        except (OSError, RuntimeError):
+            # Provider and filesystem errors can echo credentials or local paths.
+            return {"ok": False, "message": "Model selection failed safely. Check provider configuration and retry."}
     def get_status(self) -> dict[str, Any]:
         try:
             registry = getattr(self.agent, "registry", None)
