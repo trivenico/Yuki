@@ -188,7 +188,7 @@ def run_desktop() -> None:
         ("Interactive Session", focus_composer),
         ("Tasks & Plans", lambda: insert_command("/plan ")),
         ("Automation", lambda: send_text("/reminders")),
-        ("Scripting & Developer", lambda: insert_command("/knowledge index ")),
+        ("Developer Workflows", lambda: insert_command("/knowledge index ")),
         ("Memory", lambda: send_text("/memory list")),
         ("Skills", lambda: send_text("/skills")),
         ("Plugins", lambda: send_text("/plugins")),
@@ -216,7 +216,7 @@ def run_desktop() -> None:
     add_shortcut("Plan task", "/plan ")
     add_shortcut("Task command", "/task ")
     add_shortcut("Reminders", "/reminders")
-    add_shortcut("Index project", "/knowledge index ")
+    add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
 
@@ -260,6 +260,8 @@ def run_desktop() -> None:
             return
         if not command_history or command_history[-1] != command:
             command_history.append(command)
+            if len(command_history) > 500:
+                del command_history[:-500]
         history_position = None
         send_text(command)
         command_entry.delete(0, "end")
