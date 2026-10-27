@@ -46,7 +46,7 @@ From the Yuki repository root, after installing the project dependencies:
 python scripts/smoke_test_ollama.py
 ```
 
-Expected success includes `PASS: real Ollama inference returned a non-empty response.` The script returns a non-zero exit code on configuration, connectivity, missing-model, or inference failure. It never silently switches to mock or cloud inference.
+Expected success includes `PASS: real Ollama inference returned the expected smoke-test sentinel.` The script requires `YUKI_OLLAMA_SMOKE_OK` in the model response; an unrelated non-empty response fails. The script returns a non-zero exit code on configuration, connectivity, missing-model, or inference failure. It never silently switches to mock or cloud inference.
 
 ## 4. Test the actual CLI separately
 
