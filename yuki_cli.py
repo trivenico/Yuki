@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("start", help="Start the full guarded Yuki CLI runtime")
-    sub.add_parser("desktop", help="Open the optional supervision dashboard")
+    sub.add_parser("desktop", help="Open the desktop GUI console")
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
 
@@ -75,6 +75,9 @@ def run_cli(
             from ui.desktop_app import run_desktop
             run_desktop()
             return 0
+        except RuntimeError as exc:
+            output_fn(str(exc))
+            return 2
         except Exception as exc:
             output_fn(f"Yuki desktop failed to start ({type(exc).__name__}).")
             return 2
