@@ -48,7 +48,7 @@ class DesktopBridge:
             self.provider_name in CLOUD_PROVIDERS
             or (
                 self.provider_name == "hybrid"
-                and any(isinstance(task, str) and task.strip().lower() == "general" for task in cloud_tasks)
+                and any(isinstance(task, str) and task.strip() for task in cloud_tasks)
             )
         )
 
