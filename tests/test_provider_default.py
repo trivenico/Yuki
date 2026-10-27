@@ -64,8 +64,8 @@ class ProviderDefaultTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             config_path.write_text(
-                "provider: openai\\nopenai_model: gpt-4.1-nano\\n"
-                "openai_base_url: https://api.openai.com/v1\\nworkspace: ./workspace\\n",
+                "provider: openai\nopenai_model: gpt-4.1-nano\n"
+                "openai_base_url: https://api.openai.com/v1\nworkspace: ./workspace\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {}, clear=True):
@@ -77,7 +77,7 @@ class ProviderDefaultTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
             config_path.write_text(
-                "provider: openai\\nopenai_base_url: http://api.openai.com/v1\\nworkspace: ./workspace\\n",
+                "provider: openai\nopenai_base_url: http://api.openai.com/v1\nworkspace: ./workspace\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {}, clear=True):
