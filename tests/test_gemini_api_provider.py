@@ -50,6 +50,10 @@ class GeminiAPIProviderTests(unittest.TestCase):
         self.assertEqual(opener.timeout, 45)
         self.assertNotIn("test-secret", opener.request.full_url)
 
+    def test_cloud_request_requires_explicit_approval(self):
+        provider = GeminiAPIProvider(environ={"GEMINI_API_KEY": "secret"})
+        with self.assertRaisesRegex(RuntimeError, "not explicitly approved"):
+            provider.generate("hello")
     def test_missing_key_fails_before_network(self):
         provider = GeminiAPIProvider(environ={})
         with patch("providers.gemini_api.urllib.request.build_opener") as build:
