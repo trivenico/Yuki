@@ -3,7 +3,6 @@ import unittest
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
 
@@ -13,6 +12,10 @@ class ProviderFactoryTests(unittest.TestCase):
         provider = create_provider({}, environ={})
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
+
+    def test_mock_provider_is_rejected_by_runtime_factory(self):
+        with self.assertRaisesRegex(ValueError, "test-only"):
+            create_provider({"provider": "mock"}, environ={})
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
