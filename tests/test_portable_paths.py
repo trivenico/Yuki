@@ -35,7 +35,9 @@ class PortablePathTests(unittest.TestCase):
             user_data = root / "user-data"
             with patch.object(portable_paths.sys, "frozen", True, create=True), patch.object(
                 portable_paths.sys, "_MEIPASS", str(bundle), create=True
-            ), patch.dict(os.environ, {"XDG_DATA_HOME": str(user_data)}, clear=True):
+            ), patch.object(portable_paths.platform, "system", return_value="Linux"), patch.dict(
+                os.environ, {"XDG_DATA_HOME": str(user_data)}, clear=True
+            ):
                 config = config_path()
                 self.assertEqual(config, (user_data / "Yuki" / "config.yaml").resolve())
                 self.assertIn("provider: ollama", config.read_text(encoding="utf-8"))
