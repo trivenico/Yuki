@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import os
 import re
+from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
     {"name": "ollama", "label": "Ollama", "auth": "local_runtime",
-     "privacy": "local_or_configured_endpoint", "implemented": True,
+     "privacy": "local_runtime", "implemented": True,
      "capabilities": ["text", "local_inference"], "model_env": "YUKI_OLLAMA_MODEL", "key_env": None},
     {"name": "gemini", "label": "Gemini CLI", "auth": "official_cli_login",
      "privacy": "cloud_provider", "implemented": True,
@@ -69,8 +70,17 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             manager = {}
 
     result = []
+    ollama_url = str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434")))
+    try:
+        ollama_host = urlsplit(ollama_url).hostname
+    except ValueError:
+        ollama_host = None
+    ollama_is_loopback = ollama_host in {"localhost", "127.0.0.1", "::1"}
+
     for entry in _CATALOG:
         item = dict(entry)
+        if item["name"] == "ollama" and not ollama_is_loopback:
+            item["privacy"] = "configured_remote_endpoint"
         model_env = item.pop("model_env")
         key_env = item.pop("key_env")
         model = _model(env.get(model_env, "")) if model_env else None
