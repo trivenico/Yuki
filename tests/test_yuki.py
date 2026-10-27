@@ -72,7 +72,7 @@ class ProviderTests(unittest.TestCase):
 class ProviderManagerTests(unittest.TestCase):
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
@@ -116,7 +116,7 @@ class ProviderManagerTests(unittest.TestCase):
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
         from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertIsInstance(agent.provider, __import__("providers.ollama", fromlist=["OllamaProvider"]).OllamaProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -124,7 +124,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: ollama", result)
 
 
 class ToolTests(unittest.TestCase):
