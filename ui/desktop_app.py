@@ -24,7 +24,7 @@ def build_runtime_command() -> list[str]:
         runtime = install_root / "YukiRuntime" / runtime_name
         if not runtime.is_file():
             raise RuntimeError(
-                f"Packaged runtime was not found beside the desktop app: {runtime_name}. "
+                f"Packaged runtime was not found in the adjacent {runtime.parent.name} directory: {runtime_name}. "
                 "Reinstall Yuki or launch the CLI runtime directly."
             )
         return [str(runtime)]
