@@ -6,6 +6,7 @@ from pathlib import Path
 from core.extension_store import (
     InstalledPromptSkill,
     install_extension,
+    install_skill_file,
     list_extensions,
     load_installed_mcp_servers,
     load_installed_skills,
@@ -78,6 +79,30 @@ class ExtensionStoreTests(unittest.TestCase):
         value = self.skill_manifest(instructions="x" * 12001)
         with self.assertRaisesRegex(ValueError, "instructions"):
             validate_skill_manifest(value)
+
+    def test_imports_agent_skills_markdown_as_non_executable_prompt_skill(self):
+        source = self.source / "SKILL.md"
+        source.write_text(
+            "---\\nname: release-notes\\ndescription: Draft accurate release notes.\\n---\\n"
+            "Ask for the release audience, summarize verified changes, and do not invent claims.\\n",
+            encoding="utf-8",
+        )
+        installed = install_skill_file(str(source), root=self.data)
+        self.assertEqual(installed["source_format"], "agentskills_md")
+        skills = load_installed_skills(root=self.data)
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].manifest["id"], "release_notes")
+        self.assertIn("do not invent claims", skills[0].manifest["instructions"])
+
+    def test_agent_skills_import_rejects_non_skill_md_and_unclosed_frontmatter(self):
+        wrong_name = self.source / "README.md"
+        wrong_name.write_text("---\\nname: valid_skill\\ndescription: valid description\\n---\\ntext", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "named SKILL.md"):
+            install_skill_file(str(wrong_name), root=self.data)
+        source = self.source / "SKILL.md"
+        source.write_text("---\\nname: valid_skill\\ndescription: valid description\\nno closing delimiter", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "not closed"):
+            install_skill_file(str(source), root=self.data)
 
     def test_duplicate_json_keys_are_rejected(self):
         path = self.source / "duplicate.json"
