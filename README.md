@@ -6,7 +6,7 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 ## First run
 
-Install with `install_windows.bat` on Windows or `sh install_unix.sh` on macOS/Linux. Start the integrated guarded runtime with `python yuki_cli.py start` (or the platform launcher); use `python yuki_cli.py doctor` for read-only diagnostics and `python yuki_cli.py desktop` for the optional Textual supervision dashboard. New installs default to local Ollama (`llama3.2:3b`); install Ollama and pull that model before asking Yuki to generate answers. Cloud providers require explicit configuration. The desktop dashboard is currently a safe supervision surface for status and skill listing, not yet feature-parity with the full CLI.
+Install with `install_windows.bat` on Windows or `sh install_unix.sh` on macOS/Linux. Start the integrated guarded runtime with `python yuki_cli.py start` (or the platform launcher); use `python yuki_cli.py doctor` for read-only diagnostics and `python yuki_cli.py desktop` for the desktop GUI console, which forwards commands to the same guarded runtime. New installs default to local Ollama (`llama3.2:3b`); install Ollama and pull that model before asking Yuki to generate answers. Cloud providers require explicit configuration. The desktop GUI forwards commands and approval prompts to the same guarded runtime as the CLI, so it shares the CLI's feature and safety boundaries. It requires a Python build with Tk support; it is not yet packaged as a standalone executable.
 
 
 
