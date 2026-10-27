@@ -22,7 +22,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", help="Installed Ollama model ID; overrides config for this run only.")
     parser.add_argument("--base-url", help="Ollama endpoint; must be HTTPS or loopback HTTP.")
-    args = parser.parse_args(argv)
+    args = parser.parse_args([] if argv is None else argv)
     try:
         config = load_config()
     except Exception as exc:
@@ -82,4 +82,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
