@@ -17,9 +17,12 @@ class DesktopAppTests(unittest.TestCase):
 
     def test_packaged_desktop_uses_adjacent_runtime_executable(self):
         with tempfile.TemporaryDirectory() as temporary:
-            desktop = Path(temporary) / "YukiDesktop.exe"
-            runtime_dir = Path(temporary) / "YukiRuntime"
+            install_root = Path(temporary)
+            desktop_dir = install_root / "YukiDesktop"
+            runtime_dir = install_root / "YukiRuntime"
+            desktop_dir.mkdir()
             runtime_dir.mkdir()
+            desktop = desktop_dir / "YukiDesktop.exe"
             runtime = runtime_dir / "YukiRuntime.exe"
             desktop.touch()
             runtime.touch()
@@ -30,7 +33,10 @@ class DesktopAppTests(unittest.TestCase):
 
     def test_packaged_desktop_reports_missing_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
-            desktop = Path(temporary) / "YukiDesktop.exe"
+            install_root = Path(temporary)
+            desktop_dir = install_root / "YukiDesktop"
+            desktop_dir.mkdir()
+            desktop = desktop_dir / "YukiDesktop.exe"
             desktop.touch()
             with patch.object(sys, "frozen", True, create=True), patch.object(
                 sys, "executable", str(desktop)
