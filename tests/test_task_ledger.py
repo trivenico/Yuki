@@ -41,7 +41,7 @@ class TaskLedgerTests(unittest.TestCase):
         failed = self.ledger.create("Fail task")
         self.ledger.transition(failed["id"], "failed", error_code="provider_error")
         with self.assertRaisesRegex(ValueError, "transition"):
-            self.ledger.transition(failed["id"], "completed")
+            self.ledger.transition(failed["id"], "completed", verification_evidence="must still be blocked by terminal status")
         cancelled = self.ledger.create("Cancel task")
         self.assertEqual(self.ledger.cancel(cancelled["id"])["status"], "cancelled")
         with self.assertRaisesRegex(ValueError, "transition"):
