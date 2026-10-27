@@ -78,6 +78,14 @@ class ModelCatalogTests(unittest.TestCase):
             models = list_installed_ollama_models()
         self.assertEqual([item["id"] for item in models], ["llama3.2:3b"])
 
+    def test_local_provider_rejects_remote_https_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "loopback"):
+            validate_model_selection({
+                "provider": "ollama",
+                "model": "llama3.2:3b",
+                "base_url": "https://remote.example.invalid:11434",
+            })
+
     def test_ollama_discovery_disables_http_redirects(self):
         handler = _NoRedirectHandler()
         # urllib's default redirect behavior is disabled by returning None.
