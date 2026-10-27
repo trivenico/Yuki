@@ -13,7 +13,7 @@ python -m unittest discover -s tests -v
 python yuki_cli.py start
 ```
 
-Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_yuki_desktop_windows.bat` for GUI. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh` for CLI or `sh run_yuki_desktop_unix.sh` for GUI. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI; it is not yet a standalone packaged executable. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
+Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_yuki_desktop_windows.bat` for GUI. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh` for CLI or `sh run_yuki_desktop_unix.sh` for GUI. The launchers run the guided model setup first and then continue to the runtime even if setup is unavailable or declined; no download occurs without consent. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI; it is not yet a standalone packaged executable. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
 
 ## Local AI provider (default)
 
