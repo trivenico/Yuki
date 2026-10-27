@@ -182,3 +182,8 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+## Windows local-provider acceptance test
+
+For a real Ollama inference check that never falls back to cloud or mock, follow [`docs/windows-ollama-smoke-test.md`](docs/windows-ollama-smoke-test.md) and run `python scripts/smoke_test_ollama.py` from the repository root.
