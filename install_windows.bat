@@ -22,17 +22,17 @@ if errorlevel 1 (
 )
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [1/4] Creating isolated virtual environment...
+  echo [1/5] Creating isolated virtual environment...
   python -m venv .venv
   if errorlevel 1 exit /b 1
 ) else (
   echo [1/4] Existing virtual environment found.
 )
 
-echo [2/4] Updating pip...
+echo [2/5] Updating pip...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
-  echo WARNING: pip upgrade failed. Continuing because Yuki has no third-party dependencies.
+  echo WARNING: pip upgrade failed. Continuing after pip self-upgrade failure; dependency installation below must still succeed.
 )
 
 echo [3/5] Checking core dependencies...
