@@ -42,7 +42,7 @@ class DesktopBridge:
             cloud_approver=self._cloud_approval_callback,
         )
         self.ai = agent_factory(provider, usage_tracker=getattr(ai, "usage_tracker", None))
-        self.provider_name = str(self.config.get("provider", "mock")).strip().lower()
+        self.provider_name = str(self.config.get("provider", "ollama")).strip().lower()
         cloud_tasks = self.config.get("cloud_tasks", [])
         if not isinstance(cloud_tasks, (list, tuple, set, frozenset)):
             cloud_tasks = []
