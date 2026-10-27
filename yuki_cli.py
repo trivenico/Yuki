@@ -30,8 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_json(value) -> None:
-    print(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
+    output_fn(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
 
 
 def run_cli(
@@ -47,7 +47,7 @@ def run_cli(
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
-        _write_json(report)
+        _write_json(report, output_fn)
         return 0
 
     try:
@@ -68,7 +68,7 @@ def run_cli(
             "provider": type(provider).__name__,
             "available": available,
             "status": "ready" if available else "unavailable",
-        })
+        }, output_fn)
         return 0 if available else 3
 
     if args.command == "ask":
