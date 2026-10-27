@@ -1,32 +1,48 @@
 import unittest
 from unittest.mock import patch
+
 from providers.catalog import build_provider_catalog
+
 
 class ProviderCatalogTests(unittest.TestCase):
     def test_catalog_is_sanitized_and_does_not_leak_secrets(self):
         secret = "do-not-display-this-secret"
-        catalog = build_provider_catalog(config={"provider":"hybrid","ollama_model":"qwen3"},
-            environ={"YUKI_OLLAMA_MODEL":"qwen3","OPENAI_API_KEY":secret,
-                     "YUKI_CLOUD_MODEL":"model-x","YUKI_CLOUD_API_KEY_ENV":"OPENAI_API_KEY"})
+        catalog = build_provider_catalog(
+            config={"provider": "hybrid", "ollama_model": "qwen3"},
+            environ={
+                "YUKI_OLLAMA_MODEL": "qwen3",
+                "OPENAI_API_KEY": secret,
+                "YUKI_CLOUD_MODEL": "model-x",
+                "YUKI_CLOUD_API_KEY_ENV": "OPENAI_API_KEY",
+            },
+        )
         rendered = repr(catalog)
         self.assertNotIn(secret, rendered)
         hybrid = next(x for x in catalog if x["name"] == "hybrid")
         self.assertTrue(hybrid["credential_configured"])
         self.assertEqual(hybrid["configured_model"], "model-x")
         self.assertTrue(hybrid["selected"])
+        self.assertFalse(any(x["name"] == "mock" for x in catalog))
 
-    def test_unimplemented_cloud_providers_are_not_reported_ready(self):
-        catalog = build_provider_catalog(environ={"OPENAI_API_KEY":"some-key","YUKI_OPENAI_MODEL":"gpt-x"})
-        openai = next(x for x in catalog if x["name"] == "openai")
-        self.assertFalse(openai["implemented"])
-        self.assertFalse(openai["ready"])
-        self.assertEqual(openai["status"], "adapter_not_implemented")
+    def test_openai_adapter_is_reported_ready_only_with_explicit_credentials(self):
+        missing = next(x for x in build_provider_catalog(environ={}) if x["name"] == "openai")
+        self.assertTrue(missing["implemented"])
+        self.assertFalse(missing["ready"])
+        configured = next(
+            x for x in build_provider_catalog(
+                environ={"OPENAI_API_KEY": "some-key", "YUKI_OPENAI_MODEL": "gpt-x"}
+            ) if x["name"] == "openai"
+        )
+        self.assertTrue(configured["implemented"])
+        self.assertTrue(configured["ready"])
+        self.assertEqual(configured["status"], "credentials_and_model_configured")
 
-    def test_ollama_requires_model_configuration(self):
-        catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})
+    def test_ollama_uses_local_first_model_default(self):
+        catalog = build_provider_catalog(config={"provider": "ollama"}, environ={})
         item = next(x for x in catalog if x["name"] == "ollama")
-        self.assertFalse(item["ready"])
-        self.assertIsNone(item["configured_model"])
+        self.assertTrue(item["ready"])
+        self.assertEqual(item["configured_model"], "llama3.2:3b")
+        self.assertTrue(item["selected"])
 
     @patch("providers.catalog.shutil_which", return_value="/usr/bin/gemini")
     def test_gemini_cli_readiness_does_not_claim_auth_verified(self, _):
@@ -35,9 +51,13 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertEqual(item["status"], "cli_detected_auth_not_verified")
 
     def test_invalid_model_names_are_not_returned(self):
-        item = next(x for x in build_provider_catalog(environ={"YUKI_OLLAMA_MODEL":"bad model"}) if x["name"] == "ollama")
+        item = next(
+            x for x in build_provider_catalog(environ={"YUKI_OLLAMA_MODEL": "bad model"})
+            if x["name"] == "ollama"
+        )
         self.assertIsNone(item["configured_model"])
         self.assertFalse(item["ready"])
+
 
 if __name__ == "__main__":
     unittest.main()
