@@ -135,6 +135,26 @@ class TaskLedger:
                 updated = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._task(updated)
 
+    def record_verification_evidence(self, task_id: str, evidence: str) -> dict[str, Any]:
+        """Record an observation without asserting that the task goal is complete."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("Task ID must be non-empty.")
+        if not isinstance(evidence, str) or not evidence.strip() or len(evidence) > 4000:
+            raise ValueError("Verification evidence must be non-empty text of at most 4000 characters.")
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+                if row is None:
+                    raise KeyError("Task not found.")
+                if row["status"] != "awaiting_verification":
+                    raise ValueError("Evidence can only be recorded for tasks awaiting verification.")
+                db.execute(
+                    "UPDATE tasks SET updated_at=?,verification_evidence=? WHERE id=?",
+                    (_now(), evidence.strip(), task_id),
+                )
+                updated = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        return self._task(updated)
+
     def get(self, task_id: str) -> dict[str, Any] | None:
         with self._lock, closing(self._connect()) as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
