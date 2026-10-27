@@ -76,6 +76,13 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertEqual(result.status, "invalid_model_output")
         self.assertEqual(skills.calls, [])
 
+    def test_excessively_nested_json_is_rejected_without_tool_execution(self):
+        skills = FakeSkillAgent()
+        raw = '{"type":"final","message":' + ('[' * 5000) + '0' + (']' * 5000) + '}'
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Do a task")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
         result = ApprovedTaskAgent(FakeProvider(["not JSON"]), skills).run("Do a task")
