@@ -1,8 +1,12 @@
 # Safe defaults; all privileged/integration features remain disabled.
 name: Yuki
 workspace: ./yuki_workspace
+# Select: ollama, openai, gemini (official CLI), gemini_api, nvidia, or hybrid.
+# Cloud provider keys belong in environment variables, never in this file.
 provider: openai
 openai_model: gpt-4.1-mini
+gemini_model: gemini-2.5-flash
+nvidia_model: openai/gpt-oss-20b
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
 max_agent_steps: 3
