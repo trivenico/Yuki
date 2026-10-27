@@ -26,15 +26,15 @@ fi
 
 "$PYTHON" --version
 if [ ! -x ".venv/bin/python" ]; then
-  echo "[1/4] Creating isolated virtual environment..."
+  echo "[1/5] Creating isolated virtual environment..."
   "$PYTHON" -m venv .venv
 else
   echo "[1/4] Existing virtual environment found."
 fi
 
-echo "[2/4] Updating pip..."
+echo "[2/5] Updating pip..."
 if ! .venv/bin/python -m pip install --upgrade pip; then
-  echo "WARNING: pip upgrade failed; continuing because Yuki has no third-party dependencies."
+  echo "WARNING: pip upgrade failed; continuing after pip self-upgrade failure; dependency installation below must still succeed."
 fi
 
 echo "[3/5] Checking core dependencies..."
