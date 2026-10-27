@@ -2,6 +2,11 @@
 from __future__ import annotations
 import json,os,urllib.error,urllib.request
 from urllib.parse import urlsplit
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    """Never forward credentials or prompts through an HTTP redirect."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
 class OpenAICompatibleProvider:
     def __init__(self,model,*,api_key_env="OPENAI_API_KEY",base_url="https://api.openai.com/v1",timeout=45,allow_http_loopback=False,environ=None,approval_callback=None):
         if not isinstance(model,str) or not model.strip() or len(model)>120: raise ValueError("Configure a valid model name.")
@@ -33,7 +38,7 @@ class OpenAICompatibleProvider:
         if key and self.api_key_env!="YUKI_LOCAL_DUMMY_KEY": headers["Authorization"]="Bearer "+key
         req=urllib.request.Request(self.base_url+"/chat/completions",data=payload,headers=headers,method="POST")
         try:
-            with urllib.request.urlopen(req,timeout=self.timeout) as response: raw=response.read(2_000_001)
+            with urllib.request.build_opener(_RejectRedirects()).open(req,timeout=self.timeout) as response: raw=response.read(2_000_001)
         except (urllib.error.URLError,TimeoutError,OSError) as exc: raise RuntimeError("Provider request failed.") from exc
         if len(raw)>2_000_000: raise RuntimeError("Provider response exceeded the 2 MB limit.")
         try: body=json.loads(raw.decode("utf-8")); text=body["choices"][0]["message"]["content"]
