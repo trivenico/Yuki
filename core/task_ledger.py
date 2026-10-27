@@ -16,13 +16,14 @@ from uuid import uuid4
 
 
 TASK_STATUSES = frozenset({
-    "queued", "running", "awaiting_approval", "completed", "failed", "cancelled",
+    "queued", "running", "awaiting_approval", "awaiting_verification", "completed", "failed", "cancelled",
 })
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _TRANSITIONS = {
     "queued": frozenset({"running", "awaiting_approval", "failed", "cancelled"}),
-    "running": frozenset({"awaiting_approval", "completed", "failed", "cancelled"}),
+    "running": frozenset({"awaiting_approval", "awaiting_verification", "failed", "cancelled"}),
     "awaiting_approval": frozenset({"running", "failed", "cancelled"}),
+    "awaiting_verification": frozenset({"completed", "failed", "cancelled"}),
     "completed": frozenset(),
     "failed": frozenset(),
     "cancelled": frozenset(),
