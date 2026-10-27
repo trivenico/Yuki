@@ -49,6 +49,10 @@ class NvidiaNIMProviderTests(unittest.TestCase):
         self.assertNotIn("test-secret", opener.request.full_url)
         self.assertEqual(opener.timeout, 45)
 
+    def test_cloud_request_requires_explicit_approval(self):
+        provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={"NVIDIA_API_KEY": "secret"})
+        with self.assertRaisesRegex(RuntimeError, "not explicitly approved"):
+            provider.generate("hello")
     def test_missing_key_fails_before_network(self):
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={})
         with patch("providers.openai_compatible.urllib.request.build_opener") as build:
