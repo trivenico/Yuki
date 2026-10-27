@@ -28,12 +28,12 @@ class YukiCliTests(unittest.TestCase):
     def test_start_routes_to_integrated_guarded_runtime(self):
         with patch("main.main") as integrated_main:
             self.assertEqual(run_cli(["start"], output_fn=lambda _: None), 0)
-        integrated_main.assert_called_once_with(open_dashboard=False)
+        integrated_main.assert_called_once_with()
 
-    def test_desktop_routes_to_shared_runtime_dashboard(self):
-        with patch("main.main") as integrated_main:
+    def test_desktop_routes_to_gui_console(self):
+        with patch("ui.desktop_app.run_desktop") as run_desktop:
             self.assertEqual(run_cli(["desktop"], output_fn=lambda _: None), 0)
-        integrated_main.assert_called_once_with(open_dashboard=True)
+        run_desktop.assert_called_once_with()
 
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
