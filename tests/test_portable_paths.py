@@ -31,7 +31,7 @@ class PortablePathTests(unittest.TestCase):
             root = Path(temporary)
             bundle = root / "bundle"
             bundle.mkdir()
-            (bundle / "config.yaml").write_text("provider: ollama\\nollama_model: llama3.2:3b\\n", encoding="utf-8")
+            (bundle / "config.yaml").write_text("provider: ollama\nollama_model: llama3.2:3b\n", encoding="utf-8")
             user_data = root / "user-data"
             with patch.object(portable_paths.sys, "frozen", True, create=True), patch.object(
                 portable_paths.sys, "_MEIPASS", str(bundle), create=True
