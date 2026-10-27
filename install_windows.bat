@@ -35,14 +35,21 @@ if errorlevel 1 (
   echo WARNING: pip upgrade failed. Continuing because Yuki has no third-party dependencies.
 )
 
-echo [3/4] Checking declared dependencies...
+echo [3/5] Checking core dependencies...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 (
   echo ERROR: Dependency step failed.
   exit /b 1
 )
 
-echo [4/4] Running Yuki test suite...
+echo [4/5] Installing the desktop supervision UI...
+".venv\Scripts\python.exe" -m pip install -r requirements-ui.txt
+if errorlevel 1 (
+  echo ERROR: Desktop UI dependency installation failed.
+  exit /b 1
+)
+
+echo [5/5] Running Yuki test suite...
 ".venv\Scripts\python.exe" -m unittest discover -s tests -v
 if errorlevel 1 (
   echo ERROR: Tests failed. Review the failure output above before using Yuki.
