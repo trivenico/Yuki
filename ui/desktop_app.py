@@ -285,7 +285,11 @@ def run_desktop() -> None:
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         def save_settings() -> None:
-            changes = {\n                "provider": provider_value.get(),\n                "ollama_model": model_value.get(),\n                "openai_model": cloud_model_value.get(),\n            }
+            changes = {
+                "provider": provider_value.get(),
+                "ollama_model": model_value.get(),
+                "openai_model": cloud_model_value.get(),
+            }
             changes.update({key: variable.get() for key, variable in variables.items()})
             try:
                 save_user_settings(changes)
