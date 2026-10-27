@@ -204,3 +204,17 @@ Ollama model discovery is restricted to loopback HTTP. Cloud selections require 
 The catalog deliberately distinguishes runtime-supported adapters from planned providers. At this point, the selection flow can configure Ollama and the OpenAI-compatible provider. Gemini Developer API, NVIDIA NIM, Anthropic, DeepSeek, GLM, LM Studio, and llama.cpp entries are catalog information only until their runtime adapters and acceptance tests are implemented. Selecting an unsupported entry fails closed.
 
 The selection is saved to the active `config.yaml` using an atomic replacement. After changing provider selection, restart Yuki if environment overrides are configured. This command does not perform a live provider call; use the Windows Ollama smoke test below to validate real local inference.
+
+
+## Optional desktop companion
+
+Install the desktop wrapper separately, then launch Yuki as usual:
+
+```powershell
+python -m pip install -r requirements-desktop.txt
+python main.py
+```
+
+Inside Yuki, run `/desktop` to open the PyWebView companion window. The desktop bridge provides text chat, runtime status, and model selection. It does not execute registered skills or shell commands from chat. Cloud model selection and each cloud chat request require explicit confirmation. Model choices are limited to adapters marked as runtime-supported; catalog-only providers are rejected until their adapters are implemented.
+
+The desktop UI is optional and currently requires a working Python desktop/webview environment. Windows packaging and real Ollama inference are still acceptance tasks; this is not yet a signed standalone installer.
