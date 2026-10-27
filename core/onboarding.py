@@ -90,6 +90,14 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(value, str) or len(value) > 2048:
                 raise ValueError(f"{key} must be a bounded string.")
             clean[key] = value
+    local_provider = clean.get("local_provider")
+    if local_provider is not None:
+        if local_provider not in PROVIDERS or PROVIDERS[local_provider]["kind"] != "local":
+            raise ValueError("local_provider must select a supported local provider.")
+    cloud_provider = clean.get("cloud_provider")
+    if cloud_provider is not None:
+        if cloud_provider not in PROVIDERS or PROVIDERS[cloud_provider]["kind"] not in {"cloud", "custom"}:
+            raise ValueError("cloud_provider must select a supported cloud provider.")
     cloud_tasks = config.get("cloud_tasks", [])
     if isinstance(cloud_tasks, str):
         cloud_tasks = [item.strip() for item in cloud_tasks.split(",") if item.strip()]
