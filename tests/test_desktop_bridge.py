@@ -87,7 +87,7 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertEqual(factory.provider.prompts, [])
 
     def test_hybrid_env_general_route_requires_confirmation(self):
-        with patch.dict("os.environ", {"YUKI_CLOUD_TASKS": "general,summarize_public_page"}):
+        with patch.dict("os.environ", {"YUKI_CLOUD_TASKS": "summarize_public_page"}):
             factory = FakeProviderFactory()
             bridge = DesktopBridge(
                 FakeCoreAgent(),
