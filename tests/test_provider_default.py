@@ -35,5 +35,26 @@ class ProviderDefaultTests(unittest.TestCase):
         self.assertEqual(config["provider"], "ollama")
 
 
+    def test_ollama_smoke_test_refuses_non_ollama_provider(self):
+        from scripts import smoke_test_ollama
+        with patch.object(smoke_test_ollama, "load_config", return_value={"provider": "openai"}), \
+             patch("builtins.print") as output:
+            self.assertEqual(smoke_test_ollama.main(), 2)
+        self.assertTrue(any("No request was sent" in str(call) for call in output.call_args_list))
+
+    def test_ollama_smoke_test_runs_provider_contract(self):
+        from unittest.mock import Mock
+        from scripts import smoke_test_ollama
+        config = {"provider": "ollama", "ollama_model": "test-model"}
+        provider = Mock()
+        provider.is_available.return_value = True
+        provider.generate.return_value = "YUKI_OLLAMA_SMOKE_OK"
+        with patch.object(smoke_test_ollama, "load_config", return_value=config), \
+             patch.object(smoke_test_ollama, "create_provider", return_value=provider), \
+             patch("builtins.print"):
+            self.assertEqual(smoke_test_ollama.main(), 0)
+        provider.is_available.assert_called_once_with()
+        provider.generate.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()
