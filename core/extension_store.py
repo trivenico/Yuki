@@ -118,8 +118,18 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
     manifest = _read_json(source)
     value = validate_skill_manifest(manifest) if kind == "skill" else validate_plugin_manifest(manifest)
     destination = _extension_root(kind, root) / f"{value['id']}.json"
+    folder = destination.parent
     if destination.exists():
         raise ValueError(f"An extension with id '{value['id']}' is already installed; remove it before replacing.")
+    if folder.exists():
+        for existing_path in folder.glob("*.json"):
+            try:
+                existing = _read_json(existing_path)
+                checked = validate_skill_manifest(existing) if kind == "skill" else validate_plugin_manifest(existing)
+            except ValueError:
+                continue
+            if checked.get("name") == value["name"]:
+                raise ValueError(f"An extension named '{value['name']}' is already installed.")
     _atomic_json(destination, value)
     return {"id": value["id"], "name": value["name"], "path": str(destination)}
 
