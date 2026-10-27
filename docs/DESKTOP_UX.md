@@ -10,11 +10,14 @@ The desktop shell is a lightweight Tkinter application and launches the same gua
 
 - A compact Yuki header and local-first/approval-aware positioning.
 - A persistent left navigation rail for Chat, Tasks & Plans, Memory, Skills, Plugins, Voice, Security, and System Readiness.
-- A central transcript and message/command composer.
+- A central interactive transcript and message/command composer.
+- Workflow shortcuts for planning tasks, task commands, reminders, project indexing, runtime status, and help.
+- Up/down command history and a shortcut to clear the visible transcript.
+- Navigation entries for interactive sessions, automation, and scripting/developer workflows, alongside memory, skills, plugins, voice, security, and readiness.
 - Quick actions for help, readiness, installing a declarative skill, installing an MCP plugin, and settings.
 - A settings window with provider/model selection and feature configuration.
 
-Navigation must not pretend a page exists when only a runtime command is available. Current sidebar entries invoke supported CLI commands or prefill a supported command template. The runtime remains the single authority for model calls, tools, approvals, and policy; the desktop must not create a second tool execution path.
+Navigation must not pretend a page exists when only a runtime command is available. Current sidebar entries invoke supported CLI commands or prefill a supported command template. This is the first step toward bringing interactive sessions, commands, automation, scripting, and developer workflows directly into the desktop; it does not yet constitute a full IDE, shell terminal, or durable automation manager. The runtime remains the single authority for model calls, tools, approvals, and policy; the desktop must not create a second tool execution path.
 
 ## UX principles
 
