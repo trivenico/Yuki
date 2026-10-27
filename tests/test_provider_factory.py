@@ -9,8 +9,10 @@ from providers.ollama import OllamaProvider
 
 
 class ProviderFactoryTests(unittest.TestCase):
-    def test_default_factory_uses_real_openai_provider(self):
-        self.assertIsInstance(create_provider({}), OpenAICompatibleProvider)
+    def test_default_factory_uses_local_ollama_provider(self):
+        provider = create_provider({}, environ={})
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.model, "llama3.2:3b")
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
