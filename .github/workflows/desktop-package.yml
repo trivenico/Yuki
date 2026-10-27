@@ -84,8 +84,13 @@ jobs:
           New-Item -ItemType Directory -Force dist/docs | Out-Null
           Copy-Item docs/INSTALLATION.md dist/docs/INSTALLATION.md
           Compress-Archive -Path dist/YukiDesktop.exe,dist/YukiRuntime.exe,dist/config.yaml,dist/README.md,dist/docs/INSTALLATION.md -DestinationPath dist/Yuki-Windows-x64.zip -Force
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not installed." }
+          $candidateRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyInstall\lib\innosetup")
+          $iscc = Get-ChildItem -Path $candidateRoots -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) {
+            $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if ($command) { $iscc = $command.Source }
+          }
+          if (-not $iscc) { throw "Inno Setup compiler could not be located after installation." }
           $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.1.0" }
           & $iscc "/DAppVersion=$version" installer/yuki.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
