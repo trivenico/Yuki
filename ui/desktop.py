@@ -77,9 +77,11 @@ class DesktopBridge:
                 return {"ok": False, "requires_confirmation": True, "message": "No model changed. Confirm cloud-provider use first."}
             # Fail closed for catalog entries without an implemented runtime adapter.
             runtime_config = apply_model_selection(self.config, clean)
-            persist_model_selection(clean)
+            # Construct the candidate runtime before writing config, so a factory
+            # failure leaves both persisted settings and the active runtime unchanged.
             provider = self._provider_factory(runtime_config)
             new_agent = self._agent_factory(provider, usage_tracker=getattr(self.ai, "usage_tracker", None))
+            persist_model_selection(clean)
             self.config = runtime_config
             self.ai = new_agent
             self.provider_name = clean["provider"]
