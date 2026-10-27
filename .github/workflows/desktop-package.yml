@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "main.py"
+      - "README.md"
+      - "docs/**"
       - "ui/**"
       - "core/**"
       - "providers/**"
