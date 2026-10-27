@@ -31,6 +31,9 @@ from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
+from core.extension_store import install_extension, list_extensions, remove_extension, load_installed_skills, load_installed_mcp_servers
+from skills.mcp_plugin import MCPPluginSkill
+from skills.connector_management import ConnectorManagementSkill
 
 
 def _ask_approval(request):
@@ -49,6 +52,11 @@ def _confirm(action, reason, risk="medium"):
 def build_agent(config):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
+    configured_servers = list(config.get("mcp_servers", []))
+    configured_names = {item.get("name") for item in configured_servers}
+    installed_servers = [item for item in load_installed_mcp_servers()
+                         if item.get("name") not in configured_names]
+    all_servers = configured_servers + installed_servers
     registry = SkillRegistry.defaults(
         workspace, gmail_enabled=config["gmail_enabled"],
         gmail_credentials=workspace / "google_oauth_client.json",
@@ -57,7 +65,7 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
         github_allowed_roots=config.get("github_allowed_roots", []),
-        mcp_servers=config.get("mcp_servers", []),
+        mcp_servers=all_servers,
     )
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
@@ -71,6 +79,11 @@ def print_help():
   /recovery actions               List approved recovery handlers
   /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
+  /skills install PATH           Install a declarative skill pack (JSON)
+  /skills remove ID              Remove an installed skill pack
+  /plugins                       List installed MCP plugin manifests
+  /plugins install PATH          Install an allow-listed HTTPS MCP plugin (JSON)
+  /plugins remove ID             Remove an installed MCP plugin
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -225,6 +238,64 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/skills install "):
+            try:
+                installed = install_extension(command[len("/skills install "):].strip(), "skill")
+                manifest_path = Path(installed["path"])
+                import json
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == installed["id"]), None)
+                if skill is None:
+                    raise ValueError("Installed skill failed validation.")
+                agent.registry.register(skill)
+                print(f"Yuki > Installed skill '{installed['id']}' and made it available in this session.")
+            except Exception as exc:
+                print(f"Yuki > Skill installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
+        elif command.startswith("/skills remove "):
+            extension_id = command[len("/skills remove "):].strip()
+            try:
+                removed = remove_extension(extension_id, "skill")
+                agent.registry.unregister("custom_" + extension_id.replace("-", "_"))
+                print("Yuki > Skill pack removed." if removed else "Yuki > Skill pack was not installed.")
+            except Exception as exc:
+                print(f"Yuki > Skill removal failed safely ({type(exc).__name__}).")
+        elif command == "/plugins":
+            for plugin in list_extensions("plugin"):
+                status = "valid" if plugin["valid"] else "invalid"
+                print(f"- {plugin['id']} ({plugin['name']}): {status}")
+            if not list_extensions("plugin"):
+                print("No user-installed MCP plugins. Plugin install registers an allow-listed HTTPS endpoint; it never installs Python code.")
+        elif command.startswith("/plugins install "):
+            try:
+                installed = install_extension(command[len("/plugins install "):].strip(), "plugin")
+                servers = load_installed_mcp_servers()
+                for skill_name, cls in (("mcp_plugin", MCPPluginSkill), ("connector_management", ConnectorManagementSkill)):
+                    skill = agent.registry.get(skill_name)
+                    if skill is not None:
+                        skill.servers = {item["name"]: {
+                            "endpoint": item["endpoint"],
+                            "allowed_hosts": tuple(item["allowed_hosts"]),
+                            "allowed_tools": tuple(item["allowed_tools"]),
+                        } for item in servers}
+                print(f"Yuki > Installed MCP plugin '{installed['id']}'. Remote tool execution still requires explicit allow-listing and exact confirmation.")
+            except Exception as exc:
+                print(f"Yuki > Plugin installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
+        elif command.startswith("/plugins remove "):
+            extension_id = command[len("/plugins remove "):].strip()
+            try:
+                removed = remove_extension(extension_id, "plugin")
+                servers = load_installed_mcp_servers()
+                for skill_name in ("mcp_plugin", "connector_management"):
+                    skill = agent.registry.get(skill_name)
+                    if skill is not None:
+                        skill.servers = {item["name"]: {
+                            "endpoint": item["endpoint"],
+                            "allowed_hosts": tuple(item["allowed_hosts"]),
+                            "allowed_tools": tuple(item["allowed_tools"]),
+                        } for item in servers}
+                print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
+            except Exception as exc:
+                print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
