@@ -9,7 +9,7 @@ from typing import Any
 
 MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "ollama": {
-        "kind": "local", "label": "Ollama", "base_url": "http://127.0.0.1:11434",
+        "kind": "local", "label": "Ollama", "runtime_supported": True, "base_url": "http://127.0.0.1:11434",
         "key_env": "", "models": [
             {"id": "qwen2.5:7b", "label": "Qwen 2.5 7B", "note": "General-purpose local model"},
             {"id": "llama3.2:3b", "label": "Llama 3.2 3B", "note": "Smaller local model"},
@@ -18,22 +18,22 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
         ],
     },
     "lm-studio": {
-        "kind": "local", "label": "LM Studio", "base_url": "http://127.0.0.1:1234/v1",
+        "kind": "local", "label": "LM Studio", "runtime_supported": False, "base_url": "http://127.0.0.1:1234/v1",
         "key_env": "", "models": [],
     },
     "llama.cpp": {
-        "kind": "local", "label": "llama.cpp server", "base_url": "http://127.0.0.1:8080/v1",
+        "kind": "local", "label": "llama.cpp server", "runtime_supported": False, "base_url": "http://127.0.0.1:8080/v1",
         "key_env": "", "models": [],
     },
     "openai": {
-        "kind": "cloud", "label": "OpenAI API", "base_url": "https://api.openai.com/v1",
+        "kind": "cloud", "label": "OpenAI API", "runtime_supported": True, "base_url": "https://api.openai.com/v1",
         "key_env": "OPENAI_API_KEY", "models": [
             {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini", "note": "Check current API pricing and availability"},
             {"id": "gpt-4.1-nano", "label": "GPT-4.1 nano", "note": "Check current API pricing and availability"},
         ],
     },
     "gemini_api": {
-        "kind": "cloud", "label": "Google Gemini API",
+        "kind": "cloud", "label": "Google Gemini API", "runtime_supported": False,
         "base_url": "https://generativelanguage.googleapis.com/v1beta",
         "key_env": "GEMINI_API_KEY", "models": [
             {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "note": "Free-tier access subject to current Google limits"},
@@ -41,34 +41,34 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
         ],
     },
     "nvidia": {
-        "kind": "cloud", "label": "NVIDIA NIM", "base_url": "https://integrate.api.nvidia.com/v1",
+        "kind": "cloud", "label": "NVIDIA NIM", "runtime_supported": False, "base_url": "https://integrate.api.nvidia.com/v1",
         "key_env": "NVIDIA_API_KEY", "models": [
             {"id": "openai/gpt-oss-20b", "label": "GPT OSS 20B", "note": "Availability and rate limits depend on NVIDIA account"},
             {"id": "meta/llama-3.3-70b-instruct", "label": "Llama 3.3 70B Instruct", "note": "Check current endpoint availability"},
         ],
     },
     "deepseek": {
-        "kind": "cloud", "label": "DeepSeek API", "base_url": "https://api.deepseek.com/v1",
+        "kind": "cloud", "label": "DeepSeek API", "runtime_supported": False, "base_url": "https://api.deepseek.com/v1",
         "key_env": "DEEPSEEK_API_KEY", "models": [
             {"id": "deepseek-chat", "label": "DeepSeek Chat", "note": "Check current pricing and availability"},
             {"id": "deepseek-reasoner", "label": "DeepSeek Reasoner", "note": "Check current pricing and availability"},
         ],
     },
     "anthropic": {
-        "kind": "cloud", "label": "Anthropic API", "base_url": "https://api.anthropic.com",
+        "kind": "cloud", "label": "Anthropic API", "runtime_supported": False, "base_url": "https://api.anthropic.com",
         "key_env": "ANTHROPIC_API_KEY", "models": [
             {"id": "claude-3-5-haiku-latest", "label": "Claude Haiku", "note": "Use an API model ID enabled for your account"},
         ],
     },
     "glm": {
-        "kind": "cloud", "label": "GLM API", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "kind": "cloud", "label": "GLM API", "runtime_supported": False, "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "key_env": "ZHIPUAI_API_KEY", "models": [
             {"id": "glm-4-flash", "label": "GLM 4 Flash", "note": "Check current free-tier eligibility and account limits"},
             {"id": "glm-4-plus", "label": "GLM 4 Plus", "note": "Check current pricing and availability"},
         ],
     },
     "openai-compatible": {
-        "kind": "cloud", "label": "Custom OpenAI-compatible endpoint",
+        "kind": "cloud", "label": "Custom OpenAI-compatible endpoint", "runtime_supported": False,
         "base_url": "", "key_env": "YUKI_CUSTOM_API_KEY", "models": [],
     },
 }
@@ -89,7 +89,7 @@ def list_providers(kind: str | None = None) -> list[dict[str, Any]]:
             "base_url": meta["base_url"],
             "key_env": meta["key_env"],
             "models": [dict(model) for model in meta["models"]],
-            "custom_model_allowed": True,
+            "custom_model_allowed": True,\n            "runtime_supported": bool(meta.get("runtime_supported", False)),
         })
     return result
 
@@ -102,5 +102,5 @@ def get_provider(provider_id: str) -> dict[str, Any]:
         "id": provider_id, "label": meta["label"], "kind": meta["kind"],
         "base_url": meta["base_url"], "key_env": meta["key_env"],
         "models": [dict(model) for model in meta["models"]],
-        "custom_model_allowed": True,
+        "custom_model_allowed": True,\n        "runtime_supported": bool(meta.get("runtime_supported", False)),
     }
