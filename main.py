@@ -394,12 +394,10 @@ def main():
                     f"size={artifact['size_bytes']} bytes; SHA-256={artifact['sha256']}. "
                     "Scope: presence and identity only; content correctness is not verified."
                 )
-                completed = task_ledger.transition(
-                    task_id, "completed", result=item["result"],
-                    verification_evidence=evidence,
-                )
-                print(f"Yuki > Task {completed['id']} marked completed after file-presence verification.")
+                updated = task_ledger.record_verification_evidence(task_id, evidence)
+                print(f"Yuki > Artifact check recorded for task {updated['id']}.")
                 print("Yuki > Evidence: " + evidence)
+                print("Yuki > Task remains awaiting_verification; file presence alone does not prove the goal is complete.")
             except (KeyError, ValueError, OSError) as exc:
                 print(f"Yuki > Verification refused safely: {exc}")
         elif command.startswith("/task cancel "):
