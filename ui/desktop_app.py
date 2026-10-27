@@ -208,12 +208,22 @@ def run_desktop() -> None:
         command_entry.delete(0, "end")
 
     def choose_manifest(kind: str) -> None:
-        path = filedialog.askopenfilename(
-            parent=root,
-            title="Choose a Yuki skill manifest" if kind == "skill" else "Choose a Yuki MCP plugin manifest",
-            filetypes=[("JSON manifests", "*.json"), ("All files", "*.*")],
-        )
+        if kind == "agent_skill":
+            path = filedialog.askopenfilename(
+                parent=root,
+                title="Choose an Agent Skills SKILL.md file",
+                filetypes=[("Agent Skills", "SKILL.md"), ("Markdown files", "*.md"), ("All files", "*.*")],
+            )
+        else:
+            path = filedialog.askopenfilename(
+                parent=root,
+                title="Choose a Yuki skill manifest" if kind == "skill" else "Choose a Yuki MCP plugin manifest",
+                filetypes=[("JSON manifests", "*.json"), ("All files", "*.*")],
+            )
         if not path:
+            return
+        if kind == "agent_skill":
+            send_text(f'/skills import "{path}"')
             return
         command_group = "skills" if kind == "skill" else "plugins"
         send_text(f'/{command_group} install "{path}"')
@@ -348,6 +358,7 @@ def run_desktop() -> None:
     ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Install Plugin", command=lambda: choose_manifest("plugin")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Import Skill", command=lambda: choose_manifest("agent_skill")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="right", padx=(6, 0))
 
