@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from core.model_catalog import get_provider, list_providers
-from core.model_selection import list_installed_ollama_models, model_selection_options, validate_model_selection
+from core.model_selection import apply_model_selection, list_installed_ollama_models, model_selection_options, validate_model_selection
 
 
 class _Response:
@@ -66,6 +66,34 @@ class ModelCatalogTests(unittest.TestCase):
         with patch("core.model_selection.urllib.request.urlopen", return_value=_Response(payload)):
             models = list_installed_ollama_models()
         self.assertEqual([item["id"] for item in models], ["llama3.2:3b"])
+
+    def test_supported_selection_maps_to_runtime_config_without_mutation(self):
+        original = {"workspace": "./workspace", "provider": "ollama"}
+        selected = apply_model_selection(original, {
+            "provider": "ollama",
+            "model": "llama3.2:3b",
+            "base_url": "http://127.0.0.1:11434",
+        })
+        self.assertEqual(original, {"workspace": "./workspace", "provider": "ollama"})
+        self.assertEqual(selected["ollama_model"], "llama3.2:3b")
+        self.assertEqual(selected["ollama_base_url"], "http://127.0.0.1:11434")
+
+    def test_catalogued_but_unimplemented_provider_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "not yet supported"):
+            apply_model_selection({}, {
+                "provider": "gemini_api",
+                "model": "gemini-2.5-flash",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            })
+
+    def test_openai_selection_maps_configured_endpoint(self):
+        selected = apply_model_selection({}, {
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "base_url": "https://api.openai.com/v1",
+        })
+        self.assertEqual(selected["openai_model"], "gpt-4.1-mini")
+        self.assertEqual(selected["openai_base_url"], "https://api.openai.com/v1")
 
 
 if __name__ == "__main__":
