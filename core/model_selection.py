@@ -91,8 +91,21 @@ def validate_model_selection(selection: dict) -> dict:
         raise ValueError("API key environment variable name is invalid.")
     if meta["kind"] == "cloud":
         parsed = urlsplit(base_url)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("Cloud provider endpoint port is invalid.") from exc
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment):
             raise ValueError("Cloud providers must use HTTPS without embedded credentials.")
+        # The OpenAI adapter sends OPENAI_API_KEY as a bearer token. Do not let
+        # a model-selection URL redirect that credential to an arbitrary HTTPS host.
+        if provider_id == "openai" and (
+            parsed.hostname.lower() != "api.openai.com"
+            or port not in (None, 443)
+            or parsed.path.rstrip("/") != "/v1"
+        ):
+            raise ValueError("OpenAI API credentials may only be sent to https://api.openai.com/v1.")
     if meta["kind"] == "local":
         parsed = urlsplit(base_url)
         host = parsed.hostname or ""
