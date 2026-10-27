@@ -28,6 +28,7 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.task_ledger import TaskLedger
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
@@ -114,6 +115,9 @@ def print_help():
   /plugins remove ID             Remove an installed MCP plugin
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
+  /tasks                          List recent tracked tasks
+  /task show ID                   Show one tracked task
+  /task cancel ID                 Cancel a queued/active task record
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -160,6 +164,7 @@ def main():
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
     recovery_audit = RecoveryAuditLog(workspace / "recovery_audit.sqlite3")
+    task_ledger = TaskLedger(workspace / "yuki_tasks.sqlite3")
     recovery = SelfHealingEngine(
         approve=lambda proposal: _confirm(
             "recovery:" + proposal.action, proposal.reason, proposal.risk
@@ -345,14 +350,63 @@ def main():
                 print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
             except Exception as exc:
                 print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
+        elif command == "/tasks":
+            tasks = task_ledger.list(limit=20)
+            if not tasks:
+                print("Yuki > No tracked tasks yet.")
+            else:
+                for item in tasks:
+                    print(f"Yuki > [{item['status']}] {item['id'][:8]} — {item['title']}")
+        elif command.startswith("/task show "):
+            task_id = command[len("/task show "):].strip()
+            item = task_ledger.get(task_id)
+            if item is None:
+                print("Yuki > Task not found.")
+            else:
+                print(f"Yuki task {item['id']}\nTitle: {item['title']}\nStatus: {item['status']}\nCreated: {item['created_at']}\nUpdated: {item['updated_at']}")
+                if item["result"]:
+                    print("Result: " + item["result"])
+                if item["error_code"]:
+                    print("Error code: " + item["error_code"])
+        elif command.startswith("/task cancel "):
+            task_id = command[len("/task cancel "):].strip()
+            try:
+                item = task_ledger.cancel(task_id)
+                print(f"Yuki > Task {item['id'][:8]} cancelled.")
+            except (KeyError, ValueError) as exc:
+                print(f"Yuki > Cannot cancel task: {exc}")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
                 print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                 continue
-            print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
-            result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            try:
+                tracked = task_ledger.create(goal)
+                task_ledger.transition(tracked["id"], "running")
+            except Exception as exc:
+                print(f"Yuki > Task tracking unavailable ({type(exc).__name__}); no task was started.")
+                continue
+            print(f"Yuki > Task {tracked['id'][:8]} created. Preparing a bounded plan; each skill call requires fresh approval.")
+            try:
+                result = task_agent.run(goal)
+                final_status = "completed" if result.ok else "failed"
+                task_ledger.transition(
+                    tracked["id"], final_status,
+                    result=result.message,
+                    error_code="" if result.ok else result.status,
+                )
+                print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}, task_id={tracked['id'][:8]}]")
+            except KeyboardInterrupt:
+                try:
+                    task_ledger.transition(tracked["id"], "cancelled")
+                finally:
+                    print("Yuki > Task cancelled by keyboard interrupt.")
+            except Exception as exc:
+                try:
+                    task_ledger.transition(tracked["id"], "failed", error_code=type(exc).__name__)
+                except Exception:
+                    pass
+                print(f"Yuki > Task failed safely ({type(exc).__name__}); task record retained.")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
