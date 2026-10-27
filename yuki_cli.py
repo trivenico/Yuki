@@ -17,6 +17,7 @@ from collections.abc import Callable, Sequence
 from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+from core.extension_store import install_extension, list_extensions, remove_extension
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="Guide first-run local Ollama setup; model downloads require confirmation")
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
+
+    for group, kind in (("skills", "skill"), ("plugins", "plugin")):
+        extension = sub.add_parser(group, help=f"Manage installed {kind} packs")
+        actions = extension.add_subparsers(dest="extension_action", required=True)
+        actions.add_parser("list", help=f"List installed {kind} packs")
+        install = actions.add_parser("install", help=f"Install a validated {kind} manifest from a local JSON file")
+        install.add_argument("manifest", help="Path to the manifest JSON file")
+        remove = actions.add_parser("remove", help=f"Remove an installed {kind} pack by id")
+        remove.add_argument("extension_id")
 
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
@@ -85,6 +95,23 @@ def run_cli(
             return 2
         except Exception as exc:
             output_fn(f"Yuki desktop failed to start ({type(exc).__name__}).")
+            return 2
+
+    if args.command in {"skills", "plugins"}:
+        kind = "skill" if args.command == "skills" else "plugin"
+        try:
+            if args.extension_action == "list":
+                _write_json({"installed": list_extensions(kind)}, output_fn)
+                return 0
+            if args.extension_action == "install":
+                result = install_extension(args.manifest, kind)
+                _write_json({"installed": result, "note": "Manifest validated; no third-party code was executed."}, output_fn)
+                return 0
+            removed = remove_extension(args.extension_id, kind)
+            _write_json({"removed": removed, "id": args.extension_id}, output_fn)
+            return 0 if removed else 1
+        except (ValueError, OSError) as exc:
+            output_fn(f"Extension operation failed safely ({type(exc).__name__}): {str(exc)[:200]}")
             return 2
 
     if args.command == "doctor":
