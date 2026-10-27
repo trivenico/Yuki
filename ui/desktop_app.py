@@ -253,6 +253,8 @@ def run_desktop() -> None:
     add_shortcut("Add reminder", "/reminder add ")
     add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Morning briefing", "/briefing")
+    add_shortcut("Task history", "/tasks")
+    add_shortcut("New task", "/task ")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
 
