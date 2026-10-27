@@ -99,6 +99,7 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /briefing                     Show a read-only personal morning briefing
   /readiness                     Detect runtime and local model readiness
   /health                        Run read-only core health checks
   /recovery actions               List approved recovery handlers
@@ -252,6 +253,30 @@ def main():
                 print(f"Yuki recovery: {result.status} — {result.message}")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Recovery request rejected: {exc}")
+        elif command == "/briefing":
+            now = datetime.now().astimezone()
+            items = reminders.list()
+            pending = [item for item in items if not item.get("delivered")]
+            overdue = []
+            for item in pending:
+                try:
+                    if datetime.fromisoformat(item["due_at"]) <= now:
+                        overdue.append(item)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            print(f"Yuki morning briefing — {now.strftime('%A, %B %d, %Y at %H:%M %Z')}")
+            print(f"Workspace: {workspace}")
+            print(f"Provider: {config['provider']} (configured; live readiness is not inferred)")
+            print(f"Skills available: {len(agent.available_skills())}")
+            print(f"Reminders: {len(pending)} pending, {len(overdue)} due/overdue")
+            for item in sorted(overdue, key=lambda value: value.get("due_at", ""))[:5]:
+                print(f"- Due: {item.get('text', 'Reminder')}")
+            upcoming = [item for item in pending if item not in overdue]
+            for item in sorted(upcoming, key=lambda value: value.get("due_at", ""))[:3]:
+                print(f"- Upcoming {item.get('due_at')}: {item.get('text', 'Reminder')}")
+            print("Voice: " + ("enabled by settings; capture remains explicit" if config["voice_enabled"] else "disabled in settings"))
+            print("Privacy: local-first configuration; cloud use requires explicit provider selection.")
+            print("This briefing is a read-only snapshot; it does not send messages or execute tasks.")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
