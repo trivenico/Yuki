@@ -55,9 +55,6 @@ def run_desktop() -> None:
     header.pack(fill="x", pady=(0, 10))
     ttk.Label(header, text="Yuki", font=("TkDefaultFont", 16, "bold")).pack(side="left")
     ttk.Label(header, text="Your AI workspace · local-first, approval-aware").pack(side="left", padx=(12, 0))
-    extension_row = ttk.Frame(header)
-    extension_row.pack(side="right")
-
     workspace = ttk.Frame(frame)
     workspace.pack(fill="both", expand=True)
     sidebar = ttk.Frame(workspace, padding=(0, 0, 10, 0), width=170)
@@ -66,6 +63,8 @@ def run_desktop() -> None:
     ttk.Label(sidebar, text="WORKSPACE", font=("TkDefaultFont", 9, "bold")).pack(anchor="w", pady=(2, 8))
     main_panel = ttk.Frame(workspace)
     main_panel.pack(side="left", fill="both", expand=True)
+    extension_row = ttk.Frame(main_panel)
+    extension_row.pack(fill="x", pady=(0, 8))
 
     output_frame = ttk.Frame(main_panel)
     output_frame.pack(side="top", fill="both", expand=True)
@@ -176,9 +175,14 @@ def run_desktop() -> None:
     def focus_composer() -> None:
         command_entry.focus_set()
 
+    def insert_command(value: str) -> None:
+        command_entry.delete(0, "end")
+        command_entry.insert(0, value)
+        command_entry.focus_set()
+
     nav_items = (
         ("Chat", focus_composer),
-        ("Tasks & Plans", lambda: send_text("/help")),
+        ("Tasks & Plans", lambda: insert_command("/plan ")),
         ("Memory", lambda: send_text("/memory list")),
         ("Skills", lambda: send_text("/skills")),
         ("Plugins", lambda: send_text("/plugins")),
@@ -341,14 +345,11 @@ def run_desktop() -> None:
         ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right")
         ttk.Button(actions, text="Save Settings", command=save_settings).pack(side="right", padx=(0, 8))
 
-    ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="left")
-    ttk.Button(extension_row, text="Status", command=lambda: send_text("/status")).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="Install MCP Plugin", command=lambda: choose_manifest("plugin")).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="List Skills", command=lambda: send_text("/skills")).pack(side="left", padx=(8, 0))
-    ttk.Button(extension_row, text="List Plugins", command=lambda: send_text("/plugins")).pack(side="left", padx=(8, 0))
+    ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Install Plugin", command=lambda: choose_manifest("plugin")).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="right", padx=(6, 0))
 
     def close_window() -> None:
         if process.poll() is None:
