@@ -252,12 +252,20 @@ def main():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
         elif command.startswith("/skills install "):
             try:
-                installed = install_extension(command[len("/skills install "):].strip(), "skill")
+                paths = shlex.split(command[len("/skills install "):].strip())
+                if len(paths) != 1:
+                    raise ValueError("Use quotes around a skill manifest path containing spaces.")
+                installed = install_extension(paths[0], "skill")
                 skill = next((item for item in load_installed_skills()
                               if item.manifest["id"] == installed["id"]), None)
                 if skill is None:
+                    remove_extension(installed["id"], "skill")
                     raise ValueError("Installed skill failed validation.")
-                agent.registry.register(skill)
+                try:
+                    agent.registry.register(skill)
+                except Exception:
+                    remove_extension(installed["id"], "skill")
+                    raise
                 print(f"Yuki > Installed skill '{installed['id']}' and made it available in this session.")
             except Exception as exc:
                 print(f"Yuki > Skill installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
@@ -280,7 +288,13 @@ def main():
                 print("No user-installed MCP plugins. Plugin install registers an allow-listed HTTPS endpoint; it never installs Python code.")
         elif command.startswith("/plugins install "):
             try:
-                installed = install_extension(command[len("/plugins install "):].strip(), "plugin")
+                paths = shlex.split(command[len("/plugins install "):].strip())
+                if len(paths) != 1:
+                    raise ValueError("Use quotes around a plugin manifest path containing spaces.")
+                installed = install_extension(paths[0], "plugin")
+                if any(item.get("name") == installed["name"] for item in config.get("mcp_servers", [])):
+                    remove_extension(installed["id"], "plugin")
+                    raise ValueError("A configured MCP server already uses that name.")
                 _refresh_plugin_skills(agent, config)
                 print(f"Yuki > Installed MCP plugin '{installed['id']}'. Remote tool execution still requires explicit allow-listing and exact confirmation.")
             except Exception as exc:
