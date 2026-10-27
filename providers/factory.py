@@ -14,8 +14,8 @@ def create_provider(config=None, *, environ=None):
 
     Ollama is the default so prompts stay local unless a cloud provider is explicitly selected. Hybrid routing keeps general tasks local and only
     routes explicitly allow-listed task names to cloud. API keys are read from
-    the process environment, never from YAML or committed files. The mock
-    adapter remains available only to tests that call this factory explicitly.
+    the process environment, never from YAML or committed files. Mock providers
+    are rejected by this runtime factory and must be injected directly by tests.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
