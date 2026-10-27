@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from ui.desktop import DesktopBridge
 
@@ -131,6 +132,42 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("secret-value", "\\n".join(captured.output))
         self.assertEqual(factory.provider.prompts, ["Hello"])
 
+
+    def test_model_catalog_is_available_to_desktop_settings(self):
+        bridge, _ = self.make_bridge()
+        options = bridge.get_model_options("cloud")
+        provider_ids = {item["id"] for item in options["providers"]}
+        self.assertIn("gemini_api", provider_ids)
+        self.assertIn("nvidia", provider_ids)
+        self.assertNotIn("ollama", provider_ids)
+
+    def test_cloud_model_switch_requires_confirmation_before_persisting(self):
+        bridge, _ = self.make_bridge()
+        with patch("core.onboarding.save_config") as save:
+            result = bridge.select_model({"provider": "gemini_api", "model": "gemini-2.5-flash"})
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["requires_confirmation"])
+        save.assert_not_called()
+
+    def test_local_model_switch_persists_only_validated_nonsecret_settings(self):
+        bridge, _ = self.make_bridge()
+        class FakeAI:
+            def __init__(self, provider, usage_tracker=None):
+                self.provider = provider
+                self.usage_tracker = usage_tracker
+            def status(self): return "ready"
+            def ask(self, prompt): return "YUKI_REPLY"
+        bridge._agent_factory = FakeAI
+        with patch("core.onboarding.save_config") as save:
+            result = bridge.select_model({
+                "provider": "ollama", "model": "qwen2.5:7b",
+                "base_url": "http://127.0.0.1:11434",
+            })
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["provider"], "ollama")
+        saved = save.call_args.args[0]
+        self.assertEqual(saved["model"], "qwen2.5:7b")
+        self.assertNotIn("api_key", saved)
 
 if __name__ == "__main__":
     unittest.main()
