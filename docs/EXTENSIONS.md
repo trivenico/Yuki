@@ -46,4 +46,13 @@ Installed extension files live under Yuki's writable data directory: `installed_
 
 ## Learning and evolution
 
-Yuki's existing evolution workflow records observations and proposals and supports human review. Installed skill instructions can be improved by editing and reinstalling a manifest, but Yuki does not automatically rewrite or execute its own Python code. A future self-upgrade workflow should generate a patch, run tests and security checks, show a diff, and require explicit approval before applying it.
+Yuki's existing evolution workflow records local observations and proposes workflow/habit improvements for review. For example, from the interactive runtime:
+
+```text
+/evolution record feedback | The meeting-notes skill should always separate decisions from action items.
+/evolution status
+/evolution run
+/evolution review PROPOSAL_ID accept
+```
+
+The cycle analyzes only explicitly recorded observations; it does not call a model, execute tools, or change code/config. Acceptance records approval for manual follow-up—it does not silently apply a change. Installed skill instructions can be improved by editing and reinstalling a manifest, but Yuki does not automatically rewrite or execute its own Python code. A future self-upgrade workflow should generate a patch, run tests and security checks, show a diff, and require explicit approval before applying it.
