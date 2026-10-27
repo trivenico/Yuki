@@ -56,10 +56,14 @@ class TaskLedger:
                         detail TEXT NOT NULL DEFAULT '',
                         result TEXT NOT NULL DEFAULT '',
                         error_code TEXT NOT NULL DEFAULT '',
+                        verification_evidence TEXT NOT NULL DEFAULT '',
                         metadata_json TEXT NOT NULL DEFAULT '{}'
                     )
                 """)
                 db.execute("CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at DESC)")
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+                if "verification_evidence" not in columns:
+                    db.execute("ALTER TABLE tasks ADD COLUMN verification_evidence TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=3.0)
@@ -101,7 +105,7 @@ class TaskLedger:
         return self._task(row)
 
     def transition(
-        self, task_id: str, status: str, *, result: str = "", error_code: str = "",
+        self, task_id: str, status: str, *, result: str = "", error_code: str = "",\n        verification_evidence: str = "",
     ) -> dict[str, Any]:
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("Task ID must be non-empty.")
@@ -111,6 +115,10 @@ class TaskLedger:
             raise ValueError("Task result must be text of at most 8000 characters.")
         if not isinstance(error_code, str) or len(error_code) > 80:
             raise ValueError("Error code must be text of at most 80 characters.")
+        if not isinstance(verification_evidence, str) or len(verification_evidence) > 4000:
+            raise ValueError("Verification evidence must be text of at most 4000 characters.")
+        if status == "completed" and not verification_evidence.strip():
+            raise ValueError("A task cannot be completed without verification evidence.")
         with self._lock, closing(self._connect()) as db:
             with db:
                 row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -120,8 +128,8 @@ class TaskLedger:
                 if status not in _TRANSITIONS[current]:
                     raise ValueError(f"Invalid task transition: {current} -> {status}.")
                 db.execute(
-                    "UPDATE tasks SET status=?,updated_at=?,result=?,error_code=? WHERE id=?",
-                    (status, _now(), result, error_code, task_id),
+                    "UPDATE tasks SET status=?,updated_at=?,result=?,error_code=?,verification_evidence=? WHERE id=?",
+                    (status, _now(), result, error_code, verification_evidence.strip(), task_id),
                 )
                 updated = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._task(updated)
