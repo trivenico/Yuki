@@ -5,6 +5,65 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+
+## Minimal project structure and navigation
+
+Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
+
+### Target layout
+
+```text
+Yuki/
+├── yuki.py                 # stable CLI entry point (temporary compatibility facade)
+├── config.yaml             # non-secret defaults only
+├── requirements.txt        # minimal runtime dependencies
+├── src/yuki/
+│   ├── app.py              # application composition and lifecycle
+│   ├── agent/              # orchestration and model interaction
+│   ├── providers/          # Ollama and cloud provider adapters
+│   ├── memory/             # memory, retrieval and persistence
+│   ├── tasks/              # durable task state and workers
+│   ├── skills/             # skill contracts, registry and reviewed skills
+│   ├── security/           # policy, approvals, audit and isolation
+│   ├── tools/              # bounded tool interfaces and implementations
+│   ├── interfaces/cli/     # terminal UX
+│   ├── interfaces/desktop/ # desktop UX
+│   └── config/             # configuration schema and validation
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   ├── security/
+│   └── acceptance/
+├── scripts/                # setup, diagnostics and smoke tests
+├── docs/                   # setup, architecture and operations
+├── assets/                 # static UI assets only
+└── data/                   # ignored runtime data; never committed
+```
+
+This is the target layout, not a claim that the migration is already complete.
+
+### Rules
+
+1. One shared application/service layer powers both CLI and desktop. UI code must not duplicate model routing, memory, task orchestration, or security policy.
+2. Provider adapters live together behind one contract. Timeouts, response limits, safe HTTP handling, and normalized errors are shared behavior.
+3. Approval, audit, workspace containment, and tool policy each have one authoritative implementation.
+4. Skills are bounded capabilities, not independent hidden agents. They cannot bypass approvals or spawn arbitrary shell/code execution.
+5. `config.yaml` contains defaults only. API secrets stay in environment variables or the OS credential store. User data, databases, logs, model downloads, and generated artifacts stay in a configured user-data directory outside source control.
+6. Tests mirror the architecture: fast unit tests, deterministic integration tests, security tests, and opt-in acceptance tests for real Ollama/cloud calls.
+7. Keep root files limited to stable entry points, project metadata, and essential config. Put scripts in `scripts/`, architecture/operations docs in `docs/`, and static resources in `assets/`.
+8. Avoid speculative top-level folders, duplicated roadmaps, one-file-per-phase modules, and unused dependencies. Every package must have a clear owner and purpose.
+9. Root-level legacy modules remain compatibility facades during migration. Move one domain at a time, update imports, add regression tests, and remove old paths only after clean-install CI passes.
+
+### Safe cleanup order
+
+1. Inventory tracked files, import edges, entry points, generated data, duplicates, and unused modules.
+2. Add reproducible packaging and repository-wide syntax/static checks before moving code.
+3. Migrate configuration and provider contracts first; retain compatibility imports.
+4. Migrate agent/runtime, memory/tasks, tools/skills, and security one domain at a time.
+5. Make CLI and desktop call the same application layer.
+6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
+7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
