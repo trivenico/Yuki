@@ -39,8 +39,8 @@ def create_provider(config=None, *, environ=None):
     if selected not in {"ollama", "hybrid"}:
         raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
-        base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
-        model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"))),
+        base_url=str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434"))),
+        model=str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b"))),
     )
     if selected == "ollama":
         return local
