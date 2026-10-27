@@ -11,6 +11,8 @@ Install with `install_windows.bat` on Windows or `sh install_unix.sh` on macOS/L
 
 
 
+See [installation instructions](docs/INSTALLATION.md) for setup details and the Windows installer workflow.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
