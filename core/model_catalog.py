@@ -60,6 +60,13 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
             {"id": "claude-3-5-haiku-latest", "label": "Claude Haiku", "note": "Use an API model ID enabled for your account"},
         ],
     },
+    "glm": {
+        "kind": "cloud", "label": "GLM API", "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "key_env": "ZHIPUAI_API_KEY", "models": [
+            {"id": "glm-4-flash", "label": "GLM 4 Flash", "note": "Check current free-tier eligibility and account limits"},
+            {"id": "glm-4-plus", "label": "GLM 4 Plus", "note": "Check current pricing and availability"},
+        ],
+    },
     "openai-compatible": {
         "kind": "cloud", "label": "Custom OpenAI-compatible endpoint",
         "base_url": "", "key_env": "YUKI_CUSTOM_API_KEY", "models": [],
