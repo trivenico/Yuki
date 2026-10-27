@@ -29,6 +29,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.task_ledger import TaskLedger
+from core.task_verifier import verify_workspace_file
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
@@ -117,6 +118,7 @@ def print_help():
   /task GOAL                      Bounded model-guided task; approve each skill call
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
+  /task verify ID --file PATH    Verify a workspace file artifact (presence/hash only)
   /task cancel ID                 Cancel a queued task record (running-task interruption is not implemented)
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
@@ -372,6 +374,34 @@ def main():
                     print("Verification evidence: " + item["verification_evidence"])
                 elif item["status"] == "awaiting_verification":
                     print("Verification: required; a model response alone is not proof of success.")
+        elif command.startswith("/task verify "):
+            try:
+                parts = shlex.split(command)
+                if len(parts) != 5 or parts[0:2] != ["/task", "verify"] or parts[3] != "--file":
+                    print('Yuki > Usage: /task verify ID --file "relative/path"')
+                    continue
+                task_id, relative_path = parts[2], parts[4]
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                    continue
+                if item["status"] != "awaiting_verification":
+                    print("Yuki > Only tasks awaiting verification can be verified this way.")
+                    continue
+                artifact = verify_workspace_file(workspace, relative_path)
+                evidence = (
+                    f"Workspace file presence verified: {artifact['path']}; "
+                    f"size={artifact['size_bytes']} bytes; SHA-256={artifact['sha256']}. "
+                    "Scope: presence and identity only; content correctness is not verified."
+                )
+                completed = task_ledger.transition(
+                    task_id, "completed", result=item["result"],
+                    verification_evidence=evidence,
+                )
+                print(f"Yuki > Task {completed['id']} marked completed after file-presence verification.")
+                print("Yuki > Evidence: " + evidence)
+            except (KeyError, ValueError, OSError) as exc:
+                print(f"Yuki > Verification refused safely: {exc}")
         elif command.startswith("/task cancel "):
             task_id = command[len("/task cancel "):].strip()
             try:
