@@ -39,7 +39,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         with patch("yuki_cli.shutil.which", return_value="/usr/bin/ollama"), patch(
             "yuki_cli.subprocess.run", return_value=type("Result", (), {
-                "returncode": 0, "stdout": "NAME ID SIZE MODIFIED\\nother:latest abc 1GB today\\n"
+                "returncode": 0, "stdout": "NAME ID SIZE MODIFIED\nother:latest abc 1GB today\n"
             })()
         ) as run:
             code = run_cli(
@@ -56,7 +56,7 @@ class YukiCliTests(unittest.TestCase):
     def test_setup_only_pulls_after_yes_confirmation(self):
         output = []
         results = [
-            type("Result", (), {"returncode": 0, "stdout": "NAME ID SIZE MODIFIED\\nother:latest abc 1GB today\\n"})(),
+            type("Result", (), {"returncode": 0, "stdout": "NAME ID SIZE MODIFIED\nother:latest abc 1GB today\n"})(),
             type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
         ]
         with patch("yuki_cli.shutil.which", return_value="/usr/bin/ollama"), patch(
