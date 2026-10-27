@@ -18,7 +18,9 @@ class DesktopAppTests(unittest.TestCase):
     def test_packaged_desktop_uses_adjacent_runtime_executable(self):
         with tempfile.TemporaryDirectory() as temporary:
             desktop = Path(temporary) / "YukiDesktop.exe"
-            runtime = Path(temporary) / "YukiRuntime.exe"
+            runtime_dir = Path(temporary) / "YukiRuntime"
+            runtime_dir.mkdir()
+            runtime = runtime_dir / "YukiRuntime.exe"
             desktop.touch()
             runtime.touch()
             with patch.object(sys, "frozen", True, create=True), patch.object(
