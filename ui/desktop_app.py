@@ -199,10 +199,61 @@ def run_desktop() -> None:
 
         ai_group = ttk.LabelFrame(panel, text="General & AI", padding=10)
         ai_group.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        ttk.Label(ai_group, text="Local Ollama model").grid(row=0, column=0, sticky="w")
+        ttk.Label(ai_group, text="Provider").grid(row=0, column=0, sticky="w")
+        provider_value = tk.StringVar(value=current["provider"])
+        provider_picker = ttk.Combobox(
+            ai_group, textvariable=provider_value,
+            values=("ollama", "openai", "gemini", "hybrid"), state="readonly", width=20,
+        )
+        provider_picker.grid(row=1, column=0, sticky="ew", pady=(3, 8))
+
+        ttk.Label(ai_group, text="Ollama model").grid(row=2, column=0, sticky="w")
         model_value = tk.StringVar(value=current["ollama_model"])
-        ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=1, column=0, sticky="ew", pady=4)
-        ttk.Label(ai_group, text="Default: llama3.2:3b. Saving does not download a model.", wraplength=360).grid(row=2, column=0, sticky="w")
+        ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=3, column=0, sticky="ew", pady=(3, 8))
+
+        ttk.Label(ai_group, text="OpenAI-compatible model").grid(row=4, column=0, sticky="w")
+        cloud_model_value = tk.StringVar(value=current["openai_model"])
+        ttk.Entry(ai_group, textvariable=cloud_model_value, width=34).grid(row=5, column=0, sticky="ew", pady=(3, 8))
+
+        provider_help = tk.StringVar()
+        ttk.Label(ai_group, textvariable=provider_help, wraplength=410).grid(row=6, column=0, sticky="w", pady=(0, 6))
+
+        def update_provider_help(*_args) -> None:
+            notes = {
+                "ollama": "Local by default. Requires Ollama running and the selected model already installed.",
+                "openai": "Cloud provider: prompts leave this device. Set OPENAI_API_KEY in the launch environment; keys are never saved here.",
+                "gemini": "Uses the installed Gemini CLI and its own authentication. Check its setup separately.",
+                "hybrid": "Uses local Ollama by default; cloud routing requires explicit environment configuration and allow-listed task names.",
+            }
+            provider_help.set(notes.get(provider_value.get(), "Select a provider."))
+        provider_value.trace_add("write", update_provider_help)
+        update_provider_help()
+
+        def check_provider() -> None:
+            selected = provider_value.get()
+            try:
+                from core.config import load_config
+                from providers.factory import create_provider
+                config = load_config()
+                config["provider"] = selected
+                config["ollama_model"] = model_value.get().strip()
+                config["openai_model"] = cloud_model_value.get().strip()
+                provider = create_provider(config)
+                available = provider.is_available()
+            except Exception as exc:
+                messagebox.showerror("Provider check failed", f"Could not check provider ({type(exc).__name__}): {str(exc)[:240]}", parent=window)
+                return
+            if available:
+                messagebox.showinfo("Provider check", f"{selected} reports ready. This check does not send a prompt.", parent=window)
+            else:
+                messagebox.showwarning("Provider not ready", f"{selected} is not ready. Check its local service, model installation, CLI authentication, or environment credentials. No model was downloaded.", parent=window)
+
+        ttk.Button(ai_group, text="Check provider readiness", command=check_provider).grid(row=7, column=0, sticky="w", pady=(2, 0))
+        ttk.Label(
+            ai_group,
+            text="Changing provider takes effect after restart. Model selection does not download models. Cloud providers may transmit prompts to their service.",
+            wraplength=410,
+        ).grid(row=8, column=0, sticky="w", pady=(8, 0))
 
         labels = {
             "voice_enabled": "Enable optional voice features",
@@ -234,7 +285,7 @@ def run_desktop() -> None:
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         def save_settings() -> None:
-            changes = {"ollama_model": model_value.get()}
+            changes = {\n                "provider": provider_value.get(),\n                "ollama_model": model_value.get(),\n                "openai_model": cloud_model_value.get(),\n            }
             changes.update({key: variable.get() for key, variable in variables.items()})
             try:
                 save_user_settings(changes)
