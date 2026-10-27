@@ -4,6 +4,12 @@ import json
 import os
 import urllib.error
 import urllib.request
+from urllib.parse import quote
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
 
 class GeminiAPIProvider:
     def __init__(self, model="gemini-2.5-flash", *, timeout=45, environ=None):
@@ -25,10 +31,11 @@ class GeminiAPIProvider:
         if not key:
             raise RuntimeError("Gemini API is not configured; set GEMINI_API_KEY.")
         payload = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt.strip()[:20000]}]}], "generationConfig": {"maxOutputTokens": 2048}}).encode("utf-8")
-        url = "https://generativelanguage.googleapis.com/v1beta/models/" + self.model + ":generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/" + quote(self.model, safe="-._") + ":generateContent"
         request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "Accept": "application/json", "x-goog-api-key": key}, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(1000001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Gemini API request failed.") from exc
