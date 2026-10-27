@@ -53,6 +53,25 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][-1], "list")
         self.assertIn("ollama pull llama3.2:3b", output[-1])
 
+    def test_setup_does_not_treat_different_model_size_as_installed(self):
+        output = []
+        listed = type("Result", (), {
+            "returncode": 0,
+            "stdout": "NAME ID SIZE MODIFIED\nllama3.2:1b abc 1GB today\n",
+        })()
+        with patch("yuki_cli.shutil.which", return_value="/usr/bin/ollama"), patch(
+            "yuki_cli.subprocess.run", return_value=listed
+        ) as run:
+            code = run_cli(
+                ["setup"],
+                config_loader=lambda: {"provider": "ollama", "ollama_model": "llama3.2:3b"},
+                input_fn=lambda _: "n",
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("not listed", output[0])
+
     def test_setup_only_pulls_after_yes_confirmation(self):
         output = []
         results = [
