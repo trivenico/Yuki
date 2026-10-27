@@ -183,6 +183,20 @@ class DesktopBridgeTests(unittest.TestCase):
         self.assertNotIn("api_key", persist.call_args.args[0])
         self.assertEqual(factory.configs[-1]["ollama_model"], "qwen2.5:7b")
 
+    def test_provider_factory_error_is_sanitized(self):
+        bridge, factory = self.make_bridge()
+        factory.raise_on_call = True
+        with patch("core.model_selection.persist_model_selection") as persist:
+            result = bridge.select_model({
+                "provider": "ollama",
+                "model": "qwen2.5:7b",
+                "base_url": "http://127.0.0.1:11434",
+            })
+        self.assertFalse(result["ok"])
+        self.assertNotIn("provider configuration invalid", result["message"])
+        self.assertIn("failed safely", result["message"])
+        persist.assert_not_called()
+
     def test_provider_factory_failure_does_not_persist_or_activate(self):
         bridge, factory = self.make_bridge()
         factory.raise_on_call = True
