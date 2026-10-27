@@ -15,6 +15,8 @@ PROVIDERS = {
     "llama.cpp": {"kind": "local", "default_url": "http://127.0.0.1:8080/v1"},
     "lm-studio": {"kind": "local", "default_url": "http://127.0.0.1:1234/v1"},
     "openai": {"kind": "cloud", "default_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY"},
+    "gemini_api": {"kind": "cloud", "default_url": "https://generativelanguage.googleapis.com/v1beta", "key_env": "GEMINI_API_KEY"},
+    "nvidia": {"kind": "cloud", "default_url": "https://integrate.api.nvidia.com/v1", "key_env": "NVIDIA_API_KEY"},
     "anthropic": {"kind": "cloud", "default_url": "https://api.anthropic.com", "key_env": "ANTHROPIC_API_KEY"},
     "deepseek": {"kind": "cloud", "default_url": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY"},
     "glm": {"kind": "cloud", "default_url": "https://open.bigmodel.cn/api/paas/v4", "key_env": "ZHIPUAI_API_KEY"},
@@ -39,6 +41,9 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     base_url = config.get("base_url", PROVIDERS[provider].get("default_url", ""))
     if not isinstance(base_url, str) or len(base_url) > 2048:
         raise ValueError("base_url must be a bounded string.")
+    api_key_env = config.get("api_key_env", PROVIDERS[provider].get("key_env", ""))
+    if not isinstance(api_key_env, str) or (api_key_env and not api_key_env.isidentifier()):
+        raise ValueError("api_key_env must be a valid environment variable name.")
     mcp_servers = config.get("mcp_servers", [])
     if not isinstance(mcp_servers, list) or len(mcp_servers) > 25:
         raise ValueError("mcp_servers must be a list with at most 25 entries.")
@@ -66,7 +71,7 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         "provider": provider,
         "model": model,
         "base_url": base_url,
-        "api_key_env": config.get("api_key_env", PROVIDERS[provider].get("key_env", "")),
+        "api_key_env": api_key_env,
         "mcp_servers": [
             {"name": item["name"].strip(), "endpoint": item["endpoint"].strip(),
              "allowed_tools": list(dict.fromkeys(tool.strip() for tool in item.get("allowed_tools", [])))}
