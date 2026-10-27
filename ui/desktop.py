@@ -6,6 +6,7 @@ confirmation in the desktop bridge.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 from yuki_agent import YukiAgent
@@ -38,7 +39,9 @@ class DesktopBridge:
         provider = provider_factory(self.config)
         self.ai = agent_factory(provider, usage_tracker=getattr(ai, "usage_tracker", None))
         self.provider_name = str(self.config.get("provider", "ollama")).strip().lower()
-        cloud_tasks = self.config.get("cloud_tasks", [])
+        cloud_tasks = self.config.get("cloud_tasks")
+        if cloud_tasks is None:
+            cloud_tasks = [item.strip() for item in os.environ.get("YUKI_CLOUD_TASKS", "").split(",") if item.strip()]
         if not isinstance(cloud_tasks, (list, tuple, set, frozenset)):
             cloud_tasks = []
         self.cloud_confirmation_required = (
