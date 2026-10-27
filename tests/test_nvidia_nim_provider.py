@@ -42,7 +42,7 @@ class NvidiaNIMProviderTests(unittest.TestCase):
         }).encode()
         opener = FakeOpener(FakeResponse(payload))
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={"NVIDIA_API_KEY": "test-secret"}, approval_callback=lambda prompt: True)
-        with patch("providers.openai_compatible.urllib.request.urlopen", side_effect=opener.open):
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             self.assertEqual(provider.generate("hello"), "Hello from NVIDIA")
         self.assertEqual(opener.request.full_url, "https://integrate.api.nvidia.com/v1/chat/completions")
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer test-secret")
@@ -55,7 +55,7 @@ class NvidiaNIMProviderTests(unittest.TestCase):
             provider.generate("hello")
     def test_missing_key_fails_before_network(self):
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={})
-        with patch("providers.openai_compatible.urllib.request.urlopen") as build:
+        with patch("providers.openai_compatible.urllib.request.build_opener") as build:
             with self.assertRaisesRegex(RuntimeError, "NVIDIA_API_KEY"):
                 provider.generate("hello")
         build.assert_not_called()
@@ -63,14 +63,14 @@ class NvidiaNIMProviderTests(unittest.TestCase):
     def test_oversized_response_is_rejected(self):
         opener = FakeOpener(FakeResponse(b"x" * 2_000_001))
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={"NVIDIA_API_KEY": "secret"}, approval_callback=lambda prompt: True)
-        with patch("providers.openai_compatible.urllib.request.urlopen", side_effect=opener.open):
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "2 MB"):
                 provider.generate("hello")
 
     def test_malformed_response_does_not_expose_payload(self):
         opener = FakeOpener(FakeResponse(b'{"error":"private-detail"}'))
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={"NVIDIA_API_KEY": "secret"}, approval_callback=lambda prompt: True)
-        with patch("providers.openai_compatible.urllib.request.urlopen", side_effect=opener.open):
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "unsupported response") as error:
                 provider.generate("hello")
         self.assertNotIn("private-detail", str(error.exception))
@@ -78,7 +78,7 @@ class NvidiaNIMProviderTests(unittest.TestCase):
     def test_network_errors_are_sanitized(self):
         opener = FakeOpener(error=URLError("private endpoint details"))
         provider = NvidiaNIMProvider("openai/gpt-oss-20b", environ={"NVIDIA_API_KEY": "secret"}, approval_callback=lambda prompt: True)
-        with patch("providers.openai_compatible.urllib.request.urlopen", side_effect=opener.open):
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(RuntimeError, "request failed") as error:
                 provider.generate("hello")
         self.assertNotIn("private endpoint details", str(error.exception))
