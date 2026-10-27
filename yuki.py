@@ -395,7 +395,20 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             return "Usage: /learn TASK | OUTCOME | LESSON"
         result = record_outcome(parts[0].strip(), parts[1].strip(),
                                 "Recorded through terminal", parts[2].strip() if len(parts) > 2 else "")
-        write_audit_event("learning:record", "completed" if result.startswith("Outcome recorded") else "failed")
+        succeeded = result.startswith("Outcome recorded")
+        write_audit_event("learning:record", "completed" if succeeded else "failed")
+        if succeeded:
+            # Mirror the explicit learning outcome into the local evolution review log.
+            # This is an observation only; the evolution cycle never changes code or settings.
+            try:
+                lesson = parts[2].strip() if len(parts) > 2 else ""
+                summary = f"Task: {parts[0].strip()}; outcome: {parts[1].strip()}"
+                if lesson:
+                    summary += f"; lesson: {lesson}"
+                _evolution_cycle().record("lesson", summary[:1200])
+            except Exception:
+                # The existing learning flow must remain usable if evolution storage is unavailable.
+                pass
         return result
     if command.startswith("/lessons"):
         task = command[len("/lessons"):].strip()
