@@ -2,7 +2,7 @@
 
 ## Goal
 
-Yuki should be usable from desktop, CLI, and browser clients while sharing one runtime for providers, memory, skills, tools, approvals, task state, and audit events. Interfaces are clients of the runtime; they must not implement their own privileged execution path.
+Yuki is a CLI-first and desktop-only AI platform. Do not build a browser UI, browser dashboard, or browser-facing Yuki product. The desktop app and CLI share one runtime for providers, memory, skills, tools, approvals, task state, and audit events; neither interface may implement its own privileged execution path.
 
 ## What can and cannot be combined
 
@@ -18,8 +18,8 @@ Study external agent projects for architecture and documented APIs. Prefer offic
 ### Skills
 Yuki now has an initial importer for Agent Skills-style `SKILL.md` documents. It imports only bounded YAML frontmatter and Markdown instructions as a declarative prompt skill; sibling scripts and executable tools are deliberately not imported. Skill instructions are untrusted task guidance, not permission grants. A future compatibility layer should normalize supported skill metadata and required tool declarations while requiring Yuki's own approval policy for every action.
 
-### Browser interface
-Build a browser client over a dedicated local or hosted API, not by exposing the CLI process directly. The API should use authenticated sessions, CSRF/origin protections for cookie sessions, strict loopback binding for local mode, request-size and rate limits, secure headers, and explicit remote-access configuration. Streaming should use SSE or WebSockets only after authentication and cancellation behavior are defined. Browser UI, desktop, and CLI must call the same application services and task APIs.
+### Desktop and CLI interfaces
+Keep the native desktop UI and CLI as the only supported user interfaces. Both should call the same application services and durable task APIs. The desktop app should provide a polished familiar workspace, while the CLI remains scriptable and automation-friendly. Do not add a browser server, browser dashboard, or browser client as a product surface. If a future internal API is ever required for IPC, keep it private to the local machine and inaccessible to browser clients by default.
 
 ## Candidate ecosystem worklist
 
@@ -42,8 +42,8 @@ All candidates below require a current, source-level review before adoption. Lis
 1. Keep the existing runtime authoritative and document interfaces.
 2. Add the safe Agent Skills import path and regression tests.
 3. Define provider capability and privacy metadata before adding providers.
-4. Build a browser API service with authentication and local-only defaults.
-5. Build the browser workspace against the same task, memory, and approval services.
+4. Complete the desktop workspace and wire it to shared task, memory, provider, and approval services.
+5. Keep the CLI scriptable and make its commands consistent with desktop actions.
 6. Integrate external frameworks one at a time with pinned dependencies and a license/security review.
 7. Add model downloads/hosting only through an explicit model manager with disk-space checks, checksums where available, user consent, and model-specific license notices.
 
