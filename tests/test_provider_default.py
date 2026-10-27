@@ -60,6 +60,42 @@ class ProviderDefaultTests(unittest.TestCase):
         provider.is_available.assert_called_once_with()
         provider.generate.assert_called_once()
 
+    def test_ollama_smoke_test_cli_overrides_are_ephemeral(self):
+        from scripts import smoke_test_ollama
+
+        config = {"provider": "ollama", "ollama_model": "saved-model", "ollama_base_url": "http://127.0.0.1:11434"}
+        provider = Mock()
+        provider.is_available.return_value = True
+        provider.generate.return_value = "YUKI_OLLAMA_SMOKE_OK"
+        with (
+            patch.object(smoke_test_ollama, "load_config", return_value=config),
+            patch.object(smoke_test_ollama, "create_provider", return_value=provider) as create,
+            patch("builtins.print"),
+        ):
+            self.assertEqual(
+                smoke_test_ollama.main(["--model", "temporary-model", "--base-url", "http://127.0.0.1:11434"]),
+                0,
+            )
+        passed_config = create.call_args.args[0]
+        self.assertEqual(passed_config["ollama_model"], "temporary-model")
+        self.assertEqual(passed_config["ollama_base_url"], "http://127.0.0.1:11434")
+        self.assertEqual(config["ollama_model"], "saved-model")
+
+    def test_ollama_smoke_test_main_does_not_consume_test_runner_args(self):
+        from scripts import smoke_test_ollama
+
+        config = {"provider": "ollama", "ollama_model": "test-model"}
+        provider = Mock()
+        provider.is_available.return_value = True
+        provider.generate.return_value = "YUKI_OLLAMA_SMOKE_OK"
+        with (
+            patch.object(smoke_test_ollama, "load_config", return_value=config),
+            patch.object(smoke_test_ollama, "create_provider", return_value=provider),
+            patch("builtins.print"),
+            patch("sys.argv", ["unit-test-runner", "--unrelated-flag"]),
+        ):
+            self.assertEqual(smoke_test_ollama.main(), 0)
+
     def test_openai_model_and_endpoint_are_loaded_from_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.yaml"
