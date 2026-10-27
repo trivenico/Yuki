@@ -5,7 +5,6 @@ import os
 
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
@@ -22,7 +21,7 @@ def create_provider(config=None, *, environ=None):
     env = os.environ if environ is None else environ
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
-        return MockProvider()
+        raise ValueError("mock provider is test-only and cannot be selected by the application runtime.")
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
