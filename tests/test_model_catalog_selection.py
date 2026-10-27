@@ -101,7 +101,7 @@ class ModelCatalogTests(unittest.TestCase):
     def test_selection_is_persisted_without_secret_values(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"
-            path.write_text("workspace: ./workspace\\n", encoding="utf-8")
+            path.write_text("workspace: ./workspace\n", encoding="utf-8")
             result = persist_model_selection({
                 "provider": "ollama",
                 "model": "llama3.2:3b",
