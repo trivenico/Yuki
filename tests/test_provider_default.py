@@ -15,7 +15,7 @@ class ProviderDefaultTests(unittest.TestCase):
             config_path.write_text("workspace: ./workspace\n", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 config = load_config(config_path)
-        self.assertEqual(config["provider"], "openai")
+        self.assertEqual(config["provider"], "ollama")
         self.assertNotEqual(config["provider"], "mock")
 
     def test_explicit_config_provider_is_preserved(self):
