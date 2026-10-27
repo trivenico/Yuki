@@ -212,8 +212,8 @@ class LearningTests(unittest.TestCase):
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertIn("\nProvider: ollama", result)
+        self.assertNotIn("\\nProvider: ollama", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()
