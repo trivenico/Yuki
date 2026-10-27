@@ -35,7 +35,7 @@ class DesktopAppTests(unittest.TestCase):
             with patch.object(sys, "frozen", True, create=True), patch.object(
                 sys, "executable", str(desktop)
             ):
-                with self.assertRaisesRegex(RuntimeError, "not found beside"):
+                with self.assertRaisesRegex(RuntimeError, "not found in the adjacent"):
                     build_runtime_command()
 
     def test_desktop_root_is_the_repository_root(self):
