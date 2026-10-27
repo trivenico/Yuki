@@ -105,7 +105,8 @@ class TaskLedger:
         return self._task(row)
 
     def transition(
-        self, task_id: str, status: str, *, result: str = "", error_code: str = "",\n        verification_evidence: str = "",
+        self, task_id: str, status: str, *, result: str = "", error_code: str = "",
+        verification_evidence: str = "",
     ) -> dict[str, Any]:
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError("Task ID must be non-empty.")
