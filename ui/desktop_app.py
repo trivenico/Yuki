@@ -68,7 +68,7 @@ def run_desktop() -> None:
     send_button = ttk.Button(entry_row, text="Send")
     send_button.pack(side="left", padx=(8, 0))
 
-    output_queue: queue.Queue[str | None] = queue.Queue()
+    output_queue: queue.Queue[str | None] = queue.Queue(maxsize=100_000)
     try:
         process = subprocess.Popen(
             build_runtime_command(),
@@ -80,6 +80,12 @@ def run_desktop() -> None:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if os.name == "nt" and getattr(sys, "frozen", False)
+                else 0
+            ),
             shell=False,
         )
     except OSError as exc:
