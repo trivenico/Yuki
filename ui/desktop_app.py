@@ -20,7 +20,8 @@ def build_runtime_command() -> list[str]:
     """Return a shell-free command for the authoritative guarded runtime."""
     if getattr(sys, "frozen", False):
         runtime_name = "YukiRuntime.exe" if os.name == "nt" else "YukiRuntime"
-        runtime = Path(sys.executable).resolve().with_name(runtime_name)
+        install_root = Path(sys.executable).resolve().parent.parent
+        runtime = install_root / "YukiRuntime" / runtime_name
         if not runtime.is_file():
             raise RuntimeError(
                 f"Packaged runtime was not found beside the desktop app: {runtime_name}. "
@@ -72,7 +73,11 @@ def run_desktop() -> None:
     try:
         process = subprocess.Popen(
             build_runtime_command(),
-            cwd=str(ROOT),
+            cwd=str(
+                Path(sys.executable).resolve().parent.parent
+                if getattr(sys, "frozen", False)
+                else ROOT
+            ),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
