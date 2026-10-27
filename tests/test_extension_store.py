@@ -83,8 +83,8 @@ class ExtensionStoreTests(unittest.TestCase):
     def test_imports_agent_skills_markdown_as_non_executable_prompt_skill(self):
         source = self.source / "SKILL.md"
         source.write_text(
-            "---\\nname: release-notes\\ndescription: Draft accurate release notes.\\n---\\n"
-            "Ask for the release audience, summarize verified changes, and do not invent claims.\\n",
+            "---\nname: release-notes\ndescription: Draft accurate release notes.\n---\n"
+            "Ask for the release audience, summarize verified changes, and do not invent claims.\n",
             encoding="utf-8",
         )
         installed = install_skill_file(str(source), root=self.data)
@@ -96,11 +96,11 @@ class ExtensionStoreTests(unittest.TestCase):
 
     def test_agent_skills_import_rejects_non_skill_md_and_unclosed_frontmatter(self):
         wrong_name = self.source / "README.md"
-        wrong_name.write_text("---\\nname: valid_skill\\ndescription: valid description\\n---\\ntext", encoding="utf-8")
+        wrong_name.write_text("---\nname: valid_skill\ndescription: valid description\n---\ntext", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "named SKILL.md"):
             install_skill_file(str(wrong_name), root=self.data)
         source = self.source / "SKILL.md"
-        source.write_text("---\\nname: valid_skill\\ndescription: valid description\\nno closing delimiter", encoding="utf-8")
+        source.write_text("---\nname: valid_skill\ndescription: valid description\nno closing delimiter", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "not closed"):
             install_skill_file(str(source), root=self.data)
 
