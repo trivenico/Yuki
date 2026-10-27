@@ -13,11 +13,11 @@ python -m unittest discover -s tests -v
 python yuki_cli.py start
 ```
 
-Windows: run `install_windows.bat`, then `run_yuki_windows.bat`. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh`. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI; it is not yet a standalone packaged executable. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
+Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_yuki_desktop_windows.bat` for GUI. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh` for CLI or `sh run_yuki_desktop_unix.sh` for GUI. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI; it is not yet a standalone packaged executable. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
 
 ## Local AI provider (default)
 
-Yuki defaults to local Ollama at `http://127.0.0.1:11434` using model `llama3.2:3b`. Install Ollama separately and run `ollama pull llama3.2:3b` before first chat if the model is not already present. No model download or prompt is sent automatically during installation. To opt into OpenAI, set `provider: openai` in your local config and provide `OPENAI_API_KEY` via the environment; do not store secrets in YAML or Git. The desktop GUI forwards operational commands to the guarded CLI runtime instead of implementing a separate execution path.
+Yuki defaults to local Ollama at `http://127.0.0.1:11434` using model `llama3.2:3b`. Install Ollama separately, then run `python yuki_cli.py setup` to check the exact configured model tag. If it is missing, Yuki asks before running `ollama pull`; declining does not download anything. Setup does not change the selected provider, install Ollama, or claim inference works merely because a model is present. To opt into OpenAI, set `provider: openai` in your local config and provide `OPENAI_API_KEY` via the environment; do not store secrets in YAML or Git. The desktop GUI forwards operational commands to the guarded CLI runtime instead of implementing a separate execution path.
 
 ## Optional integrations
 
