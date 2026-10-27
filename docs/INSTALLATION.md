@@ -3,21 +3,22 @@
 ## Requirements
 
 - Python 3.10+ and PyYAML.
-- For real AI responses, configure an OpenAI API key in your process environment. The mock provider is test-only and is no longer offered by the runtime provider registry.
+- Ollama installed separately, running locally, with the configured model pulled for local inference. Cloud providers are opt-in and require their own credentials.
 
 ## Basic install
 
 ```sh
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-ui.txt  # for the optional desktop dashboard
 python -m unittest discover -s tests -v
-python main.py
+python yuki_cli.py start
 ```
 
-Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
+Windows: run `install_windows.bat`, then `run_yuki_windows.bat`. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh`. Use `python yuki_cli.py desktop` for the optional Textual supervision dashboard.
 
 ## Real AI provider (OpenAI)
 
-Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
+Yuki defaults to local Ollama at `http://127.0.0.1:11434` using model `llama3.2:3b`. Install Ollama separately and run `ollama pull llama3.2:3b` before first chat if the model is not already present. No model download or prompt is sent automatically during installation. To opt into OpenAI, set `provider: openai` in your local config and provide `OPENAI_API_KEY` via the environment; do not store secrets in YAML or Git. The optional desktop dashboard currently provides supervision/status and skill listing; full operational workflows remain in the guarded CLI.
 
 ## Optional integrations
 
