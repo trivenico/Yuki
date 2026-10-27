@@ -1,7 +1,6 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from ui.desktop_app import ROOT, build_runtime_command
 
