@@ -356,7 +356,7 @@ def main():
                 print("Yuki > No tracked tasks yet.")
             else:
                 for item in tasks:
-                    print(f"Yuki > [{item['status']}] {item['id'][:8]} — {item['title']}")
+                    print(f"Yuki > [{item['status']}] {item['id']} — {item['title']}")
         elif command.startswith("/task show "):
             task_id = command[len("/task show "):].strip()
             item = task_ledger.get(task_id)
@@ -372,7 +372,7 @@ def main():
             task_id = command[len("/task cancel "):].strip()
             try:
                 item = task_ledger.cancel(task_id)
-                print(f"Yuki > Task {item['id'][:8]} cancelled.")
+                print(f"Yuki > Task {item['id']} cancelled.")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Cannot cancel task: {exc}")
         elif command.startswith("/task "):
@@ -386,7 +386,7 @@ def main():
             except Exception as exc:
                 print(f"Yuki > Task tracking unavailable ({type(exc).__name__}); no task was started.")
                 continue
-            print(f"Yuki > Task {tracked['id'][:8]} created. Preparing a bounded plan; each skill call requires fresh approval.")
+            print(f"Yuki > Task {tracked['id']} created. Preparing a bounded plan; each skill call requires fresh approval.")
             try:
                 result = task_agent.run(goal)
                 final_status = "completed" if result.ok else "failed"
@@ -395,7 +395,7 @@ def main():
                     result=result.message,
                     error_code="" if result.ok else result.status,
                 )
-                print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}, task_id={tracked['id'][:8]}]")
+                print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}, task_id={tracked['id']}]")
             except KeyboardInterrupt:
                 try:
                     task_ledger.transition(tracked["id"], "cancelled")
