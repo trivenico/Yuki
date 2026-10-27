@@ -22,34 +22,27 @@ if errorlevel 1 (
 )
 
 if not exist ".venv\Scripts\python.exe" (
-  echo [1/5] Creating isolated virtual environment...
+  echo [1/4] Creating isolated virtual environment...
   python -m venv .venv
   if errorlevel 1 exit /b 1
 ) else (
   echo [1/5] Existing virtual environment found.
 )
 
-echo [2/5] Updating pip...
+echo [2/4] Updating pip...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
   echo WARNING: pip upgrade failed. Continuing after pip self-upgrade failure; dependency installation below must still succeed.
 )
 
-echo [3/5] Checking core dependencies...
+echo [3/4] Checking core dependencies...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 (
   echo ERROR: Dependency step failed.
   exit /b 1
 )
 
-echo [4/5] Installing the desktop supervision UI...
-".venv\Scripts\python.exe" -m pip install -r requirements-ui.txt
-if errorlevel 1 (
-  echo ERROR: Desktop UI dependency installation failed.
-  exit /b 1
-)
-
-echo [5/5] Running Yuki test suite...
+echo [4/4] Running Yuki test suite...
 ".venv\Scripts\python.exe" -m unittest discover -s tests -v
 if errorlevel 1 (
   echo ERROR: Tests failed. Review the failure output above before using Yuki.
