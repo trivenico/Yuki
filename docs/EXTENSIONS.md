@@ -56,3 +56,16 @@ Yuki's existing evolution workflow records local observations and proposes workf
 ```
 
 The cycle analyzes only explicitly recorded observations; it does not call a model, execute tools, or change code/config. Acceptance records approval for manual follow-up—it does not silently apply a change. Installed skill instructions can be improved by editing and reinstalling a manifest, but Yuki does not automatically rewrite or execute its own Python code. A future self-upgrade workflow should generate a patch, run tests and security checks, show a diff, and require explicit approval before applying it.
+
+## Import Agent Skills `SKILL.md`
+
+Yuki can import the Markdown `SKILL.md` format as a declarative prompt skill. From the interactive runtime:
+
+```text
+/skills import path/to/SKILL.md
+/skills
+```
+
+The desktop UI includes an **Import Skill** action for selecting the document. The importer validates bounded YAML frontmatter (`name` and `description`) and a bounded Markdown body, then stores it in Yuki's existing user-installed skill registry. It imports only that one document: sibling scripts, executables, and tools are not installed or run. The resulting instructions remain untrusted guidance and do not grant permissions or bypass the approval gate. Review imported skill content before using it, especially if it came from an untrusted source.
+
+This is a deliberately limited compatibility bridge, not full implementation of every Agent Skills ecosystem feature. Tool declarations, referenced resources, executable scripts, and framework-specific metadata are not imported automatically.
