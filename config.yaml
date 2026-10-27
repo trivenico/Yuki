@@ -1,10 +1,12 @@
 # Safe defaults; all privileged/integration features remain disabled.
 name: Yuki
 workspace: ./yuki_workspace
-provider: openai
-openai_model: gpt-4.1-mini
+provider: ollama
+# Local-first default; select a model that fits your hardware if needed.
 ollama_base_url: http://127.0.0.1:11434
-ollama_model: ""
+ollama_model: llama3.2:3b
+# Cloud providers are opt-in via an explicit provider setting.
+openai_model: gpt-4.1-mini
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect
