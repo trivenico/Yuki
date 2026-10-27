@@ -10,6 +10,32 @@ import json
 from dataclasses import dataclass
 
 
+def _unique_object(pairs):
+    """Reject duplicate keys so model proposals cannot be interpreted ambiguously."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _parse_proposal(raw):
+    """Accept only exact, supported top-level model proposal schemas."""
+    proposal = json.loads(raw, object_pairs_hook=_unique_object)
+    if not isinstance(proposal, dict):
+        raise ValueError("proposal must be an object")
+    kind = proposal.get("type")
+    expected = (
+        {"type", "message"} if kind == "final"
+        else {"type", "skill", "argument"} if kind == "tool_call"
+        else set()
+    )
+    if not expected or set(proposal) != expected:
+        raise ValueError("unsupported proposal schema")
+    return proposal
+
+
 @dataclass(frozen=True)
 class TaskResult:
     ok: bool
@@ -65,14 +91,11 @@ class ApprovedTaskAgent:
                 return TaskResult(False, "AI provider returned an invalid or oversized plan.",
                                   step_number, "invalid_model_output")
             try:
-                proposal = json.loads(raw)
-            except json.JSONDecodeError:
-                return TaskResult(False, "AI response was not valid JSON; no action was executed.",
+                proposal = _parse_proposal(raw)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                return TaskResult(False, "AI response did not match the strict action schema; no action was executed.",
                                   step_number, "invalid_model_output")
-            if not isinstance(proposal, dict):
-                return TaskResult(False, "AI response must be one JSON object; no action was executed.",
-                                  step_number, "invalid_model_output")
-            kind = proposal.get("type")
+            kind = proposal["type"]
             if kind == "final":
                 message = proposal.get("message")
                 if not isinstance(message, str) or not message.strip():
