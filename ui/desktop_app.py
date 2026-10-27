@@ -5,6 +5,7 @@ a child process and forwards typed commands/approval answers to that runtime.
 """
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import sys
@@ -17,6 +18,15 @@ MAX_TRANSCRIPT_CHARS = 1_000_000
 
 def build_runtime_command() -> list[str]:
     """Return a shell-free command for the authoritative guarded runtime."""
+    if getattr(sys, "frozen", False):
+        runtime_name = "YukiRuntime.exe" if os.name == "nt" else "YukiRuntime"
+        runtime = Path(sys.executable).resolve().with_name(runtime_name)
+        if not runtime.is_file():
+            raise RuntimeError(
+                f"Packaged runtime was not found beside the desktop app: {runtime_name}. "
+                "Reinstall Yuki or launch the CLI runtime directly."
+            )
+        return [str(runtime), "-u"] if os.name != "nt" else [str(runtime)]
     return [sys.executable, "-u", str(ROOT / "main.py")]
 
 
