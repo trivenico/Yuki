@@ -30,6 +30,7 @@ from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.task_ledger import TaskLedger
 from core.task_verifier import verify_workspace_file
+from core.test_runner import run_project_unittest_suite
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
@@ -119,6 +120,7 @@ def print_help():
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
   /task verify ID --file PATH [--contains TEXT]  Verify file presence/hash and optional literal text
+  /task test ID --project PATH    Run approved Python unittest discovery for a workspace project
   /task cancel ID                 Cancel a queued task record (running-task interruption is not implemented)
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
@@ -414,6 +416,55 @@ def main():
                 print("Yuki > Task remains awaiting_verification; an artifact check alone does not prove the full goal is complete.")
             except (KeyError, ValueError, OSError) as exc:
                 print(f"Yuki > Verification refused safely: {exc}")
+        elif command.startswith("/task test "):
+            try:
+                parts = shlex.split(command)
+                if len(parts) != 5 or parts[0:2] != ["/task", "test"] or parts[3] != "--project":
+                    print('Yuki > Usage: /task test ID --project "relative/project/path"')
+                    continue
+                task_id, project_path = parts[2], parts[4]
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                    continue
+                if item["status"] != "awaiting_verification":
+                    print("Yuki > Only tasks awaiting_verification can run this acceptance check.")
+                    continue
+                if not _confirm(
+                    "task:test-suite",
+                    f"Run Python unittest discovery in workspace project '{project_path}'. "
+                    "Project tests execute project-controlled code; this is a one-time approval.",
+                    "high",
+                ):
+                    print("Yuki > Test run not approved; task status was not changed.")
+                    continue
+                outcome = run_project_unittest_suite(workspace, project_path)
+                state = "PASS" if outcome["passed"] else "FAIL"
+                evidence = (
+                    f"Acceptance check: Python unittest discovery; project={project_path}; "
+                    f"exit_code={outcome['exit_code']}; timed_out={outcome['timed_out']}; "
+                    f"test_count={outcome.get('test_count', 0)}; outcome={state}. "
+                    "Scope: discovered Python unittest suite only. "
+                    f"stdout_tail={outcome['stdout'][-1200:]!r}; "
+                    f"stderr_tail={outcome['stderr'][-1200:]!r}"
+                )[:3900]
+                if outcome["passed"]:
+                    updated = task_ledger.transition(
+                        task_id, "completed",
+                        result=f"Approved Python unittest suite passed ({outcome['test_count']} tests).",
+                        verification_evidence=evidence,
+                    )
+                    print(f"Yuki > Task {updated['id']} completed: approved test suite passed.")
+                else:
+                    updated = task_ledger.record_verification_evidence(task_id, evidence)
+                    print(f"Yuki > Test suite did not pass; task {updated['id']} remains awaiting_verification.")
+                print(f"Yuki > Exit code: {outcome['exit_code']}; tests reported: {outcome.get('test_count', 0)}; timed out: {outcome['timed_out']}")
+                if outcome["stdout"]:
+                    print("Yuki test stdout (tail):\\n" + outcome["stdout"])
+                if outcome["stderr"]:
+                    print("Yuki test stderr (tail):\\n" + outcome["stderr"])
+            except (KeyError, ValueError, OSError) as exc:
+                print(f"Yuki > Test run refused safely: {exc}")
         elif command.startswith("/task cancel "):
             task_id = command[len("/task cancel "):].strip()
             try:
