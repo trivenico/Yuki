@@ -39,6 +39,7 @@ class DailyEvolutionCycle:
     MAX_OBSERVATIONS = 2000
     MAX_OBSERVATION_CHARS = 1200
     MAX_PROPOSALS = 500
+    MAX_DATA_FILE_BYTES = 16 * 1024 * 1024
 
     def __init__(self, workspace: str | Path):
         root = Path(workspace).expanduser().resolve()
@@ -49,9 +50,27 @@ class DailyEvolutionCycle:
         self.report_path = root / "yuki_evolution_report.json"
         self._lock = RLock()
 
+    def _read_json(self, path: Path):
+        """Read bounded local JSON so corrupt/hostile files cannot exhaust memory."""
+        try:
+            with path.open("rb") as handle:
+                raw = handle.read(self.MAX_DATA_FILE_BYTES + 1)
+        except OSError:
+            raise
+        if len(raw) > self.MAX_DATA_FILE_BYTES:
+            raise RuntimeError(
+                f"Evolution data at {path.name} exceeds the size limit; refusing to load."
+            )
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Evolution data at {path.name} is unreadable; nothing was overwritten."
+            ) from exc
+
     def _read_list(self, path: Path, limit: int) -> list:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = self._read_json(path)
         except FileNotFoundError:
             return []
         except (OSError, json.JSONDecodeError) as exc:
@@ -167,7 +186,7 @@ class DailyEvolutionCycle:
         """Read the latest report without changing it or creating a new cycle."""
         with self._lock:
             try:
-                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report = self._read_json(self.report_path)
             except FileNotFoundError:
                 return None
             except (OSError, json.JSONDecodeError) as exc:
