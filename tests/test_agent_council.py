@@ -35,10 +35,12 @@ class AgentCouncilTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(result.contributions), 3)
         self.assertEqual(provider.specialist_count, 3)
-        self.assertEqual(len(provider.prompts), 4)
+        self.assertEqual(len(provider.prompts), 7)
+        self.assertEqual(sum("Peer-review role:" in prompt for prompt in provider.prompts), 3)
         self.assertIn("Consensus", result.summary)
         self.assertTrue(any("comparing proposals" in event for event in events))
         self.assertIn("Independent recommendation", result.context)
+        self.assertIn("Peer critique:", result.context)
 
     def test_empty_goal_does_not_call_provider(self):
         provider = ParallelFakeProvider()
