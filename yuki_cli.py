@@ -112,7 +112,8 @@ def run_cli(
                 installed, errors = load_installed_skill_packs()
                 _write_json({
                     "installed": [
-                        {"name": skill.name, "description": skill.description, "risk": skill.risk,
+                        {"name": skill.pack_name, "skill_name": skill.name,
+                         "description": skill.description, "risk": skill.risk,
                          "requires_approval": skill.requires_approval}
                         for skill in installed
                     ],
