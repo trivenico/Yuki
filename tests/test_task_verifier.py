@@ -22,6 +22,34 @@ class WorkspaceFileVerifierTests(unittest.TestCase):
         self.assertEqual(result["sha256"], hashlib.sha256(b"Yuki artifact").hexdigest())
         self.assertEqual(result["scope"], "file_presence_and_identity_only")
 
+    def test_literal_text_acceptance_check_reports_match_and_mismatch(self):
+        artifact = self.root / "report.txt"
+        artifact.write_text("Project status: ready", encoding="utf-8")
+        matched = verify_workspace_file(self.root, "report.txt", expected_text="status: ready")
+        missed = verify_workspace_file(self.root, "report.txt", expected_text="deployment succeeded")
+        self.assertTrue(matched["content_match"])
+        self.assertFalse(missed["content_match"])
+        self.assertEqual(matched["scope"], "file_identity_and_literal_text_match")
+
+    def test_literal_text_check_rejects_empty_or_oversized_expectations(self):
+        artifact = self.root / "report.txt"
+        artifact.write_text("report", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            verify_workspace_file(self.root, "report.txt", expected_text="")
+        with self.assertRaisesRegex(ValueError, "4000"):
+            verify_workspace_file(self.root, "report.txt", expected_text="x" * 4001)
+
+    def test_literal_text_check_rejects_binary_and_large_files(self):
+        binary = self.root / "binary.bin"
+        binary.write_bytes(b"\\xff\\xfe")
+        with self.assertRaisesRegex(ValueError, "UTF-8"):
+            verify_workspace_file(self.root, "binary.bin", expected_text="hello")
+        large = self.root / "large.txt"
+        with large.open("wb") as handle:
+            handle.truncate(1024 * 1024 + 1)
+        with self.assertRaisesRegex(ValueError, "1 MiB"):
+            verify_workspace_file(self.root, "large.txt", expected_text="hello")
+
     def test_rejects_absolute_and_traversal_paths(self):
         outside = Path(self.temp.name) / "outside.txt"
         outside.write_text("private", encoding="utf-8")
