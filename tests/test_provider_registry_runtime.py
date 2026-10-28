@@ -22,10 +22,14 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
-        manager = ProviderManager({"ollama_model": ""}, environ={})
+        manager = ProviderManager(
+            {"ollama_model": "", "ollama_base_url": "ftp://invalid.example"},
+            environ={},
+        )
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
         self.assertEqual(manager.current().name, "ollama")
+        self.assertIsNone(manager._selected_adapter)
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
