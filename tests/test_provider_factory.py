@@ -35,9 +35,9 @@ class ProviderFactoryTests(unittest.TestCase):
             OpenAICompatibleProvider,
         )
 
-    def test_local_provider_requires_model_configuration(self):
-        with self.assertRaisesRegex(ValueError, "model"):
-            create_provider({"provider": "ollama", "ollama_model": ""}, environ={})
+    def test_local_provider_blank_model_uses_default(self):
+        provider = create_provider({"provider": "ollama", "ollama_model": ""}, environ={})
+        self.assertEqual(provider.model, "llama3.2:3b")
 
     def test_gemini_provider_is_constructible_without_cli_installation(self):
         with patch("providers.gemini_cli.shutil.which", return_value=None):
