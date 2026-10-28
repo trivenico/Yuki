@@ -12,11 +12,19 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from yaml.events import AliasEvent
 from urllib.parse import urlsplit
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    """Safe YAML loader that rejects duplicate mapping keys in skill metadata."""
+    """Safe YAML loader that rejects duplicate keys and aliases in skill metadata."""
+
+    def compose_node(self, parent, index):
+        # Aliases are unnecessary for this tiny metadata schema and can create
+        # recursive or unexpectedly shared structures in untrusted documents.
+        if self.check_event(AliasEvent):
+            raise yaml.YAMLError("YAML aliases are not supported in skill frontmatter.")
+        return super().compose_node(parent, index)
 
 
 def _construct_unique_yaml_mapping(loader, node, deep=False):
