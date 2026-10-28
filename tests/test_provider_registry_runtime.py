@@ -12,7 +12,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
-        self.assertFalse(entries["anthropic"]["implemented"])
+        self.assertTrue(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
     def test_default_ollama_adapter_is_constructible_without_network_access(self):
@@ -33,11 +33,16 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
-    def test_unimplemented_provider_does_not_change_selection(self):
+    def test_anthropic_selection_requires_configuration_and_keeps_current_provider(self):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
-        self.assertIn("not implemented", message)
+        self.assertIn("Cannot select anthropic", message)
         self.assertEqual(manager.current().name, "ollama")
+        configured = ProviderManager(
+            {"anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "test-key"},
+        )
+        self.assertEqual(configured.select("anthropic"), "Selected provider: anthropic")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
