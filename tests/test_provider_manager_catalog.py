@@ -31,6 +31,50 @@ class ProviderManagerCatalogTests(unittest.TestCase):
         self.assertEqual(result, "Selected provider for task: ollama")
         self.assertEqual(manager.current().name, "ollama")
 
+    def test_task_resolution_does_not_mutate_shared_provider_selection(self):
+        from unittest.mock import patch
+
+        class AvailableAdapter:
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                return "task-local result"
+
+        manager = ProviderManager(
+            config={"provider": "ollama", "ollama_model": "qwen3"},
+            environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+        )
+        existing_adapter = object()
+        manager._selected_adapter = existing_adapter
+        with patch.object(manager, "_build_adapter", return_value=AvailableAdapter()):
+            provider, adapter = manager.resolve_for_task(
+                required_capabilities=("text", "local_inference"),
+                preference=("ollama",),
+            )
+        self.assertEqual(provider, "ollama")
+        self.assertNotIsInstance(adapter, type(existing_adapter))
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertIs(manager._selected_adapter, existing_adapter)
+
+    def test_task_resolution_failure_preserves_shared_selection(self):
+        from unittest.mock import patch
+
+        class UnavailableAdapter:
+            def is_available(self):
+                return False
+
+        manager = ProviderManager(
+            config={"provider": "ollama", "ollama_model": "qwen3"},
+            environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+        )
+        existing_adapter = object()
+        manager._selected_adapter = existing_adapter
+        with patch.object(manager, "_build_adapter", return_value=UnavailableAdapter()):
+            with self.assertRaisesRegex(RuntimeError, "no provider switch was made"):
+                manager.resolve_for_task(required_capabilities=("text",), preference=("ollama",))
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertIs(manager._selected_adapter, existing_adapter)
+
     def test_task_routing_never_switches_to_unavailable_candidate(self):
         from unittest.mock import patch
 
