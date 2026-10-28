@@ -41,6 +41,13 @@ class ReadinessProbeTests(unittest.TestCase):
                 self.assertEqual(_probe_ollama(url).status, "unavailable")
                 opener.assert_not_called()
 
+    def test_missing_or_invalid_models_field_is_not_verified(self):
+        for payload in (b'{}', b'{"models": null}', b'{"models": {}}'):
+            with self.subTest(payload=payload), patch("core.readiness.build_opener") as builder:
+                builder.return_value.open.return_value = FakeResponse(payload)
+                result = _probe_ollama("http://localhost:11434")
+            self.assertEqual(result.status, "unavailable")
+
     def test_invalid_json_and_timeout_fail_closed(self):
         with patch("core.readiness.build_opener") as builder:
             builder.return_value.open.return_value = FakeResponse(b"not-json")
