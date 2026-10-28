@@ -123,3 +123,26 @@ class ProviderManager:
         """Return a capability-filtered registry for explicit, policy-aware routing."""
         from providers.capabilities import registry_from_catalog
         return registry_from_catalog(self.catalog())
+
+    def route_for_task(self, *, required_capabilities=("text",), preference=(), allow_cloud=False) -> str:
+        """Explicitly route one task to a configured, available adapter.
+
+        Cloud providers are excluded unless the caller explicitly opts in. A
+        candidate is not committed as selected until its adapter reports
+        available; routing never silently falls back to another provider.
+        """
+        registry = self.routing_registry()
+        candidate = registry.route(
+            required=required_capabilities,
+            preference=preference,
+            allow_cloud=allow_cloud,
+        )
+        adapter = self._build_adapter(candidate.provider)
+        if adapter.is_available() is not True:
+            raise RuntimeError(
+                f"Selected routing candidate {candidate.provider} is not available; "
+                "no provider switch was made."
+            )
+        self._selected = candidate.provider
+        self._selected_adapter = adapter
+        return f"Selected provider for task: {candidate.provider}"
