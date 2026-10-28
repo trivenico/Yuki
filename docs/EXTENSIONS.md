@@ -22,6 +22,18 @@ From the desktop/interactive runtime, use:
 
 The skill becomes a tool in Yuki's shared skill registry. Its instructions are treated as untrusted task guidance: they cannot override Yuki's safety policy, permission checks, or tool allow-lists.
 
+### Risk-tagged data-only skill packs
+
+For a separate JSON format that declares an explicit risk level (`low`, `medium`, or `high`), use the nested CLI commands below. This format is stored in the `skill_packs/` user-data directory and is loaded on the next runtime start. Runtime names are prefixed with `pack_` to avoid collisions with built-in skills.
+
+```text
+python yuki_cli.py skills packs install path/to/skill-pack.json
+python yuki_cli.py skills packs list
+python yuki_cli.py skills packs remove release_notes
+```
+
+These packs contain instructions only, not executable code. Medium- and high-risk packs carry an additional approval requirement; all skill invocations still pass through Yuki's normal human approval gate. The `skills install` command above remains the existing declarative extension-manifest format, while `skills packs install` is the risk-tagged pack format.
+
 ## Plugins
 
 The initial plugin format registers an explicitly configured HTTPS MCP server and a fixed list of tool names. It does not download or execute plugin code. Copy `mcp-plugin.example.json`, replace the example host with a service you trust, and choose only the tools you want Yuki to expose:
