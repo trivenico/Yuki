@@ -47,6 +47,39 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_mcp_config_rejects_malformed_ports_and_host_mismatch(self):
+        from core.config import _mcp_servers
+
+        valid = {
+            "name": "docs",
+            "endpoint": "https://mcp.example.com/api",
+            "allowed_hosts": ["mcp.example.com"],
+            "allowed_tools": ["search"],
+        }
+        for endpoint in (
+            "https://mcp.example.com:bad/api",
+            "https://mcp.example.com:65536/api",
+            "https://mcp.example.com:0/api",
+            " https://mcp.example.com/api",
+            "https://evil.example/api",
+        ):
+            with self.subTest(endpoint=repr(endpoint)):
+                with self.assertRaisesRegex(RuntimeError, "MCP"):
+                    _mcp_servers({ "mcp_servers": [{**valid, "endpoint": endpoint}] })
+
+    def test_mcp_config_normalizes_allowlisted_host_case(self):
+        from core.config import _mcp_servers
+
+        result = _mcp_servers({
+            "mcp_servers": [{
+                "name": "docs",
+                "endpoint": "https://MCP.Example.com/api",
+                "allowed_hosts": ["MCP.EXAMPLE.COM"],
+                "allowed_tools": ["search"],
+            }]
+        })
+        self.assertEqual(result[0]["allowed_hosts"], ["mcp.example.com"])
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
