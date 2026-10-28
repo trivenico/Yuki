@@ -14,7 +14,7 @@ class ParallelFakeProvider:
     def generate(self, prompt):
         with self.lock:
             self.prompts.append(prompt)
-        if "Specialist role:" in prompt:
+        if prompt.startswith("You are one specialist in Yuki's internal advisory council."):
             self.barrier.wait(timeout=2)
             with self.lock:
                 self.specialist_count += 1
@@ -46,7 +46,7 @@ class AgentCouncilTests(unittest.TestCase):
         class PartlyBrokenProvider(ParallelFakeProvider):
             def generate(self, prompt):
                 answer = super().generate(prompt)
-                if "Specialist role:" in prompt and "(skeptic)" in prompt:
+                if prompt.startswith("You are one specialist in Yuki's internal advisory council.") and "(skeptic)" in prompt:
                     raise RuntimeError("critic temporarily unavailable")
                 return answer
 
