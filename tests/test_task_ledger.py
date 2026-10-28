@@ -92,8 +92,9 @@ class TaskLedgerTests(unittest.TestCase):
 
 
     def test_existing_database_schema_is_migrated(self):
+        from contextlib import closing
         import sqlite3
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute("DROP TABLE tasks")
             db.execute("""
                 CREATE TABLE tasks (
@@ -108,10 +109,11 @@ class TaskLedgerTests(unittest.TestCase):
                     metadata_json TEXT NOT NULL DEFAULT '{}'
                 )
             """)
+            db.commit()
         reopened = TaskLedger(self.path)
         task = reopened.create("After migration")
         self.assertEqual(task["verification_evidence"], "")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
         self.assertIn("verification_evidence", columns)
 
