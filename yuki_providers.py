@@ -124,15 +124,16 @@ class ProviderManager:
         from providers.capabilities import registry_from_catalog
         return registry_from_catalog(self.catalog())
 
-    def route_for_task(self, *, required_capabilities=("text",), preference=(), allow_cloud=False) -> str:
-        """Explicitly route one task to a configured, available adapter.
+    def resolve_for_task(
+        self, *, required_capabilities=("text",), preference=(), allow_cloud=False
+    ) -> tuple[str, BaseProvider]:
+        """Resolve a ready adapter for one task without mutating global selection.
 
-        Cloud providers are excluded unless the caller explicitly opts in. A
-        candidate is not committed as selected until its adapter reports
-        available; routing never silently falls back to another provider.
+        Use this method for parallel agents and per-task model routing. Cloud
+        providers are excluded unless the caller explicitly opts in. No network
+        fallback is attempted when the selected adapter is unavailable.
         """
-        registry = self.routing_registry()
-        candidate = registry.route(
+        candidate = self.routing_registry().route(
             required=required_capabilities,
             preference=preference,
             allow_cloud=allow_cloud,
@@ -143,6 +144,19 @@ class ProviderManager:
                 f"Selected routing candidate {candidate.provider} is not available; "
                 "no provider switch was made."
             )
-        self._selected = candidate.provider
+        return candidate.provider, adapter
+
+    def route_for_task(self, *, required_capabilities=("text",), preference=(), allow_cloud=False) -> str:
+        """Select a task-suitable adapter as the interactive default.
+
+        Parallel tasks should use resolve_for_task() to avoid changing shared
+        provider selection while another task is running.
+        """
+        provider, adapter = self.resolve_for_task(
+            required_capabilities=required_capabilities,
+            preference=preference,
+            allow_cloud=allow_cloud,
+        )
+        self._selected = provider
         self._selected_adapter = adapter
-        return f"Selected provider for task: {candidate.provider}"
+        return f"Selected provider for task: {provider}"
