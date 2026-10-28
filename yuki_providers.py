@@ -24,7 +24,7 @@ class ProviderManager:
                 {**self._config, "provider": provider_name}, environ=self._environ
             ))
             for name in (
-                "openai", "gemini", "deepseek", "kimi", "minimax",
+                "openai", "gemini", "anthropic", "deepseek", "kimi", "minimax",
                 "openrouter", "tokenrouter",
             )
         }
@@ -35,12 +35,12 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
+            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY",), True),
             ProviderInfo("deepseek", ("DEEPSEEK_API_KEY",), True),
             ProviderInfo("kimi", ("MOONSHOT_API_KEY",), True),
             ProviderInfo("minimax", ("MINIMAX_API_KEY",), True),
             ProviderInfo("openrouter", ("OPENROUTER_API_KEY",), True),
             ProviderInfo("tokenrouter", ("TOKENROUTER_API_KEY",), True),
-            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY",)),
         ):
             self.register(item)
 
