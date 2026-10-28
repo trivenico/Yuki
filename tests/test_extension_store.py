@@ -143,6 +143,16 @@ class ExtensionStoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "port"):
                     validate_plugin_manifest(self.plugin_manifest(endpoint=endpoint))
 
+    def test_plugin_endpoint_rejects_invalid_dns_hostname_labels(self):
+        for host in ("-mcp.example.com", "mcp-.example.com", "mcp..example.com"):
+            with self.subTest(host=host):
+                manifest = self.plugin_manifest(
+                    endpoint=f"https://{host}/api",
+                    allowed_hosts=[host],
+                )
+                with self.assertRaisesRegex(ValueError, "allowed_hosts"):
+                    validate_plugin_manifest(manifest)
+
     def test_plugin_install_exposes_only_allowlisted_configuration(self):
         source = self.write_manifest("plugin.json", self.plugin_manifest())
         installed = install_extension(str(source), "plugin", root=self.data)
