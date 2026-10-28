@@ -376,9 +376,9 @@ def main():
                 print("Yuki > Provide a goal: /council run review the architecture and identify the next milestone")
                 continue
             result = council.run(goal)
-            print(f"Yuki Council [{result.status}] synthesis:\\n{result.summary}")
+            print(f"Yuki Council [{result.status}] synthesis:\n{result.summary}")
             for role, notes in result.contributions:
-                print(f"\\n--- {role} peer-review notes ---\\n{notes[:2200]}")
+                print(f"\n--- {role} peer-review notes ---\n{notes[:2200]}")
         elif command == "/tasks":
             tasks = task_ledger.list(limit=20)
             if not tasks:
@@ -522,7 +522,7 @@ def main():
                     council_result = council.run(goal)
                     if council_result.ok:
                         council_context = council_result.context
-                        print(f"Yuki Council [{council_result.status}] synthesis:\\n{council_result.summary[:3500]}")
+                        print(f"Yuki Council [{council_result.status}] synthesis:\n{council_result.summary[:3500]}")
                         for role, notes in council_result.contributions:
                             print(f"Council [{role}]: {notes[:900]}")
                     else:
