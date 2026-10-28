@@ -118,7 +118,7 @@ def print_help():
   /task GOAL                      Bounded model-guided task; approve each skill call
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
-  /task verify ID --file PATH    Verify a workspace file artifact (presence/hash only)
+  /task verify ID --file PATH [--contains TEXT]  Verify file presence/hash and optional literal text
   /task cancel ID                 Cancel a queued task record (running-task interruption is not implemented)
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
@@ -377,10 +377,16 @@ def main():
         elif command.startswith("/task verify "):
             try:
                 parts = shlex.split(command)
-                if len(parts) != 5 or parts[0:2] != ["/task", "verify"] or parts[3] != "--file":
-                    print('Yuki > Usage: /task verify ID --file "relative/path"')
+                if (
+                    parts[0:2] != ["/task", "verify"]
+                    or len(parts) not in (5, 7)
+                    or parts[3] != "--file"
+                    or (len(parts) == 7 and parts[5] != "--contains")
+                ):
+                    print('Yuki > Usage: /task verify ID --file "relative/path" [--contains "expected text"]')
                     continue
                 task_id, relative_path = parts[2], parts[4]
+                expected_text = parts[6] if len(parts) == 7 else None
                 item = task_ledger.get(task_id)
                 if item is None:
                     print("Yuki > Task not found.")
@@ -388,16 +394,24 @@ def main():
                 if item["status"] != "awaiting_verification":
                     print("Yuki > Only tasks awaiting verification can be verified this way.")
                     continue
-                artifact = verify_workspace_file(workspace, relative_path)
-                evidence = (
-                    f"Workspace file presence verified: {artifact['path']}; "
-                    f"size={artifact['size_bytes']} bytes; SHA-256={artifact['sha256']}. "
-                    "Scope: presence and identity only; content correctness is not verified."
+                artifact = verify_workspace_file(
+                    workspace, relative_path, expected_text=expected_text
                 )
+                evidence = (
+                    f"Workspace file: {artifact['path']}; size={artifact['size_bytes']} bytes; "
+                    f"SHA-256={artifact['sha256']}. "
+                )
+                if expected_text is None:
+                    evidence += "Scope: presence and identity only; content correctness is not verified."
+                else:
+                    evidence += (
+                        f"Literal expected-text check: {'MATCH' if artifact['content_match'] else 'NO MATCH'}. "
+                        "Scope: exact substring assertion only; broader task correctness is not verified."
+                    )
                 updated = task_ledger.record_verification_evidence(task_id, evidence)
                 print(f"Yuki > Artifact check recorded for task {updated['id']}.")
                 print("Yuki > Evidence: " + evidence)
-                print("Yuki > Task remains awaiting_verification; file presence alone does not prove the goal is complete.")
+                print("Yuki > Task remains awaiting_verification; an artifact check alone does not prove the full goal is complete.")
             except (KeyError, ValueError, OSError) as exc:
                 print(f"Yuki > Verification refused safely: {exc}")
         elif command.startswith("/task cancel "):
