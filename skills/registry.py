@@ -125,4 +125,12 @@ class SkillRegistry:
                     registry.register(skill)
                 except (ValueError, TypeError):
                     continue
+        from core.skill_packs import load_installed_skill_packs
+        installed_packs, _pack_errors = load_installed_skill_packs()
+        for skill in installed_packs:
+            if skill.name not in registry._skills:
+                try:
+                    registry.register(skill)
+                except (ValueError, TypeError):
+                    continue
         return registry
