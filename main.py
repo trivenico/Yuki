@@ -135,6 +135,7 @@ def print_help():
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
   /evolution auto status           Show opt-in background review setting
+  /evolution report                Show latest local proposals without running a cycle
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -639,6 +640,18 @@ def main():
             print("Runs locally after 03:00 once per local day; creates proposals only, never applies changes.")
         elif command == "/evolution status":
             print(evolution.status())
+        elif command == "/evolution report":
+            try:
+                report = evolution.report()
+                if report is None:
+                    print("Yuki > No evolution report exists yet. Enable background reviews or run /evolution run with approval.")
+                else:
+                    print(f"Yuki > Latest local review: {report.get('generated_at', 'unknown time')}; reviewed {report.get('observations_reviewed', 0)} observations.")
+                    for proposal in report["proposals"]:
+                        print(f"- {proposal.get('id', 'unknown')} [{proposal.get('status', 'unknown')}] {proposal.get('title', 'Untitled')}: {proposal.get('detail', '')}")
+                    print(f"Pending review: {evolution.status()['pending_proposals']}")
+            except RuntimeError as exc:
+                print(f"Yuki > Evolution report unavailable: {exc}")
         elif command.startswith("/evolution record "):
             payload = command[len("/evolution record "):]
             if "|" not in payload:
