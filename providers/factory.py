@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 
 from providers.gemini_cli import GeminiCLIProvider
+from providers.anthropic import AnthropicProvider
 from providers.hybrid import HybridProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
@@ -77,6 +78,17 @@ def create_provider(config=None, *, environ=None):
             max_prompt_chars=cfg.get("gemini_max_prompt_chars", 20000),
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
+    if selected == "anthropic":
+        model = str(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", ""))).strip()
+        if not model:
+            raise ValueError(
+                "Configure a model with YUKI_ANTHROPIC_MODEL or anthropic_model before selecting anthropic."
+            )
+        return AnthropicProvider(
+            model,
+            base_url=str(env.get("YUKI_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")),
+            environ=env,
+        )
     if selected in _OPENAI_COMPATIBLE_PROVIDERS:
         settings = _OPENAI_COMPATIBLE_PROVIDERS[selected]
         model = str(env.get(settings["model_env"], cfg.get(settings["model_config"], ""))).strip()
@@ -92,7 +104,7 @@ def create_provider(config=None, *, environ=None):
             environ=env,
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid, deepseek, kimi, minimax, openrouter, tokenrouter (mock is test-only).")
+        raise ValueError("provider must be one of: openai, ollama, gemini, anthropic, hybrid, deepseek, kimi, minimax, openrouter, tokenrouter (mock is test-only).")
     local = OllamaProvider(
         base_url=str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434"))),
         model=str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b"))),
