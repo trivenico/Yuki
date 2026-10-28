@@ -27,6 +27,9 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertTrue(settings["firewall_dry_run"])
         self.assertFalse(settings["background_evolution_enabled"])
         self.assertTrue(settings["agent_council_enabled"])
+        self.assertFalse(settings["screen_observation_enabled"])
+        self.assertFalse(settings["camera_access_enabled"])
+        self.assertFalse(settings["desktop_control_enabled"])
 
     def test_allowlisted_update_preserves_unrelated_settings(self):
         saved = save_user_settings(
@@ -37,6 +40,9 @@ class SettingsStoreTests(unittest.TestCase):
                 "voice_enabled": True,
                 "background_evolution_enabled": True,
                 "agent_council_enabled": False,
+                "screen_observation_enabled": True,
+                "camera_access_enabled": True,
+                "desktop_control_enabled": False,
             },
             self.path,
         )
@@ -47,6 +53,9 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertTrue(saved["voice_enabled"])
         self.assertTrue(saved["background_evolution_enabled"])
         self.assertFalse(saved["agent_council_enabled"])
+        self.assertTrue(saved["screen_observation_enabled"])
+        self.assertTrue(saved["camera_access_enabled"])
+        self.assertFalse(saved["desktop_control_enabled"])
         self.assertEqual(raw["provider"], "openai")
         self.assertEqual(raw["custom_setting"], "keep-me")
 
