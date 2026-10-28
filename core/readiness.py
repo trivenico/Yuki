@@ -14,7 +14,7 @@ import sys
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from dataclasses import asdict, dataclass
 from typing import Callable
 
@@ -49,6 +49,13 @@ def _module_available(name: str, finder: Callable = importlib.util.find_spec) ->
         return False
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Prevent a loopback readiness request from escaping via HTTP redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None = None) -> Capability:
     """Probe Ollama's local tags endpoint with a strict timeout and no credentials."""
     if not 0 < timeout <= 3:
@@ -65,7 +72,9 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
             return Capability("unavailable", "Only loopback Ollama endpoints are allowed for local readiness checks.")
         endpoint = base_url.rstrip("/") + "/api/tags"
         request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
-        open_url = urlopen if opener is None else opener
+        # urllib's default opener follows redirects, which could turn an allowed
+        # loopback probe into a request to an unrelated host. Refuse redirects.
+        open_url = (build_opener(_NoRedirectHandler()).open if opener is None else opener)
         with open_url(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             if status != 200:
