@@ -11,6 +11,18 @@ from core.skill_packs import (
     remove_skill_pack,
     validate_skill_pack,
 )
+from core.agent import YukiCoreAgent
+from skills.registry import SkillRegistry
+
+
+class _ApprovalGate:
+    def __init__(self, allowed):
+        self.allowed = allowed
+        self.requests = []
+
+    def request(self, **kwargs):
+        self.requests.append(kwargs)
+        return self.allowed
 
 
 class SkillPackTests(unittest.TestCase):
@@ -81,6 +93,23 @@ class SkillPackTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             install_skill_pack(self.write_pack(self.pack()), self.directory)
         self.assertEqual(target.read_text(encoding="utf-8"), '{"original":true}')
+
+    def test_installed_pack_runs_only_after_explicit_agent_approval(self):
+        pack = InstalledSkillPack(self.pack(risk="medium"))
+        gate = _ApprovalGate(allowed=False)
+        agent = YukiCoreAgent(registry=SkillRegistry([pack]), permission_gate=gate)
+
+        denied = agent.run_skill(pack.name, "review the release notes")
+        self.assertFalse(denied.ok)
+        self.assertEqual(denied.stage, "permission_denied")
+        self.assertEqual(len(gate.requests), 1)
+        self.assertEqual(gate.requests[0]["risk"], "medium")
+
+        gate.allowed = True
+        approved = agent.run_skill(pack.name, "review the release notes")
+        self.assertTrue(approved.ok)
+        self.assertIn("do not invent claims", approved.message)
+        self.assertEqual(len(gate.requests), 2)
 
     def test_loader_reports_invalid_installed_pack_without_loading_it(self):
         self.directory.mkdir()
