@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import sys
+from unittest.mock import patch
 from pathlib import Path
 
 from core.test_runner import run_project_unittest_suite
@@ -59,6 +61,11 @@ class ProjectTestRunnerTests(unittest.TestCase):
         project = self._project()
         with self.assertRaisesRegex(ValueError, "No top-level"):
             run_project_unittest_suite(self.workspace, "demo")
+
+    def test_refuses_frozen_runtime_until_isolated_runner_is_packaged(self):
+        with patch.object(sys, "frozen", True, create=True):
+            with self.assertRaisesRegex(ValueError, "packaged desktop runtime"):
+                run_project_unittest_suite(self.workspace, ".")
 
     def test_rejects_invalid_timeout(self):
         project = self._project()
