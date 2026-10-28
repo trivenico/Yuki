@@ -68,6 +68,18 @@ class ProviderFactoryTests(unittest.TestCase):
                 self.assertEqual(provider.base_url, base_url)
                 self.assertTrue(provider.is_available())
 
+    def test_cloud_provider_model_can_be_loaded_from_validated_config(self):
+        from core.config import _optional_model_setting
+
+        self.assertEqual(
+            _optional_model_setting({"deepseek_model": "deepseek-chat"}, "deepseek_model"),
+            "deepseek-chat",
+        )
+        for value in ("model name with spaces", "../unexpected", "x" * 121, 42):
+            with self.subTest(value=repr(value)):
+                with self.assertRaisesRegex(RuntimeError, "valid model identifier"):
+                    _optional_model_setting({"deepseek_model": value}, "deepseek_model")
+
     def test_cloud_provider_endpoint_override_is_explicit_and_validated(self):
         provider = create_provider(
             {"provider": "deepseek"},
