@@ -11,6 +11,8 @@ from core.portable_paths import config_path as resolve_config_path, workspace_pa
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
 
+_MCP_HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$")
+
 
 def _bounded_int(value, minimum, maximum):
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -59,7 +61,7 @@ def _mcp_servers(raw):
         ):
             raise RuntimeError("MCP endpoint must be a bounded HTTPS URL without surrounding whitespace or control characters.")
         if (not isinstance(hosts, list) or not hosts or len(hosts) > 20
-                or any(not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", h) for h in hosts)):
+                or any(not isinstance(h, str) or not _MCP_HOST_RE.fullmatch(h) for h in hosts)):
             raise RuntimeError("MCP allowed_hosts must be a non-empty list of hostnames.")
         normalized_hosts = list(dict.fromkeys(host.lower() for host in hosts))
         try:
