@@ -29,6 +29,20 @@ class ProviderFactoryTests(unittest.TestCase):
         provider = create_provider({"provider": "ollama", "ollama_model": ""}, environ={})
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_provider_timeout_environment_setting_is_shared_with_ollama(self):
+        provider = create_provider(
+            {"provider": "ollama"},
+            environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "17"},
+        )
+        self.assertEqual(provider.timeout, 17)
+
+    def test_invalid_provider_timeout_fails_closed(self):
+        with self.assertRaises(ValueError):
+            create_provider(
+                {"provider": "ollama"},
+                environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "not-a-number"},
+            )
+
     def test_explicit_openai_provider_is_constructible(self):
         self.assertIsInstance(
             create_provider({"provider": "openai"}, environ={}),
