@@ -26,7 +26,7 @@ _CATALOG = (
      "capabilities": ["text", "tooling_provider_dependent"], "model_env": "YUKI_OPENAI_MODEL",
      "key_env": "OPENAI_API_KEY"},
     {"name": "anthropic", "label": "Anthropic API", "auth": "api_key", "privacy": "cloud_provider",
-     "implemented": False, "capabilities": ["text", "tooling_provider_dependent"],
+     "implemented": True, "capabilities": ["text", "native_messages_api"],
      "model_env": "YUKI_ANTHROPIC_MODEL", "key_env": "ANTHROPIC_API_KEY"},
     {"name": "deepseek", "label": "DeepSeek API", "auth": "api_key", "privacy": "cloud_provider",
      "implemented": True, "capabilities": ["text"], "model_env": "YUKI_DEEPSEEK_MODEL",
@@ -89,6 +89,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b")))
         elif item["name"] == "openai":
             model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
+        elif item["name"] == "anthropic":
+            model = _model(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", "")))
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
         elif item["name"] == "hybrid":
@@ -114,13 +116,13 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
 
         status = manager.get(item["name"], {})
         implemented = bool(status.get("implemented", item["implemented"]))
-        if item["name"] in {"anthropic", "huggingface"}:
+        if item["name"] in {"huggingface"}:
             implemented = False
 
         if item["name"] == "ollama":
             ready = bool(implemented and model)
             reason = "model_configured" if ready else "model_not_configured"
-        elif item["name"] == "openai":
+        elif item["name"] in {"openai", "anthropic"}:
             ready = bool(implemented and configured_key and model)
             reason = "credentials_and_model_configured" if ready else "credentials_or_model_missing"
         elif item["name"] == "gemini":
