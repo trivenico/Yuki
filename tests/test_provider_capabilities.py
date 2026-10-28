@@ -42,6 +42,19 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route()
 
+    def test_native_messages_api_capability_is_preserved(self):
+        registry = CapabilityRegistry([
+            ProviderCapabilities(
+                provider="anthropic",
+                capabilities=frozenset({"text", "native_messages_api"}),
+                implemented=True,
+                ready=True,
+                privacy="cloud_provider",
+                configured_model="claude-test",
+            )
+        ])
+        self.assertIn("native_messages_api", registry.list()[0]["capabilities"])
+
     def test_unknown_capabilities_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "unknown required capabilities"):
             CapabilityRegistry([provider("mock")]).route(required=("text", "magic"))
