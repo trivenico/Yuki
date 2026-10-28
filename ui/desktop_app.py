@@ -417,7 +417,7 @@ def run_desktop() -> None:
             panel,
             text="Optional features may need extra dependencies or credentials. Environment variables can override saved settings. Restart Yuki after saving.",
             wraplength=430,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ).grid(row=len(groups) + 1, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
         def save_settings() -> None:
             changes = {
@@ -440,7 +440,7 @@ def run_desktop() -> None:
             window.destroy()
 
         actions = ttk.Frame(panel)
-        actions.grid(row=5, column=0, columnspan=2, sticky="e")
+        actions.grid(row=len(groups) + 2, column=0, columnspan=2, sticky="e")
         ttk.Button(actions, text="Cancel", command=window.destroy).pack(side="right")
         ttk.Button(actions, text="Save Settings", command=save_settings).pack(side="right", padx=(0, 8))
 
