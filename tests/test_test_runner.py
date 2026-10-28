@@ -70,8 +70,8 @@ class ProjectTestRunnerTests(unittest.TestCase):
     def test_timeout_result_has_same_structured_fields_as_normal_run(self):
         project = self._project()
         (project / "tests" / "test_slow.py").write_text(
-            "import time, unittest\\nclass Checks(unittest.TestCase):\\n"
-            " def test_wait(self): time.sleep(3)\\n",
+            "import time, unittest\nclass Checks(unittest.TestCase):\n"
+            " def test_wait(self): time.sleep(3)\n",
             encoding="utf-8",
         )
         result = run_project_unittest_suite(self.workspace, "demo", timeout_seconds=1)
