@@ -8,6 +8,7 @@ from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
 from companion.briefing import render_morning_briefing
 from companion.evolution import DailyEvolutionCycle
+from core.evolution_scheduler import EvolutionScheduler
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
@@ -133,6 +134,7 @@ def print_help():
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
+  /evolution auto status           Show opt-in background review setting
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -183,6 +185,11 @@ def main():
     )
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     evolution = DailyEvolutionCycle(workspace)
+    evolution_scheduler = EvolutionScheduler(
+        evolution, enabled=bool(config.get("background_evolution_enabled", False)),
+        on_error=lambda exc: print(f"Yuki background evolution skipped ({type(exc).__name__})."),
+    )
+    evolution_scheduler.start()
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
@@ -627,6 +634,9 @@ def main():
             due = reminders.due()
             if not due: print("Yuki > No reminders are due.")
             for item in due: print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
+        elif command == "/evolution auto status":
+            print("Background proposal reviews: " + ("enabled" if evolution_scheduler.enabled else "disabled"))
+            print("Runs locally after 03:00 once per local day; creates proposals only, never applies changes.")
         elif command == "/evolution status":
             print(evolution.status())
         elif command.startswith("/evolution record "):
