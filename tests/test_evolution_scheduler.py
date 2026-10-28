@@ -29,6 +29,19 @@ class EvolutionSchedulerTests(unittest.TestCase):
         self.assertFalse(scheduler.run_if_due(datetime.fromisoformat("2026-10-28T15:00:00+00:00")))
         self.cycle.run_cycle.assert_called_once()
 
+    def test_daily_deduplication_uses_the_supplied_local_timezone(self):
+        scheduler = EvolutionScheduler(self.cycle, enabled=True, hour=3)
+        self.cycle.status.return_value = {"last_report_at": "2026-10-27T17:00:00+00:00"}
+        local_now = datetime.fromisoformat("2026-10-28T03:00:00+10:00")
+        self.assertFalse(scheduler.run_if_due(local_now))
+        self.cycle.run_cycle.assert_not_called()
+
+    def test_naive_now_is_rejected(self):
+        scheduler = EvolutionScheduler(self.cycle, enabled=True, hour=3)
+        with self.assertRaisesRegex(ValueError, "timezone-aware"):
+            scheduler.run_if_due(datetime(2026, 10, 28, 12))
+        self.cycle.run_cycle.assert_not_called()
+
     def test_invalid_hour_and_poll_interval_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "hour"):
             EvolutionScheduler(self.cycle, enabled=True, hour=24)
