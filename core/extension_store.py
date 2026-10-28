@@ -63,7 +63,10 @@ def _atomic_json(destination: Path, value: dict) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, destination)
+        # Publish without replacing an existing extension if two installs race.
+        # The temporary file is created in the same directory, so this is a
+        # same-filesystem atomic link operation on supported local filesystems.
+        os.link(temporary, destination)
     finally:
         try:
             os.unlink(temporary)
