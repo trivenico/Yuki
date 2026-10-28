@@ -4,8 +4,14 @@ workspace: ./yuki_workspace
 provider: ollama
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: llama3.2:3b
-# Cloud providers are opt-in; select provider: openai or provider: gemini explicitly.
+# Cloud providers are opt-in; select a provider explicitly and configure its model/API key via environment.
 openai_model: gpt-4.1-mini
+# Optional provider model names (no API keys belong in this file):
+# deepseek_model: deepseek-chat
+# kimi_model: kimi-k2
+# minimax_model: MiniMax-M2
+# openrouter_model: openai/gpt-4.1-mini
+# tokenrouter_model: provider/model
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect
