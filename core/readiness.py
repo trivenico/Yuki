@@ -79,7 +79,10 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
             status = getattr(response, "status", 200)
             if status != 200:
                 return Capability("unavailable", f"Ollama endpoint returned HTTP {status}.")
-            payload = json.loads(response.read(1_000_001))
+            raw_payload = response.read(1_000_001)
+            if len(raw_payload) > 1_000_000:
+                return Capability("unavailable", "Ollama endpoint response exceeded the 1 MB readiness limit.")
+            payload = json.loads(raw_payload)
         if not isinstance(payload, dict) or "models" not in payload or not isinstance(payload["models"], list):
             return Capability("unavailable", "Ollama endpoint returned an invalid model-list response.")
         return Capability("verified", "Ollama tags endpoint responded successfully; inference was not tested.")
