@@ -213,7 +213,7 @@ class YukiCliTests(unittest.TestCase):
     def test_skill_packs_list_reports_loaded_packs_and_validation_errors(self):
         output = []
         pack = type("Pack", (), {
-            "name": "release_notes", "description": "Draft release notes.",
+            "name": "pack_release_notes", "pack_name": "release_notes", "description": "Draft release notes.",
             "risk": "low", "requires_approval": False,
         })()
         with patch("yuki_cli.load_installed_skill_packs", return_value=([pack], [])):
