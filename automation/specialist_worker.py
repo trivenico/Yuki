@@ -83,6 +83,71 @@ def build_handlers_from_provider_manager(provider_manager, agent_roles: Mapping[
     role_handlers = build_provider_specialist_handlers(provider)
     return {agent_id: role_handlers[role] for agent_id, role in agent_roles.items()}
 
+def build_routed_specialist_handlers(
+    provider_manager,
+    agent_roles: Mapping[str, str],
+    *,
+    role_capabilities: Mapping[str, tuple[str, ...]] | None = None,
+    allow_cloud_roles=(),
+    role_preferences: Mapping[str, tuple[str, ...]] | None = None,
+) -> dict[str, Callable[[str], str]]:
+    """Build specialist handlers with task-local adapters from capability routing.
+
+    Routing is resolved once per specialist role. It does not change the shared
+    interactive provider selection. Cloud providers remain blocked unless that
+    role is explicitly listed in allow_cloud_roles.
+    """
+    if not isinstance(agent_roles, Mapping) or not agent_roles:
+        raise ValueError("agent_roles must be a non-empty mapping.")
+    for agent_id, role in agent_roles.items():
+        if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
+            raise ValueError("agent IDs must be bounded identifiers.")
+        if not isinstance(role, str) or role not in _SPECIALIST_INSTRUCTIONS:
+            raise ValueError("each agent must map to a supported specialist role.")
+    resolver = getattr(provider_manager, "resolve_for_task", None)
+    if not callable(resolver):
+        raise TypeError("provider_manager must expose resolve_for_task().")
+    capabilities = {} if role_capabilities is None else role_capabilities
+    preferences = {} if role_preferences is None else role_preferences
+    if not isinstance(capabilities, Mapping) or not isinstance(preferences, Mapping):
+        raise TypeError("role capabilities and preferences must be mappings.")
+    roles = set(agent_roles.values())
+    if set(capabilities) - roles or set(preferences) - roles:
+        raise ValueError("routing configuration contains an unregistered specialist role.")
+    if isinstance(allow_cloud_roles, (str, bytes)):
+        raise TypeError("allow_cloud_roles must be an iterable of specialist role names.")
+    try:
+        cloud_roles = frozenset(allow_cloud_roles)
+    except TypeError as exc:
+        raise TypeError("allow_cloud_roles must be an iterable of specialist role names.") from exc
+    if cloud_roles - roles:
+        raise ValueError("cloud access may only be enabled for registered specialist roles.")
+
+    role_handlers = {}
+    for role in sorted(roles):
+        required = capabilities.get(role, ("text",))
+        preference = preferences.get(role, ())
+        if not isinstance(required, tuple) or not required or any(
+            not isinstance(item, str) or not item.strip() for item in required
+        ):
+            raise ValueError("each role capability requirement must be a non-empty tuple of names.")
+        if not isinstance(preference, tuple) or any(
+            not isinstance(item, str) or not item.strip() for item in preference
+        ):
+            raise ValueError("role preferences must be tuples of provider names.")
+        resolved = resolver(
+            required_capabilities=required,
+            preference=preference,
+            allow_cloud=role in cloud_roles,
+        )
+        if not isinstance(resolved, tuple) or len(resolved) != 2:
+            raise RuntimeError("task provider resolver returned an invalid result.")
+        provider_name, adapter = resolved
+        if not isinstance(provider_name, str) or not provider_name.strip():
+            raise RuntimeError("task provider resolver returned an invalid provider name.")
+        role_handlers[role] = build_provider_specialist_handlers(adapter)[role]
+    return {agent_id: role_handlers[role] for agent_id, role in agent_roles.items()}
+
 
 class SpecialistTaskWorker:
     """Execute one queued specialist task with store-enforced approval and task leases."""
