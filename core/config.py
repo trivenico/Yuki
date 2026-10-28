@@ -132,7 +132,7 @@ def load_config(path=None):
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "ollama"))).strip().lower(),
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
