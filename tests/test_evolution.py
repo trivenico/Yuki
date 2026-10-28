@@ -73,6 +73,16 @@ class DailyEvolutionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "size limit"):
                 cycle.report()
 
+    def test_status_and_review_reject_oversized_report_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.report_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.status()
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.review("proposal", "rejected")
+
     def test_report_fails_closed_for_invalid_json(self):
         with tempfile.TemporaryDirectory() as directory:
             cycle = DailyEvolutionCycle(directory)
