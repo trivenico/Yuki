@@ -25,6 +25,11 @@ def run_project_unittest_suite(
     """
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 120:
         raise ValueError("Test timeout must be an integer between 1 and 120 seconds.")
+    if getattr(sys, "frozen", False):
+        raise ValueError(
+            "Project test execution from the packaged desktop runtime is not enabled yet; "
+            "use Yuki's Python source-mode CLI until a dedicated isolated runner is packaged."
+        )
     workspace_root = Path(workspace).expanduser().resolve(strict=True)
     if not workspace_root.is_dir():
         raise ValueError("Configured workspace must be a directory.")
