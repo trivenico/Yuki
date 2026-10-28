@@ -201,7 +201,7 @@ class DailyEvolutionCycle:
         with self._lock:
             observations = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
             try:
-                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report = self._read_json(self.report_path)
             except FileNotFoundError:
                 report = None
             except (OSError, json.JSONDecodeError) as exc:
@@ -217,7 +217,7 @@ class DailyEvolutionCycle:
             raise ValueError("decision must be accepted_for_manual_followup or rejected.")
         with self._lock:
             try:
-                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report = self._read_json(self.report_path)
             except FileNotFoundError:
                 raise ValueError("No evolution report exists yet.") from None
             except (OSError, json.JSONDecodeError) as exc:
