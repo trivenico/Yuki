@@ -29,19 +29,19 @@ _CATALOG = (
      "implemented": False, "capabilities": ["text", "tooling_provider_dependent"],
      "model_env": "YUKI_ANTHROPIC_MODEL", "key_env": "ANTHROPIC_API_KEY"},
     {"name": "deepseek", "label": "DeepSeek API", "auth": "api_key", "privacy": "cloud_provider",
-     "implemented": False, "capabilities": ["text"], "model_env": "YUKI_DEEPSEEK_MODEL",
+     "implemented": True, "capabilities": ["text"], "model_env": "YUKI_DEEPSEEK_MODEL",
      "key_env": "DEEPSEEK_API_KEY"},
     {"name": "kimi", "label": "Kimi / Moonshot API", "auth": "api_key", "privacy": "cloud_provider",
-     "implemented": False, "capabilities": ["text", "long_context_model_dependent"],
+     "implemented": True, "capabilities": ["text", "long_context_model_dependent"],
      "model_env": "YUKI_KIMI_MODEL", "key_env": "MOONSHOT_API_KEY"},
     {"name": "minimax", "label": "MiniMax API", "auth": "api_key", "privacy": "cloud_provider",
-     "implemented": False, "capabilities": ["text", "multimodal_model_dependent"],
+     "implemented": True, "capabilities": ["text", "multimodal_model_dependent"],
      "model_env": "YUKI_MINIMAX_MODEL", "key_env": "MINIMAX_API_KEY"},
     {"name": "openrouter", "label": "OpenRouter", "auth": "api_key", "privacy": "third_party_gateway",
-     "implemented": False, "capabilities": ["multi_provider_routing"],
+     "implemented": True, "capabilities": ["multi_provider_routing"],
      "model_env": "YUKI_OPENROUTER_MODEL", "key_env": "OPENROUTER_API_KEY"},
     {"name": "tokenrouter", "label": "TokenRouter", "auth": "api_key", "privacy": "third_party_gateway",
-     "implemented": False, "capabilities": ["multi_provider_routing"],
+     "implemented": True, "capabilities": ["multi_provider_routing"],
      "model_env": "YUKI_TOKENROUTER_MODEL", "key_env": "TOKENROUTER_API_KEY"},
     {"name": "huggingface", "label": "Hugging Face Inference", "auth": "optional_or_provider_dependent",
      "privacy": "cloud_provider", "implemented": False,
@@ -104,7 +104,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
 
         status = manager.get(item["name"], {})
         implemented = bool(status.get("implemented", item["implemented"]))
-        if item["name"] in {"anthropic", "deepseek", "kimi", "minimax", "openrouter", "tokenrouter", "huggingface"}:
+        if item["name"] in {"anthropic", "huggingface"}:
             implemented = False
 
         if item["name"] == "ollama":
@@ -120,6 +120,9 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             local_model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b")))
             ready = bool(implemented and local_model)
             reason = "local_model_configured_cloud_opt_in_required" if ready else "local_model_not_configured"
+        elif item["name"] in {"deepseek", "kimi", "minimax", "openrouter", "tokenrouter"}:
+            ready = bool(implemented and configured_key and model)
+            reason = "credentials_and_model_configured" if ready else "credentials_or_model_missing"
         else:
             ready = False
             reason = "adapter_not_implemented"
