@@ -41,14 +41,19 @@ class EvolutionScheduler:
         """Run the review if enabled, past the local hour, and not yet run today."""
         if not self.enabled:
             return False
-        current = (now or datetime.now().astimezone()).astimezone()
+        current = now if now is not None else datetime.now().astimezone()
+        if not isinstance(current, datetime) or current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("now must be timezone-aware.")
         if current.hour < self.hour:
             return False
         status = self.cycle.status()
         last = status.get("last_report_at")
         if last:
             try:
-                if datetime.fromisoformat(last).astimezone().date() == current.date():
+                previous = datetime.fromisoformat(last)
+                if previous.tzinfo is None or previous.utcoffset() is None:
+                    raise ValueError("timestamp must include a timezone")
+                if previous.astimezone(current.tzinfo).date() == current.date():
                     return False
             except (TypeError, ValueError):
                 # Malformed state is not permission to overwrite it automatically.
