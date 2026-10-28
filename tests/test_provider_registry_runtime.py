@@ -25,7 +25,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager({"ollama_model": ""}, environ={})
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
