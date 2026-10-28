@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
@@ -13,14 +14,19 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_explicit_openai_provider_is_constructible(self):
+        provider = create_provider({"provider": "openai"}, environ={})
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
 
     def test_gemini_provider_is_constructible_without_cli_installation(self):
-        provider = create_provider({"provider": "gemini"}, environ={})
-        self.assertIsInstance(provider, GeminiCLIProvider)
-        self.assertFalse(provider.is_available())
+        with patch("providers.gemini_cli.shutil.which", return_value=None):
+            provider = create_provider({"provider": "gemini"}, environ={})
+            self.assertIsInstance(provider, GeminiCLIProvider)
+            self.assertFalse(provider.is_available())
 
     def test_hybrid_routes_to_local_without_explicit_cloud_tasks(self):
         provider = create_provider(
