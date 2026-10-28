@@ -20,7 +20,9 @@ class FakeResponse:
 class ReadinessProbeTests(unittest.TestCase):
     def test_successful_local_tags_endpoint_is_verified_not_inference(self):
         response = FakeResponse(b'{"models": []}')
-        with patch("core.readiness.urlopen", return_value=response) as opener:
+        with patch("core.readiness.build_opener") as builder:
+            opener = builder.return_value
+            opener.open.return_value = response
             result = _probe_ollama("http://127.0.0.1:11434", timeout=1.0)
         self.assertEqual(result.status, "verified")
         self.assertIn("inference was not tested", result.detail)
@@ -28,21 +30,23 @@ class ReadinessProbeTests(unittest.TestCase):
         self.assertEqual(response.limit, 1_000_001)
 
     def test_non_loopback_endpoints_are_rejected_without_network(self):
-        with patch("core.readiness.urlopen") as opener:
+        with patch("core.readiness.build_opener") as opener:
             result = _probe_ollama("http://192.0.2.1:11434")
         self.assertEqual(result.status, "unavailable")
         opener.assert_not_called()
 
     def test_credentials_and_query_are_rejected(self):
         for url in ("http://user:pass@localhost:11434", "http://localhost:11434?token=secret", "https://example.com:11434"):
-            with self.subTest(url=url), patch("core.readiness.urlopen") as opener:
+            with self.subTest(url=url), patch("core.readiness.build_opener") as opener:
                 self.assertEqual(_probe_ollama(url).status, "unavailable")
                 opener.assert_not_called()
 
     def test_invalid_json_and_timeout_fail_closed(self):
-        with patch("core.readiness.urlopen", return_value=FakeResponse(b"not-json")):
+        with patch("core.readiness.build_opener") as builder:
+            builder.return_value.open.return_value = FakeResponse(b"not-json")
             self.assertEqual(_probe_ollama("http://localhost:11434").status, "unavailable")
-        with patch("core.readiness.urlopen", side_effect=TimeoutError):
+        with patch("core.readiness.build_opener") as builder:
+            builder.return_value.open.side_effect = TimeoutError
             result = _probe_ollama("http://localhost:11434")
             self.assertEqual(result.status, "unavailable")
             self.assertNotIn("secret", result.detail)
