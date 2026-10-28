@@ -231,6 +231,7 @@ def run_desktop() -> None:
         ("Voice", lambda: send_text("/voice status")),
         ("Security", lambda: send_text("/security status")),
         ("System Readiness", lambda: send_text("/readiness")),
+        ("Self-Evolution", lambda: send_text("/evolution status")),
     )
     for label, action in nav_items:
         ttk.Button(sidebar, text=label, command=action).pack(fill="x", pady=2)
@@ -255,6 +256,7 @@ def run_desktop() -> None:
     add_shortcut("Add reminder", "/reminder add ")
     add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Morning briefing", "/briefing")
+    add_shortcut("Evolution review", "/evolution status")
     add_shortcut("Task history", "/tasks")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
@@ -395,11 +397,13 @@ def run_desktop() -> None:
             "firewall_dry_run": "Firewall dry-run mode (recommended)",
             "wakeword_enabled": "Enable wake-word feature",
             "plugin_discovery_enabled": "Enable plugin discovery",
+            "background_evolution_enabled": "Enable local background evolution reviews (proposals only)",
         }
         groups = (
             ("Voice", ("voice_enabled", "wakeword_enabled")),
             ("Privacy & Security", ("security_lab_enabled", "sandbox_enabled", "firewall_enabled", "firewall_dry_run")),
             ("Integrations", ("gmail_enabled", "plugin_discovery_enabled")),
+            ("Self-Evolution", ("background_evolution_enabled",)),
         )
         variables = {}
         for row, (title, keys) in enumerate(groups, start=1):
