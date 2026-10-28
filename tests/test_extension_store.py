@@ -123,6 +123,16 @@ class ExtensionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "credentials"):
             validate_plugin_manifest(self.plugin_manifest(endpoint="https://user:secret@mcp.example.com/api"))
 
+    def test_plugin_endpoint_rejects_malformed_or_invalid_ports(self):
+        for endpoint in (
+            "https://mcp.example.com:bad/api",
+            "https://mcp.example.com:65536/api",
+            "https://mcp.example.com:0/api",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(ValueError, "port"):
+                    validate_plugin_manifest(self.plugin_manifest(endpoint=endpoint))
+
     def test_plugin_install_exposes_only_allowlisted_configuration(self):
         source = self.write_manifest("plugin.json", self.plugin_manifest())
         installed = install_extension(str(source), "plugin", root=self.data)
