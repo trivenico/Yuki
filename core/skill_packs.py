@@ -89,9 +89,9 @@ def install_skill_pack(source: str | Path, directory: str | Path | None = None) 
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, target) if not target.exists() else (_ for _ in ()).throw(
-            FileExistsError(f"Skill pack '{pack['name']}' is already installed.")
-        )
+        # Atomic no-overwrite publication: concurrent installs cannot replace one another.
+        # If the filesystem cannot create a same-directory hard link, fail closed.
+        os.link(temporary, target)
     finally:
         try:
             os.unlink(temporary)
@@ -104,9 +104,8 @@ def remove_skill_pack(name: str, directory: str | Path | None = None) -> bool:
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise ValueError("Invalid skill pack name.")
     root = Path(directory).expanduser().resolve() if directory else installed_skill_directory()
-    target = (root / (name + ".json")).resolve()
-    if target.parent != root:
-        raise ValueError("Invalid skill pack path.")
+    # Do not resolve the target: unlink a symlink itself, never its destination.
+    target = root / (name + ".json")
     try:
         target.unlink()
         return True
