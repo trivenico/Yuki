@@ -108,6 +108,15 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(skills[0].manifest["id"], "release_notes")
         self.assertIn("do not invent claims", skills[0].manifest["instructions"])
 
+    def test_agent_skills_import_rejects_yaml_aliases(self):
+        source = self.source / "SKILL.md"
+        source.write_text(
+            "---\nname: valid_skill\ndescription: &desc valid description\nmetadata: *desc\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "valid YAML"):
+            install_skill_file(str(source), root=self.data)
+
     def test_agent_skills_import_rejects_duplicate_yaml_keys(self):
         source = self.source / "SKILL.md"
         source.write_text(
