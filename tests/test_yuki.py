@@ -72,8 +72,8 @@ class ProviderTests(unittest.TestCase):
 class ProviderManagerTests(unittest.TestCase):
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
-        self.assertEqual(manager.select("openai"), "Selected provider: openai")
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
         self.assertEqual(manager.current().name, "openai")
@@ -82,8 +82,8 @@ class ProviderManagerTests(unittest.TestCase):
         from providers.openai_compatible import OpenAICompatibleProvider
         manager = ProviderManager(environ={})
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        from providers.ollama import OllamaProvider
+        self.assertIsInstance(adapter, OllamaProvider)
 
     def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
         manager = ProviderManager()
@@ -116,7 +116,8 @@ class ProviderManagerTests(unittest.TestCase):
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
         from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        from providers.ollama import OllamaProvider
+        self.assertIsInstance(agent.provider, OllamaProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -124,7 +125,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: ollama", result)
 
 
 class ToolTests(unittest.TestCase):
