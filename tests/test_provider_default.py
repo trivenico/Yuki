@@ -83,6 +83,31 @@ class ProviderDefaultTests(unittest.TestCase):
         provider.is_available.assert_called_once_with()
         provider.generate.assert_called_once()
 
+    def test_openai_model_and_endpoint_are_loaded_from_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "provider: openai\nopenai_model: gpt-4.1-nano\n"
+                "openai_base_url: https://api.openai.com/v1\nworkspace: ./workspace\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                config = load_config(config_path)
+        self.assertEqual(config["openai_model"], "gpt-4.1-nano")
+        self.assertEqual(config["openai_base_url"], "https://api.openai.com/v1")
+
+    def test_openai_endpoint_rejects_plain_http(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.yaml"
+            config_path.write_text(
+                "provider: openai\nopenai_base_url: http://api.openai.com/v1\nworkspace: ./workspace\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+                    load_config(config_path)
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from companion.proactive import ReminderQueue
 from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
+from core.model_selection import model_selection_options, persist_model_selection
 from core.permissions import ApprovalRequest, PermissionGate
 from core.planner import Planner
 from core.vector_memory import VectorMemory
@@ -66,6 +67,8 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /model status                  Show model providers and runtime support
+  /model select PROVIDER | MODEL | BASE_URL   Save a supported model choice
   /readiness                     Detect runtime and local model readiness
   /health                        Run read-only core health checks
   /recovery actions               List approved recovery handlers
@@ -222,6 +225,34 @@ def main():
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
             print(f"Firewall: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']}); Gmail: {config['gmail_enabled']}")
             print(f"Skills: {', '.join(agent.registry.names())}")
+        elif command == "/model status":
+            options = model_selection_options()
+            print(f"Current provider: {config['provider']}; model selection is stored in the Yuki config file.")
+            for item in options["providers"]:
+                support = "available" if item.get("runtime_supported") else "catalog only (adapter not implemented)"
+                print(f"- {item['label']} ({item['id']}): {support}; endpoint={item['base_url']}")
+            print("Secrets are read from environment variables, never from model selection fields.")
+        elif command.startswith("/model select "):
+            payload = command[len("/model select "):]
+            parts = [part.strip() for part in payload.split("|", 2)]
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                print("Yuki > Use /model select PROVIDER | MODEL | BASE_URL (base URL is optional).")
+                continue
+            selection = {"provider": parts[0], "model": parts[1]}
+            if len(parts) == 3 and parts[2]:
+                selection["base_url"] = parts[2]
+            if selection["provider"] != "ollama":
+                if not _confirm("model:select_cloud", f"Save cloud provider {selection['provider']!r} and model {selection['model']!r}; future requests may transmit prompts to that provider.", "high"):
+                    print("Yuki > Model selection cancelled; configuration was not changed.")
+                    continue
+            try:
+                saved = persist_model_selection(selection)
+                config = load_config()
+                ai = YukiAgent(create_provider(config))
+                task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+                print(f"Yuki > Saved model selection: {saved['provider']} / {saved['model']}. Restart Yuki if any environment overrides are set.")
+            except (ValueError, RuntimeError, OSError) as exc:
+                print(f"Yuki > Model selection was not changed: {exc}")
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")

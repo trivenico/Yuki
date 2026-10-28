@@ -187,3 +187,20 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 ## Windows local-provider acceptance test
 
 For a real Ollama inference check that never falls back to cloud or mock, follow [`docs/windows-ollama-smoke-test.md`](docs/windows-ollama-smoke-test.md) and run `python scripts/smoke_test_ollama.py` from the repository root.
+
+
+## Model selection (current runtime)
+
+The guarded CLI exposes the shared provider catalog and a safe selection command:
+
+```text
+/model status
+/model select ollama | llama3.2:3b | http://127.0.0.1:11434
+/model select openai | gpt-4.1-mini | https://api.openai.com/v1
+```
+
+Ollama model discovery is restricted to loopback HTTP. Cloud selections require confirmation before the configuration is changed, and each cloud chat request remains subject to the existing provider-specific safeguards. Set cloud credentials in environment variables (for example, `OPENAI_API_KEY`); never paste API-key values into the model-selection command or config file.
+
+The catalog deliberately distinguishes runtime-supported adapters from planned providers. At this point, the selection flow can configure Ollama and the OpenAI-compatible provider. Gemini Developer API, NVIDIA NIM, Anthropic, DeepSeek, GLM, LM Studio, and llama.cpp entries are catalog information only until their runtime adapters and acceptance tests are implemented. Selecting an unsupported entry fails closed.
+
+The selection is saved to the active `config.yaml` using an atomic replacement. After changing provider selection, restart Yuki if environment overrides are configured. This command does not perform a live provider call; use the Windows Ollama smoke test below to validate real local inference.
