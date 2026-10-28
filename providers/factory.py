@@ -9,6 +9,47 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
 
+# Explicit adapters for providers that expose the OpenAI Chat Completions API.
+# Models are deliberately configured by the operator rather than guessed here.
+_OPENAI_COMPATIBLE_PROVIDERS = {
+    "deepseek": {
+        "model_env": "YUKI_DEEPSEEK_MODEL",
+        "model_config": "deepseek_model",
+        "key_env": "DEEPSEEK_API_KEY",
+        "base_env": "YUKI_DEEPSEEK_BASE_URL",
+        "base_default": "https://api.deepseek.com/v1",
+    },
+    "kimi": {
+        "model_env": "YUKI_KIMI_MODEL",
+        "model_config": "kimi_model",
+        "key_env": "MOONSHOT_API_KEY",
+        "base_env": "YUKI_KIMI_BASE_URL",
+        "base_default": "https://api.moonshot.ai/v1",
+    },
+    "minimax": {
+        "model_env": "YUKI_MINIMAX_MODEL",
+        "model_config": "minimax_model",
+        "key_env": "MINIMAX_API_KEY",
+        "base_env": "YUKI_MINIMAX_BASE_URL",
+        "base_default": "https://api.minimax.chat/v1",
+    },
+    "openrouter": {
+        "model_env": "YUKI_OPENROUTER_MODEL",
+        "model_config": "openrouter_model",
+        "key_env": "OPENROUTER_API_KEY",
+        "base_env": "YUKI_OPENROUTER_BASE_URL",
+        "base_default": "https://openrouter.ai/api/v1",
+    },
+    "tokenrouter": {
+        "model_env": "YUKI_TOKENROUTER_MODEL",
+        "model_config": "tokenrouter_model",
+        "key_env": "TOKENROUTER_API_KEY",
+        "base_env": "YUKI_TOKENROUTER_BASE_URL",
+        "base_default": "https://api.tokenrouter.io/v1",
+    },
+}
+
+
 def create_provider(config=None, *, environ=None):
     """Build the configured real provider without implicit fallback.
 
@@ -36,8 +77,22 @@ def create_provider(config=None, *, environ=None):
             max_prompt_chars=cfg.get("gemini_max_prompt_chars", 20000),
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
+    if selected in _OPENAI_COMPATIBLE_PROVIDERS:
+        settings = _OPENAI_COMPATIBLE_PROVIDERS[selected]
+        model = str(env.get(settings["model_env"], cfg.get(settings["model_config"], ""))).strip()
+        if not model:
+            raise ValueError(
+                f"Configure a model with {settings['model_env']} or "
+                f"{settings['model_config']} before selecting {selected}."
+            )
+        return OpenAICompatibleProvider(
+            model,
+            api_key_env=settings["key_env"],
+            base_url=str(env.get(settings["base_env"], settings["base_default"])),
+            environ=env,
+        )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid, deepseek, kimi, minimax, openrouter, tokenrouter (mock is test-only).")
     local = OllamaProvider(
         base_url=str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434"))),
         model=str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b"))),
