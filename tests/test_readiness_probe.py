@@ -14,7 +14,7 @@ class FakeResponse:
         return False
     def read(self, limit):
         self.limit = limit
-        return self.payload
+        return self.payload[:limit]
 
 
 class ReadinessProbeTests(unittest.TestCase):
@@ -47,6 +47,13 @@ class ReadinessProbeTests(unittest.TestCase):
                 builder.return_value.open.return_value = FakeResponse(payload)
                 result = _probe_ollama("http://localhost:11434")
             self.assertEqual(result.status, "unavailable")
+
+    def test_oversized_model_list_response_fails_closed(self):
+        payload = b'{"models":[' + (b" " * 1_000_010) + b']}'
+        with patch("core.readiness.build_opener") as builder:
+            builder.return_value.open.return_value = FakeResponse(payload)
+            result = _probe_ollama("http://localhost:11434")
+        self.assertEqual(result.status, "unavailable")
 
     def test_invalid_json_and_timeout_fail_closed(self):
         with patch("core.readiness.build_opener") as builder:
