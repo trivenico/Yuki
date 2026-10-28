@@ -21,6 +21,7 @@ BOOLEAN_SETTINGS = (
     "wakeword_enabled",
     "plugin_discovery_enabled",
     "background_evolution_enabled",
+    "agent_council_enabled",
 )
 PROVIDERS = ("ollama", "openai", "gemini", "hybrid")
 MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
@@ -59,7 +60,7 @@ def read_user_settings(path=None):
             raise RuntimeError(f"Configured {model_key} is invalid.")
         result[model_key] = value.strip()
     for key in BOOLEAN_SETTINGS:
-        result[key] = raw.get(key, key == "firewall_dry_run")
+        result[key] = raw.get(key, key in {"firewall_dry_run", "agent_council_enabled"})
         if not isinstance(result[key], bool):
             raise RuntimeError(f"{key} must be true or false.")
     return result
