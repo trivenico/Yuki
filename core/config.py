@@ -180,6 +180,7 @@ def load_config(path=None):
         "minimax_model": _optional_model_setting(raw, "minimax_model"),
         "openrouter_model": _optional_model_setting(raw, "openrouter_model"),
         "tokenrouter_model": _optional_model_setting(raw, "tokenrouter_model"),
+        "anthropic_model": _optional_model_setting(raw, "anthropic_model"),
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
