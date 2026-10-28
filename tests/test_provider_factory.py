@@ -14,6 +14,21 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_environment_overrides_ollama_config(self):
+        provider = create_provider(
+            {"provider": "ollama", "ollama_model": "", "ollama_base_url": "http://127.0.0.1:11434"},
+            environ={
+                "YUKI_OLLAMA_MODEL": "custom-model:latest",
+                "YUKI_OLLAMA_BASE_URL": "https://ollama.example.com",
+            },
+        )
+        self.assertEqual(provider.model, "custom-model:latest")
+        self.assertEqual(provider.base_url, "https://ollama.example.com")
+
+    def test_blank_config_uses_default_model(self):
+        provider = create_provider({"provider": "ollama", "ollama_model": ""}, environ={})
+        self.assertEqual(provider.model, "llama3.2:3b")
+
     def test_explicit_openai_provider_is_constructible(self):
         self.assertIsInstance(
             create_provider({"provider": "openai"}, environ={}),
