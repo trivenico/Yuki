@@ -71,12 +71,12 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
-    def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
+    def test_real_provider_is_default_and_anthropic_requires_explicit_model(self):
         manager = ProviderManager(environ={})
         self.assertEqual(manager.current().name, "ollama")
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
-        self.assertIn("not implemented", result)
+        self.assertIn("Cannot select anthropic", result)
         self.assertEqual(manager.current().name, "openai")
 
     def test_selected_adapter_is_created(self):
@@ -109,13 +109,14 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIs(agent.provider, created[0])
         self.assertIs(manager.create_selected_adapter(), created[0])
 
-    def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
+    def test_terminal_anthropic_selection_requires_model_and_preserves_current_adapter(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("not implemented", result)
+        self.assertIn("Cannot select anthropic", result)
         self.assertIsInstance(agent.provider, OllamaProvider)
+        self.assertEqual(manager.current().name, "ollama")
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
