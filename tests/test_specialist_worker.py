@@ -124,6 +124,44 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(set(handlers), {"code-review", "qa-check"})
         self.assertEqual(handlers["code-review"]("Review this patch"), "provider result")
 
+    def test_routed_handlers_resolve_task_local_provider_per_role(self):
+        class Manager:
+            def __init__(self):
+                self.calls = []
+                self.shared = FakeProvider(output="shared")
+            def resolve_for_task(self, *, required_capabilities, preference=(), allow_cloud=False):
+                self.calls.append((required_capabilities, preference, allow_cloud))
+                name = "cloud-coding" if allow_cloud else "local"
+                return name, FakeProvider(output=name)
+
+        manager = Manager()
+        handlers = build_routed_specialist_handlers(
+            manager,
+            {"researcher": "research", "coder": "coding", "qa": "testing"},
+            role_capabilities={"coding": ("text", "native_messages_api")},
+            allow_cloud_roles=("coding",),
+            role_preferences={"research": ("ollama",), "coding": ("anthropic",)},
+        )
+        self.assertEqual(handlers["researcher"]("Investigate"), "local")
+        self.assertEqual(handlers["coder"]("Review"), "cloud-coding")
+        self.assertEqual(handlers["qa"]("Test plan"), "local")
+        self.assertIn((("text",), ("ollama",), False), manager.calls)
+        self.assertIn((("text", "native_messages_api"), ("anthropic",), True), manager.calls)
+        self.assertEqual(sum(1 for _, _, cloud in manager.calls if cloud), 1)
+
+    def test_routed_handlers_fail_closed_without_task_resolver(self):
+        with self.assertRaises(TypeError):
+            build_routed_specialist_handlers(object(), {"researcher": "research"})
+
+    def test_routed_handlers_reject_cloud_permission_for_unregistered_role(self):
+        class Manager:
+            def resolve_for_task(self, **kwargs):
+                return "ollama", FakeProvider()
+        with self.assertRaises(ValueError):
+            build_routed_specialist_handlers(
+                Manager(), {"researcher": "research"}, allow_cloud_roles=("coding",)
+            )
+
     def test_provider_manager_role_map_fails_closed(self):
         class MissingManager:
             pass
