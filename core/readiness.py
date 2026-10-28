@@ -105,18 +105,21 @@ def build_readiness_report(
         except Exception:
             configured_model = ""
 
+    # The CLI and server are separate capabilities: Ollama may be running as a
+    # service even when its CLI is not on this process's PATH. The probe itself
+    # enforces loopback-only URLs and a strict timeout.
+    ollama_cli_available = executable_finder("ollama") is not None
+    ollama_server = ollama_probe(
+        str(env.get("YUKI_OLLAMA_BASE_URL", "http://127.0.0.1:11434")).strip(), 1.0
+    )
     capabilities: dict[str, Capability] = {
         "python_runtime": Capability("detected", sys.version.split()[0]),
         "ollama_cli": (
             Capability("detected", "Ollama executable is on PATH; server/model not verified.")
-            if executable_finder("ollama")
+            if ollama_cli_available
             else Capability("unavailable", "Ollama executable not found on PATH.")
         ),
-        "ollama_server": (
-            ollama_probe(str(env.get("YUKI_OLLAMA_BASE_URL", "http://127.0.0.1:11434")).strip(), 1.0)
-            if executable_finder("ollama")
-            else Capability("unavailable", "Ollama CLI is unavailable; server connectivity was not checked.")
-        ),
+        "ollama_server": ollama_server,
         "ollama_model_config": (
             Capability("configured", "A local model name is configured; model availability not verified.")
             if configured_model
