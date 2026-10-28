@@ -207,7 +207,7 @@ def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
         raise ValueError("SKILL.md frontmatter is not closed.")
     try:
         metadata = yaml.load(frontmatter, Loader=_UniqueKeyLoader) or {}
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, RecursionError) as exc:
         raise ValueError("SKILL.md frontmatter must be valid YAML.") from exc
     if not isinstance(metadata, dict):
         raise ValueError("SKILL.md frontmatter must be a YAML mapping.")
