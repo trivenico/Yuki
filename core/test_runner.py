@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -15,7 +16,7 @@ _ALLOWED_ENV_KEYS = (
 
 
 def run_project_unittest_suite(
-    workspace: str | Path, *, timeout_seconds: int = 120
+    workspace: str | Path, project_path: str = ".", *, timeout_seconds: int = 120
 ) -> dict[str, Any]:
     """Run unittest discovery without a shell and return bounded factual evidence.
 
@@ -24,9 +25,31 @@ def run_project_unittest_suite(
     """
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 120:
         raise ValueError("Test timeout must be an integer between 1 and 120 seconds.")
-    root = Path(workspace).expanduser().resolve(strict=True)
-    if not root.is_dir():
+    workspace_root = Path(workspace).expanduser().resolve(strict=True)
+    if not workspace_root.is_dir():
         raise ValueError("Configured workspace must be a directory.")
+    if not isinstance(project_path, str) or not project_path.strip():
+        raise ValueError("Provide a workspace-relative project path.")
+    supplied = Path(project_path)
+    if supplied.is_absolute():
+        raise ValueError("Absolute project paths are not accepted.")
+    root = workspace_root / supplied
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_root.relative_to(workspace_root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Project must exist inside the configured Yuki workspace.") from exc
+    cursor = root
+    while cursor != workspace_root:
+        if cursor.is_symlink():
+            raise ValueError("Symbolic links are not accepted in project paths.")
+        parent = cursor.parent
+        if parent == cursor:
+            raise ValueError("Project must exist inside the configured Yuki workspace.")
+        cursor = parent
+    root = resolved_root
+    if not root.is_dir():
+        raise ValueError("Project path must be a directory.")
     tests_dir = root / "tests"
     if tests_dir.is_symlink() or not tests_dir.is_dir():
         raise ValueError("A real tests directory must exist in the workspace.")
@@ -49,7 +72,8 @@ def run_project_unittest_suite(
             "command": command,
             "exit_code": completed.returncode,
             "timed_out": False,
-            "passed": completed.returncode == 0,
+            "test_count": int(match.group(1)) if (match := re.search(r"Ran (\\d+) tests?", stdout + "\\n" + stderr)) else 0,
+            "passed": completed.returncode == 0 and bool(match and int(match.group(1)) > 0),
             "stdout": stdout[-_MAX_OUTPUT_CHARS:],
             "stderr": stderr[-_MAX_OUTPUT_CHARS:],
             "scope": "python_unittest_discovery_only",
