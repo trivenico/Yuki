@@ -29,6 +29,7 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.agent_council import AgentCouncil
 from core.task_ledger import TaskLedger
 from core.task_verifier import verify_workspace_file
 from core.test_runner import run_project_unittest_suite
@@ -118,6 +119,8 @@ def print_help():
   /plugins remove ID             Remove an installed MCP plugin
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
+  /council status                 Show whether council planning is enabled for tasks
+  /council run GOAL               Convene parallel specialists and synthesize a plan
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
   /task verify ID --file PATH [--contains TEXT]  Verify file presence/hash and optional literal text
@@ -165,6 +168,7 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    council = AgentCouncil(ai.provider, on_event=lambda message: print("Yuki > " + message))
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -362,6 +366,19 @@ def main():
                 print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
             except Exception as exc:
                 print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
+        elif command == "/council status":
+            enabled = bool(config.get("agent_council_enabled", True))
+            print("Yuki Council automatic task planning: " + ("enabled" if enabled else "disabled"))
+            print("Council uses 3 parallel advisory specialists and one synthesis call; it does not execute tools.")
+        elif command.startswith("/council run "):
+            goal = command[len("/council run "):].strip()
+            if not goal:
+                print("Yuki > Provide a goal: /council run review the architecture and identify the next milestone")
+                continue
+            result = council.run(goal)
+            print(f"Yuki Council [{result.status}]:\\n{result.summary}")
+            if result.contributions:
+                print("Specialist contributions: " + ", ".join(role for role, _ in result.contributions))
         elif command == "/tasks":
             tasks = task_ledger.list(limit=20)
             if not tasks:
@@ -499,7 +516,15 @@ def main():
                 continue
             print(f"Yuki > Task {tracked['id']} created. Preparing a bounded plan; each skill call requires fresh approval.")
             try:
-                result = task_agent.run(goal)
+                council_context = ""
+                if bool(config.get("agent_council_enabled", True)):
+                    print("Yuki > Convening the specialist council before planning this task.")
+                    council_result = council.run(goal)
+                    if council_result.ok:
+                        council_context = council_result.context
+                    else:
+                        print("Yuki > Council unavailable; continuing with the bounded single-agent planner.")
+                result = task_agent.run(goal, council_context=council_context)
                 # A model's final response is not independent proof that the user's goal
                 # was achieved. Keep successful runs awaiting verification until an
                 # acceptance check can confirm the actual outcome.
