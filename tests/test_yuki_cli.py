@@ -210,6 +210,38 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertNotIn("secret payload", output[0])
 
+    def test_skill_packs_list_reports_loaded_packs_and_validation_errors(self):
+        output = []
+        pack = type("Pack", (), {
+            "name": "release_notes", "description": "Draft release notes.",
+            "risk": "low", "requires_approval": False,
+        })()
+        with patch("yuki_cli.load_installed_skill_packs", return_value=([pack], [])):
+            code = run_cli(["skill-packs", "list"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        report = json.loads(output[0])
+        self.assertEqual(report["installed"][0]["name"], "release_notes")
+        self.assertFalse(report["installed"][0]["requires_approval"])
+
+    def test_skill_pack_install_uses_validated_data_only_store(self):
+        from pathlib import Path
+        output = []
+        with patch("yuki_cli.install_skill_pack", return_value=Path("/tmp/skill-packs/release_notes.json")) as install:
+            code = run_cli(["skill-packs", "install", "/tmp/release_notes.json"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        install.assert_called_once_with("/tmp/release_notes.json")
+        report = json.loads(output[0])
+        self.assertEqual(report["installed"]["name"], "release_notes")
+        self.assertIn("next Yuki runtime start", report["note"])
+
+    def test_skill_pack_remove_returns_nonzero_when_missing(self):
+        output = []
+        with patch("yuki_cli.remove_skill_pack", return_value=False) as remove:
+            code = run_cli(["skill-packs", "remove", "release_notes"], output_fn=output.append)
+        self.assertEqual(code, 1)
+        remove.assert_called_once_with("release_notes")
+        self.assertFalse(json.loads(output[0])["removed"])
+
 
 if __name__ == "__main__":
     unittest.main()
