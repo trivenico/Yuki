@@ -6,7 +6,7 @@ It uses only the provider explicitly configured by the user.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Callable
 
@@ -107,7 +107,7 @@ class AgentCouncil:
                     self._emit(f"Council: {label} has submitted its analysis.")
                 except Exception as exc:
                     errors.append(f"{label}: {type(exc).__name__}")
-        except TimeoutError:
+        except FuturesTimeoutError:
             errors.append("specialist round timed out")
         finally:
             for future in futures:
