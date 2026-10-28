@@ -1,6 +1,6 @@
 # Installing Yuki skills and plugins
 
-Yuki's desktop console and full CLI use the same runtime and user extension store. The desktop window includes **Install Skill**, **Install MCP Plugin**, **List Skills**, and **List Plugins** buttons; the same operations are available from the command line. You can install validated extension manifests while the runtime is running; newly installed skill packs become available immediately. Restarting Yuki is not required for the supported extension types.
+Yuki's desktop console and full CLI use the same runtime and user extension store. The desktop window includes **Install Skill**, **Install MCP Plugin**, **List Skills**, and **List Plugins** buttons; the same operations are available from the command line. The `skills install` and `plugins install` manifest formats update the active registry while the runtime is running. The separate risk-tagged `skills packs install` format is loaded on the next runtime start; its timing is documented below.
 
 ## Skills
 
