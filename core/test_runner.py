@@ -72,7 +72,7 @@ def run_project_unittest_suite(
             "command": command,
             "exit_code": completed.returncode,
             "timed_out": False,
-            "test_count": int(match.group(1)) if (match := re.search(r"Ran (\\d+) tests?", stdout + "\\n" + stderr)) else 0,
+            "test_count": int(match.group(1)) if (match := re.search(r"Ran (\d+) tests?", stdout + "\n" + stderr)) else 0,
             "passed": completed.returncode == 0 and bool(match and int(match.group(1)) > 0),
             "stdout": stdout[-_MAX_OUTPUT_CHARS:],
             "stderr": stderr[-_MAX_OUTPUT_CHARS:],
