@@ -20,8 +20,13 @@ class ProviderManager:
         self._config.setdefault("ollama_model", self._environ.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"))
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
-            "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
-            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            name: (lambda provider_name=name: create_provider(
+                {**self._config, "provider": provider_name}, environ=self._environ
+            ))
+            for name in (
+                "openai", "gemini", "deepseek", "kimi", "minimax",
+                "openrouter", "tokenrouter",
+            )
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "ollama"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
@@ -30,10 +35,12 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
-            ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
-            ProviderInfo("kimi", ("official_api_key_flow_planned",)),
-            ProviderInfo("minimax", ("official_api_key_flow_planned",)),
+            ProviderInfo("deepseek", ("DEEPSEEK_API_KEY",), True),
+            ProviderInfo("kimi", ("MOONSHOT_API_KEY",), True),
+            ProviderInfo("minimax", ("MINIMAX_API_KEY",), True),
+            ProviderInfo("openrouter", ("OPENROUTER_API_KEY",), True),
+            ProviderInfo("tokenrouter", ("TOKENROUTER_API_KEY",), True),
+            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY",)),
         ):
             self.register(item)
 
