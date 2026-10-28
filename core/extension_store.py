@@ -47,7 +47,7 @@ def _read_json(path: Path) -> dict:
         if path.stat().st_size > MAX_MANIFEST_BYTES:
             raise ValueError("Manifest exceeds 64 KiB.")
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("Manifest could not be read as valid UTF-8 JSON.") from exc
     if not isinstance(value, dict):
         raise ValueError("Manifest must be a JSON object.")
