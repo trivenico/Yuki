@@ -48,6 +48,14 @@ class ReadinessProbeTests(unittest.TestCase):
                 result = _probe_ollama("http://localhost:11434")
             self.assertEqual(result.status, "unavailable")
 
+    def test_valid_json_with_oversized_trailing_whitespace_is_rejected(self):
+        payload = b'{"models": []}' + (b" " * 1_000_010)
+        with patch("core.readiness.build_opener") as builder:
+            builder.return_value.open.return_value = FakeResponse(payload)
+            result = _probe_ollama("http://localhost:11434")
+        self.assertEqual(result.status, "unavailable")
+        self.assertIn("exceeded the 1 MB", result.detail)
+
     def test_oversized_model_list_response_fails_closed(self):
         payload = b'{"models":[' + (b" " * 1_000_010) + b']}'
         with patch("core.readiness.build_opener") as builder:
