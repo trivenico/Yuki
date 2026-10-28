@@ -126,6 +126,7 @@ def load_config(path=None):
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),
         "wakeword_enabled": _bool_setting("YUKI_WAKEWORD_ENABLED", raw, "wakeword_enabled", False),
         "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
+        "background_evolution_enabled": _bool_setting("YUKI_BACKGROUND_EVOLUTION_ENABLED", raw, "background_evolution_enabled", False),
         "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
         "github_allowed_roots": [str(Path(p).expanduser().resolve()) for p in github_roots],
         "mcp_servers": _mcp_servers(raw),
