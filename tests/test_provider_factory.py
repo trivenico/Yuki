@@ -67,6 +67,21 @@ class ProviderFactoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "MCP"):
                     _mcp_servers({ "mcp_servers": [{**valid, "endpoint": endpoint}] })
 
+    def test_mcp_config_rejects_invalid_dns_hostname_labels(self):
+        from core.config import _mcp_servers
+
+        for host in ("-mcp.example.com", "mcp-.example.com", "mcp..example.com"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(RuntimeError, "allowed_hosts"):
+                    _mcp_servers({
+                        "mcp_servers": [{
+                            "name": "docs",
+                            "endpoint": f"https://{host}/api",
+                            "allowed_hosts": [host],
+                            "allowed_tools": ["search"],
+                        }]
+                    })
+
     def test_mcp_config_normalizes_allowlisted_host_case(self):
         from core.config import _mcp_servers
 
