@@ -1,6 +1,6 @@
 # Yuki
 
-Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
+Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations. New configurations default to local Ollama (`llama3.2:3b`); cloud providers must be selected explicitly.
 
 **Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
@@ -241,3 +241,8 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+## Windows local-provider acceptance test
+
+For a real Ollama inference check that never falls back to cloud or mock, follow [`docs/windows-ollama-smoke-test.md`](docs/windows-ollama-smoke-test.md) and run `python scripts/smoke_test_ollama.py` from the repository root.

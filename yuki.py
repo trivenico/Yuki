@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from yuki_agent import YukiAgent
+from core.config import load_config
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -377,7 +378,10 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 
 def main():
-    providers = ProviderManager()
+    # Use the validated user configuration for the actual CLI runtime. Previously
+    # the CLI silently ignored config.yaml and user onboarding settings.
+    config = load_config()
+    providers = ProviderManager(config=config)
     agent = YukiAgent(provider=providers.create_selected_adapter())
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()

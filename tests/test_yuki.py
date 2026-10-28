@@ -8,6 +8,7 @@ import yuki_learning
 import yuki_tasks
 import yuki_security
 from providers import MockProvider
+from providers.ollama import OllamaProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
@@ -70,20 +71,31 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
+    def test_main_loads_user_config_and_passes_it_to_provider_manager(self):
+        from yuki import main
+        with patch("yuki.load_config", return_value={"provider": "ollama", "ollama_model": "qwen2.5:7b"}) as load_config:
+            with patch("yuki.ProviderManager") as manager_cls:
+                with patch("yuki.YukiAgent") as agent_cls:
+                    with patch("builtins.input", side_effect=EOFError), patch("builtins.print"):
+                        main()
+        load_config.assert_called_once_with()
+        manager_cls.assert_called_once_with(config={"provider": "ollama", "ollama_model": "qwen2.5:7b"})
+        manager_cls.return_value.create_selected_adapter.assert_called_once_with()
+        agent_cls.assert_called_once_with(provider=manager_cls.return_value.create_selected_adapter.return_value)
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
-        self.assertEqual(manager.select("openai"), "Selected provider: openai")
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
     def test_selected_adapter_is_created(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
+        from providers.ollama import OllamaProvider
         manager = ProviderManager(environ={})
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
         manager = ProviderManager()
@@ -115,8 +127,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("not implemented", result)
-        from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertIsInstance(agent.provider, OllamaProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -124,7 +135,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: ollama", result)
 
 
 class ToolTests(unittest.TestCase):
@@ -213,8 +224,8 @@ class LearningTests(unittest.TestCase):
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertIn("\nProvider: ollama", result)
+        self.assertNotIn("\\nProvider: ollama", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()
