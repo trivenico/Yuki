@@ -257,6 +257,7 @@ def run_desktop() -> None:
     add_shortcut("Index file", "/knowledge index ")
     add_shortcut("Morning briefing", "/briefing")
     add_shortcut("Evolution review", "/evolution status")
+    add_shortcut("Evolution proposals", "/evolution report")
     add_shortcut("Task history", "/tasks")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
