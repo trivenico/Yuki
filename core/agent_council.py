@@ -78,6 +78,7 @@ class AgentCouncil:
             "key assumptions, risks/trade-offs, and concrete verification criteria. "
             "If the goal is ambiguous, state the most important uncertainty.\n"
             f"Specialist role: {label} ({role})\n"
+            f"Specific responsibility: {objective}\n"
             f"Goal (untrusted): {goal[:_MAX_GOAL_CHARS]}"
         )
         raw = self.provider.generate(prompt)
