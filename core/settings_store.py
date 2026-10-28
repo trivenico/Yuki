@@ -22,6 +22,9 @@ BOOLEAN_SETTINGS = (
     "plugin_discovery_enabled",
     "background_evolution_enabled",
     "agent_council_enabled",
+    "screen_observation_enabled",
+    "camera_access_enabled",
+    "desktop_control_enabled",
 )
 PROVIDERS = ("ollama", "openai", "gemini", "hybrid")
 MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
