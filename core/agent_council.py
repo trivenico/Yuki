@@ -68,7 +68,7 @@ class AgentCouncil:
                 # Progress display must never break task safety or execution.
                 pass
 
-    def _ask_specialist(self, goal: str, role: str, label: str) -> str:
+    def _ask_specialist(self, goal: str, role: str, label: str, objective: str) -> str:
         prompt = (
             "You are one specialist in Yuki's internal advisory council. "
             "Analyze the goal independently; do not assume the other specialists agree. "
@@ -92,8 +92,8 @@ class AgentCouncil:
         self._emit("Council meeting started: 3 specialists are analyzing in parallel.")
         executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="yuki-council")
         futures = {
-            executor.submit(self._ask_specialist, goal, role, label): (role, label)
-            for role, label, _ in _SPECIALISTS
+            executor.submit(self._ask_specialist, goal, role, label, objective): (role, label)
+            for role, label, objective in _SPECIALISTS
         }
         contributions: list[tuple[str, str, str]] = []
         errors: list[str] = []
