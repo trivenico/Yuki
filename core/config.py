@@ -93,7 +93,7 @@ def _mcp_servers(raw):
 def _optional_model_setting(raw, key, default=""):
     value = raw.get(key, default)
     if not isinstance(value, str):
-        raise RuntimeError(f"{key} must be a string.")
+        raise RuntimeError(f"{key} must be a valid model identifier string.")
     value = value.strip()
     if len(value) > 120 or (value and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", value)):
         raise RuntimeError(f"{key} must be a valid model identifier of at most 120 characters.")
