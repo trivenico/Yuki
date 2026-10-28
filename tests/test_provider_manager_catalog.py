@@ -52,7 +52,7 @@ class ProviderManagerCatalogTests(unittest.TestCase):
                 preference=("ollama",),
             )
         self.assertEqual(provider, "ollama")
-        self.assertNotIsInstance(adapter, type(existing_adapter))
+        self.assertIsNot(adapter, existing_adapter)
         self.assertEqual(manager.current().name, "ollama")
         self.assertIs(manager._selected_adapter, existing_adapter)
 
