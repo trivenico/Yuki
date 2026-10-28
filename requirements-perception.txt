@@ -1,0 +1,4 @@
+# Optional local perception dependencies.
+# Install only if you want one-shot screen capture or camera snapshots:
+Pillow>=10.4,<13
+opencv-python>=4.10,<5
