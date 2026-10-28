@@ -90,6 +90,16 @@ def _mcp_servers(raw):
     return result
 
 
+def _optional_model_setting(raw, key, default=""):
+    value = raw.get(key, default)
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a string.")
+    value = value.strip()
+    if len(value) > 120 or (value and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", value)):
+        raise RuntimeError(f"{key} must be a valid model identifier of at most 120 characters.")
+    return value
+
+
 def load_config(path=None):
     selected_config_path = Path(path) if path else resolve_config_path()
     try:
@@ -164,6 +174,12 @@ def load_config(path=None):
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "ollama"))).strip().lower(),
         "ollama_base_url": base_url, "ollama_model": model,
+        "openai_model": _optional_model_setting(raw, "openai_model", "gpt-4.1-mini"),
+        "deepseek_model": _optional_model_setting(raw, "deepseek_model"),
+        "kimi_model": _optional_model_setting(raw, "kimi_model"),
+        "minimax_model": _optional_model_setting(raw, "minimax_model"),
+        "openrouter_model": _optional_model_setting(raw, "openrouter_model"),
+        "tokenrouter_model": _optional_model_setting(raw, "tokenrouter_model"),
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
