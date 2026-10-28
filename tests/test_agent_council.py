@@ -42,6 +42,21 @@ class AgentCouncilTests(unittest.TestCase):
         self.assertIn("Independent recommendation", result.context)
         self.assertIn("Peer critique:", result.context)
 
+    def test_partial_specialist_failure_still_debates_available_proposals(self):
+        class PartlyBrokenProvider(ParallelFakeProvider):
+            def generate(self, prompt):
+                answer = super().generate(prompt)
+                if "Specialist role:" in prompt and "(skeptic)" in prompt:
+                    raise RuntimeError("critic temporarily unavailable")
+                return answer
+
+        provider = PartlyBrokenProvider()
+        result = AgentCouncil(provider, timeout_seconds=5).run("Improve project reliability")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(len(result.contributions), 2)
+        self.assertIn("Peer critique:", result.context)
+
     def test_empty_goal_does_not_call_provider(self):
         provider = ParallelFakeProvider()
         result = AgentCouncil(provider).run("  ")
