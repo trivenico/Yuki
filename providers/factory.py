@@ -5,7 +5,6 @@ import os
 
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
@@ -15,14 +14,14 @@ def create_provider(config=None, *, environ=None):
 
     OpenAI is the default. Hybrid routing keeps general tasks local and only
     routes explicitly allow-listed task names to cloud. API keys are read from
-    the process environment, never from YAML or committed files. The mock
-    adapter remains available only to tests that call this factory explicitly.
+    the process environment, never from YAML or committed files. Mock providers
+    must be injected directly by tests and are never selectable by the runtime.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
-        return MockProvider()
+        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only and cannot be selected at runtime).")
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
