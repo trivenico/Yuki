@@ -93,6 +93,16 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
+        elif item["name"] == "deepseek":
+            model = _model(env.get("YUKI_DEEPSEEK_MODEL", cfg.get("deepseek_model", "")))
+        elif item["name"] == "kimi":
+            model = _model(env.get("YUKI_KIMI_MODEL", cfg.get("kimi_model", "")))
+        elif item["name"] == "minimax":
+            model = _model(env.get("YUKI_MINIMAX_MODEL", cfg.get("minimax_model", "")))
+        elif item["name"] == "openrouter":
+            model = _model(env.get("YUKI_OPENROUTER_MODEL", cfg.get("openrouter_model", "")))
+        elif item["name"] == "tokenrouter":
+            model = _model(env.get("YUKI_TOKENROUTER_MODEL", cfg.get("tokenrouter_model", "")))
 
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
         if item["name"] == "hybrid":
