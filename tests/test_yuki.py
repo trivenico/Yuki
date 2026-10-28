@@ -118,6 +118,51 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIsInstance(agent.provider, OllamaProvider)
         self.assertEqual(manager.current().name, "ollama")
 
+    def test_provider_route_command_updates_agent_only_after_success(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+
+        class AvailableAdapter(MockProvider):
+            def is_available(self):
+                return True
+
+        adapter = AvailableAdapter()
+        class Registry:
+            def route(self, *, required, preference=(), allow_cloud=False):
+                self.required = required
+                self.allow_cloud = allow_cloud
+                return SimpleNamespace(provider="ollama")
+
+        registry = Registry()
+        with patch.object(manager, "routing_registry", return_value=registry), \
+             patch.object(manager, "_build_adapter", return_value=adapter):
+            result = handle_command(
+                "/provider route text local_inference",
+                [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys())
+            )
+        self.assertEqual(result, "Selected provider for task: ollama")
+        self.assertEqual(registry.required, ("text", "local_inference"))
+        self.assertFalse(registry.allow_cloud)
+        self.assertIs(agent.provider, adapter)
+
+    def test_provider_route_command_requires_capability_and_explicit_cloud_opt_in(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command(
+            "/provider route native_messages_api --allow-cloud",
+            [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys())
+        )
+        self.assertIn("Task routing failed", result)
+        self.assertIsInstance(agent.provider, OllamaProvider)
+        usage = handle_command(
+            "/provider route", [], [], agent, manager,
+            SecurityPolicy(allowed_tools=TOOLS.keys())
+        )
+        self.assertIn("Usage:", usage)
+
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
