@@ -46,6 +46,8 @@ class CommandHistory:
             return ""
         if self._position is None:
             self._position = len(self._commands)
+        if direction == -1 and self._position == 0:
+            return ""
         self._position = max(0, min(len(self._commands), self._position + direction))
         if self._position == len(self._commands):
             return ""
