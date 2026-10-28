@@ -5,6 +5,7 @@ from pathlib import Path
 
 from core.extension_store import (
     InstalledPromptSkill,
+    _atomic_json,
     install_extension,
     install_skill_file,
     list_extensions,
@@ -56,6 +57,19 @@ class ExtensionStoreTests(unittest.TestCase):
         }
         value.update(overrides)
         return value
+
+    def test_atomic_extension_publish_never_overwrites_existing_file(self):
+        destination = self.data / "installed_skills" / "example.json"
+        destination.parent.mkdir(parents=True)
+        destination.write_text('{"name":"original"}', encoding="utf-8")
+
+        with self.assertRaises(FileExistsError):
+            _atomic_json(destination, {"name": "replacement"})
+
+        self.assertEqual(
+            json.loads(destination.read_text(encoding="utf-8")),
+            {"name": "original"},
+        )
 
     def test_install_load_execute_and_remove_declarative_skill(self):
         source = self.write_manifest("skill.json", self.skill_manifest())
