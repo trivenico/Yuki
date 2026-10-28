@@ -15,11 +15,11 @@ class WorkspaceFileVerifierTests(unittest.TestCase):
 
     def test_reports_sha256_size_and_limited_scope(self):
         artifact = self.root / "report.txt"
-        artifact.write_text("Yuki artifact\n", encoding="utf-8")
+        artifact.write_text("Yuki artifact", encoding="utf-8")
         result = verify_workspace_file(self.root, "report.txt")
         self.assertEqual(result["path"], "report.txt")
-        self.assertEqual(result["size_bytes"], len(b"Yuki artifact\n"))
-        self.assertEqual(result["sha256"], hashlib.sha256(b"Yuki artifact\n").hexdigest())
+        self.assertEqual(result["size_bytes"], len(b"Yuki artifact"))
+        self.assertEqual(result["sha256"], hashlib.sha256(b"Yuki artifact").hexdigest())
         self.assertEqual(result["scope"], "file_presence_and_identity_only")
 
     def test_rejects_absolute_and_traversal_paths(self):
