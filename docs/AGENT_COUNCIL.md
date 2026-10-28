@@ -9,7 +9,7 @@ Yuki can convene a small, bounded advisory council before planning a task. It is
 - **Independent critic/security reviewer** — challenges assumptions, highlights failure modes, and recommends safer alternatives.
 - **Council chair** — compares agreement and disagreement across the available responses and produces a prioritized plan.
 
-The three specialist calls run concurrently. The chair then makes one synthesis call. If the task is a /task command, the synthesis and specialist notes are passed to the existing bounded task planner as untrusted advisory context.
+The three specialist calls run concurrently. Each specialist then cross-reviews the other available proposals in a second parallel round. The chair compares the original analyses and peer critiques and makes one synthesis call. If the task is a /task command, the synthesis and specialist notes are passed to the existing bounded task planner as untrusted advisory context.
 
 ## Commands
 
@@ -21,7 +21,7 @@ The three specialist calls run concurrently. The chair then makes one synthesis 
 
 The council is enabled by default for task planning. Disable **Settings → AI Agent Council → Enable parallel Yuki Council for task planning** to reduce latency, local model load, or provider usage. The setting can also be controlled with agent_council_enabled or YUKI_AGENT_COUNCIL_ENABLED.
 
-One council round uses up to four model generations: three parallel specialist responses and one synthesis. Each specialist has bounded input/output, and the council uses the configured provider only. With local Ollama, several concurrent requests may compete for RAM/VRAM; disable the setting if the local model becomes slow or unstable.
+One full council round uses up to seven model generations: three parallel first opinions, three parallel peer critiques, and one chair synthesis. Failed or timed-out calls may reduce this count. Each specialist has bounded input/output, and the council uses the configured provider only. With local Ollama, several concurrent requests may compete for RAM/VRAM; disable the setting if the local model becomes slow or unstable.
 
 ## Safety boundaries
 
