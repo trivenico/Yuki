@@ -118,6 +118,12 @@ class ExtensionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not closed"):
             install_skill_file(str(source), root=self.data)
 
+    def test_excessively_nested_json_is_rejected_without_crashing(self):
+        path = self.source / "nested.json"
+        path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "valid UTF-8 JSON"):
+            install_extension(str(path), "skill", root=self.data)
+
     def test_duplicate_json_keys_are_rejected(self):
         path = self.source / "duplicate.json"
         path.write_text(
