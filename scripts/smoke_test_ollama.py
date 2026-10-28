@@ -33,7 +33,12 @@ def main() -> int:
         default=os.environ.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"),
         help="Installed Ollama model (default: YUKI_OLLAMA_MODEL or llama3.2:3b).",
     )
-    parser.add_argument("--timeout", type=float, default=45.0, help="Request timeout in seconds (1-120).")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=float(os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45")),
+        help="Request timeout in seconds (1-120; defaults to YUKI_PROVIDER_TIMEOUT_SECONDS or 45).",
+    )
     args = parser.parse_args()
 
     try:
