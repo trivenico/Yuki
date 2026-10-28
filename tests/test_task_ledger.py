@@ -94,10 +94,26 @@ class TaskLedgerTests(unittest.TestCase):
     def test_existing_database_schema_is_migrated(self):
         import sqlite3
         with sqlite3.connect(self.path) as db:
-            db.execute("ALTER TABLE tasks DROP COLUMN verification_evidence")
+            db.execute("DROP TABLE tasks")
+            db.execute("""
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    result TEXT NOT NULL DEFAULT '',
+                    error_code TEXT NOT NULL DEFAULT '',
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+            """)
         reopened = TaskLedger(self.path)
         task = reopened.create("After migration")
         self.assertEqual(task["verification_evidence"], "")
+        with sqlite3.connect(self.path) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
+        self.assertIn("verification_evidence", columns)
 
     def test_status_set_is_explicit(self):
         self.assertEqual(TASK_STATUSES, {
