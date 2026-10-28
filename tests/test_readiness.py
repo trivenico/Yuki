@@ -65,6 +65,22 @@ class OllamaProbeSecurityTests(unittest.TestCase):
         self.assertEqual(result.status, "verified")
         self.assertIsInstance(build.call_args.args[0], _NoRedirectHandler)
 
+    def test_redirect_response_fails_closed_without_disclosing_location(self):
+        redirect = HTTPError(
+            "http://127.0.0.1:11434/api/tags",
+            302,
+            "Found",
+            {"Location": "https://example.com/collect?token=secret"},
+            None,
+        )
+        with patch("core.readiness.build_opener") as build:
+            build.return_value.open.side_effect = redirect
+            result = _probe_ollama("http://127.0.0.1:11434")
+        self.assertEqual(result.status, "unavailable")
+        self.assertIn("HTTPError", result.detail)
+        self.assertNotIn("example.com", result.detail)
+        self.assertNotIn("secret", result.detail)
+
     def test_non_loopback_endpoint_is_rejected_without_opening(self):
         with patch("core.readiness.build_opener") as build:
             result = _probe_ollama("http://example.com:11434")
