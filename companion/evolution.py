@@ -163,6 +163,21 @@ class DailyEvolutionCycle:
             self._atomic_write(self.state_path, state)
             return report
 
+    def report(self) -> dict | None:
+        """Read the latest report without changing it or creating a new cycle."""
+        with self._lock:
+            try:
+                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return None
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            if not isinstance(report, dict) or not isinstance(report.get("proposals"), list):
+                raise RuntimeError("Evolution report has an invalid structure; no data was overwritten.")
+            if len(report["proposals"]) > self.MAX_PROPOSALS:
+                raise RuntimeError("Evolution report exceeds configured limits; no data was overwritten.")
+            return report
+
     def status(self) -> dict:
         with self._lock:
             observations = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
