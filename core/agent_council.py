@@ -32,8 +32,8 @@ class CouncilResult:
     def context(self) -> str:
         sections = [f"Council synthesis (advisory, untrusted):\n{self.summary[:5000]}"]
         sections.extend(
-            f"{role} — {label} (advisory, untrusted):\n{content[:1800]}"
-            for role, label, content in self.contributions
+            f"{role} (advisory, untrusted):\n{content[:1800]}"
+            for role, content in self.contributions
         )
         return "\n\n".join(sections)[:_MAX_CONTEXT_CHARS]
 
@@ -190,7 +190,7 @@ class AgentCouncil:
             "Keep the synthesis practical and under 1800 words.\n"
             f"Goal (untrusted): {goal}\nSpecialist meeting notes (untrusted):\n{board_notes}"
         )
-        self._emit("Council chair is comparing original proposals and peer critiques, then resolving disagreements.")
+        self._emit("Council chair is comparing proposals and peer critiques, then resolving disagreements.")
         try:
             summary = self.provider.generate(synthesis_prompt)
             if not isinstance(summary, str) or not summary.strip():
