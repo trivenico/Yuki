@@ -217,7 +217,7 @@ class YukiCliTests(unittest.TestCase):
             "risk": "low", "requires_approval": False,
         })()
         with patch("yuki_cli.load_installed_skill_packs", return_value=([pack], [])):
-            code = run_cli(["skill-packs", "list"], output_fn=output.append)
+            code = run_cli(["skills", "packs", "list"], output_fn=output.append)
         self.assertEqual(code, 0)
         report = json.loads(output[0])
         self.assertEqual(report["installed"][0]["name"], "release_notes")
@@ -227,7 +227,7 @@ class YukiCliTests(unittest.TestCase):
         from pathlib import Path
         output = []
         with patch("yuki_cli.install_skill_pack", return_value=Path("/tmp/skill-packs/release_notes.json")) as install:
-            code = run_cli(["skill-packs", "install", "/tmp/release_notes.json"], output_fn=output.append)
+            code = run_cli(["skills", "packs", "install", "/tmp/release_notes.json"], output_fn=output.append)
         self.assertEqual(code, 0)
         install.assert_called_once_with("/tmp/release_notes.json")
         report = json.loads(output[0])
@@ -237,7 +237,7 @@ class YukiCliTests(unittest.TestCase):
     def test_skill_pack_remove_returns_nonzero_when_missing(self):
         output = []
         with patch("yuki_cli.remove_skill_pack", return_value=False) as remove:
-            code = run_cli(["skill-packs", "remove", "release_notes"], output_fn=output.append)
+            code = run_cli(["skills", "packs", "remove", "release_notes"], output_fn=output.append)
         self.assertEqual(code, 1)
         remove.assert_called_once_with("release_notes")
         self.assertFalse(json.loads(output[0])["removed"])
