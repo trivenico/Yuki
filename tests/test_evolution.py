@@ -83,6 +83,24 @@ class DailyEvolutionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "size limit"):
                 cycle.review("proposal", "rejected")
 
+    def test_status_and_review_reject_malformed_report_structures(self):
+        malformed_reports = (
+            [],
+            {"proposals": "not-a-list"},
+            {"proposals": [None]},
+        )
+        for report in malformed_reports:
+            with self.subTest(report=report), tempfile.TemporaryDirectory() as directory:
+                cycle = DailyEvolutionCycle(directory)
+                import json
+                cycle.report_path.write_text(json.dumps(report), encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.status()
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.review("proposal", "rejected")
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.report()
+
     def test_report_fails_closed_for_invalid_json(self):
         with tempfile.TemporaryDirectory() as directory:
             cycle = DailyEvolutionCycle(directory)
