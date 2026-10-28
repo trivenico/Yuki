@@ -9,9 +9,11 @@ class FakeProvider:
     def __init__(self, outputs):
         self.outputs = list(outputs)
         self.calls = 0
+        self.prompts = []
 
     def generate(self, prompt):
         self.calls += 1
+        self.prompts.append(prompt)
         return self.outputs.pop(0)
 
 
@@ -54,6 +56,18 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(skills.calls, [("time", "")])
         self.assertEqual(provider.calls, 2)
+
+    def test_council_context_is_advisory_input_to_task_planning(self):
+        skills = FakeSkillAgent()
+        provider = FakeProvider(['{"type":"final","message":"Use the reviewed plan."}'])
+        result = ApprovedTaskAgent(provider, skills).run(
+            "Improve reliability",
+            council_context="Consensus: add regression tests first.",
+        )
+        self.assertTrue(result.ok)
+        self.assertIn("Consensus: add regression tests first.", provider.prompts[0])
+        self.assertIn("never authorization", provider.prompts[0])
+        self.assertEqual(skills.calls, [])
 
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
