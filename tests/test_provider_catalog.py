@@ -75,6 +75,26 @@ class ProviderCatalogTests(unittest.TestCase):
                 self.assertEqual(configured["configured_model"], "operator-model")
                 self.assertEqual(configured["status"], "credentials_and_model_configured")
 
+    def test_additional_provider_models_can_come_from_validated_config(self):
+        cases = (
+            ("deepseek", "deepseek_model"),
+            ("kimi", "kimi_model"),
+            ("minimax", "minimax_model"),
+            ("openrouter", "openrouter_model"),
+            ("tokenrouter", "tokenrouter_model"),
+        )
+        for name, key in cases:
+            with self.subTest(provider=name):
+                item = next(
+                    entry for entry in build_provider_catalog(
+                        config={"provider": name, key: "configured-model"},
+                        environ={},
+                    ) if entry["name"] == name
+                )
+                self.assertTrue(item["implemented"])
+                self.assertTrue(item["ready"])
+                self.assertEqual(item["configured_model"], "configured-model")
+
     def test_invalid_model_names_are_not_returned(self):
         item = next(
             x for x in build_provider_catalog(environ={"YUKI_OLLAMA_MODEL": "bad model"})
