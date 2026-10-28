@@ -108,6 +108,16 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(skills[0].manifest["id"], "release_notes")
         self.assertIn("do not invent claims", skills[0].manifest["instructions"])
 
+    def test_agent_skills_import_rejects_excessively_nested_frontmatter(self):
+        source = self.source / "SKILL.md"
+        nested = "[" * 2000 + "x" + "]" * 2000
+        source.write_text(
+            "---\nname: valid_skill\ndescription: valid description\nmetadata: " + nested + "\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(ValueError):
+            install_skill_file(str(source), root=self.data)
+
     def test_agent_skills_import_rejects_yaml_aliases(self):
         source = self.source / "SKILL.md"
         source.write_text(
