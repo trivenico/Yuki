@@ -8,7 +8,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 _DEFAULT_ALLOWED_HOSTS = frozenset({
-    "api.openai.com", "openrouter.ai", "api.deepseek.com",
+    "api.openai.com", "api.anthropic.com", "openrouter.ai", "api.deepseek.com",
     "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
     "api.z.ai", "api.tokenrouter.io",
 })
