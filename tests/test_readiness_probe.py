@@ -26,7 +26,7 @@ class ReadinessProbeTests(unittest.TestCase):
             result = _probe_ollama("http://127.0.0.1:11434", timeout=1.0)
         self.assertEqual(result.status, "verified")
         self.assertIn("inference was not tested", result.detail)
-        self.assertEqual(opener.call_args.kwargs["timeout"], 1.0)
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 1.0)
         self.assertEqual(response.limit, 1_000_001)
 
     def test_non_loopback_endpoints_are_rejected_without_network(self):
