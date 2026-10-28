@@ -47,6 +47,47 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
 
+    def test_openai_compatible_cloud_providers_require_explicit_model(self):
+        cases = (
+            ("deepseek", "YUKI_DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"),
+            ("kimi", "YUKI_KIMI_MODEL", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
+            ("minimax", "YUKI_MINIMAX_MODEL", "MINIMAX_API_KEY", "https://api.minimax.chat/v1"),
+            ("openrouter", "YUKI_OPENROUTER_MODEL", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+            ("tokenrouter", "YUKI_TOKENROUTER_MODEL", "TOKENROUTER_API_KEY", "https://api.tokenrouter.io/v1"),
+        )
+        for name, model_env, key_env, base_url in cases:
+            with self.subTest(provider=name):
+                with self.assertRaisesRegex(ValueError, "Configure a model"):
+                    create_provider({"provider": name}, environ={})
+                provider = create_provider(
+                    {"provider": name},
+                    environ={model_env: "operator-selected-model", key_env: "test-key"},
+                )
+                self.assertIsInstance(provider, OpenAICompatibleProvider)
+                self.assertEqual(provider.model, "operator-selected-model")
+                self.assertEqual(provider.base_url, base_url)
+                self.assertTrue(provider.is_available())
+
+    def test_cloud_provider_endpoint_override_is_explicit_and_validated(self):
+        provider = create_provider(
+            {"provider": "deepseek"},
+            environ={
+                "YUKI_DEEPSEEK_MODEL": "operator-model",
+                "YUKI_DEEPSEEK_BASE_URL": "https://api.deepseek.com/v1",
+                "DEEPSEEK_API_KEY": "test-key",
+            },
+        )
+        self.assertEqual(provider.base_url, "https://api.deepseek.com/v1")
+        with self.assertRaisesRegex(ValueError, "not trusted"):
+            create_provider(
+                {"provider": "deepseek"},
+                environ={
+                    "YUKI_DEEPSEEK_MODEL": "operator-model",
+                    "YUKI_DEEPSEEK_BASE_URL": "https://untrusted.example/v1",
+                    "DEEPSEEK_API_KEY": "test-key",
+                },
+            )
+
     def test_mcp_config_rejects_malformed_ports_and_host_mismatch(self):
         from core.config import _mcp_servers
 
