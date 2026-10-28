@@ -41,7 +41,7 @@ class WorkspaceFileVerifierTests(unittest.TestCase):
 
     def test_literal_text_check_rejects_binary_and_large_files(self):
         binary = self.root / "binary.bin"
-        binary.write_bytes(b"\\xff\\xfe")
+        binary.write_bytes(bytes([0xFF, 0xFE]))
         with self.assertRaisesRegex(ValueError, "UTF-8"):
             verify_workspace_file(self.root, "binary.bin", expected_text="hello")
         large = self.root / "large.txt"
