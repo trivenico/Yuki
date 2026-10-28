@@ -21,7 +21,7 @@ MAX_MANIFEST_BYTES = 64 * 1024
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _SKILL_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-_HOST = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
+_HOST = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$")
 
 
 def _extension_root(kind: str, root: Path | None = None) -> Path:
