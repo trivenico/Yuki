@@ -94,8 +94,9 @@ def run_project_unittest_suite(
             "command": command,
             "exit_code": None,
             "timed_out": True,
+            "test_count": 0,
             "passed": False,
-            "stdout": str(stdout)[-_MAX_OUTPUT_CHARS:],
-            "stderr": str(stderr)[-_MAX_OUTPUT_CHARS:],
+            "stdout": stdout[-_MAX_OUTPUT_CHARS:],
+            "stderr": stderr[-_MAX_OUTPUT_CHARS:],
             "scope": "python_unittest_discovery_only",
         }
