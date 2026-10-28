@@ -39,14 +39,14 @@ def build_parser() -> argparse.ArgumentParser:
         install.add_argument("manifest", help="Path to the manifest JSON file")
         remove = actions.add_parser("remove", help=f"Remove an installed {kind} pack by id")
         remove.add_argument("extension_id")
-
-    packs = sub.add_parser("skill-packs", help="Manage data-only JSON skill packs")
-    pack_actions = packs.add_subparsers(dest="pack_action", required=True)
-    pack_actions.add_parser("list", help="List installed data-only skill packs")
-    pack_install = pack_actions.add_parser("install", help="Install a validated data-only skill pack")
-    pack_install.add_argument("manifest", help="Path to the skill pack JSON file")
-    pack_remove = pack_actions.add_parser("remove", help="Remove an installed data-only skill pack")
-    pack_remove.add_argument("name", help="Installed skill pack name")
+        if group == "skills":
+            packs = actions.add_parser("packs", help="Manage risk-tagged, data-only skill packs")
+            pack_actions = packs.add_subparsers(dest="pack_action", required=True)
+            pack_actions.add_parser("list", help="List installed data-only skill packs")
+            pack_install = pack_actions.add_parser("install", help="Install a validated data-only skill pack")
+            pack_install.add_argument("manifest", help="Path to the skill pack JSON file")
+            pack_remove = pack_actions.add_parser("remove", help="Remove an installed data-only skill pack")
+            pack_remove.add_argument("name", help="Installed skill pack name")
 
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
@@ -106,37 +106,32 @@ def run_cli(
             output_fn(f"Yuki desktop failed to start ({type(exc).__name__}).")
             return 2
 
-    if args.command == "skill-packs":
-        try:
-            if args.pack_action == "list":
-                installed, errors = load_installed_skill_packs()
-                _write_json({
-                    "installed": [
-                        {"name": skill.pack_name, "skill_name": skill.name,
-                         "description": skill.description, "risk": skill.risk,
-                         "requires_approval": skill.requires_approval}
-                        for skill in installed
-                    ],
-                    "errors": errors,
-                }, output_fn)
-                return 0 if not errors else 1
-            if args.pack_action == "install":
-                target = install_skill_pack(args.manifest)
-                _write_json({
-                    "installed": {"path": str(target), "name": target.stem},
-                    "note": "Data-only guidance installed; it will be loaded on the next Yuki runtime start.",
-                }, output_fn)
-                return 0
-            removed = remove_skill_pack(args.name)
-            _write_json({"removed": removed, "name": args.name}, output_fn)
-            return 0 if removed else 1
-        except (ValueError, OSError) as exc:
-            output_fn(f"Skill-pack operation failed safely ({type(exc).__name__}): {str(exc)[:200]}")
-            return 2
-
     if args.command in {"skills", "plugins"}:
         kind = "skill" if args.command == "skills" else "plugin"
         try:
+            if kind == "skill" and args.extension_action == "packs":
+                if args.pack_action == "list":
+                    installed, errors = load_installed_skill_packs()
+                    _write_json({
+                        "installed": [
+                            {"name": skill.pack_name, "skill_name": skill.name,
+                             "description": skill.description, "risk": skill.risk,
+                             "requires_approval": skill.requires_approval}
+                            for skill in installed
+                        ],
+                        "errors": errors,
+                    }, output_fn)
+                    return 0 if not errors else 1
+                if args.pack_action == "install":
+                    target = install_skill_pack(args.manifest)
+                    _write_json({
+                        "installed": {"path": str(target), "name": target.stem},
+                        "note": "Data-only guidance installed; it will be loaded on the next Yuki runtime start.",
+                    }, output_fn)
+                    return 0
+                removed = remove_skill_pack(args.name)
+                _write_json({"removed": removed, "name": args.name}, output_fn)
+                return 0 if removed else 1
             if args.extension_action == "list":
                 _write_json({"installed": list_extensions(kind)}, output_fn)
                 return 0
