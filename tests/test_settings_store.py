@@ -26,6 +26,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertFalse(settings["voice_enabled"])
         self.assertTrue(settings["firewall_dry_run"])
         self.assertFalse(settings["background_evolution_enabled"])
+        self.assertTrue(settings["agent_council_enabled"])
 
     def test_allowlisted_update_preserves_unrelated_settings(self):
         saved = save_user_settings(
@@ -35,6 +36,7 @@ class SettingsStoreTests(unittest.TestCase):
                 "openai_model": "gpt-4.1-mini",
                 "voice_enabled": True,
                 "background_evolution_enabled": True,
+                "agent_council_enabled": False,
             },
             self.path,
         )
@@ -44,6 +46,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(saved["ollama_model"], "qwen2.5:3b")
         self.assertTrue(saved["voice_enabled"])
         self.assertTrue(saved["background_evolution_enabled"])
+        self.assertFalse(saved["agent_council_enabled"])
         self.assertEqual(raw["provider"], "openai")
         self.assertEqual(raw["custom_setting"], "keep-me")
 
