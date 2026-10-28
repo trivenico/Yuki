@@ -32,5 +32,5 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertEqual(manager.current().name, "ollama")
 
 
-if __name == "__main__":
+if __name__ == "__main__":
     unittest.main()
