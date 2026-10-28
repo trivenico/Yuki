@@ -59,6 +59,8 @@ class SkillPackTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(loaded), 1)
         self.assertIsInstance(loaded[0], InstalledSkillPack)
+        self.assertEqual(loaded[0].pack_name, "release_notes")
+        self.assertEqual(loaded[0].name, "pack_release_notes")
         self.assertFalse(loaded[0].requires_approval)
         result = loaded[0].execute("prepare v1.2 notes")
         self.assertTrue(result.ok)
