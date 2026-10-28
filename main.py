@@ -460,9 +460,9 @@ def main():
                     print(f"Yuki > Test suite did not pass; task {updated['id']} remains awaiting_verification.")
                 print(f"Yuki > Exit code: {outcome['exit_code']}; tests reported: {outcome.get('test_count', 0)}; timed out: {outcome['timed_out']}")
                 if outcome["stdout"]:
-                    print("Yuki test stdout (tail):\\n" + outcome["stdout"])
+                    print("Yuki test stdout (tail):\n" + outcome["stdout"])
                 if outcome["stderr"]:
-                    print("Yuki test stderr (tail):\\n" + outcome["stderr"])
+                    print("Yuki test stderr (tail):\n" + outcome["stderr"])
             except (KeyError, ValueError, OSError) as exc:
                 print(f"Yuki > Test run refused safely: {exc}")
         elif command.startswith("/task cancel "):
