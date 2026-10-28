@@ -50,6 +50,31 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertTrue(item["ready"])
         self.assertEqual(item["status"], "cli_detected_auth_not_verified")
 
+    def test_additional_cloud_provider_readiness_requires_model_and_key(self):
+        cases = (
+            ("deepseek", "YUKI_DEEPSEEK_MODEL", "DEEPSEEK_API_KEY"),
+            ("kimi", "YUKI_KIMI_MODEL", "MOONSHOT_API_KEY"),
+            ("minimax", "YUKI_MINIMAX_MODEL", "MINIMAX_API_KEY"),
+            ("openrouter", "YUKI_OPENROUTER_MODEL", "OPENROUTER_API_KEY"),
+            ("tokenrouter", "YUKI_TOKENROUTER_MODEL", "TOKENROUTER_API_KEY"),
+        )
+        for name, model_env, key_env in cases:
+            with self.subTest(provider=name):
+                missing = next(item for item in build_provider_catalog(environ={}) if item["name"] == name)
+                self.assertTrue(missing["implemented"])
+                self.assertFalse(missing["ready"])
+                configured = next(
+                    item for item in build_provider_catalog(
+                        config={"provider": name},
+                        environ={model_env: "operator-model", key_env: "test-key"},
+                    ) if item["name"] == name
+                )
+                self.assertTrue(configured["implemented"])
+                self.assertTrue(configured["ready"])
+                self.assertTrue(configured["credential_configured"])
+                self.assertEqual(configured["configured_model"], "operator-model")
+                self.assertEqual(configured["status"], "credentials_and_model_configured")
+
     def test_invalid_model_names_are_not_returned(self):
         item = next(
             x for x in build_provider_catalog(environ={"YUKI_OLLAMA_MODEL": "bad model"})
