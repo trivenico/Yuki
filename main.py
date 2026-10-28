@@ -30,6 +30,7 @@ from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.agent_council import AgentCouncil
+from core.perception import get_screen_context
 from core.task_ledger import TaskLedger
 from core.task_verifier import verify_workspace_file
 from core.test_runner import run_project_unittest_suite
@@ -121,6 +122,8 @@ def print_help():
   /task GOAL                      Bounded model-guided task; approve each skill call
   /council status                 Show whether council planning is enabled for tasks
   /council run GOAL               Convene parallel specialists and synthesize a plan
+  /observe status                 Show screen/camera privacy settings
+  /observe window                 Read active-window metadata locally (opt-in)
   /tasks                          List recent tracked tasks
   /task show ID                   Show one tracked task
   /task verify ID --file PATH [--contains TEXT]  Verify file presence/hash and optional literal text
@@ -366,6 +369,19 @@ def main():
                 print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
             except Exception as exc:
                 print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
+        elif command == "/observe status":
+            print("Screen observation: " + ("enabled (manual actions only)" if config.get("screen_observation_enabled", False) else "disabled"))
+            print("Camera access: " + ("enabled (one-shot snapshots only)" if config.get("camera_access_enabled", False) else "disabled"))
+            print("Desktop control: " + ("permission flag enabled, but control actions are not implemented yet" if config.get("desktop_control_enabled", False) else "disabled"))
+            print("No background screen or camera capture is running.")
+        elif command == "/observe window":
+            try:
+                context = get_screen_context(enabled=bool(config.get("screen_observation_enabled", False)))
+                print("Yuki local screen context:")
+                print(context.as_prompt_context())
+                print("This command reads only the active-window title. It does not capture pixels or send anything to a model.")
+            except PermissionError as exc:
+                print(f"Yuki > {exc}")
         elif command == "/council status":
             enabled = bool(config.get("agent_council_enabled", True))
             print("Yuki Council automatic task planning: " + ("enabled" if enabled else "disabled"))
