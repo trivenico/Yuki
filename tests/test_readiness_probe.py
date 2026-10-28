@@ -54,6 +54,30 @@ class ReadinessProbeTests(unittest.TestCase):
     def test_invalid_timeout_is_rejected(self):
         self.assertEqual(_probe_ollama("http://localhost:11434", timeout=10).status, "unavailable")
 
+    def test_server_is_probed_even_when_cli_is_not_on_path(self):
+        probe = lambda url, timeout: Capability("verified", "local server responded")
+        report = build_readiness_report(
+            environ={},
+            executable_finder=lambda name: None,
+            module_finder=lambda name: None,
+            ollama_probe=probe,
+        )
+        self.assertEqual(report.capabilities["ollama_cli"].status, "unavailable")
+        self.assertEqual(report.capabilities["ollama_server"].status, "verified")
+
+    def test_executable_finder_is_called_once_for_ollama_cli(self):
+        calls = []
+        def finder(name):
+            calls.append(name)
+            return None
+        build_readiness_report(
+            environ={},
+            executable_finder=finder,
+            module_finder=lambda name: None,
+            ollama_probe=lambda url, timeout: Capability("unavailable", "not running"),
+        )
+        self.assertEqual(calls.count("ollama"), 1)
+
     def test_report_uses_injected_probe_and_keeps_detection_distinct(self):
         report = build_readiness_report(
             environ={"YUKI_OLLAMA_MODEL": "test-model"},
