@@ -99,8 +99,13 @@ def validate_plugin_manifest(value: dict) -> dict:
     if not isinstance(value["name"], str) or not _SERVER_NAME.fullmatch(value["name"]):
         raise ValueError("Plugin name must be a simple server identifier.")
     endpoint = value["endpoint"]
-    if not isinstance(endpoint, str) or len(endpoint) > 2048:
-        raise ValueError("Plugin endpoint must be a bounded HTTPS URL.")
+    if (
+        not isinstance(endpoint, str)
+        or len(endpoint) > 2048
+        or endpoint != endpoint.strip()
+        or any(ord(char) < 32 or ord(char) == 127 for char in endpoint)
+    ):
+        raise ValueError("Plugin endpoint must be a bounded HTTPS URL without surrounding whitespace or control characters.")
     try:
         parsed = urlsplit(endpoint)
         port = parsed.port
