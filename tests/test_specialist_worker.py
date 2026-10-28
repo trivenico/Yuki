@@ -7,6 +7,7 @@ from automation.agent_coordinator import (
 )
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
+    build_routed_specialist_handlers,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
