@@ -57,6 +57,22 @@ class DailyEvolutionTests(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertGreaterEqual(len(loaded["proposals"]), 1)
 
+    def test_oversized_observation_file_is_rejected_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.observations_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.status()
+
+    def test_oversized_report_file_is_rejected_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.report_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.report()
+
     def test_report_fails_closed_for_invalid_json(self):
         with tempfile.TemporaryDirectory() as directory:
             cycle = DailyEvolutionCycle(directory)
