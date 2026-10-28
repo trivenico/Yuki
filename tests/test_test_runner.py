@@ -67,6 +67,21 @@ class ProjectTestRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "packaged desktop runtime"):
                 run_project_unittest_suite(self.workspace, ".")
 
+    def test_timeout_result_has_same_structured_fields_as_normal_run(self):
+        project = self._project()
+        (project / "tests" / "test_slow.py").write_text(
+            "import time, unittest\\nclass Checks(unittest.TestCase):\\n"
+            " def test_wait(self): time.sleep(3)\\n",
+            encoding="utf-8",
+        )
+        result = run_project_unittest_suite(self.workspace, "demo", timeout_seconds=1)
+        self.assertTrue(result["timed_out"])
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["exit_code"])
+        self.assertEqual(result["test_count"], 0)
+        self.assertIn("stdout", result)
+        self.assertIn("stderr", result)
+
     def test_rejects_invalid_timeout(self):
         project = self._project()
         (project / "tests" / "test_demo.py").write_text(
