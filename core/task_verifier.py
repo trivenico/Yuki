@@ -7,7 +7,9 @@ from pathlib import Path
 _MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
 
 
-def verify_workspace_file(workspace: str | Path, relative_path: str) -> dict[str, str | int]:
+def verify_workspace_file(
+    workspace: str | Path, relative_path: str, *, expected_text: str | None = None
+) -> dict[str, str | int | bool]:
     """Verify that a regular, non-symlink file exists under the workspace and hash it.
 
     This proves artifact presence and identity only, not that its contents satisfy
@@ -15,6 +17,11 @@ def verify_workspace_file(workspace: str | Path, relative_path: str) -> dict[str
     """
     if not isinstance(relative_path, str) or not relative_path.strip():
         raise ValueError("Provide a workspace-relative file path.")
+    if expected_text is not None:
+        if not isinstance(expected_text, str) or not expected_text:
+            raise ValueError("Expected text must be a non-empty string.")
+        if len(expected_text) > 4000:
+            raise ValueError("Expected text must be at most 4000 characters.")
     supplied = Path(relative_path)
     if supplied.is_absolute():
         raise ValueError("Absolute paths are not accepted; use a workspace-relative path.")
@@ -44,9 +51,19 @@ def verify_workspace_file(workspace: str | Path, relative_path: str) -> dict[str
     with resolved.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return {
+    result: dict[str, str | int | bool] = {
         "path": resolved.relative_to(root).as_posix(),
         "size_bytes": size,
         "sha256": digest.hexdigest(),
         "scope": "file_presence_and_identity_only",
     }
+    if expected_text is not None:
+        if size > 1024 * 1024:
+            raise ValueError("Text-content verification is limited to files of 1 MiB or less.")
+        try:
+            content = resolved.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Text-content verification requires a UTF-8 text file.") from exc
+        result["content_match"] = expected_text in content
+        result["scope"] = "file_identity_and_literal_text_match"
+    return result
