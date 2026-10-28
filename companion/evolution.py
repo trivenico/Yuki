@@ -79,6 +79,19 @@ class DailyEvolutionCycle:
             raise RuntimeError(f"Evolution data at {path.name} has an invalid structure or exceeds limits.")
         return value
 
+    def _validate_report(self, report: object) -> dict:
+        """Validate report structure before status/review code inspects proposal entries."""
+        if (
+            not isinstance(report, dict)
+            or not isinstance(report.get("proposals"), list)
+            or len(report["proposals"]) > self.MAX_PROPOSALS
+            or any(not isinstance(proposal, dict) for proposal in report["proposals"])
+        ):
+            raise RuntimeError(
+                "Evolution report has an invalid structure or exceeds limits; no data was overwritten."
+            )
+        return report
+
     def _atomic_write(self, path: Path, value) -> None:
         fd, temp_name = tempfile.mkstemp(prefix=".yuki-evolution-", suffix=".tmp", dir=str(self.workspace))
         try:
@@ -191,11 +204,7 @@ class DailyEvolutionCycle:
                 return None
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
-            if not isinstance(report, dict) or not isinstance(report.get("proposals"), list):
-                raise RuntimeError("Evolution report has an invalid structure; no data was overwritten.")
-            if len(report["proposals"]) > self.MAX_PROPOSALS:
-                raise RuntimeError("Evolution report exceeds configured limits; no data was overwritten.")
-            return report
+            return self._validate_report(report)
 
     def status(self) -> dict:
         with self._lock:
@@ -206,6 +215,8 @@ class DailyEvolutionCycle:
                 report = None
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            if report is not None:
+                report = self._validate_report(report)
             return {"observations": len(observations), "last_report_at": report.get("generated_at") if isinstance(report, dict) else None,
                     "pending_proposals": sum(1 for p in report.get("proposals", []) if p.get("status") == "pending_review") if isinstance(report, dict) else 0,
                     "report_path": str(self.report_path)}
@@ -222,8 +233,9 @@ class DailyEvolutionCycle:
                 raise ValueError("No evolution report exists yet.") from None
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            report = self._validate_report(report)
             found = False
-            for proposal in report.get("proposals", []):
+            for proposal in report["proposals"]:
                 if proposal.get("id") == proposal_id:
                     if proposal.get("status") != "pending_review":
                         raise ValueError("This proposal has already been reviewed.")
