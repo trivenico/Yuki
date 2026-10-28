@@ -143,8 +143,8 @@ class AgentCouncil:
         original_by_role = {role: (label, answer) for role, label, answer in contributions}
         review_executor = ThreadPoolExecutor(max_workers=self.max_workers, thread_name_prefix="yuki-council-review")
         review_futures = {}
-        for role, label, _objective in _SPECIALISTS:
-            own_label, own_answer = original_by_role[role]
+        for role, (own_label, own_answer) in original_by_role.items():
+            label = own_label
             other_notes = "\n\n".join(
                 f"[{other_label} / {other_role}]\n{other_answer}"
                 for other_role, (other_label, other_answer) in original_by_role.items()
