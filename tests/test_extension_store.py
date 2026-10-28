@@ -123,6 +123,16 @@ class ExtensionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "credentials"):
             validate_plugin_manifest(self.plugin_manifest(endpoint="https://user:secret@mcp.example.com/api"))
 
+    def test_plugin_endpoint_rejects_surrounding_whitespace_and_control_characters(self):
+        for endpoint in (
+            " https://mcp.example.com/api",
+            "https://mcp.example.com/api ",
+            "https://mcp.example.com/api\\n",
+        ):
+            with self.subTest(endpoint=repr(endpoint)):
+                with self.assertRaisesRegex(ValueError, "whitespace or control"):
+                    validate_plugin_manifest(self.plugin_manifest(endpoint=endpoint))
+
     def test_plugin_endpoint_rejects_malformed_or_invalid_ports(self):
         for endpoint in (
             "https://mcp.example.com:bad/api",
