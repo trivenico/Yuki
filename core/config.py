@@ -51,15 +51,38 @@ def _mcp_servers(raw):
         hosts, tools = item.get("allowed_hosts"), item.get("allowed_tools")
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name) or name in seen:
             raise RuntimeError("MCP server names must be unique simple identifiers.")
-        if not isinstance(endpoint, str) or not endpoint.startswith("https://") or len(endpoint) > 2048:
-            raise RuntimeError("MCP endpoint must be a bounded HTTPS URL.")
+        if (
+            not isinstance(endpoint, str)
+            or len(endpoint) > 2048
+            or endpoint != endpoint.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in endpoint)
+        ):
+            raise RuntimeError("MCP endpoint must be a bounded HTTPS URL without surrounding whitespace or control characters.")
         if (not isinstance(hosts, list) or not hosts or len(hosts) > 20
                 or any(not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", h) for h in hosts)):
             raise RuntimeError("MCP allowed_hosts must be a non-empty list of hostnames.")
+        normalized_hosts = list(dict.fromkeys(host.lower() for host in hosts))
+        try:
+            parsed = urlsplit(endpoint)
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("MCP endpoint must contain a valid port.") from exc
+        if port == 0:
+            raise RuntimeError("MCP endpoint port must be between 1 and 65535.")
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
+            raise RuntimeError("MCP endpoint must be HTTPS and must not contain credentials or a fragment.")
+        if parsed.hostname.lower() not in normalized_hosts:
+            raise RuntimeError("MCP endpoint hostname must appear in allowed_hosts.")
         if (not isinstance(tools, list) or len(tools) > 100
                 or any(not isinstance(t, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", t) for t in tools)):
             raise RuntimeError("MCP allowed_tools must be a list of simple tool names.")
-        result.append({"name": name, "endpoint": endpoint, "allowed_hosts": list(dict.fromkeys(hosts)),
+        result.append({"name": name, "endpoint": endpoint, "allowed_hosts": normalized_hosts,
                        "allowed_tools": list(dict.fromkeys(tools))})
         seen.add(name)
     return result
