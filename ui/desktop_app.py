@@ -13,6 +13,13 @@ import threading
 from pathlib import Path
 
 from core.settings_store import BOOLEAN_SETTINGS, read_user_settings, save_user_settings
+from core.perception import (
+    PerceptionUnavailable,
+    active_window_title,
+    capture_camera_frame,
+    capture_screen,
+    get_screen_context,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRANSCRIPT_CHARS = 1_000_000
@@ -233,6 +240,7 @@ def run_desktop() -> None:
         ("System Readiness", lambda: send_text("/readiness")),
         ("Self-Evolution", lambda: send_text("/evolution status")),
         ("AI Agent Council", lambda: send_text("/council status")),
+        ("Screen & Camera", lambda: open_perception()),
     )
     for label, action in nav_items:
         ttk.Button(sidebar, text=label, command=action).pack(fill="x", pady=2)
@@ -260,6 +268,8 @@ def run_desktop() -> None:
     add_shortcut("Evolution review", "/evolution status")
     add_shortcut("Evolution proposals", "/evolution report")
     add_shortcut("Run AI Council", "/council run Review the current project goal and propose next steps")
+    add_shortcut("Observe screen", "/observe screen")
+    add_shortcut("Camera snapshot", "/observe camera")
     add_shortcut("Task history", "/tasks")
     add_shortcut("Runtime status", "/status")
     add_shortcut("Help / commands", "/help")
@@ -318,6 +328,73 @@ def run_desktop() -> None:
             return
         command_group = "skills" if kind == "skill" else "plugins"
         send_text(f'/{command_group} install "{path}"')
+
+    def open_perception() -> None:
+        """Explicit one-shot local captures; no background polling or persistence."""
+        try:
+            current = read_user_settings()
+        except Exception as exc:
+            messagebox.showerror("Perception unavailable", f"Could not read privacy settings ({type(exc).__name__}).", parent=root)
+            return
+
+        window = tk.Toplevel(root)
+        window.title("Yuki — Screen & Camera")
+        window.transient(root)
+        window.geometry("620x520")
+        window.minsize(520, 400)
+        panel = ttk.Frame(window, padding=14)
+        panel.pack(fill="both", expand=True)
+        ttk.Label(panel, text="Local perception", font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
+        ttk.Label(
+            panel,
+            text="Captures happen only when you click a button. Frames are held in memory for preview and are not saved or uploaded by this feature. Close this window to discard the preview.",
+            wraplength=560,
+        ).pack(anchor="w", pady=(5, 10))
+        status = tk.StringVar(value="Idle — no capture active.")
+        ttk.Label(panel, textvariable=status, wraplength=560).pack(anchor="w", pady=(0, 8))
+        preview = ttk.Label(panel, anchor="center", text="No image captured")
+        preview.pack(fill="both", expand=True, pady=6)
+        preview_image = {"value": None}
+
+        def show_capture(image, label: str) -> None:
+            try:
+                from PIL import ImageTk
+                image = image.copy()
+                image.thumbnail((560, 330))
+                photo = ImageTk.PhotoImage(image)
+                preview_image["value"] = photo
+                preview.configure(image=photo, text="")
+                status.set(label)
+            except Exception as exc:
+                status.set(f"Preview unavailable ({type(exc).__name__}); capture was not saved.")
+
+        def take_screen() -> None:
+            try:
+                image = capture_screen(enabled=current["screen_observation_enabled"])
+                show_capture(image, "One screen snapshot captured locally. No continuous observation is running.")
+            except (PermissionError, PerceptionUnavailable) as exc:
+                messagebox.showwarning("Screen capture unavailable", str(exc), parent=window)
+
+        def take_camera() -> None:
+            try:
+                image = capture_camera_frame(enabled=current["camera_access_enabled"])
+                show_capture(image, "One camera frame captured locally. Camera released; no recording is running.")
+            except (PermissionError, PerceptionUnavailable, ValueError) as exc:
+                messagebox.showwarning("Camera unavailable", str(exc), parent=window)
+
+        def read_window() -> None:
+            try:
+                context = get_screen_context(enabled=current["screen_observation_enabled"])
+                status.set("Active window metadata: " + (context.active_window or "Unavailable on this platform"))
+            except PermissionError as exc:
+                messagebox.showwarning("Screen observation disabled", str(exc), parent=window)
+
+        buttons = ttk.Frame(panel)
+        buttons.pack(fill="x", pady=(4, 0))
+        ttk.Button(buttons, text="Capture screen once", command=take_screen).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="Camera snapshot", command=take_camera).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Active window", command=read_window).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Privacy settings", command=lambda: (window.destroy(), open_settings())).pack(side="right")
 
     def open_settings() -> None:
         window = tk.Toplevel(root)
@@ -402,6 +479,9 @@ def run_desktop() -> None:
             "plugin_discovery_enabled": "Enable plugin discovery",
             "background_evolution_enabled": "Enable local background evolution reviews (proposals only)",
             "agent_council_enabled": "Enable parallel Yuki Council for task planning",
+            "screen_observation_enabled": "Allow explicit local screen observation",
+            "camera_access_enabled": "Allow explicit camera snapshots (no recording)",
+            "desktop_control_enabled": "Allow approved desktop control actions (not yet implemented)",
         }
         groups = (
             ("Voice", ("voice_enabled", "wakeword_enabled")),
@@ -409,6 +489,7 @@ def run_desktop() -> None:
             ("Integrations", ("gmail_enabled", "plugin_discovery_enabled")),
             ("Self-Evolution", ("background_evolution_enabled",)),
             ("AI Agent Council", ("agent_council_enabled",)),
+            ("Perception & Desktop", ("screen_observation_enabled", "camera_access_enabled", "desktop_control_enabled")),
         )
         variables = {}
         for row, (title, keys) in enumerate(groups, start=1):
