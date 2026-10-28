@@ -36,7 +36,7 @@ def main() -> int:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=float(os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45")),
+        default=os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45"),
         help="Request timeout in seconds (1-120; defaults to YUKI_PROVIDER_TIMEOUT_SECONDS or 45).",
     )
     args = parser.parse_args()
