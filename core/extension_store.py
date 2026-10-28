@@ -14,6 +14,30 @@ from pathlib import Path
 import yaml
 from urllib.parse import urlsplit
 
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate mapping keys in skill metadata."""
+
+
+def _construct_unique_yaml_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise ValueError("SKILL.md frontmatter mapping keys must be hashable.") from exc
+        if duplicate:
+            raise ValueError(f"Duplicate YAML frontmatter key: {key!r}.")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_yaml_mapping,
+)
+
 from core.portable_paths import data_root
 from skills.base import Skill, SkillResult
 
@@ -182,7 +206,7 @@ def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
     if not separator:
         raise ValueError("SKILL.md frontmatter is not closed.")
     try:
-        metadata = yaml.safe_load(frontmatter) or {}
+        metadata = yaml.load(frontmatter, Loader=_UniqueKeyLoader) or {}
     except yaml.YAMLError as exc:
         raise ValueError("SKILL.md frontmatter must be valid YAML.") from exc
     if not isinstance(metadata, dict):
