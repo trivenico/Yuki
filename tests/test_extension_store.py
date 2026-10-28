@@ -127,7 +127,7 @@ class ExtensionStoreTests(unittest.TestCase):
         for endpoint in (
             " https://mcp.example.com/api",
             "https://mcp.example.com/api ",
-            "https://mcp.example.com/api\\n",
+            "https://mcp.example.com/api" + chr(10),
         ):
             with self.subTest(endpoint=repr(endpoint)):
                 with self.assertRaisesRegex(ValueError, "whitespace or control"):
