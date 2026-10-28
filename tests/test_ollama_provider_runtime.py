@@ -39,6 +39,18 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 5)
 
     @patch("providers.ollama.urllib.request.urlopen")
+    def test_availability_returns_false_when_model_is_not_installed(self, urlopen):
+        urlopen.return_value = FakeResponse(json.dumps({
+            "models": [{"name": "other:latest"}]
+        }).encode())
+        self.assertFalse(self.provider().is_available())
+
+    @patch("providers.ollama.urllib.request.urlopen")
+    def test_availability_fails_closed_on_unexpected_payload_shape(self, urlopen):
+        urlopen.return_value = FakeResponse(json.dumps({"models": "not-a-list"}).encode())
+        self.assertFalse(self.provider().is_available())
+
+    @patch("providers.ollama.urllib.request.urlopen")
     def test_availability_fails_closed_on_bad_json(self, urlopen):
         urlopen.return_value = FakeResponse(b"not-json")
         self.assertFalse(self.provider().is_available())
@@ -68,6 +80,24 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Local Ollama request failed") as raised:
             self.provider().generate("hello")
         self.assertNotIn("private endpoint detail", str(raised.exception))
+
+    @patch("providers.ollama.urllib.request.urlopen")
+    def test_generate_rejects_invalid_json(self, urlopen):
+        urlopen.return_value = FakeResponse(b"not-json")
+        with self.assertRaisesRegex(RuntimeError, "invalid JSON"):
+            self.provider().generate("hello")
+
+    @patch("providers.ollama.urllib.request.urlopen")
+    def test_generate_rejects_empty_response_text(self, urlopen):
+        urlopen.return_value = FakeResponse(json.dumps({"response": "  "}).encode())
+        with self.assertRaisesRegex(RuntimeError, "no text response"):
+            self.provider().generate("hello")
+
+    @patch("providers.ollama.urllib.request.urlopen")
+    def test_generate_rejects_oversized_response(self, urlopen):
+        urlopen.return_value = FakeResponse(b"x" * 2_000_001)
+        with self.assertRaisesRegex(RuntimeError, "2 MB limit"):
+            self.provider().generate("hello")
 
     def test_rejects_insecure_non_loopback_http(self):
         with self.assertRaisesRegex(ValueError, "HTTPS or loopback HTTP"):
