@@ -88,7 +88,15 @@ class ProviderCatalogTests(unittest.TestCase):
                 item = next(
                     entry for entry in build_provider_catalog(
                         config={"provider": name, key: "configured-model"},
-                        environ={},
+                        environ={
+                            {
+                                "deepseek_model": "DEEPSEEK_API_KEY",
+                                "kimi_model": "MOONSHOT_API_KEY",
+                                "minimax_model": "MINIMAX_API_KEY",
+                                "openrouter_model": "OPENROUTER_API_KEY",
+                                "tokenrouter_model": "TOKENROUTER_API_KEY",
+                            }[key]: "test-key"
+                        },
                     ) if entry["name"] == name
                 )
                 self.assertTrue(item["implemented"])
