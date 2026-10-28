@@ -12,6 +12,7 @@ openai_model: gpt-4.1-mini
 # minimax_model: MiniMax-M2
 # openrouter_model: openai/gpt-4.1-mini
 # tokenrouter_model: provider/model
+# anthropic_model: claude-sonnet-4-5
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect
