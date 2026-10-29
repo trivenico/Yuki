@@ -146,8 +146,8 @@ def validate_plugin_manifest(value: dict) -> dict:
         port = parsed.port
     except ValueError as exc:
         raise ValueError("Plugin endpoint must contain a valid port.") from exc
-    if port == 0:
-        raise ValueError("Plugin endpoint port must be between 1 and 65535.")
+    if port not in (None, 443):
+        raise ValueError("Plugin endpoint must use the default HTTPS port (443).")
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("Plugin endpoint must be HTTPS and must not contain credentials or a fragment.")
     hosts = value["allowed_hosts"]
