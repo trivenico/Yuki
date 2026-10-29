@@ -119,22 +119,31 @@ class YukiCliTests(unittest.TestCase):
         self.assertIn("not installed or executed", result["note"])
 
     def test_skills_import_directory_lints_its_skill_document(self):
+        import tempfile
         from pathlib import Path
+
         output = []
-        with patch("core.skill_linter.lint_skill", return_value=[]) as lint, patch(
-            "core.skill_linter.findings_as_json",
-            return_value={"valid": True, "errors": 0, "warnings": 0, "findings": []},
-        ), patch(
-            "yuki_cli.install_skill_file",
-            return_value={"id": "directory_skill", "name": "directory_skill", "path": "/tmp/directory_skill.json"},
-        ):
-            code = run_cli(
-                ["skills", "import", "/tmp/directory-skill"],
-                input_fn=lambda _: "yes",
-                output_fn=output.append,
+        with tempfile.TemporaryDirectory() as temporary_root:
+            skill_dir = Path(temporary_root) / "directory-skill"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                "---\\nname: directory-skill\\ndescription: Test skill import.\\n---\\n",
+                encoding="utf-8",
             )
-        self.assertEqual(code, 0)
-        lint.assert_called_once_with(Path("/tmp/directory-skill") / "SKILL.md")
+            with patch("core.skill_linter.lint_skill", return_value=[]) as lint, patch(
+                "core.skill_linter.findings_as_json",
+                return_value={"valid": True, "errors": 0, "warnings": 0, "findings": []},
+            ), patch(
+                "yuki_cli.install_skill_file",
+                return_value={"id": "directory_skill", "name": "directory_skill", "path": "/tmp/directory_skill.json"},
+            ):
+                code = run_cli(
+                    ["skills", "import", str(skill_dir)],
+                    input_fn=lambda _: "yes",
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 0)
+            lint.assert_called_once_with(skill_dir / "SKILL.md")
 
     def test_skills_import_defaults_to_cancel_when_not_confirmed(self):
         output = []
