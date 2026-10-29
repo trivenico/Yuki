@@ -230,11 +230,13 @@ def main():
             command = input("\nYou > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nYuki > Goodbye.")
+            evolution_scheduler.stop()
             return
         if not command:
             continue
         if command in {"/quit", "/exit"}:
             print("Yuki > Goodbye.")
+            evolution_scheduler.stop()
             return
         if command == "/help":
             print_help()
