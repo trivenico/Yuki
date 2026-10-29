@@ -40,6 +40,15 @@ _POSIX_PRIMITIVES = (
     "/proc/", "apt-get", "systemctl",
 )
 _FORBIDDEN_FILES = ("README.md", "CHANGELOG.md", "install.sh", ".env", ".env.example", ".gitignore")
+# Heuristic only: these patterns flag suspicious skill instructions for human review.
+# They must never be treated as proof that a skill is malicious or safe.
+_RISK_PATTERNS = (
+    ("prompt-override", re.compile(r"\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer)\s+instructions\b", re.I)),
+    ("secret-transfer", re.compile(r"\b(?:send|upload|exfiltrate|transmit|post)\b.{0,100}\b(?:api[_ -]?keys?|credentials|secrets?|access tokens?|\.env)\b", re.I | re.S)),
+    ("remote-shell-pipe", re.compile(r"\b(?:curl|wget)\b.{0,160}\|\s*(?:sudo\s+)?(?:sh|bash)\b", re.I | re.S)),
+    ("destructive-root-delete", re.compile(r"\brm\s+-rf\s+/(?:\s|$)", re.I)),
+    ("approval-bypass", re.compile(r"\b(?:disable|bypass|turn off|skip)\b.{0,60}\b(?:approval|permissions?|security|safety checks?|sandbox)\b", re.I | re.S)),
+)
 
 
 @dataclass(frozen=True)
@@ -109,6 +118,9 @@ def _check_body(body: str, skill_dir: Path | None) -> Iterator[LintFinding]:
     if len(body) > _BODY_SOFT_BUDGET_CHARS:
         yield _warn("oversized-body", f"body is {len(body)} chars; consider moving deep reference material into separate files.")
     prose = _strip_code_blocks(body)
+    for rule, pattern in _RISK_PATTERNS:
+        if pattern.search(prose):
+            yield _warn("suspicious-instruction", f"skill content matches heuristic '{rule}'; review the instruction manually before approval.")
     for utility, replacement in _SHELL_UTIL_TO_TOOL.items():
         if re.search(rf"`{re.escape(utility)}`", prose):
             yield _warn("shell-utility-reference", f"prose references `{utility}`; prefer the registered tool name `{replacement}`.")
