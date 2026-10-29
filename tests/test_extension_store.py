@@ -333,6 +333,23 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertTrue(remove_extension("example_docs", "plugin", root=self.data))
         self.assertEqual(load_installed_mcp_servers(root=self.data), [])
 
+    def test_skill_import_rejects_symlinked_parent_directory(self):
+        real_dir = self.root / "real-skill"
+        real_dir.mkdir()
+        skill_file = real_dir / "SKILL.md"
+        skill_file.write_text(
+            "---\\nname: safe-skill\\ndescription: A safe test skill.\\n---\\n"
+            "## When to Use\\nUse this skill for a test.\\n",
+            encoding="utf-8",
+        )
+        linked_dir = self.root / "linked-skill"
+        try:
+            linked_dir.symlink_to(real_dir, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Directory symlink creation is unavailable")
+        with self.assertRaisesRegex(ValueError, "parent directories"):
+            install_skill_file(str(linked_dir / "SKILL.md"), root=self.data)
+
     def test_install_rejects_symlinked_manifest_source(self):
         source = self.write_manifest("real.json", self.skill_manifest())
         linked = self.source / "linked.json"
