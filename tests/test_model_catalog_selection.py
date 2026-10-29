@@ -62,11 +62,18 @@ class ModelCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not supported"):
             validate_model_selection({"provider": "gemini_api", "model": "gemini-2.5-flash"})
 
-    def test_model_id_must_be_nonempty_bounded_text(self):
-        for value in ("", "  ", "x" * 121, "bad\nmodel"):
+    def test_model_id_validation_matches_runtime_settings(self):
+        valid = ("llama3.2:3b", "qwen2.5:7b", "org/model-v2", "model_name")
+        for value in valid:
+            with self.subTest(value=value):
+                self.assertEqual(
+                    validate_model_selection({"provider": "ollama", "model": value})["model"],
+                    value,
+                )
+        invalid = ("", "  ", "x" * 121, "bad\\nmodel", "model with spaces", "model\\tname", "../bad")
+        for value in invalid:
             with self.subTest(value=repr(value)), self.assertRaises(ValueError):
                 validate_model_selection({"provider": "ollama", "model": value})
-
     def test_config_mapping_does_not_mutate_original(self):
         original = {"workspace": "./workspace", "provider": "ollama"}
         updated = apply_model_selection(original, {"provider": "openai", "model": "gpt-4.1-mini"})
