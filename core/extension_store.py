@@ -5,10 +5,14 @@ register explicitly allow-listed HTTPS MCP endpoints; they do not execute on ins
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import yaml
@@ -50,6 +54,9 @@ from core.portable_paths import data_root
 from skills.base import Skill, SkillResult
 
 MAX_MANIFEST_BYTES = 64 * 1024
+MAX_SKILL_INSTRUCTIONS_CHARS = 48_000
+MAX_GITHUB_API_BYTES = 5 * 1024 * 1024
+_GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _SKILL_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -107,9 +114,25 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 
 def validate_skill_manifest(value: dict) -> dict:
-    allowed = {"type", "id", "version", "name", "description", "instructions"}
-    if set(value) != allowed or value.get("type") != "yuki_skill":
-        raise ValueError("Skill manifest must contain only type, id, version, name, description, and instructions.")
+    required = {"type", "id", "version", "name", "description", "instructions"}
+    optional = {"source", "source_commit", "source_path"}
+    if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
+        raise ValueError("Skill manifest contains missing or unsupported fields.")
+    if "source" in value and (
+        not isinstance(value["source"], str) or len(value["source"]) > 300
+        or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", value["source"])
+    ):
+        raise ValueError("Skill source must be an OWNER/REPO identifier.")
+    if "source_commit" in value and (
+        not isinstance(value["source_commit"], str) or not re.fullmatch(r"[0-9a-f]{40}", value["source_commit"])
+    ):
+        raise ValueError("Skill source commit must be a full 40-character Git commit SHA.")
+    if "source_path" in value and (
+        not isinstance(value["source_path"], str) or len(value["source_path"]) > 500
+        or value["source_path"].startswith("/") or "\\" in value["source_path"]
+        or any(part in {"", ".", ".."} for part in value["source_path"].split("/"))
+    ):
+        raise ValueError("Skill source path is invalid.")
     if not isinstance(value["id"], str) or not _SLUG.fullmatch(value["id"]):
         raise ValueError("Skill id must be a lowercase slug (2-48 characters).")
     if value["version"] != "1":
@@ -192,7 +215,12 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
     return {"id": value["id"], "name": value["name"], "path": str(destination)}
 
 
-def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
+def install_skill_file(
+    skill_file: str,
+    *,
+    root: Path | None = None,
+    source_metadata: dict | None = None,
+) -> dict:
     """Import an Agent Skills-style document or directory as a declarative prompt skill.
 
     Directory imports currently consume only SKILL.md; sibling resources and scripts
@@ -241,18 +269,25 @@ def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
         raise ValueError("Skill name must be a lowercase identifier (2-48 characters).")
     if not isinstance(description, str) or not description.strip() or len(description) > 500:
         raise ValueError("Skill description must be non-empty and at most 500 characters.")
-    if not instructions or len(instructions) > 12000:
-        raise ValueError("Skill instructions must be non-empty and at most 12000 characters.")
+    if not instructions or len(instructions) > MAX_SKILL_INSTRUCTIONS_CHARS:
+        raise ValueError(
+            f"Skill instructions must be non-empty and at most {MAX_SKILL_INSTRUCTIONS_CHARS} characters."
+        )
 
     normalized_name = name.replace("-", "_")
-    manifest = validate_skill_manifest({
+    manifest_value = {
         "type": "yuki_skill",
         "id": normalized_name,
         "version": "1",
         "name": normalized_name,
         "description": description.strip(),
         "instructions": instructions,
-    })
+    }
+    if source_metadata is not None:
+        if not isinstance(source_metadata, dict) or set(source_metadata) != {"source", "source_commit", "source_path"}:
+            raise ValueError("Skill source metadata is invalid.")
+        manifest_value.update(source_metadata)
+    manifest = validate_skill_manifest(manifest_value)
     destination = _extension_root("skill", root) / f"{manifest['id']}.json"
     if destination.exists():
         raise ValueError(f"An extension with id '{manifest['id']}' is already installed; remove it before replacing.")
@@ -268,6 +303,148 @@ def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
     _atomic_json(destination, manifest)
     return {"id": manifest["id"], "name": manifest["name"], "path": str(destination), "source_format": "agentskills_md"}
 
+
+
+def _github_api_json(url: str, *, max_bytes: int = MAX_GITHUB_API_BYTES) -> dict:
+    """Fetch bounded JSON from api.github.com only; never follow redirects to other hosts."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname != "api.github.com" or parsed.username or parsed.password:
+        raise ValueError("GitHub skill source must use the official HTTPS GitHub API.")
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "Yuki-Skill-Installer", "X-GitHub-Api-Version": "2022-11-28"},
+    )
+
+    class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            target = urlsplit(newurl)
+            if target.scheme != "https" or target.hostname != "api.github.com":
+                raise ValueError("GitHub API redirected outside api.github.com.")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    try:
+        opener = urllib.request.build_opener(_SameHostRedirect)
+        with opener.open(request, timeout=15) as response:
+            if response.geturl() != url and (
+                urlsplit(response.geturl()).scheme != "https"
+                or urlsplit(response.geturl()).hostname != "api.github.com"
+            ):
+                raise ValueError("GitHub API response redirected outside api.github.com.")
+            length = response.headers.get("Content-Length")
+            if length and int(length) > max_bytes:
+                raise ValueError("GitHub response exceeds the configured size limit.")
+            raw = response.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("GitHub response exceeds the configured size limit.")
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, urllib.error.URLError, UnicodeError, json.JSONDecodeError, TimeoutError) as exc:
+        raise ValueError(f"Could not retrieve GitHub skill metadata ({type(exc).__name__}).") from exc
+    if not isinstance(value, dict):
+        raise ValueError("GitHub API returned an unexpected response.")
+    return value
+
+
+def install_github_skill(
+    repository: str,
+    *,
+    skill_path: str | None = None,
+    root: Path | None = None,
+    approve=None,
+) -> dict:
+    """Install only SKILL.md from a pinned GitHub revision after explicit preview approval.
+
+    Supporting files are listed in the preview but are not copied or executed yet.
+    """
+    if not isinstance(repository, str) or not _GITHUB_REPOSITORY.fullmatch(repository):
+        raise ValueError("Use a GitHub repository in OWNER/REPO format.")
+    owner, repo = repository.split("/", 1)
+    encoded_repo = f"{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}"
+    base = f"https://api.github.com/repos/{encoded_repo}"
+    repo_info = _github_api_json(base)
+    default_branch = repo_info.get("default_branch")
+    if not isinstance(default_branch, str) or not default_branch or len(default_branch) > 200:
+        raise ValueError("GitHub repository has no usable default branch.")
+    branch = urllib.parse.quote(default_branch, safe="")
+    commit_info = _github_api_json(f"{base}/commits/{branch}")
+    commit = commit_info.get("sha")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("Could not resolve a pinned Git commit for this repository.")
+    tree = _github_api_json(f"{base}/git/trees/{commit}?recursive=1")
+    entries = tree.get("tree")
+    if not isinstance(entries, list) or tree.get("truncated"):
+        raise ValueError("GitHub repository tree is invalid or too large to safely inspect.")
+    skill_documents = [
+        item.get("path") for item in entries
+        if isinstance(item, dict) and item.get("type") == "blob"
+        and isinstance(item.get("path"), str)
+        and item["path"].split("/")[-1].lower() == "skill.md"
+    ]
+    if skill_path:
+        requested = skill_path.strip("/")
+        if requested.endswith("/SKILL.md"):
+            requested = requested[:-len("/SKILL.md")]
+        candidates = [p for p in skill_documents if p.rsplit("/", 1)[0] == requested]
+        if not candidates and requested == "":
+            candidates = [p for p in skill_documents if "/" not in p]
+    elif len(skill_documents) == 1:
+        candidates = skill_documents
+    else:
+        candidates = []
+    if len(candidates) != 1:
+        choices = sorted(skill_documents)
+        if not choices:
+            raise ValueError("No SKILL.md was found in this GitHub repository.")
+        raise ValueError("Choose a skill with --path. Available SKILL.md files: " + ", ".join(choices[:30]))
+    document_path = candidates[0]
+    skill_dir = document_path.rsplit("/", 1)[0] if "/" in document_path else ""
+    contained_files = sorted(
+        item["path"] for item in entries
+        if isinstance(item, dict) and item.get("type") == "blob"
+        and isinstance(item.get("path"), str)
+        and (item["path"].startswith(skill_dir + "/") if skill_dir else "/" not in item["path"])
+    )
+    scripts = [p for p in contained_files if p.lower().endswith((".py", ".js", ".mjs", ".sh", ".ps1", ".bat", ".cmd"))]
+    preview = {
+        "repository": repository,
+        "commit": commit,
+        "skill_path": skill_dir or ".",
+        "skill_document": document_path,
+        "files_in_skill_directory": contained_files[:200],
+        "file_count": len(contained_files),
+        "executable_script_candidates": scripts[:50],
+        "install_scope": "SKILL.md instructions only; supporting files are previewed but not copied or executed",
+    }
+    if approve is None or not approve(preview):
+        return {"installed": False, "cancelled": True, "preview": preview}
+    content_url = f"{base}/contents/{urllib.parse.quote(document_path, safe='/')}?ref={commit}"
+    content = _github_api_json(content_url, max_bytes=1024 * 1024)
+    if content.get("type") != "file" or content.get("encoding") != "base64" or not isinstance(content.get("content"), str):
+        raise ValueError("GitHub did not return a supported text file for SKILL.md.")
+    try:
+        document = base64.b64decode(content["content"], validate=True).decode("utf-8")
+    except (ValueError, UnicodeError) as exc:
+        raise ValueError("Remote SKILL.md is not valid base64-encoded UTF-8.") from exc
+    if len(document.encode("utf-8")) > MAX_MANIFEST_BYTES:
+        raise ValueError("Remote SKILL.md exceeds the 64 KiB import limit.")
+    import tempfile as _tempfile
+    with _tempfile.TemporaryDirectory(prefix="yuki-skill-import-") as temporary:
+        local_skill = Path(temporary) / "SKILL.md"
+        local_skill.write_text(document, encoding="utf-8")
+        result = install_skill_file(
+            str(local_skill),
+            root=root,
+            source_metadata={
+                "source": repository,
+                "source_commit": commit,
+                "source_path": document_path,
+            },
+        )
+    result["source"] = repository
+    result["source_commit"] = commit
+    result["source_path"] = document_path
+    result["compatibility"] = "instructions-only"
+    result["preview"] = preview
+    return result
 
 def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
     folder = _extension_root(kind, root)
