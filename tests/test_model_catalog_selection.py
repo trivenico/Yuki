@@ -8,6 +8,7 @@ from unittest.mock import patch
 import yaml
 
 from core.model_catalog import get_provider, list_providers
+from core.settings_store import MODEL_SETTING_BY_PROVIDER, PROVIDERS
 from core.model_selection import (
     _NoRedirectHandler, apply_model_selection, list_installed_ollama_models,
     model_selection_options, persist_model_selection, validate_model_selection,
@@ -34,6 +35,13 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertFalse(entries["gemini_api"]["runtime_supported"])
         self.assertFalse(entries["nvidia"]["runtime_supported"])
         self.assertNotIn("nvidia", {p["id"] for p in list_providers(supported_only=True)})
+
+    def test_runtime_catalog_matches_desktop_provider_and_model_settings(self):
+        supported = {item["id"]: item for item in list_providers(supported_only=True)}
+        self.assertEqual(set(supported), set(PROVIDERS))
+        for provider, setting_key in MODEL_SETTING_BY_PROVIDER.items():
+            with self.subTest(provider=provider):
+                self.assertEqual(supported[provider]["model_config"], setting_key)
 
     def test_catalog_returns_copy_safe_models(self):
         local = list_providers("local")
