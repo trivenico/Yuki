@@ -50,6 +50,18 @@ These projects were requested for direct evaluation on 2026-10-29. Their public 
 | **Dodaios** (formerly Personal Jarvis) | [Dodaios/Dodaios](https://github.com/Dodaios/Dodaios) — Apache-2.0 from 2.0.0 onward; releases through 1.6.0 remain MIT; follow `NOTICE` and licensing docs | Desktop/voice interaction, coding-agent panes, worktree isolation, agent coordination, approval UX, local memory and artifact workflows | **Best desktop-companion UX benchmark.** Study architecture and test the workflow concepts. Do not copy its desktop shell wholesale; compare the narrowest components against Yuki's Windows-first runtime and desktop launcher. | License changes by version; preserve the correct notices. Existing agent CLIs and tool backends have their own licenses and security boundaries. |
 | **OpenHands Software Agent SDK** | [OpenHands/software-agent-sdk](https://github.com/OpenHands/software-agent-sdk) | Coding agent workspaces, event-driven agent execution and tool adapters | Keep as the coding-specialist alternative to OpenJarvis's coding mode; benchmark both rather than integrating both immediately. | Workspace isolation and host tool permissions must be enforced by Yuki, not inferred from the SDK alone. |
 
+### First actual code reuse: Hermes skill linter
+
+Yuki now includes an adapted, deliberately bounded subset of Hermes Agent's advisory `tools/skill_linter.py`:
+
+- Upstream file: https://github.com/NousResearch/hermes-agent/blob/a938f00f0f3cdf00fdb93d9a82a9ae447e9b857f/tools/skill_linter.py
+- Upstream project license: MIT, copyright 2025 Nous Research; preserved at `third_party/licenses/HERMES_AGENT_LICENSE`.
+- Yuki adapter: `core/skill_linter.py`; this is modified for Yuki's duplicate-key-rejecting frontmatter loader, CLI output, and bounded local file scans.
+- CLI: `python yuki_cli.py skills lint path/to/SKILL.md`.
+- Tests: `tests/test_skill_linter.py` and CLI tests in `tests/test_yuki_cli.py`.
+
+The linter checks metadata quality, descriptions, trigger sections, shell-tool wording, oversized instructions, dangling local references, suspicious scaffolding files, and portability declarations. Findings are advisory; hard installation validation remains authoritative. It never executes scripts, installs dependencies, or grants skills permissions. Ubuntu quality gates have passed on the current commit; Windows quality gates and desktop packaging are still running, so this port is not yet fully cross-platform validated.
+
 ### Integration work that can be used immediately
 
 Yuki already has a safer common denominator: `yuki skills add OWNER/REPO --path <skill-directory>` resolves a GitHub revision to a commit SHA, previews the selected skill, requires approval, and imports only its `SKILL.md` instructions. It does **not** copy or execute companion scripts. This is suitable for importing compatible skills from OpenClaw, Hermes, OpenJarvis, or other repositories after selecting a specific skill and reviewing its content.
