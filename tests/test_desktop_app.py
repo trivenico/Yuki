@@ -5,10 +5,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ui.desktop_app import CommandHistory, ROOT, build_runtime_command, provider_environment_override
+from core.model_catalog import list_providers
+from ui.desktop_app import CommandHistory, ROOT, RUNTIME_PROVIDER_OPTIONS, build_runtime_command, provider_environment_override
 
 
 class DesktopAppTests(unittest.TestCase):
+    def test_desktop_provider_picker_only_lists_runtime_supported_adapters(self):
+        expected = tuple(item["id"] for item in list_providers(supported_only=True))
+        self.assertEqual(RUNTIME_PROVIDER_OPTIONS, expected)
+        self.assertIn("ollama", RUNTIME_PROVIDER_OPTIONS)
+        self.assertNotIn("gemini_api", RUNTIME_PROVIDER_OPTIONS)
+        self.assertNotIn("nvidia", RUNTIME_PROVIDER_OPTIONS)
+
     def test_desktop_uses_the_current_python_and_authoritative_runtime(self):
         command = build_runtime_command()
         self.assertEqual(command[0], sys.executable)

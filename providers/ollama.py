@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -37,8 +38,8 @@ class OllamaProvider:
         if (parsed.scheme != "https" and not (parsed.scheme == "http" and loopback)
                 or not host or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError("Ollama must use HTTPS or loopback HTTP without URL credentials.")
-        if not isinstance(model, str) or not model.strip() or len(model) > 120:
-            raise ValueError("Configure a valid Ollama model name.")
+        if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model.strip()):
+            raise ValueError("Configure a valid Ollama model name (1–120 letters, numbers, dots, underscores, colons, slashes, or hyphens).")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.base_url = base_url.strip().rstrip("/")

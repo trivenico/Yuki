@@ -4,7 +4,8 @@ from pathlib import Path
 
 import yaml
 
-from core.settings_store import read_user_settings, save_user_settings
+from core.settings_store import MODEL_SETTING_BY_PROVIDER, PROVIDERS, read_user_settings, save_user_settings
+from core.model_catalog import list_providers
 
 
 class SettingsStoreTests(unittest.TestCase):
@@ -17,6 +18,15 @@ class SettingsStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_settings_provider_options_match_shared_runtime_catalog(self):
+        supported = {item["id"]: item for item in list_providers(supported_only=True)}
+        self.assertEqual(set(PROVIDERS), set(supported))
+        self.assertEqual(set(MODEL_SETTING_BY_PROVIDER), {
+            provider for provider, item in supported.items() if item["model_config"] is not None and provider != "ollama"
+        })
+        self.assertNotIn("gemini_api", PROVIDERS)
+        self.assertNotIn("nvidia", PROVIDERS)
 
     def test_safe_defaults(self):
         settings = read_user_settings(self.path)

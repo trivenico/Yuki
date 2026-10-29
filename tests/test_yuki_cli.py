@@ -98,6 +98,39 @@ class YukiCliTests(unittest.TestCase):
         install.assert_called_once_with("/tmp/docs.json", "plugin")
         self.assertIn("no third-party code was executed", output[0])
 
+    def test_models_list_reports_supported_runtime_providers(self):
+        output = []
+        with patch("yuki_cli.list_providers", return_value=[{"id": "ollama"}]) as catalog:
+            code = run_cli(["models", "list", "--supported-only"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        catalog.assert_called_once_with(supported_only=True)
+        self.assertEqual(json.loads(output[0])["providers"], [{"id": "ollama"}])
+
+    def test_models_installed_uses_safe_local_discovery_without_download(self):
+        output = []
+        with patch("yuki_cli.list_installed_ollama_models", return_value=[{"id": "llama3.2:3b"}]) as discover:
+            code = run_cli(["models", "installed"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        discover.assert_called_once_with()
+        result = json.loads(output[0])
+        self.assertEqual(result["count"], 1)
+        self.assertIn("no model was downloaded", result["note"])
+
+    def test_models_set_persists_only_explicit_selection(self):
+        output = []
+        with patch("yuki_cli.persist_model_selection", return_value={"provider": "ollama", "model": "llama3.2:3b"}) as persist:
+            code = run_cli(["models", "set", "ollama", "--model", "llama3.2:3b"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        persist.assert_called_once_with({"provider": "ollama", "model": "llama3.2:3b"})
+        self.assertEqual(json.loads(output[0])["selected"]["provider"], "ollama")
+
+    def test_models_set_reports_unsupported_selection_without_traceback(self):
+        output = []
+        with patch("yuki_cli.persist_model_selection", side_effect=ValueError("not supported")):
+            code = run_cli(["models", "set", "nvidia", "--model", "example"], output_fn=output.append)
+        self.assertEqual(code, 2)
+        self.assertIn("failed safely", output[0])
+
     def test_start_routes_to_integrated_guarded_runtime(self):
         with patch("main.main") as integrated_main:
             self.assertEqual(run_cli(["start"], output_fn=lambda _: None), 0)

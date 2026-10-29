@@ -175,6 +175,22 @@ python -m companion.evolution --daily --hour 3 --workspace ./yuki_workspace
 
 This runs at 03:00 local time while the process remains alive. It is not an OS service and does not wake a sleeping computer; stopping the process stops scheduling. `--once` runs one cycle immediately. No scheduler starts automatically. The daily cycle only proposes review items; it does not perform self-modification.
 
+## CLI provider and model selection
+
+The standalone CLI can inspect the provider catalog, list models already installed in a local Ollama instance, and persist an explicit provider/model selection. These commands do not download models or make inference requests:
+
+```sh
+python yuki_cli.py models list
+python yuki_cli.py models list --supported-only
+python yuki_cli.py models installed
+python yuki_cli.py models set ollama --model llama3.2:3b
+python yuki_cli.py models set openai --model gpt-4.1-mini
+```
+
+`models list` also identifies catalog entries that are planned but not yet runtime-supported; those entries cannot be selected. `models installed` is read-only and only contacts an HTTP endpoint on a literal loopback IP address (default `127.0.0.1:11434`); it rejects hostnames, redirects, non-loopback destinations, oversized responses, and malformed model lists. It never pulls a model. Provider/model selection is written atomically to Yuki's configuration, preserves other settings, and does not store API keys. Cloud credentials remain environment variables, and an existing `YUKI_PROVIDER` or provider-specific model environment override takes precedence over YAML configuration. Restart an active runtime after changing the saved selection.
+
+The desktop settings panel shares the runtime-supported provider catalog and can refresh installed local Ollama models. A green CI package build is not a substitute for validating real inference on the target machine; see [Ollama setup and real-inference smoke test](docs/OLLAMA_SETUP.md).
+
 ## Runtime commands
 
 - `/help`, `/status`, `/providers`, `/provider select NAME`, `/dashboard`
