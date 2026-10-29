@@ -95,7 +95,7 @@ jobs:
           cp -a dist/YukiRuntime dist/portable/YukiRuntime
           cp config.yaml README.md dist/portable/
           cp docs/INSTALLATION.md dist/portable/docs/
-          tar -C dist/portable -czf ../Yuki-Linux-x86_64.tar.gz YukiDesktop YukiRuntime config.yaml README.md docs
+          tar -czf dist/Yuki-Linux-x86_64.tar.gz -C dist/portable YukiDesktop YukiRuntime config.yaml README.md docs
 
       - name: Verify release bundle contents
         run: |
