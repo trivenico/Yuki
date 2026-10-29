@@ -10,6 +10,7 @@ from typing import Mapping
 import yaml
 
 from core.portable_paths import config_path
+from core.model_catalog import list_providers
 
 BOOLEAN_SETTINGS = (
     "voice_enabled",
@@ -26,15 +27,14 @@ BOOLEAN_SETTINGS = (
     "camera_access_enabled",
     "desktop_control_enabled",
 )
-PROVIDERS = ("ollama", "openai", "gemini", "hybrid", "anthropic", "deepseek", "kimi", "minimax", "openrouter", "tokenrouter")
+# Provider support and model-setting mappings come from the shared runtime catalog.
+# This prevents settings from advertising adapters the runtime cannot construct.
+_SUPPORTED_PROVIDERS = list_providers(supported_only=True)
+PROVIDERS = tuple(item["id"] for item in _SUPPORTED_PROVIDERS)
 MODEL_SETTING_BY_PROVIDER = {
-    "openai": "openai_model",
-    "anthropic": "anthropic_model",
-    "deepseek": "deepseek_model",
-    "kimi": "kimi_model",
-    "minimax": "minimax_model",
-    "openrouter": "openrouter_model",
-    "tokenrouter": "tokenrouter_model",
+    item["id"]: item["model_config"]
+    for item in _SUPPORTED_PROVIDERS
+    if item["model_config"] is not None
 }
 OPTIONAL_MODEL_SETTINGS = tuple(
     key for key in MODEL_SETTING_BY_PROVIDER.values() if key != "openai_model"
