@@ -11,7 +11,7 @@ Install with `install_windows.bat` on Windows or `sh install_unix.sh` on Linux. 
 
 
 
-See [installation instructions](docs/INSTALLATION.md) for setup details and the Windows installer workflow. For user-installed declarative skills, allow-listed MCP plugins, and supervised evolution, see [extension installation](docs/EXTENSIONS.md).
+See [installation instructions](docs/INSTALLATION.md) for setup details and the Windows installer workflow, and [Ollama setup and real-inference smoke test](docs/OLLAMA_SETUP.md) for validating a real local model on Windows or Linux. For user-installed declarative skills, allow-listed MCP plugins, and supervised evolution, see [extension installation](docs/EXTENSIONS.md).
 
 ## Minimal project structure and navigation
 
@@ -205,10 +205,11 @@ Yuki is still under active engineering. Passing CI verifies tested code paths, n
 
 ## Real provider and approved task-loop milestone
 
-The provider layer now defaults to the real OpenAI API and includes a local Ollama adapter, official Gemini CLI adapter, and explicit hybrid router. The mock adapter is retained only for automated tests and is not exposed by the runtime provider registry.
+The provider layer defaults to local Ollama (`llama3.2:3b`). Cloud providers, including OpenAI and the Gemini CLI adapter, are opt-in and must be explicitly selected/configured. The mock adapter is retained only for automated tests and is not exposed by the runtime provider registry.
 
-- Set `OPENAI_API_KEY` in the process environment; the default model is `gpt-4.1-mini` and can be overridden with `YUKI_OPENAI_MODEL`.
-- Set `YUKI_PROVIDER=ollama` and configure `YUKI_OLLAMA_MODEL` to use a locally running Ollama instance.
+- For local inference, install Ollama, ensure the configured model is installed, and run the [real-inference smoke test](docs/OLLAMA_SETUP.md).
+- To opt into OpenAI, set `YUKI_PROVIDER=openai` and `OPENAI_API_KEY`; the default OpenAI model is `gpt-4.1-mini` and can be overridden with `YUKI_OPENAI_MODEL`.
+- Set `YUKI_PROVIDER=ollama` and configure `YUKI_OLLAMA_MODEL` to explicitly select a local Ollama instance.
 - Set `YUKI_PROVIDER=hybrid` to use local Ollama by default. To route specific task names to cloud, configure `YUKI_CLOUD_MODEL`, `OPENAI_API_KEY` (or the environment-variable name in `YUKI_CLOUD_API_KEY_ENV`), and a comma-separated `YUKI_CLOUD_TASKS` allow-list. Optional endpoint override: `YUKI_CLOUD_BASE_URL`, HTTPS only.
 - Provider selection is exposed through `/providers` and `/provider select NAME`. Ordinary free-text input is sent to the currently selected provider through `YukiAgent.ask()`.
 - The current terminal runtime does **not** expose `/ask-cloud` or a model-directed `/task GOAL` planner command; do not assume those commands are available based on module presence.
