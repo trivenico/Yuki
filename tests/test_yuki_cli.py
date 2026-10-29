@@ -39,6 +39,19 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output[0])["installed"][0]["id"], "writing_helper")
 
+    def test_skills_import_command_accepts_a_skill_file_or_directory(self):
+        output = []
+        with patch(
+            "yuki_cli.install_skill_file",
+            return_value={"id": "release_notes", "name": "release_notes", "path": "/tmp/release_notes.json"},
+        ) as importer:
+            code = run_cli(["skills", "import", "/tmp/release-notes"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        importer.assert_called_once_with("/tmp/release-notes")
+        result = json.loads(output[0])
+        self.assertEqual(result["installed"]["id"], "release_notes")
+        self.assertIn("not installed or executed", result["note"])
+
     def test_plugin_install_command_uses_validated_extension_store(self):
         output = []
         with patch("yuki_cli.install_extension", return_value={"id": "docs", "name": "docs", "path": "/tmp/docs.json"}) as install:
