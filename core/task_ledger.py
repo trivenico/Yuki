@@ -14,6 +14,8 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from core.task_contracts import TaskEvent
+
 
 TASK_STATUSES = frozenset({
     "queued", "running", "awaiting_approval", "awaiting_verification", "completed", "failed", "cancelled",
@@ -35,6 +37,14 @@ _MAX_RESULT = 8000
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, dict) or hasattr(value, "items"):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_json(item) for item in value]
+    return value
 
 
 class TaskLedger:
@@ -61,6 +71,8 @@ class TaskLedger:
                     )
                 """)
                 db.execute("CREATE INDEX IF NOT EXISTS tasks_updated_idx ON tasks(updated_at DESC)")
+                db.execute("""CREATE TABLE IF NOT EXISTS task_events (\n                    event_id TEXT PRIMARY KEY,\n                    task_id TEXT NOT NULL,\n                    event_type TEXT NOT NULL,\n                    payload_json TEXT NOT NULL,\n                    occurred_at TEXT NOT NULL,\n                    schema_version INTEGER NOT NULL,\n                    FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE\n                )""")
+                db.execute("CREATE INDEX IF NOT EXISTS task_events_task_idx ON task_events(task_id, occurred_at, event_id)")
                 columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
                 if "verification_evidence" not in columns:
                     db.execute("ALTER TABLE tasks ADD COLUMN verification_evidence TEXT NOT NULL DEFAULT ''")
@@ -159,6 +171,68 @@ class TaskLedger:
                 )
                 updated = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._task(updated)
+
+    def append_event(self, event: TaskEvent) -> dict[str, Any]:
+        """Persist a validated event for an existing task, idempotently by event ID."""
+        if not isinstance(event, TaskEvent):
+            raise TypeError("A validated TaskEvent is required.")
+        payload_json = json.dumps(
+            _plain_json(event.payload), ensure_ascii=True, allow_nan=False, sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(payload_json) > 24_000:
+            raise ValueError("Task event payload exceeds 24000 characters.")
+        item = {
+            "event_id": event.event_id,
+            "task_id": event.task_id,
+            "event_type": event.event_type,
+            "payload": json.loads(payload_json),
+            "occurred_at": event.occurred_at,
+            "schema_version": event.schema_version,
+        }
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM tasks WHERE id=?", (event.task_id,)).fetchone() is None:
+                    raise KeyError("Task not found.")
+                existing = db.execute(
+                    "SELECT * FROM task_events WHERE event_id=?", (event.event_id,)
+                ).fetchone()
+                if existing is not None:
+                    existing_item = dict(existing)
+                    existing_item["payload"] = json.loads(existing_item.pop("payload_json"))
+                    if existing_item != item:
+                        raise ValueError("Event ID already exists with different content.")
+                    return existing_item
+                db.execute(
+                    "INSERT INTO task_events "
+                    "(event_id,task_id,event_type,payload_json,occurred_at,schema_version) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (event.event_id, event.task_id, event.event_type, payload_json,
+                     event.occurred_at, event.schema_version),
+                )
+        return item
+
+    def list_events(self, task_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return the newest bounded page of events in chronological order."""
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("Task ID must be non-empty.")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("Event list limit must be between 1 and 500.")
+        with self._lock, closing(self._connect()) as db:
+            if db.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone() is None:
+                raise KeyError("Task not found.")
+            rows = db.execute(
+                "SELECT * FROM task_events WHERE task_id=? "
+                "ORDER BY occurred_at DESC, event_id DESC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        items = []
+        for row in reversed(rows):
+            item = dict(row)
+            item["payload"] = json.loads(item.pop("payload_json"))
+            items.append(item)
+        return items
 
     def get(self, task_id: str) -> dict[str, Any] | None:
         with self._lock, closing(self._connect()) as db:
