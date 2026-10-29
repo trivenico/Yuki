@@ -39,6 +39,26 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output[0])["installed"][0]["id"], "writing_helper")
 
+    def test_skills_lint_returns_structured_advisory_report(self):
+        output = []
+        with patch("core.skill_linter.lint_skill", return_value=[]) as lint:
+            code = run_cli(["skills", "lint", "/tmp/SKILL.md"], output_fn=output.append)
+        self.assertEqual(code, 0)
+        lint.assert_called_once()
+        report = json.loads(output[0])
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["warnings"], 0)
+
+    def test_skills_lint_returns_nonzero_when_hard_lint_errors_are_found(self):
+        from core.skill_linter import LintFinding
+        output = []
+        with patch("core.skill_linter.lint_skill", return_value=[
+            LintFinding("error", "name-format", "invalid name")
+        ]):
+            code = run_cli(["skills", "lint", "/tmp/SKILL.md"], output_fn=output.append)
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(output[0])["valid"])
+
     def test_skills_add_previews_repository_and_requires_approval(self):
         output = []
         preview = {
