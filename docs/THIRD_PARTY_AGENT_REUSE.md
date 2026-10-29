@@ -38,6 +38,44 @@ This is an architecture shortlist, not a claim that any candidate has passed Yuk
 - **Durable orchestration:** build a small comparison spike for Microsoft Agent Framework vs. LangGraph vs. Yuki's existing workflow engine. Use the same acceptance suite and a no-network mock provider first. Do not run two independent task ledgers in production.
 - **Desktop automation:** keep OS control in Yuki-owned capability adapters with explicit per-action approvals. Never grant an imported agent blanket shell, keyboard, mouse, camera, or screen access.
 
+## Additional high-priority candidates: OpenClaw, Hermes, OpenJarvis, Dodaios
+
+These projects were requested for direct evaluation on 2026-10-29. Their public repositories/docs were inspected for architecture and license claims; this is not a full source audit, vulnerability assessment, or proof that their latest builds run in Yuki.
+
+| Project | Upstream / stated license | What is worth reusing | Integration recommendation | Main cautions |
+|---|---|---|---|---|
+| **OpenClaw** | [openclaw/openclaw](https://github.com/openclaw/openclaw) — MIT; review `THIRD_PARTY_NOTICES.md` for incorporated code | Channel/gateway architecture, provider and plugin registry boundaries, Agent Skills format, device-node concepts, security model | **Do not port the whole runtime.** Import a selected `SKILL.md` through Yuki's existing pinned GitHub skill importer. Later, evaluate a separately supervised gateway/MCP adapter if a concrete channel or device capability is needed. | Very large TypeScript/Rust/pnpm workspace, broad host integrations, high dependency footprint. Main-session tools may run on the host unless sandboxing is configured. MIT core license does not automatically relicense third-party components. |
+| **Hermes Agent** | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) — MIT per upstream repository | Python agent loop patterns, skills, memory/learning loop, tool gateways, messaging and provider patterns | **Best Python source for selective code review.** First reuse compatible skills. Then port only a small isolated component after exact-file provenance and dependency review; consider a supervised CLI/MCP adapter if its public interface is stable. | Self-improvement and tool execution are powerful attack surfaces; never allow generated skills or learned memory to grant permissions. Provider/model assumptions and dependencies need compatibility testing. |
+| **OpenJarvis** | [open-jarvis/OpenJarvis](https://github.com/open-jarvis/OpenJarvis) — Apache-2.0 | Personal-device/local-first research, on-demand/scheduled/continuous agent patterns, benchmark/skill optimization, deep research and monitoring concepts | **Best benchmark and evaluation candidate.** Reuse its task/skill benchmark ideas and investigate a narrow optional Python adapter; compare its native ReAct/operative agents with Yuki's task lifecycle before importing implementation code. | Research project and broad optional capabilities may add dependencies. Any code-execution/CodeAct agent must run in an isolated workspace with no ambient credentials or host access. |
+| **Dodaios** (formerly Personal Jarvis) | [Dodaios/Dodaios](https://github.com/Dodaios/Dodaios) — Apache-2.0 from 2.0.0 onward; releases through 1.6.0 remain MIT; follow `NOTICE` and licensing docs | Desktop/voice interaction, coding-agent panes, worktree isolation, agent coordination, approval UX, local memory and artifact workflows | **Best desktop-companion UX benchmark.** Study architecture and test the workflow concepts. Do not copy its desktop shell wholesale; compare the narrowest components against Yuki's Windows-first runtime and desktop launcher. | License changes by version; preserve the correct notices. Existing agent CLIs and tool backends have their own licenses and security boundaries. |
+| **OpenHands Software Agent SDK** | [OpenHands/software-agent-sdk](https://github.com/OpenHands/software-agent-sdk) | Coding agent workspaces, event-driven agent execution and tool adapters | Keep as the coding-specialist alternative to OpenJarvis's coding mode; benchmark both rather than integrating both immediately. | Workspace isolation and host tool permissions must be enforced by Yuki, not inferred from the SDK alone. |
+
+### Integration work that can be used immediately
+
+Yuki already has a safer common denominator: `yuki skills add OWNER/REPO --path <skill-directory>` resolves a GitHub revision to a commit SHA, previews the selected skill, requires approval, and imports only its `SKILL.md` instructions. It does **not** copy or execute companion scripts. This is suitable for importing compatible skills from OpenClaw, Hermes, OpenJarvis, or other repositories after selecting a specific skill and reviewing its content.
+
+Example (replace `<verified-skill-directory>` with a path confirmed from that repository's current tree):
+
+```powershell
+python yuki_cli.py skills add openclaw/openclaw --path <verified-skill-directory>
+python yuki_cli.py skills add NousResearch/hermes-agent --path <verified-skill-directory>
+python yuki_cli.py skills add open-jarvis/OpenJarvis --path <verified-skill-directory>
+```
+
+Do not run these commands unattended as a production bootstrap: the user should inspect the preview and approve the selected skill. The repository may contain no compatible skill, many skills, or a different path after an upstream update.
+
+### Proposed code-reuse sequence
+
+1. **Now:** use the existing skill importer and tests; do not add a new runtime dependency just to consume markdown skills.
+2. **First code-port candidate:** inspect Hermes for one small, well-bounded Python component (e.g. a pure parser or non-executing skill utility), then copy only after checking the exact source file, history, license header, transitive imports, and tests. If no component is independently useful, do not port code merely to claim reuse.
+3. **First orchestration benchmark:** compare Yuki's current agent against OpenJarvis agent patterns and one of Microsoft Agent Framework or LangGraph. Use mock providers and a common task suite.
+4. **Desktop/voice benchmark:** use Dodaios and OpenClaw as architecture/UX references; preserve Yuki's Windows-first packaging and explicit screen/camera/desktop permissions.
+5. **Adapter decision:** only after evidence, add one optional adapter behind a narrow API. All external tool proposals must pass Yuki's authorization gate and write to Yuki's durable task timeline.
+
+### Reuse is not a substitute for tests
+
+No code from these four repositories has been copied into Yuki in this commit. Their licenses permit reuse subject to their terms, but a production port still requires exact-version/file provenance, notice retention, dependency/SBOM review, static/security analysis, tests, and an explicit decision about who owns updates. This is deliberate: bulk-copying several runtimes before establishing their boundaries would make Yuki harder to secure and ship, not faster.
+
 ## Mandatory intake checklist before copying or adding a dependency
 
 1. Identify the exact upstream repository, immutable commit/tag, source file paths, and authorship.
