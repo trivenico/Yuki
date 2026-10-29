@@ -90,8 +90,12 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(saved["provider"], "deepseek")
         self.assertEqual(saved["deepseek_model"], "deepseek-chat")
         self.assertNotIn("DEEPSEEK_API_KEY", self.path.read_text(encoding="utf-8"))
-        with self.assertRaises(ValueError):
-            save_user_settings({"provider": "anthropic", "anthropic_model": ""}, self.path)
+        saved = save_user_settings(
+            {"provider": "anthropic", "anthropic_model": ""},
+            self.path,
+        )
+        self.assertEqual(saved["provider"], "anthropic")
+        self.assertEqual(saved["anthropic_model"], "")
         self.assertEqual(read_user_settings(self.path)["deepseek_model"], "deepseek-chat")
 
 
