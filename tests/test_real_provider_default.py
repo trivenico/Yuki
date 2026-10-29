@@ -27,8 +27,21 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertEqual(manager.current().name, "ollama")
         self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
 
+    def test_explicit_selection_can_override_startup_environment_provider(self):
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"YUKI_PROVIDER": "ollama"},
+        )
+        result = manager.select("openai")
+        self.assertEqual(result, "Selected provider: openai")
+        self.assertEqual(manager.current().name, "openai")
+        self.assertIsInstance(manager.create_selected_adapter(), OpenAICompatibleProvider)
+
     def test_openai_key_is_read_from_environment(self):
-        manager = ProviderManager({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"OPENAI_API_KEY": "test-only-not-a-real-key"},
+        )
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertTrue(adapter.is_available())
