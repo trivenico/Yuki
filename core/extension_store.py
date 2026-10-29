@@ -139,7 +139,7 @@ def validate_skill_manifest(value: dict) -> dict:
         raise ValueError("Only skill manifest version '1' is supported.")
     if not isinstance(value["name"], str) or not _SKILL_NAME.fullmatch(value["name"]):
         raise ValueError("Skill name must be a lowercase identifier (2-48 characters).")
-    for key, limit in (("description", 500), ("instructions", 12000)):
+    for key, limit in (("description", 500), ("instructions", MAX_SKILL_INSTRUCTIONS_CHARS)):
         item = value[key]
         if not isinstance(item, str) or not item.strip() or len(item) > limit:
             raise ValueError(f"{key} must be non-empty and at most {limit} characters.")
