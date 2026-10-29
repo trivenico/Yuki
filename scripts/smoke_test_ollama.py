@@ -73,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     provider_env["YUKI_OLLAMA_MODEL"] = model
     provider_env["YUKI_OLLAMA_BASE_URL"] = base_url
     if args.timeout is not None:
+        if not 1 <= args.timeout <= 120:
+            parser.error("argument --timeout: timeout must be between 1 and 120 seconds")
         provider_env["YUKI_PROVIDER_TIMEOUT_SECONDS"] = str(args.timeout)
     else:
         raw_timeout = provider_env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45")
