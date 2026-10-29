@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 
 from core.task_ledger import TASK_STATUSES, TaskLedger
@@ -65,6 +67,29 @@ class TaskLedgerTests(unittest.TestCase):
         self.assertEqual(self.ledger.cancel(cancelled["id"])["status"], "cancelled")
         with self.assertRaisesRegex(ValueError, "transition"):
             self.ledger.cancel(cancelled["id"])
+
+    def test_competing_terminal_transitions_are_serialized(self):
+        task = self.ledger.create("Competing updates")
+        second_ledger = TaskLedger(self.path)
+        barrier = Barrier(2)
+
+        def attempt(ledger, status):
+            barrier.wait(timeout=2)
+            try:
+                return ledger.transition(task["id"], status)["status"]
+            except ValueError as exc:
+                return type(exc)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(attempt, self.ledger, "failed"),
+                pool.submit(attempt, second_ledger, "cancelled"),
+            ]
+            outcomes = [future.result(timeout=5) for future in futures]
+
+        self.assertEqual(sum(isinstance(item, str) for item in outcomes), 1)
+        self.assertEqual(sum(item is ValueError for item in outcomes), 1)
+        self.assertIn(self.ledger.get(task["id"])["status"], {"failed", "cancelled"})
 
     def test_tasks_survive_reopening_store(self):
         task = self.ledger.create("Persistent task")
