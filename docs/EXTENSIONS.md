@@ -1,6 +1,6 @@
 # Installing Yuki skills and plugins
 
-Yuki's desktop console and full CLI use the same runtime and user extension store. The desktop window includes **Install Skill**, **Install MCP Plugin**, **List Skills**, and **List Plugins** buttons; the same operations are available from the command line. The `skills install` and `plugins install` manifest formats update the active registry while the runtime is running. The separate risk-tagged `skills packs install` format is loaded on the next runtime start; its timing is documented below.
+Yuki's desktop console and full CLI use the same extension-store implementation. They share installed skills when they resolve to the same data root. Packaged installs default to per-user application data; source checkouts default to the repository root. Set `YUKI_HOME` to the same absolute directory in both environments when you intentionally want to share extensions across them. The desktop window includes **Install Skill**, **Import Skill**, **Import Skill Folder**, **Install MCP Plugin**, **List Skills**, and **List Plugins** buttons. The `skills install` and `plugins install` manifest formats update the active registry while the runtime is running. The separate risk-tagged `skills packs install` format is loaded on the next runtime start; its timing is documented below.
 
 ## Skills
 
@@ -33,6 +33,22 @@ python yuki_cli.py skills packs remove release_notes
 ```
 
 These packs contain instructions only, not executable code. Medium- and high-risk packs carry an additional approval requirement; all skill invocations still pass through Yuki's normal human approval gate. The `skills install` command above remains the existing declarative extension-manifest format, while `skills packs install` is the risk-tagged pack format.
+
+### Install from GitHub (previewed, pinned revision)
+
+The CLI supports a reviewed GitHub import:
+
+```bash
+python yuki_cli.py skills add Leonxlnx/taste-skill
+# If the repository contains multiple SKILL.md files:
+python yuki_cli.py skills add OWNER/REPO --path path/to/skill-directory
+```
+
+Yuki resolves the repository's default branch to a full commit SHA, previews the selected skill directory and script-like files, then asks for approval. `--yes` accepts the preview without an interactive prompt and should be used only when you have reviewed the source yourself.
+
+**Compatibility limitation:** this initial command installs only the selected `SKILL.md` instructions. Supporting files are listed in the preview but are not copied, and scripts/dependencies are not executed or installed. Installed manifests record the GitHub repository, commit SHA, and source path. Skills with required scripts (including some capabilities of `Leonxlnx/taste-skill`) are therefore instructions-only until resource packaging and explicit script capability support are implemented. Do not treat that as full upstream skill compatibility.
+
+The GitHub API client is restricted to HTTPS `api.github.com`, bounded responses, and pinned-commit content retrieval. Installation does not grant OS permissions or override Yuki's policy.
 
 ## Plugins
 
