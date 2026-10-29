@@ -76,6 +76,10 @@ python yuki_cli.py skills add open-jarvis/OpenJarvis --path <verified-skill-dire
 
 Do not run these commands unattended as a production bootstrap: the user should inspect the preview and approve the selected skill. The repository may contain no compatible skill, many skills, or a different path after an upstream update.
 
+### Local skill-import approval gate
+
+The CLI path `yuki skills import` now prints a preview and the advisory lint report before installation, requires an explicit confirmation by default, refuses lint errors even when `--yes` is supplied, and installs only the validated SKILL.md instruction text. `--yes` is a deliberate non-interactive approval flag and should be used only after reviewing the source. This is an operator-facing confirmation, not a sandbox: imported instructions remain untrusted, and model prompt wording does not enforce tool permissions by itself.
+
 ### Extension-store boundary hardening
 
 A follow-up audit found that installed extension directories and JSON manifest paths could follow symbolic links. The extension store now rejects a symlinked installed_skills / installed_plugins directory, rejects symlinked manifest inputs, and requires manifest files discovered by loaders to be regular non-symlink files. Regression tests cover manifest-source symlinks, installed-manifest symlinks, and redirected store directories.
