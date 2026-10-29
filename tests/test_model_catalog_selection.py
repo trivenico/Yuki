@@ -137,7 +137,7 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(opener.return_value.open.call_count, len(bad_payloads))
 
     def test_discovery_bounds_and_deduplicates_models(self):
-        payload = json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "llama3.2:3b"}, {"name": ""}, {"name": "bad\\nmodel"}, {"name": "  qwen2.5:7b  "}]}).encode()
+        payload = json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "llama3.2:3b"}, {"name": ""}, {"name": "bad" + chr(10) + "model"}, {"name": "  qwen2.5:7b  "}]}).encode()
         with patch("core.model_selection.urllib.request.build_opener") as opener:
             opener.return_value.open.return_value = _Response(payload)
             models = list_installed_ollama_models()
