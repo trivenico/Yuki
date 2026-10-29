@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from core.task_contracts import TaskEvent
+
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -21,7 +23,7 @@ class TaskResult:
 class ApprovedTaskAgent:
     """Run at most a few approved registered-skill calls for a single user goal."""
 
-    def __init__(self, provider, skill_agent, *, max_steps=3):
+    def __init__(self, provider, skill_agent, *, max_steps=3, ledger=None):
         if not callable(getattr(provider, "generate", None)):
             raise TypeError("Provider must implement generate().")
         if not callable(getattr(skill_agent, "run_skill", None)) or not callable(
@@ -33,8 +35,28 @@ class ApprovedTaskAgent:
         self.provider = provider
         self.skill_agent = skill_agent
         self.max_steps = max_steps
+        if ledger is not None and not all(callable(getattr(ledger, name, None)) for name in ("create", "transition", "append_event")):
+            raise TypeError("Ledger must implement create(), transition(), and append_event().")
+        self.ledger = ledger
 
     def run(self, goal, *, council_context: str = ""):
+        if self.ledger is None or not isinstance(goal, str) or not goal.strip():
+            return self._run(goal, council_context=council_context)
+        normalized_goal = goal.strip()[:4000]
+        task = self.ledger.create(normalized_goal[:240], detail=normalized_goal, metadata={"agent": "ApprovedTaskAgent"})
+        task_id = task["id"]
+        self.ledger.transition(task_id, "running")
+        self.ledger.append_event(TaskEvent(task_id, "task.started", {"agent": "ApprovedTaskAgent", "goal": normalized_goal}))
+        result = self._run(goal, council_context=council_context, task_id=task_id)
+        if result.status == "completed":
+            self.ledger.transition(task_id, "awaiting_verification", result=result.message)
+            self.ledger.append_event(TaskEvent(task_id, "task.awaiting_verification", {"steps": result.steps, "message": result.message}))
+            return TaskResult(True, result.message, result.steps, "awaiting_verification")
+        self.ledger.transition(task_id, "failed", result=result.message, error_code=result.status[:80])
+        self.ledger.append_event(TaskEvent(task_id, "task.failed", {"status": result.status, "steps": result.steps, "message": result.message}))
+        return result
+
+    def _run(self, goal, *, council_context: str = "", task_id: str | None = None):
         if not isinstance(goal, str) or not goal.strip():
             return TaskResult(False, "Provide a task goal.", status="invalid_input")
         goal = goal.strip()[:4000]
@@ -91,6 +113,10 @@ class ApprovedTaskAgent:
             if not isinstance(argument, str) or len(argument) > 500:
                 return TaskResult(False, "AI supplied an invalid skill argument; nothing was executed.",
                                   step_number, "invalid_model_output")
+            if task_id is not None:
+                self.ledger.append_event(TaskEvent(
+                    task_id, "tool.proposed", {"skill": skill_name, "argument": argument, "step": step_number}
+                ))
             result = self.skill_agent.run_skill(skill_name, argument)
             observation = {
                 "skill": skill_name,
@@ -100,6 +126,12 @@ class ApprovedTaskAgent:
                 "data": str(result.data)[:2000],
             }
             observations.append(observation)
+            if task_id is not None:
+                self.ledger.append_event(TaskEvent(
+                    task_id, "tool.observed",
+                    {"skill": skill_name, "ok": bool(result.ok), "stage": str(result.stage),
+                     "message": str(result.message)[:1000], "step": step_number},
+                ))
             if not result.ok:
                 return TaskResult(False, result.message, step_number,
                                   "approval_denied" if result.stage == "permission_denied" else "tool_failed")
