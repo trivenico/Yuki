@@ -1,4 +1,6 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime
 from unittest.mock import Mock
 
@@ -35,6 +37,28 @@ class EvolutionSchedulerTests(unittest.TestCase):
         local_now = datetime.fromisoformat("2026-10-28T03:00:00+10:00")
         self.assertFalse(scheduler.run_if_due(local_now))
         self.cycle.run_cycle.assert_not_called()
+
+
+    def test_concurrent_due_checks_run_only_one_cycle(self):
+        scheduler = EvolutionScheduler(self.cycle, enabled=True, hour=3)
+        now = datetime.fromisoformat("2026-10-28T12:00:00+00:00")
+        barrier = Barrier(2)
+
+        def run_cycle(*, now):
+            self.cycle.status.return_value = {"last_report_at": now.isoformat()}
+
+        self.cycle.run_cycle.side_effect = run_cycle
+
+        def attempt():
+            barrier.wait()
+            return scheduler.run_if_due(now)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: attempt(), range(2)))
+
+        self.assertEqual(results.count(True), 1)
+        self.assertEqual(results.count(False), 1)
+        self.cycle.run_cycle.assert_called_once_with(now=now)
 
     def test_naive_now_is_rejected(self):
         scheduler = EvolutionScheduler(self.cycle, enabled=True, hour=3)
