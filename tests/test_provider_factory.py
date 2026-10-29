@@ -13,6 +13,13 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_provider_environment_override_takes_precedence_over_config(self):
+        provider = create_provider(
+            {"provider": "openai"},
+            environ={"YUKI_PROVIDER": "ollama"},
+        )
+        self.assertIsInstance(provider, OllamaProvider)
+
     def test_explicit_environment_overrides_local_model_and_endpoint(self):
         provider = create_provider(
             {"provider": "ollama", "ollama_model": "configured-model"},
