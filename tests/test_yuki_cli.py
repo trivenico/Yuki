@@ -39,6 +39,44 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output[0])["installed"][0]["id"], "writing_helper")
 
+    def test_skills_add_previews_repository_and_requires_approval(self):
+        output = []
+        preview = {
+            "repository": "Leonxlnx/taste-skill",
+            "commit": "a" * 40,
+            "skill_document": "skills/taste-skill/SKILL.md",
+            "files_in_skill_directory": ["SKILL.md", "scripts/draw.mjs"],
+            "executable_script_candidates": ["scripts/draw.mjs"],
+        }
+        with patch(
+            "yuki_cli.install_github_skill",
+            return_value={"installed": False, "cancelled": True, "preview": preview},
+        ) as installer:
+            code = run_cli(
+                ["skills", "add", "Leonxlnx/taste-skill"],
+                input_fn=lambda _: "n",
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 1)
+        installer.assert_called_once()
+        self.assertEqual(installer.call_args.kwargs["repository"], "Leonxlnx/taste-skill")
+        self.assertFalse(installer.call_args.kwargs["approve"](preview))
+        self.assertTrue(any("Supporting files and scripts" in line for line in output))
+
+    def test_skills_add_supports_explicit_path_and_approval_flag(self):
+        output = []
+        with patch(
+            "yuki_cli.install_github_skill",
+            return_value={"installed": True, "id": "design_taste_frontend", "source_commit": "a" * 40},
+        ) as installer:
+            code = run_cli(
+                ["skills", "add", "Leonxlnx/taste-skill", "--path", "skills/taste-skill", "--yes"],
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(installer.call_args.kwargs["skill_path"], "skills/taste-skill")
+        self.assertTrue(installer.call_args.kwargs["approve"]({}))
+
     def test_skills_import_command_accepts_a_skill_file_or_directory(self):
         output = []
         with patch(
