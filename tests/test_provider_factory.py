@@ -13,6 +13,21 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider, OllamaProvider)
         self.assertEqual(provider.model, "llama3.2:3b")
 
+    def test_provider_timeout_environment_is_passed_to_ollama(self):
+        provider = create_provider(
+            {"provider": "ollama"},
+            environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "23"},
+        )
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.timeout, 23.0)
+
+    def test_invalid_provider_timeout_is_rejected_during_construction(self):
+        with self.assertRaisesRegex(ValueError, "could not convert string to float|float"):
+            create_provider(
+                {"provider": "ollama"},
+                environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "not-a-number"},
+            )
+
     def test_provider_environment_override_takes_precedence_over_config(self):
         provider = create_provider(
             {"provider": "openai"},
