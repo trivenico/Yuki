@@ -42,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
                 "import", help="Import a SKILL.md document or directory containing SKILL.md"
             )
             skill_import.add_argument("source", help="Path to SKILL.md or its containing directory")
+            skill_lint = actions.add_parser(
+                "lint", help="Run advisory quality and portability checks on a local SKILL.md"
+            )
+            skill_lint.add_argument("source", help="Path to a local SKILL.md file")
             skill_add = actions.add_parser(
                 "add", help="Preview and install a skill from a GitHub OWNER/REPO repository"
             )
@@ -151,6 +155,11 @@ def run_cli(
                     ),
                 }, output_fn)
                 return 0 if result.get("installed", True) else 1
+            if kind == "skill" and args.extension_action == "lint":
+                from core.skill_linter import findings_as_json, lint_skill
+                report = findings_as_json(lint_skill(args.source))
+                _write_json(report, output_fn)
+                return 0 if report["valid"] else 1
             if kind == "skill" and args.extension_action == "import":
                 result = install_skill_file(args.source)
                 _write_json({
