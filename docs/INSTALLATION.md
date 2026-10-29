@@ -17,7 +17,7 @@ Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_
 
 ## Desktop packages (preview)
 
-The `Windows desktop package` GitHub Actions workflow builds a per-user installer (`Yuki-Setup.exe`) and a portable ZIP. Do not treat these as a release until the workflow has passed on the current PR head and the release is reviewed.
+The Windows and Linux desktop package GitHub Actions workflows build platform-specific release artifacts. The supported-platform CI matrix is Windows and Linux only; macOS is not supported or packaged. Do not treat artifacts as a release until both packaging and smoke-test workflows have passed on the current PR head and the release is reviewed.
 
 For a validated CI build, open the workflow run in GitHub Actions and download the `yuki-windows-x64` artifact. Run `Yuki-Setup.exe` to install under your LocalAppData Programs folder; administrator privileges are not required. The installer creates Start Menu shortcuts for the desktop GUI and console runtime. The portable ZIP contains the same onedir app folders plus the default configuration and docs.
 
