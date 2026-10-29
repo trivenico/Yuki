@@ -71,6 +71,7 @@ def create_provider(config=None, *, environ=None):
             model,
             api_key_env="OPENAI_API_KEY",
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             environ=env,
         )
     if selected == "gemini":
@@ -88,6 +89,7 @@ def create_provider(config=None, *, environ=None):
         return AnthropicProvider(
             model,
             base_url=str(env.get("YUKI_ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")),
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             environ=env,
         )
     if selected in _OPENAI_COMPATIBLE_PROVIDERS:
@@ -102,6 +104,7 @@ def create_provider(config=None, *, environ=None):
             model,
             api_key_env=settings["key_env"],
             base_url=str(env.get(settings["base_env"], settings["base_default"])),
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             environ=env,
         )
     if selected not in {"ollama", "hybrid"}:
