@@ -29,16 +29,16 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         defaults.update(kwargs)
         return OllamaProvider(**defaults)
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_requires_configured_model(self, urlopen):
-        urlopen.return_value = FakeResponse(json.dumps({
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_requires_configured_model(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(json.dumps({
             "models": [{"name": "llama3.2:3b"}, {"name": "other:latest"}]
         }).encode())
         self.assertTrue(self.provider().is_available())
-        request = urlopen.call_args.args[0]
+        request = build_opener.return_value.open.call_args.args[0]
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/tags")
         self.assertEqual(request.get_method(), "GET")
-        self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 5)
+        self.assertLessEqual(build_opener.return_value.open.call_args.kwargs["timeout"], 5)
 
     @patch("providers.ollama.urllib.request.build_opener")
     def test_availability_uses_no_redirect_handler(self, build_opener):
@@ -48,40 +48,40 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         self.assertTrue(self.provider().is_available())
         build_opener.assert_called_once_with(_NoRedirectHandler)
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_returns_false_when_model_is_not_installed(self, urlopen):
-        urlopen.return_value = FakeResponse(json.dumps({
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_returns_false_when_model_is_not_installed(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(json.dumps({
             "models": [{"name": "other:latest"}]
         }).encode())
         self.assertFalse(self.provider().is_available())
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_fails_closed_on_unexpected_payload_shape(self, urlopen):
-        urlopen.return_value = FakeResponse(json.dumps({"models": "not-a-list"}).encode())
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_fails_closed_on_unexpected_payload_shape(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(json.dumps({"models": "not-a-list"}).encode())
         self.assertFalse(self.provider().is_available())
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_fails_closed_on_bad_json(self, urlopen):
-        urlopen.return_value = FakeResponse(b"not-json")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_fails_closed_on_bad_json(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(b"not-json")
         self.assertFalse(self.provider().is_available())
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_returns_false_when_server_is_down(self, urlopen):
-        urlopen.side_effect = urllib.error.URLError("offline")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_returns_false_when_server_is_down(self, build_opener):
+        build_opener.return_value.open.side_effect = urllib.error.URLError("offline")
         self.assertFalse(self.provider().is_available())
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_availability_fails_closed_on_http_protocol_error(self, urlopen):
-        urlopen.side_effect = http.client.HTTPException("truncated HTTP response")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_availability_fails_closed_on_http_protocol_error(self, build_opener):
+        build_opener.return_value.open.side_effect = http.client.HTTPException("truncated HTTP response")
         self.assertFalse(self.provider().is_available())
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_sends_non_streaming_request_and_returns_text(self, urlopen):
-        urlopen.return_value = FakeResponse(json.dumps({
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_sends_non_streaming_request_and_returns_text(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(json.dumps({
             "response": " YUKI_OK "
         }).encode())
         self.assertEqual(self.provider().generate(" hello "), "YUKI_OK")
-        request = urlopen.call_args.args[0]
+        request = build_opener.return_value.open.call_args.args[0]
         payload = json.loads(request.data.decode())
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/generate")
         self.assertEqual(payload, {
@@ -97,34 +97,34 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         self.assertEqual(self.provider().generate("hello"), "YUKI_OK")
         build_opener.assert_called_once_with(_NoRedirectHandler)
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_wraps_network_errors_without_leaking_details(self, urlopen):
-        urlopen.side_effect = urllib.error.URLError("private endpoint detail")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_wraps_network_errors_without_leaking_details(self, build_opener):
+        build_opener.return_value.open.side_effect = urllib.error.URLError("private endpoint detail")
         with self.assertRaisesRegex(RuntimeError, "Local Ollama request failed") as raised:
             self.provider().generate("hello")
         self.assertNotIn("private endpoint detail", str(raised.exception))
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_wraps_http_protocol_errors(self, urlopen):
-        urlopen.side_effect = http.client.HTTPException("truncated HTTP response")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_wraps_http_protocol_errors(self, build_opener):
+        build_opener.return_value.open.side_effect = http.client.HTTPException("truncated HTTP response")
         with self.assertRaisesRegex(RuntimeError, "Local Ollama request failed"):
             self.provider().generate("hello")
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_rejects_invalid_json(self, urlopen):
-        urlopen.return_value = FakeResponse(b"not-json")
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_rejects_invalid_json(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(b"not-json")
         with self.assertRaisesRegex(RuntimeError, "invalid JSON"):
             self.provider().generate("hello")
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_rejects_empty_response_text(self, urlopen):
-        urlopen.return_value = FakeResponse(json.dumps({"response": "  "}).encode())
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_rejects_empty_response_text(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(json.dumps({"response": "  "}).encode())
         with self.assertRaisesRegex(RuntimeError, "no text response"):
             self.provider().generate("hello")
 
-    @patch("providers.ollama.urllib.request.urlopen")
-    def test_generate_rejects_oversized_response(self, urlopen):
-        urlopen.return_value = FakeResponse(b"x" * 2_000_001)
+    @patch("providers.ollama.urllib.request.build_opener")
+    def test_generate_rejects_oversized_response(self, build_opener):
+        build_opener.return_value.open.return_value = FakeResponse(b"x" * 2_000_001)
         with self.assertRaisesRegex(RuntimeError, "2 MB limit"):
             self.provider().generate("hello")
 
