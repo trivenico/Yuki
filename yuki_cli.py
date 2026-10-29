@@ -165,9 +165,16 @@ def run_cli(
                 _write_json(report, output_fn)
                 return 0 if report["valid"] else 1
             if kind == "skill" and args.extension_action == "import":
+                from pathlib import Path
                 from core.skill_linter import findings_as_json, lint_skill
 
-                report = findings_as_json(lint_skill(args.source))
+                requested_source = Path(args.source).expanduser()
+                lint_path = (
+                    requested_source / "SKILL.md"
+                    if requested_source.is_dir() and not requested_source.is_symlink()
+                    else requested_source
+                )
+                report = findings_as_json(lint_skill(lint_path))
                 preview = {
                     "source": args.source,
                     "operation": "import SKILL.md instructions only",
