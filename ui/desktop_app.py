@@ -84,13 +84,16 @@ def provider_environment_override(
 ) -> str | None:
     """Explain when environment overrides make desktop provider settings ineffective."""
     env = os.environ if environ is None else environ
-    provider_override = str(env.get("YUKI_PROVIDER", "")).strip().lower()
     selected = selected_provider.strip().lower()
-    if provider_override and provider_override != selected:
-        return (
-            f"YUKI_PROVIDER is set to '{provider_override}', so the runtime will ignore "
-            f"the UI selection '{selected}'. Remove or update YUKI_PROVIDER and restart Yuki."
-        )
+    if "YUKI_PROVIDER" in env:
+        provider_override = str(env["YUKI_PROVIDER"]).strip().lower()
+        if provider_override != selected:
+            shown_provider = provider_override or "(empty)"
+            return (
+                f"YUKI_PROVIDER is set to '{shown_provider}', so the runtime will ignore "
+                f"the UI selection '{selected}' or fail provider selection. Remove or update "
+                "YUKI_PROVIDER and restart Yuki."
+            )
 
     model_env_by_provider = {
         "ollama": "YUKI_OLLAMA_MODEL",
@@ -105,12 +108,15 @@ def provider_environment_override(
         "tokenrouter": "YUKI_TOKENROUTER_MODEL",
     }
     model_env_name = model_env_by_provider.get(selected)
-    environment_model = str(env.get(model_env_name, "")).strip() if model_env_name else ""
-    if environment_model and environment_model != selected_model.strip():
-        return (
-            f"{model_env_name} is set to '{environment_model}', so the runtime will ignore "
-            "the model entered in Settings. Remove or update that environment variable and restart Yuki."
-        )
+    if model_env_name and model_env_name in env:
+        environment_model = str(env[model_env_name]).strip()
+        if environment_model != selected_model.strip():
+            shown_model = environment_model or "(empty)"
+            return (
+                f"{model_env_name} is set to '{shown_model}', so the runtime will ignore "
+                "the model entered in Settings or fail model selection. Remove or update "
+                "that environment variable and restart Yuki."
+            )
     return None
 
 
