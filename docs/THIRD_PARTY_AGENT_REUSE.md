@@ -60,7 +60,7 @@ Yuki now includes an adapted, deliberately bounded subset of Hermes Agent's advi
 - CLI: `python yuki_cli.py skills lint path/to/SKILL.md`.
 - Tests: `tests/test_skill_linter.py` and CLI tests in `tests/test_yuki_cli.py`.
 
-The linter checks metadata quality, descriptions, trigger sections, shell-tool wording, oversized instructions, dangling local references, suspicious scaffolding files, and portability declarations. Findings are advisory; hard installation validation remains authoritative. It never executes scripts, installs dependencies, or grants skills permissions. Ubuntu quality gates have passed on the current commit; Windows quality gates and desktop packaging are still running, so this port is not yet fully cross-platform validated.
+The linter checks metadata quality, descriptions, trigger sections, shell-tool wording, oversized instructions, dangling local references, suspicious scaffolding files, and portability declarations. Findings are advisory; hard installation validation remains authoritative. It never executes scripts, installs dependencies, or grants skills permissions. Ubuntu quality gates passed on a preceding code revision; CI for the latest exact head has not yet been confirmed, so this port is not yet fully cross-platform validated.
 
 ### Integration work that can be used immediately
 
