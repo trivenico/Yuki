@@ -58,6 +58,27 @@ class SkillLinterTests(unittest.TestCase):
             self.assertIn("dangling-reference", rules)
             self.assertIn("forbidden-file", rules)
 
+    def test_does_not_inspect_symlinked_scripts_outside_skill(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "skill"
+            scripts = root / "scripts"
+            scripts.mkdir(parents=True)
+            outside = Path(temp) / "outside.sh"
+            outside.write_text("import fcntl\n", encoding="utf-8")
+            try:
+                (scripts / "external.sh").symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation is unavailable")
+            skill = root / "SKILL.md"
+            skill.write_text(
+                "---\nname: skill\ndescription: Inspect scripts.\n"
+                "license: MIT\ncompatibility: local\nmetadata: {}\n---\n"
+                "## When to Use\nReview scripts safely.\n",
+                encoding="utf-8",
+            )
+            rules = {finding.rule for finding in lint_skill(skill)}
+            self.assertNotIn("platforms-gating", rules)
+
     def test_rejects_symlink_and_oversized_skill(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
