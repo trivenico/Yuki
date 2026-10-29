@@ -80,6 +80,24 @@ jobs:
             throw "Packaged runtime did not reach its interactive ready state."
           }
 
+      - name: Smoke-test packaged desktop launch
+        shell: pwsh
+        run: |
+          $env:YUKI_HOME = Join-Path $env:RUNNER_TEMP "yuki-desktop-smoke"
+          $gui = Start-Process -FilePath (Resolve-Path "dist/YukiDesktop/YukiDesktop.exe").Path -PassThru
+          try {
+            Start-Sleep -Seconds 3
+            $gui.Refresh()
+            if ($gui.HasExited) {
+              throw "Packaged desktop GUI exited during startup (exit code $($gui.ExitCode))."
+            }
+          }
+          finally {
+            # The GUI owns the child runtime. Stop the process tree to avoid
+            # leaving background processes on the hosted runner.
+            & taskkill.exe /PID $gui.Id /T /F | Out-Null
+          }
+
       - name: Assemble portable bundle and installer
         shell: pwsh
         run: |
