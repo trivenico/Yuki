@@ -34,15 +34,16 @@ def list_installed_ollama_models(
         port = parsed.port
     except ValueError as exc:
         raise ValueError("Ollama base URL is invalid.") from exc
-    loopback = host == "localhost"
-    if host:
-        try:
-            loopback = loopback or ipaddress.ip_address(host).is_loopback
-        except ValueError:
-            pass
+    # Require a loopback IP literal. Hostnames (including "localhost") can be
+    # remapped by local name-service configuration, so do not resolve names here.
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
     if (parsed.scheme != "http" or not loopback or parsed.username or parsed.password
-            or parsed.query or parsed.fragment or (port is not None and not 1 <= port <= 65535)):
-        raise ValueError("Model discovery only permits loopback HTTP Ollama endpoints.")
+            or parsed.query or parsed.fragment or parsed.path not in ("", "/")
+            or (port is not None and not 1 <= port <= 65535)):
+        raise ValueError("Model discovery only permits loopback IP HTTP Ollama endpoints.")
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 0.1 <= timeout <= 5:
         raise ValueError("Discovery timeout must be between 0.1 and 5 seconds.")
     request = urllib.request.Request(
