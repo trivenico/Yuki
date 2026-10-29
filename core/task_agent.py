@@ -47,11 +47,19 @@ class ApprovedTaskAgent:
         task_id = task["id"]
         self.ledger.transition(task_id, "running")
         self.ledger.append_event(TaskEvent(task_id, "task.started", {"agent": "ApprovedTaskAgent", "goal": normalized_goal}))
-        result = self._run(goal, council_context=council_context, task_id=task_id)
+        try:
+            result = self._run(goal, council_context=council_context, task_id=task_id)
+        except Exception as exc:
+            result = TaskResult(
+                False, f"Task execution failed safely ({type(exc).__name__}).", 0, "execution_error"
+            )
         if result.status == "completed":
             self.ledger.transition(task_id, "awaiting_verification", result=result.message)
             self.ledger.append_event(TaskEvent(task_id, "task.awaiting_verification", {"steps": result.steps, "message": result.message}))
-            return TaskResult(True, result.message, result.steps, "awaiting_verification")
+            return TaskResult(
+                False, f"Plan finished; independent verification is still required: {result.message}",
+                result.steps, "awaiting_verification",
+            )
         self.ledger.transition(task_id, "failed", result=result.message, error_code=result.status[:80])
         self.ledger.append_event(TaskEvent(task_id, "task.failed", {"status": result.status, "steps": result.steps, "message": result.message}))
         return result
