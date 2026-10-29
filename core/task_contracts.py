@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import json
 import re
+import hashlib
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -116,20 +117,35 @@ class ToolCall:
             self, "arguments", _validate_json_object(self.arguments, "Tool arguments", _MAX_ARGUMENTS)
         )
 
+    @property
+    def fingerprint(self) -> str:
+        canonical = json.dumps(
+            {"task_id": self.task_id, "tool_name": self.tool_name, "arguments": self.arguments},
+            ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class ApprovalDecision:
     """A decision bound to one exact call fingerprint; it is not a reusable blanket grant."""
 
     call_id: str
+    call_fingerprint: str
     approved: bool
     reason: str
     policy_version: str
     decided_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    def matches(self, call: ToolCall) -> bool:
+        """Return true only for the exact call that was reviewed."""
+        return self.call_id == call.call_id and self.call_fingerprint == call.fingerprint
+
     def __post_init__(self) -> None:
         if not isinstance(self.call_id, str) or not _ID_RE.fullmatch(self.call_id):
             raise ValueError("Approval call ID is invalid.")
+        if not isinstance(self.call_fingerprint, str) or not re.fullmatch(r"[a-f0-9]{64}", self.call_fingerprint):
+            raise ValueError("Approval must bind to a valid tool-call fingerprint.")
         if not isinstance(self.approved, bool):
             raise ValueError("Approval decision must be boolean.")
         _require_text(self.reason, "Approval reason", maximum=1000)
