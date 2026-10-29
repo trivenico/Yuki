@@ -47,6 +47,12 @@ class OllamaModelConfigValidationTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "ollama_model"):
                         load_config(path)
 
+    def test_valid_environment_override_takes_precedence_over_invalid_yaml_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._config_path(directory, "invalid model value")
+            with patch.dict("os.environ", {"YUKI_OLLAMA_MODEL": "qwen2.5:7b"}, clear=True):
+                self.assertEqual(load_config(path)["ollama_model"], "qwen2.5:7b")
+
     def test_valid_environment_model_override_wins(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self._config_path(directory, "llama3.2:3b")
