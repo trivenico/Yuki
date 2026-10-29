@@ -188,10 +188,25 @@ jobs:
           name: yuki-windows-x64
           path: dist
 
-      - name: Publish tagged Windows release
+      - name: Ensure tagged release exists
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$env:GITHUB_REF_NAME" dist/Yuki-Windows-x64.zip dist/Yuki-Setup.exe --generate-notes --title "Yuki $env:GITHUB_REF_NAME"
+          gh release view "$env:GITHUB_REF_NAME" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:GITHUB_REF_NAME" --generate-notes --title "Yuki $env:GITHUB_REF_NAME"
+            if ($LASTEXITCODE -ne 0) {
+              # The Linux publisher may have created the same release concurrently.
+              gh release view "$env:GITHUB_REF_NAME"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          }
+
+      - name: Upload tagged Windows artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$env:GITHUB_REF_NAME" dist/Yuki-Windows-x64.zip dist/Yuki-Setup.exe --clobber
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
