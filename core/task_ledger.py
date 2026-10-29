@@ -122,6 +122,9 @@ class TaskLedger:
             raise ValueError("A task cannot be completed without verification evidence.")
         with self._lock, closing(self._connect()) as db:
             with db:
+                # Acquire SQLite's write reservation before reading state. The Python
+                # lock protects this instance only; other processes may share this DB.
+                db.execute("BEGIN IMMEDIATE")
                 row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
                 if row is None:
                     raise KeyError("Task not found.")
@@ -143,6 +146,8 @@ class TaskLedger:
             raise ValueError("Verification evidence must be non-empty text of at most 4000 characters.")
         with self._lock, closing(self._connect()) as db:
             with db:
+                # Serialize the state check and update across independent processes.
+                db.execute("BEGIN IMMEDIATE")
                 row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
                 if row is None:
                     raise KeyError("Task not found.")
