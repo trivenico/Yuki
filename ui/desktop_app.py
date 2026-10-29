@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 from core.settings_store import BOOLEAN_SETTINGS, MODEL_SETTING_BY_PROVIDER, PROVIDERS, read_user_settings, save_user_settings
+from core.model_catalog import list_providers
 from core.perception import (
     PerceptionUnavailable,
     active_window_title,
@@ -24,6 +25,11 @@ from core.perception import (
 ROOT = Path(__file__).resolve().parents[1]
 MAX_TRANSCRIPT_CHARS = 1_000_000
 MAX_COMMAND_HISTORY = 500
+
+# Keep the settings picker aligned with adapters actually wired into the runtime.
+RUNTIME_PROVIDER_OPTIONS = tuple(
+    item["id"] for item in list_providers(supported_only=True)
+)
 
 
 class CommandHistory:
@@ -451,7 +457,7 @@ def run_desktop() -> None:
         provider_value = tk.StringVar(value=current["provider"])
         provider_picker = ttk.Combobox(
             ai_group, textvariable=provider_value,
-            values=PROVIDERS, state="readonly", width=20,
+            values=RUNTIME_PROVIDER_OPTIONS, state="readonly", width=20,
         )
         provider_picker.grid(row=1, column=0, sticky="ew", pady=(3, 8))
 
