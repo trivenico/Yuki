@@ -59,7 +59,7 @@ class YukiCliTests(unittest.TestCase):
             )
         self.assertEqual(code, 1)
         installer.assert_called_once()
-        self.assertEqual(installer.call_args.kwargs["repository"], "Leonxlnx/taste-skill")
+        self.assertEqual(installer.call_args.args[0], "Leonxlnx/taste-skill")
         self.assertFalse(installer.call_args.kwargs["approve"](preview))
         self.assertTrue(any("Supporting files and scripts" in line for line in output))
 

@@ -91,9 +91,9 @@ class ExtensionStoreTests(unittest.TestCase):
     def test_rejects_unknown_fields_and_non_json_skill_payloads(self):
         value = self.skill_manifest()
         value["python_module"] = "os"
-        with self.assertRaisesRegex(ValueError, "only"):
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
             validate_skill_manifest(value)
-        value = self.skill_manifest(instructions="x" * 12001)
+        value = self.skill_manifest(instructions="x" * 40001)
         with self.assertRaisesRegex(ValueError, "instructions"):
             validate_skill_manifest(value)
 
@@ -154,7 +154,7 @@ class ExtensionStoreTests(unittest.TestCase):
     def test_github_skill_install_requires_approval_and_records_pinned_source(self):
         document = (
             "---\nname: design-taste-frontend\ndescription: Improve frontend visual quality.\n---\n"
-            + ("Make deliberate design decisions and test the page.\n" * 900)
+            + ("Make deliberate design decisions and test the page.\n" * 700)
         )
         commit = "a" * 40
         tree = {
