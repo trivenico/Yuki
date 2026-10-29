@@ -473,6 +473,28 @@ def run_desktop() -> None:
                     parent=window,
                 )
                 return
+
+            model_env_by_provider = {
+                "ollama": "YUKI_OLLAMA_MODEL",
+                "openai": "YUKI_OPENAI_MODEL",
+                "anthropic": "YUKI_ANTHROPIC_MODEL",
+                "deepseek": "YUKI_DEEPSEEK_MODEL",
+                "kimi": "YUKI_KIMI_MODEL",
+                "minimax": "YUKI_MINIMAX_MODEL",
+                "openrouter": "YUKI_OPENROUTER_MODEL",
+                "tokenrouter": "YUKI_TOKENROUTER_MODEL",
+            }
+            model_env_name = model_env_by_provider.get(selected)
+            environment_model = os.environ.get(model_env_name, "").strip() if model_env_name else ""
+            selected_model = model_value.get().strip() if selected == "ollama" else cloud_model_value.get().strip()
+            if environment_model and environment_model != selected_model:
+                messagebox.showwarning(
+                    "Model overridden by environment",
+                    f"{model_env_name} is set to '{environment_model}', so the runtime will ignore the model entered in Settings. "
+                    "Remove or update that environment variable and restart Yuki before checking the selected model.",
+                    parent=window,
+                )
+                return
             try:
                 from core.config import load_config
                 from providers.factory import create_provider
