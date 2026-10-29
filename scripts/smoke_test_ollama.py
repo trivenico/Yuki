@@ -51,15 +51,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: Yuki configuration could not be loaded ({type(exc).__name__}).")
         return 1
 
-    provider_name = str(config.get("provider", "")).strip().lower()
+    # Match the runtime's provider-selection precedence, but refuse any non-local
+    # selection before constructing a provider so this script can never probe cloud.
+    provider_name = str(os.environ.get("YUKI_PROVIDER", config.get("provider", "ollama"))).strip().lower()
     if provider_name != "ollama":
-        print("FAIL: configured provider is not Ollama.")
-        print("Set provider: ollama in your Yuki config, or run with YUKI_PROVIDER=ollama.")
+        print("FAIL: the effective provider selection is not Ollama.")
+        print("Select Ollama in Yuki config or set YUKI_PROVIDER=ollama for this invocation.")
         print("No request was sent to any provider.")
         return 2
 
-    model = str(args.model if args.model is not None else config.get("ollama_model", "")).strip()
-    base_url = str(args.base_url if args.base_url is not None else config.get("ollama_base_url", "")).strip()
+    model = str(
+        args.model if args.model is not None
+        else os.environ.get("YUKI_OLLAMA_MODEL", config.get("ollama_model", ""))
+    ).strip()
+    base_url = str(
+        args.base_url if args.base_url is not None
+        else os.environ.get("YUKI_OLLAMA_BASE_URL", config.get("ollama_base_url", ""))
+    ).strip()
     if not model:
         print("FAIL: no Ollama model is configured.")
         print("Set ollama_model to an installed model name, for example llama3.2:3b.")
@@ -72,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     provider_env = dict(os.environ)
+    # Pin the provider for this invocation after the effective-selection guard above.
+    provider_env["YUKI_PROVIDER"] = "ollama"
     provider_env["YUKI_OLLAMA_MODEL"] = model
     provider_env["YUKI_OLLAMA_BASE_URL"] = base_url
     if args.timeout is not None:
