@@ -152,6 +152,21 @@ class TaskContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             TaskEvent("task-1", "tool.completed", {}, schema_version=2)
 
+    def test_nested_task_event_payload_is_immutable(self):
+        source = {"details": {"steps": [1, 2]}}
+        event = TaskEvent("task-1", "task.progress", source)
+        source["details"]["steps"].append(3)
+        self.assertEqual(list(event.payload["details"]["steps"]), [1, 2])
+        with self.assertRaises(TypeError):
+            event.payload["details"]["new"] = "blocked"
+        with self.assertRaises(AttributeError):
+            event.payload["details"]["steps"].append(4)
+
+    def test_fingerprint_is_canonical_across_mapping_order(self):
+        first = ToolCall("task-1", "file.read", {"path": "README.md", "options": {"a": 1, "b": 2}})
+        second = ToolCall("task-1", "file.read", {"options": {"b": 2, "a": 1}, "path": "README.md"})
+        self.assertEqual(first.fingerprint, second.fingerprint)
+
     def test_task_statuses_are_stable_wire_values(self):
         self.assertEqual(TaskStatus.AWAITING_APPROVAL.value, "awaiting_approval")
         self.assertEqual(TaskStatus.COMPLETED.value, "completed")
