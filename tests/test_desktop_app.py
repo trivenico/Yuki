@@ -120,6 +120,17 @@ class DesktopAppTests(unittest.TestCase):
                 self.assertIn("(empty)", message)
                 self.assertIn("fail model selection", message)
 
+    def test_empty_model_override_warns_when_ui_model_is_also_blank(self):
+        message = provider_environment_override(
+            "anthropic",
+            "",
+            environ={"YUKI_PROVIDER": "anthropic", "YUKI_ANTHROPIC_MODEL": ""},
+        )
+        self.assertIsNotNone(message)
+        self.assertIn("YUKI_ANTHROPIC_MODEL", message)
+        self.assertIn("(empty)", message)
+        self.assertIn("fail model selection", message)
+
     def test_provider_environment_override_ignores_unrelated_model_variables(self):
         message = provider_environment_override(
             "ollama",
