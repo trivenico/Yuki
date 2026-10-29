@@ -97,18 +97,56 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(installer.call_args.kwargs["skill_path"], "skills/taste-skill")
         self.assertTrue(installer.call_args.kwargs["approve"]({}))
 
-    def test_skills_import_command_accepts_a_skill_file_or_directory(self):
+    def test_skills_import_requires_confirmation_and_reports_lint_preview(self):
         output = []
-        with patch(
+        report = {"valid": True, "errors": 0, "warnings": 1, "findings": []}
+        with patch("core.skill_linter.lint_skill", return_value=[]), patch(
+            "core.skill_linter.findings_as_json", return_value=report
+        ), patch(
             "yuki_cli.install_skill_file",
             return_value={"id": "release_notes", "name": "release_notes", "path": "/tmp/release_notes.json"},
         ) as importer:
-            code = run_cli(["skills", "import", "/tmp/release-notes"], output_fn=output.append)
+            code = run_cli(
+                ["skills", "import", "/tmp/release-notes"],
+                input_fn=lambda _: "yes",
+                output_fn=output.append,
+            )
         self.assertEqual(code, 0)
         importer.assert_called_once_with("/tmp/release-notes")
-        result = json.loads(output[0])
+        self.assertTrue(json.loads(output[0])["review_required"])
+        result = json.loads(output[-1])
         self.assertEqual(result["installed"]["id"], "release_notes")
         self.assertIn("not installed or executed", result["note"])
+
+    def test_skills_import_defaults_to_cancel_when_not_confirmed(self):
+        output = []
+        with patch("core.skill_linter.lint_skill", return_value=[]), patch(
+            "core.skill_linter.findings_as_json",
+            return_value={"valid": True, "errors": 0, "warnings": 0, "findings": []},
+        ), patch("yuki_cli.install_skill_file") as importer:
+            code = run_cli(
+                ["skills", "import", "/tmp/release-notes"],
+                input_fn=lambda _: "n",
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 1)
+        importer.assert_not_called()
+        self.assertTrue(json.loads(output[0])["review_required"])
+        self.assertTrue(json.loads(output[-1])["cancelled"])
+
+    def test_skills_import_refuses_lint_errors_even_with_yes(self):
+        output = []
+        with patch("core.skill_linter.lint_skill", return_value=[]), patch(
+            "core.skill_linter.findings_as_json",
+            return_value={"valid": False, "errors": 1, "warnings": 0, "findings": []},
+        ), patch("yuki_cli.install_skill_file") as importer:
+            code = run_cli(
+                ["skills", "import", "/tmp/release-notes", "--yes"],
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 1)
+        importer.assert_not_called()
+        self.assertIn("fix them before importing", json.loads(output[-1])["error"])
 
     def test_plugin_install_command_uses_validated_extension_store(self):
         output = []
