@@ -225,6 +225,20 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
     return {"id": value["id"], "name": value["name"], "path": str(destination)}
 
 
+def _has_symlink_component(path: Path) -> bool:
+    """Return True if an existing path component is a symlink or junction."""
+    for component in (path, *path.parents):
+        try:
+            if component.is_symlink():
+                return True
+            is_junction = getattr(component, "is_junction", None)
+            if callable(is_junction) and is_junction():
+                return True
+        except OSError:
+            return True
+    return False
+
+
 def install_skill_file(
     skill_file: str,
     *,
@@ -237,8 +251,8 @@ def install_skill_file(
     are not imported or executed. Imported instructions never grant permissions.
     """
     requested = Path(skill_file).expanduser()
-    if requested.is_symlink():
-        raise ValueError("Skill files and directories must not be symbolic links.")
+    if _has_symlink_component(requested):
+        raise ValueError("Skill files and their parent directories must not contain symbolic links or junctions.")
     if requested.is_dir():
         skill_root = requested.resolve()
         source_candidate = requested / "SKILL.md"
