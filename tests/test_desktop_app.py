@@ -92,6 +92,34 @@ class DesktopAppTests(unittest.TestCase):
                 self.assertIn(configured_model, message)
                 self.assertIn("ignore", message)
 
+    def test_empty_provider_environment_override_is_reported(self):
+        message = provider_environment_override(
+            "ollama",
+            "llama3.2:3b",
+            environ={"YUKI_PROVIDER": ""},
+        )
+        self.assertIn("YUKI_PROVIDER", message)
+        self.assertIn("(empty)", message)
+        self.assertIn("fail provider selection", message)
+
+    def test_empty_model_environment_override_is_reported(self):
+        cases = (
+            ("ollama", "YUKI_OLLAMA_MODEL"),
+            ("openai", "YUKI_OPENAI_MODEL"),
+            ("gemini", "YUKI_GEMINI_MODEL"),
+            ("hybrid", "YUKI_CLOUD_MODEL"),
+        )
+        for provider, variable in cases:
+            with self.subTest(provider=provider):
+                message = provider_environment_override(
+                    provider,
+                    "configured-model",
+                    environ={"YUKI_PROVIDER": provider, variable: ""},
+                )
+                self.assertIn(variable, message)
+                self.assertIn("(empty)", message)
+                self.assertIn("fail model selection", message)
+
     def test_provider_environment_override_ignores_unrelated_model_variables(self):
         message = provider_environment_override(
             "ollama",
