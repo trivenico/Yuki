@@ -9,6 +9,9 @@ import yaml
 
 from core.model_catalog import get_provider, list_providers
 from core.settings_store import MODEL_SETTING_BY_PROVIDER, PROVIDERS
+from core.config import load_config
+from providers.factory import create_provider
+from providers.openai_compatible import OpenAICompatibleProvider
 from core.model_selection import (
     _NoRedirectHandler, apply_model_selection, list_installed_ollama_models,
     model_selection_options, persist_model_selection, validate_model_selection,
@@ -97,6 +100,18 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertFalse(saved["voice_enabled"])
         self.assertEqual(saved["ollama_model"], "llama3.2:3b")
         self.assertNotIn("api_key", saved)
+
+    def test_persisted_selection_is_consumed_by_real_provider_factory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text("workspace: " + str(Path(tmp) / "workspace") + "\n", encoding="utf-8")
+            persist_model_selection({"provider": "openai", "model": "gpt-4.1-mini"}, path=path)
+            config = load_config(path)
+            self.assertEqual(config["provider"], "openai")
+            self.assertEqual(config["openai_model"], "gpt-4.1-mini")
+            provider = create_provider(config, environ={"OPENAI_API_KEY": "test-key"})
+            self.assertIsInstance(provider, OpenAICompatibleProvider)
+            self.assertEqual(provider.model, "gpt-4.1-mini")
 
     def test_unsupported_selection_does_not_create_config(self):
         with tempfile.TemporaryDirectory() as tmp:
