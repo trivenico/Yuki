@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
-from core.extension_store import install_extension, list_extensions, remove_extension
+from core.extension_store import install_extension, install_skill_file, list_extensions, remove_extension
 from core.skill_packs import install_skill_pack, load_installed_skill_packs, remove_skill_pack
 
 
@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
         actions.add_parser("list", help=f"List installed {kind} packs")
         install = actions.add_parser("install", help=f"Install a validated {kind} manifest from a local JSON file")
         install.add_argument("manifest", help="Path to the manifest JSON file")
+        if group == "skills":
+            skill_import = actions.add_parser(
+                "import", help="Import a SKILL.md document or directory containing SKILL.md"
+            )
+            skill_import.add_argument("source", help="Path to SKILL.md or its containing directory")
         remove = actions.add_parser("remove", help=f"Remove an installed {kind} pack by id")
         remove.add_argument("extension_id")
         if group == "skills":
@@ -109,6 +114,13 @@ def run_cli(
     if args.command in {"skills", "plugins"}:
         kind = "skill" if args.command == "skills" else "plugin"
         try:
+            if kind == "skill" and args.extension_action == "import":
+                result = install_skill_file(args.source)
+                _write_json({
+                    "installed": result,
+                    "note": "Only SKILL.md instructions were imported; companion scripts and resources were not installed or executed.",
+                }, output_fn)
+                return 0
             if kind == "skill" and args.extension_action == "packs":
                 if args.pack_action == "list":
                     installed, errors = load_installed_skill_packs()
