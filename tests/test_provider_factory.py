@@ -28,6 +28,20 @@ class ProviderFactoryTests(unittest.TestCase):
                 environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "not-a-number"},
             )
 
+    def test_provider_timeout_environment_is_shared_with_cloud_adapters(self):
+        cases = (
+            ("openai", {"YUKI_OPENAI_MODEL": "gpt-test", "OPENAI_API_KEY": "test-key"}),
+            ("anthropic", {"YUKI_ANTHROPIC_MODEL": "claude-test", "ANTHROPIC_API_KEY": "test-key"}),
+            ("deepseek", {"YUKI_DEEPSEEK_MODEL": "deepseek-test", "DEEPSEEK_API_KEY": "test-key"}),
+        )
+        for name, extra_env in cases:
+            with self.subTest(provider=name):
+                provider = create_provider(
+                    {"provider": name},
+                    environ={**extra_env, "YUKI_PROVIDER_TIMEOUT_SECONDS": "23"},
+                )
+                self.assertEqual(provider.timeout, 23.0)
+
     def test_provider_environment_override_takes_precedence_over_config(self):
         provider = create_provider(
             {"provider": "openai"},
