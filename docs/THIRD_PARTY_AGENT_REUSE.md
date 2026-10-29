@@ -83,6 +83,8 @@ The CLI lints the actual `SKILL.md` path for both file imports and directory imp
 The CLI path `yuki skills import` now prints a preview and the advisory lint report before installation, requires an explicit confirmation by default, refuses lint errors even when `--yes` is supplied, and installs only the validated SKILL.md instruction text. `--yes` is a deliberate non-interactive approval flag and should be used only after reviewing the source. This is an operator-facing confirmation, not a sandbox: imported instructions remain untrusted, and model prompt wording does not enforce tool permissions by itself.
 
 ### Extension-store boundary hardening
+Skill-import path validation now checks every existing component for symbolic links and, on Windows runtimes that expose it, junctions. This closes the straightforward case where `SKILL.md` itself is a regular file reached through a linked parent directory. Filesystem races between validation and reading remain a separate TOCTOU risk and need platform-specific hardening.
+
 
 A follow-up audit found that installed extension directories and JSON manifest paths could follow symbolic links. The extension store now rejects a symlinked installed_skills / installed_plugins directory, rejects symlinked manifest inputs, and requires manifest files discovered by loaders to be regular non-symlink files. Regression tests cover manifest-source symlinks, installed-manifest symlinks, and redirected store directories.
 
