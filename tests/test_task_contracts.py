@@ -9,6 +9,7 @@ from core.task_contracts import (
     ToolDefinition,
     ToolResult,
     VerificationResult,
+    validate_tool_call,
 )
 
 
@@ -48,6 +49,60 @@ class TaskContractTests(unittest.TestCase):
             ToolCall("task-1", "file.read", {"payload": "x" * 17_000})
         with self.assertRaises(ValueError):
             ToolCall("task-1", "file.read", {"not-finite": float("nan")})
+
+    def test_registered_tool_schema_accepts_valid_call(self):
+        definition = ToolDefinition(
+            "file.read",
+            "Read one authorized workspace file",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "minLength": 1, "maxLength": 200},
+                    "max_lines": {"type": "integer", "minimum": 1, "maximum": 500},
+                },
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        )
+        call = ToolCall("task-1", "file.read", {"path": "README.md", "max_lines": 50})
+        self.assertIsNone(validate_tool_call(call, definition))
+
+    def test_registered_tool_schema_rejects_unknown_or_invalid_arguments(self):
+        definition = ToolDefinition(
+            "file.read",
+            "Read one authorized workspace file",
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string", "minLength": 1}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        )
+        invalid_calls = (
+            ToolCall("task-1", "file.read", {"path": ""}),
+            ToolCall("task-1", "file.read", {"path": "README.md", "execute": True}),
+            ToolCall("task-1", "file.read", {}),
+        )
+        for call in invalid_calls:
+            with self.subTest(arguments=dict(call.arguments)):
+                with self.assertRaises(ValueError):
+                    validate_tool_call(call, definition)
+
+    def test_registered_tool_schema_rejects_mismatched_tool_and_unsupported_keywords(self):
+        definition = ToolDefinition(
+            "file.read",
+            "Read one authorized workspace file",
+            {"type": "object", "properties": {"path": {"type": "string"}}},
+        )
+        with self.assertRaises(ValueError):
+            validate_tool_call(ToolCall("task-1", "shell.run", {"path": "x"}), definition)
+        unsupported = ToolDefinition(
+            "file.read",
+            "Read one authorized workspace file",
+            {"type": "object", "properties": {"path": {"type": "string", "pattern": ".*"}}},
+        )
+        with self.assertRaises(ValueError):
+            validate_tool_call(ToolCall("task-1", "file.read", {"path": "README.md"}), unsupported)
 
     def test_approval_is_bound_to_exact_call_not_only_call_id(self):
         call = ToolCall("task-1", "file.read", {"path": "safe.txt"}, call_id="call-1")
