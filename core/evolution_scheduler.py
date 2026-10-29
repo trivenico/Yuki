@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Callable
 
 from companion.evolution import DailyEvolutionCycle
@@ -35,31 +35,35 @@ class EvolutionScheduler:
         self.poll_seconds = poll_seconds
         self.on_error = on_error
         self._stop = Event()
+        self._run_lock = Lock()
         self._thread: Thread | None = None
 
     def run_if_due(self, now: datetime | None = None) -> bool:
-        """Run the review if enabled, past the local hour, and not yet run today."""
-        if not self.enabled:
-            return False
-        current = now if now is not None else datetime.now().astimezone()
-        if not isinstance(current, datetime) or current.tzinfo is None or current.utcoffset() is None:
-            raise ValueError("now must be timezone-aware.")
-        if current.hour < self.hour:
-            return False
-        status = self.cycle.status()
-        last = status.get("last_report_at")
-        if last:
-            try:
-                previous = datetime.fromisoformat(last)
-                if previous.tzinfo is None or previous.utcoffset() is None:
-                    raise ValueError("timestamp must include a timezone")
-                if previous.astimezone(current.tzinfo).date() == current.date():
-                    return False
-            except (TypeError, ValueError):
-                # Malformed state is not permission to overwrite it automatically.
-                raise RuntimeError("Evolution report timestamp is invalid; background run skipped.")
-        self.cycle.run_cycle(now=current)
-        return True
+        """Run at most one review per local date, including concurrent callers."""
+        # The status check and cycle write must be serialized together; otherwise
+        # two callers can both observe a stale report and run the same day's cycle.
+        with self._run_lock:
+            if not self.enabled:
+                return False
+            current = now if now is not None else datetime.now().astimezone()
+            if not isinstance(current, datetime) or current.tzinfo is None or current.utcoffset() is None:
+                raise ValueError("now must be timezone-aware.")
+            if current.hour < self.hour:
+                return False
+            status = self.cycle.status()
+            last = status.get("last_report_at")
+            if last:
+                try:
+                    previous = datetime.fromisoformat(last)
+                    if previous.tzinfo is None or previous.utcoffset() is None:
+                        raise ValueError("timestamp must include a timezone")
+                    if previous.astimezone(current.tzinfo).date() == current.date():
+                        return False
+                except (TypeError, ValueError):
+                    # Malformed state is not permission to overwrite it automatically.
+                    raise RuntimeError("Evolution report timestamp is invalid; background run skipped.")
+            self.cycle.run_cycle(now=current)
+            return True
 
     def start(self) -> None:
         if not self.enabled or (self._thread and self._thread.is_alive()):
