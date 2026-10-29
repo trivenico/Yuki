@@ -145,7 +145,7 @@ def _check_files(frontmatter: dict[str, Any], skill_dir: Path) -> Iterator[LintF
             if files_seen > _MAX_FILES_SCANNED:
                 yield _warn("scan-limit", "directory scan reached its safety limit; some files were not checked.")
                 break
-            if not script.is_file() or script.suffix.lower() not in {".py", ".sh", ".bash"}:
+            if script.is_symlink() or not script.is_file() or script.suffix.lower() not in {".py", ".sh", ".bash"}:
                 continue
             try:
                 if script.stat().st_size > _MAX_SCRIPT_BYTES:
