@@ -21,7 +21,7 @@ The `Windows desktop package` GitHub Actions workflow builds a per-user installe
 
 For a validated CI build, open the workflow run in GitHub Actions and download the `yuki-windows-x64` artifact. Run `Yuki-Setup.exe` to install under your LocalAppData Programs folder; administrator privileges are not required. The installer creates Start Menu shortcuts for the desktop GUI and console runtime. The portable ZIP contains the same onedir app folders plus the default configuration and docs.
 
-Ollama remains a separate install and must be running locally with the selected model available. The packaged app copies its bundled default configuration into a writable per-user data directory on first launch and preserves an existing user configuration on subsequent launches. A version tag (`vX.Y.Z`) triggers the Windows GitHub Release containing the installer and portable ZIP after the Windows packaging job succeeds. The Linux tarball is currently uploaded as a CI artifact; Linux release publishing still needs to be wired into the release job.
+Ollama remains a separate install and must be running locally with the selected model available. The packaged app copies its bundled default configuration into a writable per-user data directory on first launch and preserves an existing user configuration on subsequent launches. A version tag (`vX.Y.Z`) triggers the Windows GitHub Release containing the installer and portable ZIP after the Windows packaging job succeeds. The Linux tarball is published to the tagged GitHub Release after the Linux packaging job succeeds.
 
 ## Local AI provider (default)
 
