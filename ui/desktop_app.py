@@ -464,6 +464,15 @@ def run_desktop() -> None:
 
         def check_provider() -> None:
             selected = provider_value.get()
+            environment_provider = os.environ.get("YUKI_PROVIDER", "").strip().lower()
+            if environment_provider and environment_provider != selected:
+                messagebox.showwarning(
+                    "Provider overridden by environment",
+                    f"YUKI_PROVIDER is set to '{environment_provider}', so the runtime will ignore the UI selection '{selected}'. "
+                    "Remove or update YUKI_PROVIDER and restart Yuki before checking the selected provider.",
+                    parent=window,
+                )
+                return
             try:
                 from core.config import load_config
                 from providers.factory import create_provider
