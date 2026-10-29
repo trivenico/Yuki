@@ -1,4 +1,5 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
+import atexit
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
@@ -198,6 +199,8 @@ def main():
         on_error=lambda exc: print(f"Yuki background evolution skipped ({type(exc).__name__})."),
     )
     evolution_scheduler.start()
+    # Also stop the daemon worker on exceptional runtime shutdown paths.
+    atexit.register(evolution_scheduler.stop)
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
