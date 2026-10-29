@@ -29,7 +29,7 @@ Navigation must not pretend a page exists when only a runtime command is availab
 6. **Useful empty/error states:** explain setup steps when Ollama, a model, credentials, optional dependencies, or an extension are missing.
 7. **Accessible and responsive:** keyboard navigation, visible focus, readable contrast, resizable layout, and a useful minimum window size.
 8. **Progressive disclosure:** keep the default chat simple; place advanced provider, automation, security, and developer controls in clear secondary views.
-9. **Portable by design:** UI must work on supported Windows packaging and source launchers; avoid machine-specific absolute paths.
+9. **Portable by design:** UI must work on supported Windows and Linux packaging/source launchers; avoid machine-specific absolute paths.
 10. **No fake capabilities:** a navigation item is not proof that a feature is implemented. Mark unavailable or incomplete features honestly.
 
 ## Planned next stages
@@ -44,9 +44,9 @@ Navigation must not pretend a page exists when only a runtime command is availab
 - Track guarded `/task` runs in a durable SQLite ledger and expose `/tasks`, `/task show ID`, plus desktop task-history/new-task shortcuts. Active execution cancellation is explicitly not claimed; only queued task records can currently be cancelled. Successful model responses remain `awaiting_verification`. The `/task verify ID --file PATH` command records file-presence/hash evidence only. Add `--contains "expected text"` to check a literal UTF-8 substring in files up to 1 MiB; this records a match or mismatch but deliberately does not mark the task `completed`. Artifact checks alone do not prove the full task goal.
 
 For project acceptance, `/task test ID --project "relative/project/path"` requests a fresh high-risk approval before executing that project's Python `unittest` suite. It is limited to projects inside the configured Yuki workspace, uses no shell, has a 120-second timeout, and records the actual exit code and test count. A non-zero exit, timeout, or zero discovered tests leaves the task `awaiting_verification`; a passing non-empty suite can mark it complete. This is evidence for that test suite only, not a guarantee of overall correctness. Project tests are executable code and should be reviewed before approval.
-- Add automated headless UI construction tests and hosted Windows package smoke tests.
-- Evaluate a richer UI toolkit (for example, PySide6 or the existing optional webview approach) after comparing accessibility, packaging size, maintenance, and Windows reliability. Do not introduce a second frontend runtime until the current shared-runtime contract remains covered.
+- Add automated headless UI construction tests and hosted Windows/Linux package smoke tests.
+- Evaluate a richer UI toolkit (for example, PySide6 or the existing optional webview approach) after comparing accessibility, packaging size, maintenance, and Windows/Linux reliability. Do not introduce a second frontend runtime until the current shared-runtime contract remains covered.
 
 ## Validation boundary
 
-Hosted CI can validate syntax, unit tests, packaging, and runtime smoke tests. It cannot fully prove interactive Windows usability, screen-reader behavior, GPU/display quirks, microphone access, or real local Ollama inference on the user's own device. Those require explicit acceptance testing on supported Windows hardware.
+Hosted CI can validate syntax, unit tests, packaging, and runtime smoke tests. It cannot fully prove interactive Windows/Linux usability, screen-reader behavior, GPU/display quirks, microphone access, or real local Ollama inference on the user's own device. Those require explicit acceptance testing on supported Windows or Linux hardware.
