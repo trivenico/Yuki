@@ -123,6 +123,8 @@ def create_provider(config=None, *, environ=None):
             cloud_model,
             api_key_env=str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")),
             base_url=str(env.get("YUKI_CLOUD_BASE_URL", "https://api.openai.com/v1")),
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+            environ=env,
         )
     raw_tasks = str(env.get("YUKI_CLOUD_TASKS", "")).strip()
     cloud_tasks = [item.strip() for item in raw_tasks.split(",") if item.strip()]
