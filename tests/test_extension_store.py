@@ -333,6 +333,40 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertTrue(remove_extension("example_docs", "plugin", root=self.data))
         self.assertEqual(load_installed_mcp_servers(root=self.data), [])
 
+    def test_install_rejects_symlinked_manifest_source(self):
+        source = self.write_manifest("real.json", self.skill_manifest())
+        linked = self.source / "linked.json"
+        try:
+            linked.symlink_to(source)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is unavailable")
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            install_extension(str(linked), "skill", root=self.data)
+
+    def test_installed_skill_loader_ignores_symlinked_manifest(self):
+        folder = self.data / "installed_skills"
+        folder.mkdir(parents=True)
+        outside = self.write_manifest("outside.json", self.skill_manifest())
+        try:
+            (folder / "linked.json").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is unavailable")
+        self.assertEqual(load_installed_skills(root=self.data), [])
+        listing = list_extensions("skill", root=self.data)
+        self.assertEqual(len(listing), 1)
+        self.assertFalse(listing[0]["valid"])
+
+    def test_extension_store_directory_cannot_be_redirected_by_symlink(self):
+        outside = self.root / "outside-store"
+        outside.mkdir()
+        self.data.mkdir()
+        try:
+            (self.data / "installed_skills").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Directory symlink creation is unavailable")
+        with self.assertRaisesRegex(ValueError, "directory must not be a symbolic link"):
+            load_installed_skills(root=self.data)
+
     def test_duplicate_id_cannot_overwrite_installed_skill(self):
         source = self.write_manifest("skill.json", self.skill_manifest())
         install_extension(str(source), "skill", root=self.data)
