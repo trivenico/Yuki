@@ -58,9 +58,9 @@ class MCPClientEndpointTests(unittest.TestCase):
         )
         result = client._rpc("tools/list", {})
 
-        self.assertEqual(client._pinned_address, "93.184.216.34")
+        self.assertEqual(client._resolved_address, (2, 1, 6, ("93.184.216.34", 443)))
         connection_cls.assert_called_once_with(
-            "mcp.example.com", "93.184.216.34", timeout=2
+            "mcp.example.com", (2, 1, 6, ("93.184.216.34", 443)), timeout=2
         )
         connection.request.assert_called_once()
         self.assertEqual(connection.request.call_args.args[1], "/rpc?mode=read")
@@ -75,6 +75,14 @@ class MCPClientEndpointTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(MCPError, "Non-public"):
             MCPHTTPClient("https://mcp.example.com/api", allowed_hosts={"mcp.example.com"})
+
+    @patch("core.mcp_client.socket.getaddrinfo")
+    def test_invalid_resolver_address_is_reported_as_mcp_error(self, getaddrinfo):
+        getaddrinfo.return_value = [(2, 1, 6, "", ("not-an-ip", 443))]
+        with self.assertRaisesRegex(MCPError, "valid addresses"):
+            MCPHTTPClient._validate_endpoint(
+                "https://mcp.example.com/api", {"mcp.example.com"}
+            )
 
     def test_requires_exact_allowlisted_host_and_https(self):
         with self.assertRaisesRegex(MCPError, "allow-list"):
