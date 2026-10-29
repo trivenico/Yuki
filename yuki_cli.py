@@ -19,6 +19,8 @@ from core.readiness import build_readiness_report
 from providers.factory import create_provider
 from core.extension_store import install_extension, install_github_skill, install_skill_file, list_extensions, remove_extension
 from core.skill_packs import install_skill_pack, load_installed_skill_packs, remove_skill_pack
+from core.model_catalog import list_providers
+from core.model_selection import list_installed_ollama_models, persist_model_selection
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="Guide first-run local Ollama setup; model downloads require confirmation")
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
+
+    models = sub.add_parser("models", help="List providers, inspect local models, or select a provider/model")
+    model_actions = models.add_subparsers(dest="model_action", required=True)
+    model_list = model_actions.add_parser("list", help="List supported and planned provider adapters")
+    model_list.add_argument("--supported-only", action="store_true", help="Show only providers wired into the runtime")
+    model_set = model_actions.add_parser("set", help="Persist a provider/model choice")
+    model_set.add_argument("provider", help="Runtime-supported provider ID")
+    model_set.add_argument("--model", help="Model ID; required for providers with model selection")
+    model_actions.add_parser("installed", help="Discover models from a local loopback Ollama server")
 
     for group, kind in (("skills", "skill"), ("plugins", "plugin")):
         extension = sub.add_parser(group, help=f"Manage installed {kind} packs")
@@ -193,6 +204,34 @@ def run_cli(
             return 0 if removed else 1
         except (ValueError, OSError) as exc:
             output_fn(f"Extension operation failed safely ({type(exc).__name__}): {str(exc)[:200]}")
+            return 2
+
+
+    if args.command == "models":
+        try:
+            if args.model_action == "list":
+                _write_json({"providers": list_providers(supported_only=args.supported_only)}, output_fn)
+                return 0
+            if args.model_action == "installed":
+                installed = list_installed_ollama_models()
+                _write_json({
+                    "provider": "ollama",
+                    "models": installed,
+                    "count": len(installed),
+                    "note": "Read-only local discovery; no model was downloaded or selected.",
+                }, output_fn)
+                return 0
+            selection = {"provider": args.provider}
+            if args.model is not None:
+                selection["model"] = args.model
+            selected = persist_model_selection(selection)
+            _write_json({
+                "selected": selected,
+                "note": "Saved to Yuki configuration. Restart an active runtime for the new selection to take effect.",
+            }, output_fn)
+            return 0
+        except (ValueError, OSError, RuntimeError) as exc:
+            output_fn(f"Model operation failed safely ({type(exc).__name__}): {str(exc)[:200]}")
             return 2
 
     if args.command == "doctor":
