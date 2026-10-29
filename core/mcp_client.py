@@ -16,13 +16,16 @@ class MCPError(RuntimeError):
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPS transport pinned to a previously validated IP address."""
 
-    def __init__(self, host, address, *, timeout):
+    def __init__(self, host, resolved_address, *, timeout):
         super().__init__(host, port=443, timeout=timeout, context=ssl.create_default_context())
-        self._pinned_address = address
+        self._resolved_address = resolved_address
 
     def connect(self):
-        raw = socket.create_connection((self._pinned_address, self.port), self.timeout)
+        family, socktype, proto, sockaddr = self._resolved_address
+        raw = socket.socket(family, socktype, proto)
+        raw.settimeout(self.timeout)
         try:
+            raw.connect(sockaddr)
             self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
         except Exception:
             raw.close()
@@ -43,14 +46,19 @@ class MCPHTTPClient:
         # Resolve once for the actual transport, reject any non-public answer, and
         # connect to this exact IP while retaining hostname-based TLS verification.
         try:
-            addresses = sorted({item[4][0] for item in socket.getaddrinfo(
-                self._host, 443, type=socket.SOCK_STREAM
-            )})
+            resolved = socket.getaddrinfo(self._host, 443, type=socket.SOCK_STREAM)
+            addresses = {item[4][0] for item in resolved}
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
                 raise MCPError("Non-public MCP destinations are blocked.")
-            self._pinned_address = addresses[0]
-        except OSError as exc:
-            raise MCPError("MCP host could not be resolved.") from exc
+            # Preserve the resolver's socket family and sockaddr so IPv4 and IPv6
+            # addresses are connected directly without another DNS lookup.
+            self._resolved_address = next(
+                (item[0], item[1], item[2], item[4])
+                for item in resolved
+                if item[4][0] in addresses
+            )
+        except (OSError, ValueError, IndexError) as exc:
+            raise MCPError("MCP host could not be resolved to a valid public address.") from exc
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
         self.timeout = timeout
@@ -73,11 +81,12 @@ class MCPHTTPClient:
         if not allowed or host not in allowed:
             raise MCPError("MCP host is not on the explicit allow-list.")
         try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
+            resolved = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            addresses = {item[4][0] for item in resolved}
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
                 raise MCPError("Non-public MCP destinations are blocked.")
-        except OSError as exc:
-            raise MCPError("MCP host could not be resolved.") from exc
+        except (OSError, ValueError, IndexError) as exc:
+            raise MCPError("MCP host could not be resolved to valid addresses.") from exc
         return endpoint.strip()
 
     def _rpc(self, method, params=None, *, notification=False):
@@ -91,7 +100,7 @@ class MCPHTTPClient:
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         connection = _PinnedHTTPSConnection(
-            self._host, self._pinned_address, timeout=self.timeout
+            self._host, self._resolved_address, timeout=self.timeout
         )
         try:
             connection.request(
