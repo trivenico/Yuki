@@ -33,13 +33,21 @@ def main() -> int:
         default=os.environ.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"),
         help="Installed Ollama model (default: YUKI_OLLAMA_MODEL or llama3.2:3b).",
     )
+    # Defer environment parsing until after argparse handles --help. A malformed
+    # environment default must not prevent a user from discovering CLI usage.
     parser.add_argument(
         "--timeout",
         type=float,
-        default=os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45"),
+        default=None,
         help="Request timeout in seconds (1-120; defaults to YUKI_PROVIDER_TIMEOUT_SECONDS or 45).",
     )
     args = parser.parse_args()
+    if args.timeout is None:
+        raw_timeout = os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", "45")
+        try:
+            args.timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            parser.error(f"argument --timeout: invalid float value: {raw_timeout!r}")
 
     try:
         provider = OllamaProvider(base_url=args.base_url, model=args.model, timeout=args.timeout)
