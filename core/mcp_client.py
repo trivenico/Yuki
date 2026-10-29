@@ -35,10 +35,14 @@ class MCPHTTPClient:
     def _validate_endpoint(endpoint, allowed_hosts):
         if not isinstance(endpoint, str) or len(endpoint) > 2048:
             raise MCPError("MCP endpoint must be a bounded URL.")
-        parts = urlsplit(endpoint.strip())
-        host = (parts.hostname or "").lower().rstrip(".")
+        try:
+            parts = urlsplit(endpoint.strip())
+            host = (parts.hostname or "").lower().rstrip(".")
+            port = parts.port
+        except ValueError as exc:
+            raise MCPError("MCP endpoint URL is malformed.") from exc
         allowed = frozenset(str(h).lower().rstrip(".") for h in allowed_hosts)
-        if parts.scheme != "https" or not host or parts.username or parts.password or parts.port not in (None, 443):
+        if parts.scheme != "https" or not host or parts.username or parts.password or port not in (None, 443):
             raise MCPError("Only HTTPS MCP endpoints on the default port are accepted.")
         if not allowed or host not in allowed:
             raise MCPError("MCP host is not on the explicit allow-list.")
