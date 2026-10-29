@@ -113,6 +113,20 @@ class ModelCatalogTests(unittest.TestCase):
             self.assertIsInstance(provider, OpenAICompatibleProvider)
             self.assertEqual(provider.model, "gpt-4.1-mini")
 
+    def test_environment_provider_and_model_override_saved_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text("workspace: " + str(Path(tmp) / "workspace") + "\n", encoding="utf-8")
+            persist_model_selection({"provider": "openai", "model": "gpt-4.1-mini"}, path=path)
+            config = load_config(path)
+            provider = create_provider(
+                config,
+                environ={"YUKI_PROVIDER": "ollama", "YUKI_OLLAMA_MODEL": "qwen2.5:7b"},
+            )
+        from providers.ollama import OllamaProvider
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.model, "qwen2.5:7b")
+
     def test_unsupported_selection_does_not_create_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.yaml"
