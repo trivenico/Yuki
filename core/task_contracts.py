@@ -98,6 +98,7 @@ class ToolDefinition:
         schema = _validate_json_object(self.input_schema, "Tool input schema", 8_000)
         if schema.get("type") != "object":
             raise ValueError("Tool input schema must declare type='object'.")
+        _validate_schema_definition(schema)
         if not isinstance(self.risk, RiskLevel):
             raise ValueError("Tool risk must be a RiskLevel.")
         if not isinstance(self.side_effecting, bool):
@@ -149,6 +150,54 @@ _SCHEMA_KEYS = {
     "enum", "minLength", "maxLength", "minItems", "maxItems",
     "minimum", "maximum", "description", "title", "default",
 }
+
+
+
+def _validate_schema_definition(schema: Mapping[str, Any], path: str = "$") -> None:
+    if not isinstance(schema, Mapping):
+        raise ValueError(f"Invalid schema at {path}: expected an object.")
+    unknown = set(schema) - _SCHEMA_KEYS
+    if unknown:
+        raise ValueError(f"Unsupported schema keyword(s) at {path}: {', '.join(sorted(unknown))}.")
+    expected = schema.get("type")
+    allowed_types = {"object", "array", "string", "boolean", "integer", "number", "null"}
+    if expected not in allowed_types:
+        raise ValueError(f"Unsupported or missing schema type at {path}.")
+    for key in ("minLength", "maxLength", "minItems", "maxItems"):
+        if key in schema and (
+            isinstance(schema[key], bool) or not isinstance(schema[key], int) or schema[key] < 0
+        ):
+            raise ValueError(f"{key} must be a non-negative integer at {path}.")
+    for key in ("minimum", "maximum"):
+        if key in schema and (
+            isinstance(schema[key], bool) or not isinstance(schema[key], (int, float))
+        ):
+            raise ValueError(f"{key} must be numeric at {path}.")
+    for lower, upper in (("minLength", "maxLength"), ("minItems", "maxItems"), ("minimum", "maximum")):
+        if lower in schema and upper in schema and schema[lower] > schema[upper]:
+            raise ValueError(f"{lower} cannot exceed {upper} at {path}.")
+    if "enum" in schema and not isinstance(schema["enum"], (list, tuple)):
+        raise ValueError(f"enum must be a list at {path}.")
+    if expected == "object":
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        additional = schema.get("additionalProperties", True)
+        if not isinstance(properties, Mapping) or not isinstance(required, (list, tuple)):
+            raise ValueError(f"Invalid object schema at {path}.")
+        if any(not isinstance(key, str) for key in properties):
+            raise ValueError(f"Invalid property name in schema at {path}.")
+        if any(not isinstance(key, str) for key in required) or len(set(required)) != len(required):
+            raise ValueError(f"Invalid required list in schema at {path}.")
+        if any(key not in properties for key in required):
+            raise ValueError(f"Required fields must be declared in properties at {path}.")
+        if not isinstance(additional, bool):
+            raise ValueError(f"additionalProperties must be a boolean at {path}.")
+        for key, child in properties.items():
+            _validate_schema_definition(child, f"{path}.{key}")
+    elif expected == "array":
+        if "items" not in schema:
+            raise ValueError(f"Array schema must declare items at {path}.")
+        _validate_schema_definition(schema["items"], f"{path}[]")
 
 
 def _schema_type_matches(value: Any, expected: str) -> bool:
