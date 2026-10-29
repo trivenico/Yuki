@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import tempfile
 import urllib.error
 import urllib.request
@@ -14,6 +15,8 @@ import yaml
 
 from core.model_catalog import get_provider, list_providers
 from core.portable_paths import config_path as resolve_config_path
+
+_MODEL_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -98,11 +101,11 @@ def validate_model_selection(selection: dict) -> dict:
             raise ValueError("This provider does not use a selectable model field.")
         normalized_model = ""
     else:
-        if not isinstance(model, str) or not model.strip() or len(model.strip()) > 120:
-            raise ValueError("Choose a model ID of 1 to 120 characters.")
-        if any(ord(ch) < 32 or ord(ch) == 127 for ch in model):
-            raise ValueError("Model ID cannot contain control characters.")
+        if not isinstance(model, str):
+            raise ValueError("Model ID must be text.")
         normalized_model = model.strip()
+        if not _MODEL_ID_PATTERN.fullmatch(normalized_model):
+            raise ValueError("Model ID must be 1 to 120 characters and use only letters, numbers, '.', '_', ':', '/', or '-'.")
     return {"provider": provider_id, "model": normalized_model}
 
 
