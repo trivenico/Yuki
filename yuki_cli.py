@@ -17,7 +17,7 @@ from collections.abc import Callable, Sequence
 from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
-from core.extension_store import install_extension, install_skill_file, list_extensions, remove_extension
+from core.extension_store import install_extension, install_github_skill, install_skill_file, list_extensions, remove_extension
 from core.skill_packs import install_skill_pack, load_installed_skill_packs, remove_skill_pack
 
 
@@ -42,6 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
                 "import", help="Import a SKILL.md document or directory containing SKILL.md"
             )
             skill_import.add_argument("source", help="Path to SKILL.md or its containing directory")
+            skill_add = actions.add_parser(
+                "add", help="Preview and install a skill from a GitHub OWNER/REPO repository"
+            )
+            skill_add.add_argument("repository", help="GitHub repository, for example Leonxlnx/taste-skill")
+            skill_add.add_argument(
+                "--path", dest="skill_path",
+                help="Directory containing SKILL.md when the repository has multiple skills",
+            )
+            skill_add.add_argument(
+                "--yes", action="store_true",
+                help="Approve after printing the preview (use only when you have reviewed the repository)",
+            )
         remove = actions.add_parser("remove", help=f"Remove an installed {kind} pack by id")
         remove.add_argument("extension_id")
         if group == "skills":
@@ -114,6 +126,31 @@ def run_cli(
     if args.command in {"skills", "plugins"}:
         kind = "skill" if args.command == "skills" else "plugin"
         try:
+            if kind == "skill" and args.extension_action == "add":
+                def approve_preview(preview: dict) -> bool:
+                    _write_json({"review_required": True, "preview": preview}, output_fn)
+                    if args.yes:
+                        return True
+                    try:
+                        answer = input_fn("Install only the listed SKILL.md instructions at this pinned commit? [y/N] ")
+                    except (EOFError, KeyboardInterrupt):
+                        return False
+                    return answer.strip().lower() in {"y", "yes"}
+
+                result = install_github_skill(
+                    args.repository,
+                    skill_path=args.skill_path,
+                    approve=approve_preview,
+                )
+                _write_json({
+                    "result": result,
+                    "note": (
+                        "Only SKILL.md instructions were installed. Supporting files and scripts were previewed, "
+                        "but were not copied or executed. CLI and Desktop share installed skills only when configured "
+                        "to use the same YUKI_HOME/data root."
+                    ),
+                }, output_fn)
+                return 0 if result.get("installed", True) else 1
             if kind == "skill" and args.extension_action == "import":
                 result = install_skill_file(args.source)
                 _write_json({
