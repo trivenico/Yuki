@@ -98,6 +98,26 @@ class OllamaSmokeScriptTests(unittest.TestCase):
         self.assertIn("RuntimeError", output)
         self.assertNotIn("private path", output)
 
+    def test_invalid_explicit_timeout_is_a_cli_error_before_loading_config(self):
+        with patch.object(smoke_test_ollama, "load_config") as load, \
+             contextlib.redirect_stderr(io.StringIO()) as error:
+            with self.assertRaises(SystemExit) as raised:
+                smoke_test_ollama.main(["--timeout", "0"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("between 1 and 120 seconds", error.getvalue())
+        load.assert_not_called()
+
+    def test_help_does_not_load_config_or_contact_provider(self):
+        with patch.object(smoke_test_ollama, "load_config") as load, \
+             patch.object(smoke_test_ollama, "create_provider") as create, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(SystemExit) as raised:
+                smoke_test_ollama.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("--base-url", output.getvalue())
+        load.assert_not_called()
+        create.assert_not_called()
+
     def test_explicit_overrides_are_per_invocation_and_passed_to_provider_factory(self):
         config = {
             "provider": "ollama",
