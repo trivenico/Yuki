@@ -98,12 +98,43 @@ class ModelCatalogTests(unittest.TestCase):
                 persist_model_selection({"provider": "nvidia", "model": "example"}, path=path)
             self.assertFalse(path.exists())
 
-    def test_discovery_only_accepts_loopback_http_and_disables_redirects(self):
+    def test_discovery_requires_literal_loopback_ip_and_rejects_url_tricks(self):
+        invalid_urls = (
+            "http://localhost:11434",
+            "http://ollama.local:11434",
+            "http://192.0.2.10:11434",
+            "https://127.0.0.1:11434",
+            "http://user@127.0.0.1:11434",
+            "http://127.0.0.1:11434/api",
+            "http://127.0.0.1:11434?next=example",
+            "http://127.0.0.1:99999",
+        )
         with patch("core.model_selection.urllib.request.build_opener") as opener:
-            with self.assertRaisesRegex(ValueError, "loopback"):
-                list_installed_ollama_models("http://192.0.2.10:11434")
+            for url in invalid_urls:
+                with self.subTest(url=url), self.assertRaises(ValueError):
+                    list_installed_ollama_models(url)
         opener.assert_not_called()
         self.assertIsNone(_NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://evil.example/"))
+
+    def test_discovery_rejects_invalid_timeout_without_network(self):
+        with patch("core.model_selection.urllib.request.build_opener") as opener:
+            for timeout in (True, 0, 5.1, "2"):
+                with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                    list_installed_ollama_models(timeout=timeout)
+        opener.assert_not_called()
+
+    def test_discovery_handles_bad_json_wrong_shape_and_oversized_body(self):
+        bad_payloads = (
+            b"not json",
+            json.dumps({"models": {}}).encode(),
+            b"x" * 500_001,
+        )
+        with patch("core.model_selection.urllib.request.build_opener") as opener:
+            for payload in bad_payloads:
+                opener.return_value.open.return_value = _Response(payload)
+                with self.subTest(length=len(payload)):
+                    self.assertEqual(list_installed_ollama_models(), [])
+        self.assertEqual(opener.return_value.open.call_count, len(bad_payloads))
 
     def test_discovery_bounds_and_deduplicates_models(self):
         payload = json.dumps({"models": [{"name": "llama3.2:3b"}, {"name": "llama3.2:3b"}, {"name": ""}]}).encode()
