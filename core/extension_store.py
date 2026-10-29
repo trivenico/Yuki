@@ -193,14 +193,26 @@ def install_extension(manifest_path: str, kind: str, *, root: Path | None = None
 
 
 def install_skill_file(skill_file: str, *, root: Path | None = None) -> dict:
-    """Import an Agent Skills-style SKILL.md as a declarative, non-executable prompt skill.
+    """Import an Agent Skills-style document or directory as a declarative prompt skill.
 
-    Only the SKILL.md document is imported. Sibling scripts and tools are ignored.
-    Imported instructions never grant policy permissions.
+    Directory imports currently consume only SKILL.md; sibling resources and scripts
+    are not imported or executed. Imported instructions never grant permissions.
     """
-    source = Path(skill_file).expanduser().resolve()
+    requested = Path(skill_file).expanduser()
+    if requested.is_symlink():
+        raise ValueError("Skill files and directories must not be symbolic links.")
+    if requested.is_dir():
+        skill_root = requested.resolve()
+        source_candidate = requested / "SKILL.md"
+        if source_candidate.is_symlink():
+            raise ValueError("SKILL.md must not be a symbolic link.")
+        source = source_candidate.resolve()
+        if source.parent != skill_root:
+            raise ValueError("SKILL.md must be located directly inside the selected skill directory.")
+    else:
+        source = requested.resolve()
     if source.name.lower() != "skill.md":
-        raise ValueError("Import an Agent Skills document named SKILL.md.")
+        raise ValueError("Import a skill directory containing SKILL.md or a document named SKILL.md.")
     try:
         if source.stat().st_size > MAX_MANIFEST_BYTES:
             raise ValueError("SKILL.md exceeds 64 KiB.")
