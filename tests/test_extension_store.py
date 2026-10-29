@@ -91,7 +91,7 @@ class ExtensionStoreTests(unittest.TestCase):
     def test_rejects_unknown_fields_and_non_json_skill_payloads(self):
         value = self.skill_manifest()
         value["python_module"] = "os"
-        with self.assertRaisesRegex(ValueError, "only"):
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
             validate_skill_manifest(value)
         value = self.skill_manifest(instructions="x" * 12001)
         with self.assertRaisesRegex(ValueError, "instructions"):
