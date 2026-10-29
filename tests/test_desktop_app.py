@@ -76,6 +76,22 @@ class DesktopAppTests(unittest.TestCase):
         )
         self.assertIsNone(message)
 
+    def test_provider_environment_override_warns_for_gemini_and_hybrid_models(self):
+        cases = (
+            ("gemini", "YUKI_GEMINI_MODEL", "gemini-2.5-pro"),
+            ("hybrid", "YUKI_CLOUD_MODEL", "cloud-model"),
+        )
+        for provider, variable, configured_model in cases:
+            with self.subTest(provider=provider):
+                message = provider_environment_override(
+                    provider,
+                    "ui-model",
+                    environ={"YUKI_PROVIDER": provider, variable: configured_model},
+                )
+                self.assertIn(variable, message)
+                self.assertIn(configured_model, message)
+                self.assertIn("ignore", message)
+
     def test_provider_environment_override_ignores_unrelated_model_variables(self):
         message = provider_environment_override(
             "ollama",
