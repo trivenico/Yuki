@@ -13,7 +13,8 @@ import threading
 from pathlib import Path
 
 from core.settings_store import BOOLEAN_SETTINGS, MODEL_SETTING_BY_PROVIDER, PROVIDERS, read_user_settings, save_user_settings
-from core.model_catalog import list_providers
+from core.model_catalog import get_provider, list_providers
+from core.model_selection import list_installed_ollama_models
 from core.perception import (
     PerceptionUnavailable,
     active_window_title,
@@ -463,9 +464,41 @@ def run_desktop() -> None:
 
         ttk.Label(ai_group, text="Ollama model").grid(row=2, column=0, sticky="w")
         model_value = tk.StringVar(value=current["ollama_model"])
-        ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=3, column=0, sticky="ew", pady=(3, 8))
+        ollama_models = [item["id"] for item in get_provider("ollama")["models"]]
+        ollama_model_picker = ttk.Combobox(
+            ai_group, textvariable=model_value, values=ollama_models,
+            state="normal", width=31,
+        )
+        ollama_model_picker.grid(row=3, column=0, sticky="ew", pady=(3, 3))
 
-        ttk.Label(ai_group, text="Selected cloud provider model").grid(row=4, column=0, sticky="w")
+        def refresh_ollama_models() -> None:
+            try:
+                discovered = list_installed_ollama_models()
+            except ValueError as exc:
+                messagebox.showwarning("Ollama model discovery blocked", str(exc), parent=window)
+                return
+            discovered_ids = [item["id"] for item in discovered]
+            ollama_model_picker.configure(values=list(dict.fromkeys(ollama_models + discovered_ids)))
+            if discovered_ids:
+                messagebox.showinfo(
+                    "Local Ollama models",
+                    "Found installed models:\\n" + "\\n".join(discovered_ids)
+                    + "\\n\\nNo model was downloaded or selected automatically.",
+                    parent=window,
+                )
+            else:
+                messagebox.showinfo(
+                    "Local Ollama models",
+                    "No installed models were found. Make sure Ollama is running locally. "
+                    "Yuki did not download anything.",
+                    parent=window,
+                )
+
+        ttk.Button(ai_group, text="Refresh installed local models", command=refresh_ollama_models).grid(
+            row=4, column=0, sticky="w", pady=(0, 8)
+        )
+
+        ttk.Label(ai_group, text="Selected cloud provider model").grid(row=5, column=0, sticky="w")
         cloud_model_values = {
             key: current.get(key, "") for key in MODEL_SETTING_BY_PROVIDER.values()
         }
@@ -473,12 +506,12 @@ def run_desktop() -> None:
         selected_model_key = {"value": cloud_model_key}
         cloud_model_value = tk.StringVar(value=cloud_model_values.get(cloud_model_key, "") if cloud_model_key else "")
         cloud_model_entry = ttk.Entry(ai_group, textvariable=cloud_model_value, width=34)
-        cloud_model_entry.grid(row=5, column=0, sticky="ew", pady=(3, 8))
+        cloud_model_entry.grid(row=6, column=0, sticky="ew", pady=(3, 8))
         if not cloud_model_key:
             cloud_model_entry.configure(state="disabled")
 
         provider_help = tk.StringVar()
-        ttk.Label(ai_group, textvariable=provider_help, wraplength=410).grid(row=6, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(ai_group, textvariable=provider_help, wraplength=410).grid(row=7, column=0, sticky="w", pady=(0, 6))
 
         def update_provider_help(*_args) -> None:
             notes = {
@@ -534,12 +567,12 @@ def run_desktop() -> None:
             else:
                 messagebox.showwarning("Provider not ready", f"{selected} is not ready. Check its local service, model installation, CLI authentication, or environment credentials. No model was downloaded.", parent=window)
 
-        ttk.Button(ai_group, text="Check provider readiness", command=check_provider).grid(row=7, column=0, sticky="w", pady=(2, 0))
+        ttk.Button(ai_group, text="Check provider readiness", command=check_provider).grid(row=8, column=0, sticky="w", pady=(2, 0))
         ttk.Label(
             ai_group,
             text="Changing provider takes effect after restart. Model selection does not download models. Cloud providers may transmit prompts to their service.",
             wraplength=410,
-        ).grid(row=8, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=9, column=0, sticky="w", pady=(8, 0))
 
         labels = {
             "voice_enabled": "Enable optional voice features",
