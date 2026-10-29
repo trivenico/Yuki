@@ -108,6 +108,46 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(skills[0].manifest["id"], "release_notes")
         self.assertIn("do not invent claims", skills[0].manifest["instructions"])
 
+    def test_imports_agent_skills_directory_containing_skill_md(self):
+        skill_dir = self.source / "release-notes"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: release-notes\ndescription: Draft accurate release notes.\n---\n"
+            "Summarize verified changes and preserve factual accuracy.\n",
+            encoding="utf-8",
+        )
+        # A companion script is deliberately ignored and never executed.
+        script = skill_dir / "install.py"
+        script.write_text("raise RuntimeError('must not execute')\n", encoding="utf-8")
+
+        installed = install_skill_file(str(skill_dir), root=self.data)
+        self.assertEqual(installed["id"], "release_notes")
+        skills = load_installed_skills(root=self.data)
+        self.assertEqual(len(skills), 1)
+        self.assertIn("preserve factual accuracy", skills[0].manifest["instructions"])
+
+    def test_agent_skills_directory_import_rejects_symlinked_skill_file(self):
+        skill_dir = self.source / "linked-skill"
+        skill_dir.mkdir()
+        outside = self.source / "outside.md"
+        outside.write_text(
+            "---\nname: linked_skill\ndescription: Valid description.\n---\nInstructions.\n",
+            encoding="utf-8",
+        )
+        try:
+            (skill_dir / "SKILL.md").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is not available in this environment")
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            install_skill_file(str(skill_dir), root=self.data)
+
+    def test_agent_skills_import_rejects_non_skill_directory_file(self):
+        skill_dir = self.source / "missing-skill"
+        skill_dir.mkdir()
+        (skill_dir / "README.md").write_text("not a skill", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            install_skill_file(str(skill_dir), root=self.data)
+
     def test_agent_skills_import_rejects_excessively_nested_frontmatter(self):
         source = self.source / "SKILL.md"
         nested = "[" * 2000 + "x" + "]" * 2000
