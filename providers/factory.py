@@ -19,7 +19,9 @@ def create_provider(config=None, *, environ=None):
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "ollama")).strip().lower()
+    # Keep direct factory calls consistent with config loading and ProviderManager:
+    # an explicit environment override wins over the YAML/config value.
+    selected = str(env.get("YUKI_PROVIDER", cfg.get("provider", "ollama"))).strip().lower()
     if selected == "mock":
         raise ValueError("provider must be one of: ollama, openai, gemini, hybrid (mock is test-only and cannot be selected at runtime).")
     if selected == "openai":
