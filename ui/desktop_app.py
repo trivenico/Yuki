@@ -601,8 +601,18 @@ def run_desktop() -> None:
 
     ttk.Button(sidebar, text="Settings", command=open_settings).pack(fill="x", pady=2)
     ttk.Button(extension_row, text="Settings", command=open_settings).pack(side="right", padx=(6, 0))
+    def choose_skill_directory() -> None:
+        directory = filedialog.askdirectory(
+            parent=root,
+            title="Choose a skill directory containing SKILL.md",
+            mustexist=True,
+        )
+        if directory:
+            send_text(f'/skills import "{directory}"')
+
     ttk.Button(extension_row, text="Install Plugin", command=lambda: choose_manifest("plugin")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Install Skill", command=lambda: choose_manifest("skill")).pack(side="right", padx=(6, 0))
+    ttk.Button(extension_row, text="Import Skill Folder", command=choose_skill_directory).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Import Skill", command=lambda: choose_manifest("agent_skill")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Readiness", command=lambda: send_text("/readiness")).pack(side="right", padx=(6, 0))
     ttk.Button(extension_row, text="Help", command=lambda: send_text("/help")).pack(side="right", padx=(6, 0))
