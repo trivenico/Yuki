@@ -1,3 +1,4 @@
+import http.client
 import json
 import unittest
 import urllib.error
@@ -61,6 +62,11 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         self.assertFalse(self.provider().is_available())
 
     @patch("providers.ollama.urllib.request.urlopen")
+    def test_availability_fails_closed_on_http_protocol_error(self, urlopen):
+        urlopen.side_effect = http.client.HTTPException("truncated HTTP response")
+        self.assertFalse(self.provider().is_available())
+
+    @patch("providers.ollama.urllib.request.urlopen")
     def test_generate_sends_non_streaming_request_and_returns_text(self, urlopen):
         urlopen.return_value = FakeResponse(json.dumps({
             "response": " YUKI_OK "
@@ -80,6 +86,12 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Local Ollama request failed") as raised:
             self.provider().generate("hello")
         self.assertNotIn("private endpoint detail", str(raised.exception))
+
+    @patch("providers.ollama.urllib.request.urlopen")
+    def test_generate_wraps_http_protocol_errors(self, urlopen):
+        urlopen.side_effect = http.client.HTTPException("truncated HTTP response")
+        with self.assertRaisesRegex(RuntimeError, "Local Ollama request failed"):
+            self.provider().generate("hello")
 
     @patch("providers.ollama.urllib.request.urlopen")
     def test_generate_rejects_invalid_json(self, urlopen):
@@ -110,6 +122,10 @@ class OllamaProviderRuntimeTests(unittest.TestCase):
     def test_rejects_invalid_timeout(self):
         with self.assertRaisesRegex(ValueError, "Timeout"):
             self.provider(timeout=0)
+
+    def test_rejects_boolean_timeout(self):
+        with self.assertRaisesRegex(ValueError, "Timeout"):
+            self.provider(timeout=True)
 
     def test_rejects_empty_prompt(self):
         with self.assertRaisesRegex(ValueError, "non-empty"):
