@@ -65,6 +65,20 @@ class ModelCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not supported"):
             validate_model_selection({"provider": "gemini_api", "model": "gemini-2.5-flash"})
 
+    def test_runtime_config_rejects_invalid_ollama_model_ids(self):
+        invalid_models = ("", "  ", "x" * 121, "bad\\nmodel", "model with spaces", None, 7)
+        for model in invalid_models:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "config.yaml"
+                if model is None:
+                    path.write_text("ollama_model: null\\n", encoding="utf-8")
+                elif isinstance(model, int):
+                    path.write_text("ollama_model: 7\\n", encoding="utf-8")
+                else:
+                    path.write_text(yaml.safe_dump({"ollama_model": model}), encoding="utf-8")
+                with self.subTest(model=repr(model)), self.assertRaisesRegex(RuntimeError, "ollama_model"):
+                    load_config(path)
+
     def test_model_id_validation_matches_runtime_settings(self):
         valid = ("llama3.2:3b", "qwen2.5:7b", "org/model-v2", "model_name")
         for value in valid:
