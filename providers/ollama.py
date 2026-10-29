@@ -1,6 +1,7 @@
 """Local Ollama chat/generation adapter using only the Python standard library."""
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -38,7 +39,7 @@ class OllamaProvider:
         self.timeout = timeout
 
     def is_available(self):
-        """Return true only when the local server responds and the model is installed."""
+        """Return true only when the server responds and the model is installed."""
         request = urllib.request.Request(
             self.base_url + "/api/tags",
             headers={"Accept": "application/json"},
@@ -47,7 +48,8 @@ class OllamaProvider:
         try:
             with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
+            # Includes abrupt disconnects and malformed/truncated HTTP responses.
             return False
         if len(raw) > 500_000:
             return False
@@ -83,7 +85,7 @@ class OllamaProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama request failed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")
