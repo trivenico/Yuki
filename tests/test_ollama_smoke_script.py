@@ -106,16 +106,19 @@ class OllamaSmokeScriptTests(unittest.TestCase):
         }
         provider = Mock()
         provider.is_available.return_value = False
-        with patch.dict(os.environ, {}, clear=True):
-            code, _ = self.run_main(
-                config,
-                provider,
-                argv=["--model", "override-model", "--base-url", "http://127.0.0.1:11435", "--timeout", "23"],
-            )
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(smoke_test_ollama, "load_config", return_value=config), \
+             patch.object(smoke_test_ollama, "create_provider", return_value=provider) as create, \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = smoke_test_ollama.main([
+                "--model", "override-model",
+                "--base-url", "http://127.0.0.1:11435",
+                "--timeout", "23",
+            ])
         self.assertEqual(code, 4)
         self.assertEqual(config["ollama_model"], "saved-model")
         self.assertEqual(config["ollama_base_url"], "http://127.0.0.1:11434")
-        args, kwargs = smoke_test_ollama.create_provider.call_args
+        args, kwargs = create.call_args
         self.assertEqual(args[0]["ollama_model"], "override-model")
         self.assertEqual(args[0]["ollama_base_url"], "http://127.0.0.1:11435")
         self.assertEqual(kwargs["environ"]["YUKI_OLLAMA_MODEL"], "override-model")
