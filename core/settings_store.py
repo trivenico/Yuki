@@ -26,9 +26,22 @@ BOOLEAN_SETTINGS = (
     "camera_access_enabled",
     "desktop_control_enabled",
 )
-PROVIDERS = ("ollama", "openai", "gemini", "hybrid")
+PROVIDERS = ("ollama", "openai", "gemini", "hybrid", "anthropic", "deepseek", "kimi", "minimax", "openrouter", "tokenrouter")
+MODEL_SETTING_BY_PROVIDER = {
+    "openai": "openai_model",
+    "anthropic": "anthropic_model",
+    "deepseek": "deepseek_model",
+    "kimi": "kimi_model",
+    "minimax": "minimax_model",
+    "openrouter": "openrouter_model",
+    "tokenrouter": "tokenrouter_model",
+}
+OPTIONAL_MODEL_SETTINGS = tuple(
+    key for key in MODEL_SETTING_BY_PROVIDER.values() if key != "openai_model"
+)
 MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}")
-ALLOWED_SETTINGS = {"provider", "ollama_model", "openai_model", *BOOLEAN_SETTINGS}
+MODEL_SETTINGS = ("ollama_model", "openai_model", *OPTIONAL_MODEL_SETTINGS)
+ALLOWED_SETTINGS = {"provider", *MODEL_SETTINGS, *BOOLEAN_SETTINGS}
 
 
 def _read_raw(target: Path) -> dict:
@@ -53,15 +66,19 @@ def read_user_settings(path=None):
         "provider": raw.get("provider", "ollama"),
         "ollama_model": raw.get("ollama_model", "llama3.2:3b"),
         "openai_model": raw.get("openai_model", "gpt-4.1-mini"),
+        **{key: raw.get(key, "") for key in OPTIONAL_MODEL_SETTINGS},
     }
     if not isinstance(result["provider"], str) or result["provider"].strip().lower() not in PROVIDERS:
         raise RuntimeError("Configured provider must be one of: " + ", ".join(PROVIDERS) + ".")
     result["provider"] = result["provider"].strip().lower()
-    for model_key in ("ollama_model", "openai_model"):
+    for model_key in MODEL_SETTINGS:
         value = result[model_key]
-        if not isinstance(value, str) or not MODEL_PATTERN.fullmatch(value.strip()):
+        if not isinstance(value, str):
             raise RuntimeError(f"Configured {model_key} is invalid.")
-        result[model_key] = value.strip()
+        value = value.strip()
+        if (model_key in {"ollama_model", "openai_model"} or value) and not MODEL_PATTERN.fullmatch(value):
+            raise RuntimeError(f"Configured {model_key} is invalid.")
+        result[model_key] = value
     for key in BOOLEAN_SETTINGS:
         result[key] = raw.get(key, key in {"firewall_dry_run", "agent_council_enabled"})
         if not isinstance(result[key], bool):
@@ -83,10 +100,13 @@ def save_user_settings(changes: Mapping[str, object], path=None):
             if not isinstance(value, str) or value.strip().lower() not in PROVIDERS:
                 raise ValueError("Provider must be one of: " + ", ".join(PROVIDERS) + ".")
             normalized[key] = value.strip().lower()
-        elif key in {"ollama_model", "openai_model"}:
-            if not isinstance(value, str) or not MODEL_PATTERN.fullmatch(value.strip()):
+        elif key in MODEL_SETTINGS:
+            if not isinstance(value, str):
                 raise ValueError("Model name is invalid.")
-            normalized[key] = value.strip()
+            model = value.strip()
+            if (key in {"ollama_model", "openai_model"} or model) and not MODEL_PATTERN.fullmatch(model):
+                raise ValueError("Model name is invalid.")
+            normalized[key] = model
         else:
             if not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false.")
