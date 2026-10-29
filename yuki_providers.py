@@ -22,7 +22,7 @@ class ProviderManager:
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
         }
-        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "ollama"))).strip().lower()
+        self._selected: Optional[str] = str(self._environ.get("YUKI_PROVIDER", self._config.get("provider", "ollama"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
