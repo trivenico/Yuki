@@ -96,13 +96,18 @@ class TaskContractTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             validate_tool_call(ToolCall("task-1", "shell.run", {"path": "x"}), definition)
-        unsupported = ToolDefinition(
-            "file.read",
-            "Read one authorized workspace file",
-            {"type": "object", "properties": {"path": {"type": "string", "pattern": ".*"}}},
-        )
         with self.assertRaises(ValueError):
-            validate_tool_call(ToolCall("task-1", "file.read", {"path": "README.md"}), unsupported)
+            ToolDefinition(
+                "file.read",
+                "Read one authorized workspace file",
+                {"type": "object", "properties": {"path": {"type": "string", "pattern": ".*"}}},
+            )
+        with self.assertRaises(ValueError):
+            ToolDefinition(
+                "file.read",
+                "Read one authorized workspace file",
+                {"type": "object", "properties": {"path": {"type": "string", "maxLength": "many"}}},
+            )
 
     def test_approval_is_bound_to_exact_call_not_only_call_id(self):
         call = ToolCall("task-1", "file.read", {"path": "safe.txt"}, call_id="call-1")
