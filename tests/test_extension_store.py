@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.extension_store import (
     InstalledPromptSkill,
@@ -197,7 +198,7 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(installed["compatibility"], "instructions-only")
         skills = load_installed_skills(root=self.data)
         self.assertEqual(len(skills), 1)
-        self.assertEqual(len(skills[0].manifest["instructions"]), len(document.split("---\\n", 2)[-1].strip()))
+        self.assertEqual(len(skills[0].manifest["instructions"]), len(document.split("---\n", 2)[-1].strip()))
 
     def test_github_skill_install_rejects_invalid_repository_and_ambiguous_skills(self):
         with self.assertRaisesRegex(ValueError, "OWNER/REPO"):
