@@ -101,11 +101,18 @@ jobs:
       - name: Assemble portable bundle and installer
         shell: pwsh
         run: |
-          Copy-Item config.yaml dist/config.yaml
-          Copy-Item README.md dist/README.md
-          New-Item -ItemType Directory -Force dist/docs | Out-Null
-          Copy-Item docs/INSTALLATION.md dist/docs/INSTALLATION.md
-          Compress-Archive -Path dist/YukiDesktop,dist/YukiRuntime,dist/config.yaml,dist/README.md,dist/docs/INSTALLATION.md -DestinationPath dist/Yuki-Windows-x64.zip -Force
+          # Build the portable ZIP from a dedicated staging root so the archive
+          # has deterministic top-level paths regardless of Compress-Archive's
+          # handling of mixed files and directories.
+          $portableRoot = "dist/portable"
+          Remove-Item -LiteralPath $portableRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$portableRoot/docs" | Out-Null
+          Copy-Item -Recurse -Force dist/YukiDesktop "$portableRoot/YukiDesktop"
+          Copy-Item -Recurse -Force dist/YukiRuntime "$portableRoot/YukiRuntime"
+          Copy-Item config.yaml "$portableRoot/config.yaml"
+          Copy-Item README.md "$portableRoot/README.md"
+          Copy-Item docs/INSTALLATION.md "$portableRoot/docs/INSTALLATION.md"
+          Compress-Archive -Path "$portableRoot/*" -DestinationPath dist/Yuki-Windows-x64.zip -Force
           $candidateRoots = @("${env:ProgramFiles(x86)}", "$env:ProgramFiles", "$env:ChocolateyInstall\lib\innosetup")
           $iscc = Get-ChildItem -Path $candidateRoots -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if (-not $iscc) {
