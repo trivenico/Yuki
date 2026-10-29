@@ -138,7 +138,7 @@ class ToolCall:
     @property
     def fingerprint(self) -> str:
         canonical = json.dumps(
-            {"task_id": self.task_id, "tool_name": self.tool_name, "arguments": self.arguments},
+            {"task_id": self.task_id, "tool_name": self.tool_name, "arguments": _thaw_json(self.arguments)},
             ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"),
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -382,5 +382,7 @@ class TaskEvent:
             raise ValueError("Unsupported task event schema version.")
         _require_text(self.occurred_at, "Event timestamp", maximum=80)
         object.__setattr__(
-            self, "payload", _validate_json_object(self.payload, "Task event payload", _MAX_EVENT_PAYLOAD)
+            self,
+            "payload",
+            _freeze_json(_validate_json_object(self.payload, "Task event payload", _MAX_EVENT_PAYLOAD)),
         )
