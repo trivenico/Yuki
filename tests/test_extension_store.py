@@ -191,6 +191,15 @@ class ExtensionStoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "port"):
                     validate_plugin_manifest(self.plugin_manifest(endpoint=endpoint))
 
+    def test_plugin_endpoint_rejects_non_default_https_ports(self):
+        for endpoint in (
+            "https://mcp.example.com:8443/api",
+            "https://mcp.example.com:444/api",
+        ):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaisesRegex(ValueError, "default HTTPS port"):
+                    validate_plugin_manifest(self.plugin_manifest(endpoint=endpoint))
+
     def test_plugin_endpoint_rejects_invalid_dns_hostname_labels(self):
         for host in ("-mcp.example.com", "mcp-.example.com", "mcp..example.com"):
             with self.subTest(host=host):
