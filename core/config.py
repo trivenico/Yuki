@@ -141,9 +141,11 @@ def load_config(path=None):
             raise RuntimeError("YUKI_GITHUB_ALLOWED_ROOTS may contain at most 50 paths.")
     else:
         github_roots = _string_list(raw, "github_allowed_roots")
-    configured_model = _optional_model_setting(raw, "ollama_model", "llama3.2:3b")
     model_override = os.environ.get("YUKI_OLLAMA_MODEL")
-    model = model_override.strip() if model_override is not None else configured_model
+    if model_override is not None:
+        model = model_override.strip()
+    else:
+        model = _optional_model_setting(raw, "ollama_model", "llama3.2:3b")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model):
         raise RuntimeError("ollama_model must be a valid model identifier of at most 120 characters.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
