@@ -109,6 +109,7 @@ def create_provider(config=None, *, environ=None):
     local = OllamaProvider(
         base_url=str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434"))),
         model=str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "llama3.2:3b"))),
+        timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
     )
     if selected == "ollama":
         return local
