@@ -76,6 +76,42 @@ def build_runtime_command() -> list[str]:
     return [sys.executable, "-u", str(ROOT / "main.py")]
 
 
+def provider_environment_override(
+    selected_provider: str,
+    selected_model: str,
+    *,
+    environ=None,
+) -> str | None:
+    """Explain when environment overrides make desktop provider settings ineffective."""
+    env = os.environ if environ is None else environ
+    provider_override = str(env.get("YUKI_PROVIDER", "")).strip().lower()
+    selected = selected_provider.strip().lower()
+    if provider_override and provider_override != selected:
+        return (
+            f"YUKI_PROVIDER is set to '{provider_override}', so the runtime will ignore "
+            f"the UI selection '{selected}'. Remove or update YUKI_PROVIDER and restart Yuki."
+        )
+
+    model_env_by_provider = {
+        "ollama": "YUKI_OLLAMA_MODEL",
+        "openai": "YUKI_OPENAI_MODEL",
+        "anthropic": "YUKI_ANTHROPIC_MODEL",
+        "deepseek": "YUKI_DEEPSEEK_MODEL",
+        "kimi": "YUKI_KIMI_MODEL",
+        "minimax": "YUKI_MINIMAX_MODEL",
+        "openrouter": "YUKI_OPENROUTER_MODEL",
+        "tokenrouter": "YUKI_TOKENROUTER_MODEL",
+    }
+    model_env_name = model_env_by_provider.get(selected)
+    environment_model = str(env.get(model_env_name, "")).strip() if model_env_name else ""
+    if environment_model and environment_model != selected_model.strip():
+        return (
+            f"{model_env_name} is set to '{environment_model}', so the runtime will ignore "
+            "the model entered in Settings. Remove or update that environment variable and restart Yuki."
+        )
+    return None
+
+
 def run_desktop() -> None:
     """Run the desktop console; operational commands retain CLI approval gates."""
     try:
@@ -464,34 +500,12 @@ def run_desktop() -> None:
 
         def check_provider() -> None:
             selected = provider_value.get()
-            environment_provider = os.environ.get("YUKI_PROVIDER", "").strip().lower()
-            if environment_provider and environment_provider != selected:
-                messagebox.showwarning(
-                    "Provider overridden by environment",
-                    f"YUKI_PROVIDER is set to '{environment_provider}', so the runtime will ignore the UI selection '{selected}'. "
-                    "Remove or update YUKI_PROVIDER and restart Yuki before checking the selected provider.",
-                    parent=window,
-                )
-                return
-
-            model_env_by_provider = {
-                "ollama": "YUKI_OLLAMA_MODEL",
-                "openai": "YUKI_OPENAI_MODEL",
-                "anthropic": "YUKI_ANTHROPIC_MODEL",
-                "deepseek": "YUKI_DEEPSEEK_MODEL",
-                "kimi": "YUKI_KIMI_MODEL",
-                "minimax": "YUKI_MINIMAX_MODEL",
-                "openrouter": "YUKI_OPENROUTER_MODEL",
-                "tokenrouter": "YUKI_TOKENROUTER_MODEL",
-            }
-            model_env_name = model_env_by_provider.get(selected)
-            environment_model = os.environ.get(model_env_name, "").strip() if model_env_name else ""
             selected_model = model_value.get().strip() if selected == "ollama" else cloud_model_value.get().strip()
-            if environment_model and environment_model != selected_model:
+            override_message = provider_environment_override(selected, selected_model)
+            if override_message:
                 messagebox.showwarning(
-                    "Model overridden by environment",
-                    f"{model_env_name} is set to '{environment_model}', so the runtime will ignore the model entered in Settings. "
-                    "Remove or update that environment variable and restart Yuki before checking the selected model.",
+                    "Settings overridden by environment",
+                    override_message,
                     parent=window,
                 )
                 return
