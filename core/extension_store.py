@@ -68,7 +68,12 @@ def _extension_root(kind: str, root: Path | None = None) -> Path:
     folder = {"skill": "installed_skills", "plugin": "installed_plugins"}.get(kind)
     if folder is None:
         raise ValueError("Unknown extension kind.")
-    return base / folder
+    destination = base / folder
+    # Installed-extension directories are trust boundaries; never traverse a
+    # symlink here, which could redirect reads/writes outside Yuki's data root.
+    if destination.is_symlink():
+        raise ValueError("Installed extension directory must not be a symbolic link.")
+    return destination
 
 
 def _unique_object(pairs):
@@ -83,6 +88,8 @@ def _unique_object(pairs):
 
 def _read_json(path: Path) -> dict:
     try:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Extension manifest must be a regular, non-symlink file.")
         if path.stat().st_size > MAX_MANIFEST_BYTES:
             raise ValueError("Manifest exceeds 64 KiB.")
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
@@ -195,7 +202,10 @@ def validate_plugin_manifest(value: dict) -> dict:
 
 
 def install_extension(manifest_path: str, kind: str, *, root: Path | None = None) -> dict:
-    source = Path(manifest_path).expanduser().resolve()
+    requested_source = Path(manifest_path).expanduser()
+    if requested_source.is_symlink():
+        raise ValueError("Extension manifest must not be a symbolic link.")
+    source = requested_source.resolve()
     manifest = _read_json(source)
     value = validate_skill_manifest(manifest) if kind == "skill" else validate_plugin_manifest(manifest)
     destination = _extension_root(kind, root) / f"{value['id']}.json"
