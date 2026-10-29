@@ -143,6 +143,110 @@ class ToolCall:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+
+_SCHEMA_KEYS = {
+    "type", "properties", "required", "additionalProperties", "items",
+    "enum", "minLength", "maxLength", "minItems", "maxItems",
+    "minimum", "maximum", "description", "title", "default",
+}
+
+
+def _schema_type_matches(value: Any, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, Mapping)
+    if expected == "array":
+        return isinstance(value, (list, tuple))
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return False
+
+
+def _validate_value_against_schema(value: Any, schema: Mapping[str, Any], path: str) -> None:
+    if not isinstance(schema, Mapping):
+        raise ValueError(f"Unsupported schema at {path}: expected an object.")
+    unknown = set(schema) - _SCHEMA_KEYS
+    if unknown:
+        raise ValueError(f"Unsupported schema keyword(s) at {path}: {', '.join(sorted(unknown))}.")
+    expected = schema.get("type")
+    allowed_types = {"object", "array", "string", "boolean", "integer", "number", "null"}
+    if expected not in allowed_types:
+        raise ValueError(f"Unsupported or missing schema type at {path}.")
+    if not _schema_type_matches(value, expected):
+        raise ValueError(f"Tool argument {path} must be {expected}.")
+
+    if "enum" in schema:
+        choices = schema["enum"]
+        if not isinstance(choices, (list, tuple)) or value not in choices:
+            raise ValueError(f"Tool argument {path} is not an allowed value.")
+
+    if expected == "object":
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        additional = schema.get("additionalProperties", True)
+        if not isinstance(properties, Mapping) or not isinstance(required, (list, tuple)):
+            raise ValueError(f"Invalid object schema at {path}.")
+        if any(not isinstance(key, str) for key in properties):
+            raise ValueError(f"Invalid property name in schema at {path}.")
+        if any(not isinstance(key, str) for key in required) or len(set(required)) != len(required):
+            raise ValueError(f"Invalid required list in schema at {path}.")
+        if any(key not in properties for key in required):
+            raise ValueError(f"Required fields must be declared in properties at {path}.")
+        if not isinstance(additional, bool):
+            raise ValueError(f"additionalProperties must be a boolean at {path}.")
+        missing = set(required) - set(value)
+        if missing:
+            raise ValueError(f"Missing required tool argument(s) at {path}: {', '.join(sorted(missing))}.")
+        if not additional:
+            extras = set(value) - set(properties)
+            if extras:
+                raise ValueError(f"Unexpected tool argument(s) at {path}: {', '.join(sorted(extras))}.")
+        for key, child in value.items():
+            if key in properties:
+                _validate_value_against_schema(child, properties[key], f"{path}.{key}")
+
+    elif expected == "array":
+        if "items" not in schema:
+            raise ValueError(f"Array schema must declare items at {path}.")
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            raise ValueError(f"Tool argument {path} has too few items.")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise ValueError(f"Tool argument {path} has too many items.")
+        for index, child in enumerate(value):
+            _validate_value_against_schema(child, schema["items"], f"{path}[{index}]")
+
+    elif expected == "string":
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise ValueError(f"Tool argument {path} is too short.")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise ValueError(f"Tool argument {path} is too long.")
+
+    elif expected in {"integer", "number"}:
+        if "minimum" in schema and value < schema["minimum"]:
+            raise ValueError(f"Tool argument {path} is below the minimum.")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise ValueError(f"Tool argument {path} is above the maximum.")
+
+
+def validate_tool_call(call: ToolCall, definition: ToolDefinition) -> None:
+    """Fail closed unless the untrusted call matches a registered tool's schema.
+
+    This deliberately supports a documented JSON Schema subset; unsupported keywords
+    are rejected rather than silently ignored. This validates shape, not authorization.
+    """
+    if not isinstance(call, ToolCall) or not isinstance(definition, ToolDefinition):
+        raise TypeError("A ToolCall and ToolDefinition are required.")
+    if call.tool_name != definition.name:
+        raise ValueError("Tool call name does not match the registered tool.")
+    _validate_value_against_schema(call.arguments, definition.input_schema, "$")
+
 @dataclass(frozen=True)
 class ApprovalDecision:
     """A decision bound to one exact call fingerprint; it is not a reusable blanket grant."""
