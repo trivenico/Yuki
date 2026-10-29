@@ -424,8 +424,12 @@ def run_desktop() -> None:
         ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=3, column=0, sticky="ew", pady=(3, 8))
 
         ttk.Label(ai_group, text="Selected cloud provider model").grid(row=4, column=0, sticky="w")
+        cloud_model_values = {
+            key: current.get(key, "") for key in MODEL_SETTING_BY_PROVIDER.values()
+        }
         cloud_model_key = MODEL_SETTING_BY_PROVIDER.get(provider_value.get())
-        cloud_model_value = tk.StringVar(value=current.get(cloud_model_key, "") if cloud_model_key else "")
+        selected_model_key = {"value": cloud_model_key}
+        cloud_model_value = tk.StringVar(value=cloud_model_values.get(cloud_model_key, "") if cloud_model_key else "")
         cloud_model_entry = ttk.Entry(ai_group, textvariable=cloud_model_value, width=34)
         cloud_model_entry.grid(row=5, column=0, sticky="ew", pady=(3, 8))
         if not cloud_model_key:
@@ -447,8 +451,12 @@ def run_desktop() -> None:
                 "openrouter": "Third-party model gateway: set OPENROUTER_API_KEY in the launch environment. Prompts go through that service.",
                 "tokenrouter": "Third-party model gateway: set TOKENROUTER_API_KEY in the launch environment. Prompts go through that service.",
             }
+            previous_key = selected_model_key["value"]
+            if previous_key:
+                cloud_model_values[previous_key] = cloud_model_value.get()
             model_key = MODEL_SETTING_BY_PROVIDER.get(provider_value.get())
-            cloud_model_value.set(current.get(model_key, "") if model_key else "")
+            selected_model_key["value"] = model_key
+            cloud_model_value.set(cloud_model_values.get(model_key, "") if model_key else "")
             cloud_model_entry.configure(state="normal" if model_key else "disabled")
             provider_help.set(notes.get(provider_value.get(), "Select a provider."))
         provider_value.trace_add("write", update_provider_help)
