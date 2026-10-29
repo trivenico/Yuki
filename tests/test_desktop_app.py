@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ui.desktop_app import CommandHistory, ROOT, build_runtime_command
+from ui.desktop_app import CommandHistory, ROOT, build_runtime_command, provider_environment_override
 
 
 class DesktopAppTests(unittest.TestCase):
@@ -45,6 +45,44 @@ class DesktopAppTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "not found in the adjacent"):
                     build_runtime_command()
+
+    def test_provider_environment_override_warns_when_provider_differs(self):
+        message = provider_environment_override(
+            "ollama",
+            "llama3.2:3b",
+            environ={"YUKI_PROVIDER": "openai"},
+        )
+        self.assertIn("YUKI_PROVIDER", message)
+        self.assertIn("openai", message)
+        self.assertIn("ollama", message)
+
+    def test_provider_environment_override_warns_when_model_differs(self):
+        message = provider_environment_override(
+            "ollama",
+            "llama3.2:3b",
+            environ={"YUKI_OLLAMA_MODEL": "qwen2.5:7b"},
+        )
+        self.assertIn("YUKI_OLLAMA_MODEL", message)
+        self.assertIn("qwen2.5:7b", message)
+
+    def test_provider_environment_override_allows_matching_values(self):
+        message = provider_environment_override(
+            "ollama",
+            "llama3.2:3b",
+            environ={
+                "YUKI_PROVIDER": "ollama",
+                "YUKI_OLLAMA_MODEL": "llama3.2:3b",
+            },
+        )
+        self.assertIsNone(message)
+
+    def test_provider_environment_override_ignores_unrelated_model_variables(self):
+        message = provider_environment_override(
+            "ollama",
+            "llama3.2:3b",
+            environ={"YUKI_OPENAI_MODEL": "gpt-4.1-mini"},
+        )
+        self.assertIsNone(message)
 
     def test_command_history_moves_backward_and_forward(self):
         history = CommandHistory()
