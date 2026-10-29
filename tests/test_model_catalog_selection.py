@@ -79,6 +79,12 @@ class ModelCatalogTests(unittest.TestCase):
                 with self.subTest(model=repr(model)), self.assertRaisesRegex(RuntimeError, "ollama_model"):
                     load_config(path)
 
+    def test_ollama_provider_rejects_malformed_model_ids(self):
+        from providers.ollama import OllamaProvider
+        for model in ("", " ", "x" * 121, "bad\nmodel", "model with spaces", "model\tname", None, 7):
+            with self.subTest(model=repr(model)), self.assertRaises(ValueError):
+                OllamaProvider(model=model)
+
     def test_model_id_validation_matches_runtime_settings(self):
         valid = ("llama3.2:3b", "qwen2.5:7b", "org/model-v2", "model_name")
         for value in valid:
