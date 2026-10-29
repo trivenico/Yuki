@@ -71,13 +71,14 @@ The cycle analyzes only explicitly recorded observations; it does not call a mod
 
 ## Import Agent Skills `SKILL.md`
 
-Yuki can import the Markdown `SKILL.md` format as a declarative prompt skill. From the interactive runtime:
+Yuki can import the Markdown `SKILL.md` format as a declarative prompt skill, either by selecting the file or its containing directory.
 
 ```text
-/skills import path/to/SKILL.md
-/skills
+python yuki_cli.py skills import path/to/SKILL.md
+python yuki_cli.py skills import path/to/skill-directory
+python yuki_cli.py skills list
 ```
 
-The desktop UI includes an **Import Skill** action for selecting the document. The importer validates bounded YAML frontmatter (`name` and `description`) and a bounded Markdown body, then stores it in Yuki's existing user-installed skill registry. It imports only that one document: sibling scripts, executables, and tools are not installed or run. The resulting instructions remain untrusted guidance and do not grant permissions or bypass the approval gate. Review imported skill content before using it, especially if it came from an untrusted source.
+From the interactive runtime, use `/skills import path/to/SKILL.md` or `/skills import path/to/skill-directory`. The desktop UI includes **Import Skill** for a file and **Import Skill Folder** for a directory. The directory must contain `SKILL.md` at its top level. The importer validates bounded YAML frontmatter (`name` and `description`) and a bounded Markdown body, then stores it in Yuki's existing user-installed skill registry. It currently imports only that document: sibling scripts, executables, and resources are not installed or run. The resulting instructions remain untrusted guidance and do not grant permissions or bypass the approval gate. Review imported skill content before using it, especially if it came from an untrusted source.
 
 This is a deliberately limited compatibility bridge, not full implementation of every Agent Skills ecosystem feature. Tool declarations, referenced resources, executable scripts, and framework-specific metadata are not imported automatically.
