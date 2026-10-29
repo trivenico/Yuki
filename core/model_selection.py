@@ -70,9 +70,11 @@ def list_installed_ollama_models(
         if not isinstance(item, dict):
             continue
         model_id = item.get("name")
-        if isinstance(model_id, str) and model_id.strip() and len(model_id) <= 120 and model_id not in seen:
-            result.append({"id": model_id, "label": model_id, "note": "Installed locally"})
-            seen.add(model_id)
+        if (isinstance(model_id, str) and model_id.strip() and len(model_id) <= 120
+                and not any(ord(ch) < 32 or ord(ch) == 127 for ch in model_id) and model_id.strip() not in seen):
+            normalized_id = model_id.strip()
+            result.append({"id": normalized_id, "label": normalized_id, "note": "Installed locally"})
+            seen.add(normalized_id)
     return result
 
 
