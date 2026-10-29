@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from core.extension_store import (
     InstalledPromptSkill,
     _atomic_json,
     install_extension,
+    install_github_skill,
     install_skill_file,
     list_extensions,
     load_installed_mcp_servers,
@@ -147,6 +149,75 @@ class ExtensionStoreTests(unittest.TestCase):
         (skill_dir / "README.md").write_text("not a skill", encoding="utf-8")
         with self.assertRaises(ValueError):
             install_skill_file(str(skill_dir), root=self.data)
+
+    def test_github_skill_install_requires_approval_and_records_pinned_source(self):
+        document = (
+            "---\nname: design-taste-frontend\ndescription: Improve frontend visual quality.\n---\n"
+            + ("Make deliberate design decisions and test the page.\n" * 900)
+        )
+        commit = "a" * 40
+        tree = {
+            "truncated": False,
+            "tree": [
+                {"path": "skills/taste-skill/SKILL.md", "type": "blob"},
+                {"path": "skills/taste-skill/references/type.md", "type": "blob"},
+                {"path": "skills/taste-skill/scripts/draw.mjs", "type": "blob"},
+                {"path": "README.md", "type": "blob"},
+            ],
+        }
+        def fake_api(url, *, max_bytes=5 * 1024 * 1024):
+            if url.endswith("/repos/Leonxlnx/taste-skill"):
+                return {"default_branch": "main"}
+            if "/commits/" in url:
+                return {"sha": commit}
+            if "/git/trees/" in url:
+                return tree
+            if "/contents/skills/taste-skill/SKILL.md?ref=" in url:
+                return {
+                    "type": "file",
+                    "encoding": "base64",
+                    "content": base64.b64encode(document.encode()).decode(),
+                }
+            raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+        with patch("core.extension_store._github_api_json", side_effect=fake_api):
+            cancelled = install_github_skill(
+                "Leonxlnx/taste-skill", root=self.data, approve=lambda preview: False
+            )
+        self.assertFalse(cancelled["installed"])
+        self.assertIn("skills/taste-skill/scripts/draw.mjs", cancelled["preview"]["executable_script_candidates"])
+        self.assertEqual(load_installed_skills(root=self.data), [])
+
+        with patch("core.extension_store._github_api_json", side_effect=fake_api):
+            installed = install_github_skill(
+                "Leonxlnx/taste-skill", root=self.data, approve=lambda preview: True
+            )
+        self.assertEqual(installed["source_commit"], commit)
+        self.assertEqual(installed["source_path"], "skills/taste-skill/SKILL.md")
+        self.assertEqual(installed["compatibility"], "instructions-only")
+        skills = load_installed_skills(root=self.data)
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(len(skills[0].manifest["instructions"]), len(document.split("---\\n", 2)[-1].strip()))
+
+    def test_github_skill_install_rejects_invalid_repository_and_ambiguous_skills(self):
+        with self.assertRaisesRegex(ValueError, "OWNER/REPO"):
+            install_github_skill("../evil/repo", root=self.data, approve=lambda _: True)
+
+        def fake_api(url, *, max_bytes=5 * 1024 * 1024):
+            if url.endswith("/repos/owner/repo"):
+                return {"default_branch": "main"}
+            if "/commits/" in url:
+                return {"sha": "b" * 40}
+            if "/git/trees/" in url:
+                return {"truncated": False, "tree": [
+                    {"path": "one/SKILL.md", "type": "blob"},
+                    {"path": "two/SKILL.md", "type": "blob"},
+                ]}
+            raise AssertionError(f"Unexpected GitHub API URL: {url}")
+
+        with patch("core.extension_store._github_api_json", side_effect=fake_api):
+            with self.assertRaisesRegex(ValueError, "Choose a skill with --path"):
+                install_github_skill("owner/repo", root=self.data, approve=lambda _: True)
 
     def test_agent_skills_import_rejects_excessively_nested_frontmatter(self):
         source = self.source / "SKILL.md"
