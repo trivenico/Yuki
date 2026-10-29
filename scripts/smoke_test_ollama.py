@@ -24,7 +24,7 @@ from core.config import load_config  # noqa: E402
 from providers.factory import create_provider  # noqa: E402
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Check the configured local Ollama endpoint and perform real inference."
     )
@@ -41,7 +41,7 @@ def main() -> int:
         type=float,
         help="Request timeout in seconds (1-120; default: YUKI_PROVIDER_TIMEOUT_SECONDS or 45).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         config = load_config()
