@@ -42,6 +42,19 @@ class ProviderFactoryTests(unittest.TestCase):
                 )
                 self.assertEqual(provider.timeout, 23.0)
 
+    def test_hybrid_cloud_adapter_receives_shared_timeout(self):
+        provider = create_provider(
+            {"provider": "hybrid", "ollama_model": "local-model"},
+            environ={
+                "YUKI_CLOUD_MODEL": "cloud-model",
+                "YUKI_PROVIDER_TIMEOUT_SECONDS": "23",
+                "OPENAI_API_KEY": "test-key",
+                "YUKI_CLOUD_TASKS": "summarize",
+            },
+        )
+        self.assertIsInstance(provider.cloud_provider, OpenAICompatibleProvider)
+        self.assertEqual(provider.cloud_provider.timeout, 23.0)
+
     def test_provider_environment_override_takes_precedence_over_config(self):
         provider = create_provider(
             {"provider": "openai"},
