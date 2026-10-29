@@ -36,6 +36,46 @@ class MCPClientEndpointTests(unittest.TestCase):
                 "https://mcp.example.com/api", {"mcp.example.com"}
             )
 
+
+    @patch("core.mcp_client.socket.getaddrinfo")
+    @patch("core.mcp_client._PinnedHTTPSConnection")
+    def test_rpc_uses_pinned_public_ip_and_does_not_follow_redirects(self, connection_cls, getaddrinfo):
+        getaddrinfo.return_value = [
+            (2, 1, 6, "", ("93.184.216.34", 443)),
+        ]
+        connection = connection_cls.return_value
+        response = connection.getresponse.return_value
+        response.status = 200
+        response.getheader.side_effect = lambda name, default=None: (
+            "application/json" if name == "Content-Type" else default
+        )
+        response.read.return_value = b'{"jsonrpc":"2.0","id":1,"result":{"ok":true}}'
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc?mode=read",
+            allowed_hosts={"mcp.example.com"},
+            timeout=2,
+        )
+        result = client._rpc("tools/list", {})
+
+        self.assertEqual(client._pinned_address, "93.184.216.34")
+        connection_cls.assert_called_once_with(
+            "mcp.example.com", "93.184.216.34", timeout=2
+        )
+        connection.request.assert_called_once()
+        self.assertEqual(connection.request.call_args.args[1], "/rpc?mode=read")
+        self.assertEqual(result, {"ok": True})
+        connection.close.assert_called_once()
+
+    @patch("core.mcp_client.socket.getaddrinfo")
+    def test_constructor_rejects_private_answer_from_transport_resolution(self, getaddrinfo):
+        getaddrinfo.side_effect = [
+            [(2, 1, 6, "", ("93.184.216.34", 443))],
+            [(2, 1, 6, "", ("127.0.0.1", 443))],
+        ]
+        with self.assertRaisesRegex(MCPError, "Non-public"):
+            MCPHTTPClient("https://mcp.example.com/api", allowed_hosts={"mcp.example.com"})
+
     def test_requires_exact_allowlisted_host_and_https(self):
         with self.assertRaisesRegex(MCPError, "allow-list"):
             MCPHTTPClient._validate_endpoint(
