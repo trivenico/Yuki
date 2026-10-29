@@ -54,7 +54,7 @@ from core.portable_paths import data_root
 from skills.base import Skill, SkillResult
 
 MAX_MANIFEST_BYTES = 64 * 1024
-MAX_SKILL_INSTRUCTIONS_CHARS = 48_000
+MAX_SKILL_INSTRUCTIONS_CHARS = 40_000
 MAX_GITHUB_API_BYTES = 5 * 1024 * 1024
 _GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
@@ -358,6 +358,8 @@ def install_github_skill(
     if not isinstance(repository, str) or not _GITHUB_REPOSITORY.fullmatch(repository):
         raise ValueError("Use a GitHub repository in OWNER/REPO format.")
     owner, repo = repository.split("/", 1)
+    if owner in {".", ".."} or repo in {".", ".."} or owner.startswith(".") or repo.startswith("."):
+        raise ValueError("GitHub owner and repository names must be valid path components.")
     encoded_repo = f"{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}"
     base = f"https://api.github.com/repos/{encoded_repo}"
     repo_info = _github_api_json(base)
@@ -373,11 +375,24 @@ def install_github_skill(
     entries = tree.get("tree")
     if not isinstance(entries, list) or tree.get("truncated"):
         raise ValueError("GitHub repository tree is invalid or too large to safely inspect.")
+    safe_entries = []
+    for item in entries:
+        if not isinstance(item, dict) or item.get("type") != "blob":
+            continue
+        path = item.get("path")
+        if not isinstance(path, str) or len(path) > 500:
+            continue
+        parts = path.split("/")
+        if (
+            path.startswith("/") or "\\" in path
+            or any(part in {"", ".", ".."} for part in parts)
+            or any(any(ord(char) < 32 or ord(char) == 127 for char in part) for part in parts)
+        ):
+            continue
+        safe_entries.append(item)
     skill_documents = [
-        item.get("path") for item in entries
-        if isinstance(item, dict) and item.get("type") == "blob"
-        and isinstance(item.get("path"), str)
-        and item["path"].split("/")[-1].lower() == "skill.md"
+        item["path"] for item in safe_entries
+        if item["path"].split("/")[-1].lower() == "skill.md"
     ]
     if skill_path:
         requested = skill_path.strip("/")
@@ -398,10 +413,8 @@ def install_github_skill(
     document_path = candidates[0]
     skill_dir = document_path.rsplit("/", 1)[0] if "/" in document_path else ""
     contained_files = sorted(
-        item["path"] for item in entries
-        if isinstance(item, dict) and item.get("type") == "blob"
-        and isinstance(item.get("path"), str)
-        and (item["path"].startswith(skill_dir + "/") if skill_dir else "/" not in item["path"])
+        item["path"] for item in safe_entries
+        if (item["path"].startswith(skill_dir + "/") if skill_dir else "/" not in item["path"])
     )
     scripts = [p for p in contained_files if p.lower().endswith((".py", ".js", ".mjs", ".sh", ".ps1", ".bat", ".cmd"))]
     preview = {
