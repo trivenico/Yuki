@@ -141,8 +141,12 @@ def load_config(path=None):
             raise RuntimeError("YUKI_GITHUB_ALLOWED_ROOTS may contain at most 50 paths.")
     else:
         github_roots = _string_list(raw, "github_allowed_roots")
-    model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", "llama3.2:3b"))).strip()
-    if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    model_value = os.environ.get("YUKI_OLLAMA_MODEL", raw.get("ollama_model", "llama3.2:3b"))
+    if not isinstance(model_value, str):
+        raise RuntimeError("ollama_model must be a valid model identifier string.")
+    model = model_value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model):
+        raise RuntimeError("ollama_model must be a non-empty valid model identifier of at most 120 characters.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
