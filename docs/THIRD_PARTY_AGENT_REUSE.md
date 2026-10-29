@@ -77,6 +77,8 @@ python yuki_cli.py skills add open-jarvis/OpenJarvis --path <verified-skill-dire
 Do not run these commands unattended as a production bootstrap: the user should inspect the preview and approve the selected skill. The repository may contain no compatible skill, many skills, or a different path after an upstream update.
 
 ### Local skill-import approval gate
+The CLI lints the actual `SKILL.md` path for both file imports and directory imports. Directory imports resolve to `<selected-directory>/SKILL.md`; a symlinked directory is not followed by the lint preview and is rejected by the import validation. A regression test covers directory-path lint selection.
+
 
 The CLI path `yuki skills import` now prints a preview and the advisory lint report before installation, requires an explicit confirmation by default, refuses lint errors even when `--yes` is supplied, and installs only the validated SKILL.md instruction text. `--yes` is a deliberate non-interactive approval flag and should be used only after reviewing the source. This is an operator-facing confirmation, not a sandbox: imported instructions remain untrusted, and model prompt wording does not enforce tool permissions by itself.
 
