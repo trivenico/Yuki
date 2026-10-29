@@ -42,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
                 "import", help="Import a SKILL.md document or directory containing SKILL.md"
             )
             skill_import.add_argument("source", help="Path to SKILL.md or its containing directory")
+            skill_import.add_argument(
+                "--yes", action="store_true",
+                help="Approve after displaying the local skill preview and lint report",
+            )
             skill_lint = actions.add_parser(
                 "lint", help="Run advisory quality and portability checks on a local SKILL.md"
             )
@@ -161,10 +165,37 @@ def run_cli(
                 _write_json(report, output_fn)
                 return 0 if report["valid"] else 1
             if kind == "skill" and args.extension_action == "import":
+                from core.skill_linter import findings_as_json, lint_skill
+
+                report = findings_as_json(lint_skill(args.source))
+                preview = {
+                    "source": args.source,
+                    "operation": "import SKILL.md instructions only",
+                    "lint_report": report,
+                    "execution": "No companion scripts or resources are copied or executed.",
+                }
+                _write_json({"review_required": True, "preview": preview}, output_fn)
+                if not report["valid"]:
+                    _write_json({
+                        "installed": False,
+                        "error": "Skill lint reported errors; fix them before importing.",
+                    }, output_fn)
+                    return 1
+                if not args.yes:
+                    try:
+                        answer = input_fn("Import these instructions as an untrusted prompt skill? [y/N] ")
+                    except (EOFError, KeyboardInterrupt):
+                        answer = "n"
+                    if not isinstance(answer, str) or answer.strip().lower() not in {"y", "yes"}:
+                        _write_json({"installed": False, "cancelled": True}, output_fn)
+                        return 1
                 result = install_skill_file(args.source)
                 _write_json({
                     "installed": result,
-                    "note": "Only SKILL.md instructions were imported; companion scripts and resources were not installed or executed.",
+                    "note": (
+                        "Only SKILL.md instructions were imported; companion scripts and resources were not "
+                        "installed or executed. Imported instructions do not grant permissions."
+                    ),
                 }, output_fn)
                 return 0
             if kind == "skill" and args.extension_action == "packs":
