@@ -338,8 +338,8 @@ class ExtensionStoreTests(unittest.TestCase):
         real_dir.mkdir()
         skill_file = real_dir / "SKILL.md"
         skill_file.write_text(
-            "---\\nname: safe-skill\\ndescription: A safe test skill.\\n---\\n"
-            "## When to Use\\nUse this skill for a test.\\n",
+            "---\nname: safe-skill\ndescription: A safe test skill.\n---\n"
+            "## When to Use\nUse this skill for a test.\n",
             encoding="utf-8",
         )
         linked_dir = self.root / "linked-skill"
