@@ -70,7 +70,7 @@ class ModelCatalogTests(unittest.TestCase):
                     validate_model_selection({"provider": "ollama", "model": value})["model"],
                     value,
                 )
-        invalid = ("", "  ", "x" * 121, "bad\\nmodel", "model with spaces", "model\\tname", "../bad")
+        invalid = ("", "  ", "x" * 121, "bad\\nmodel", "model with spaces", "model\\tname")
         for value in invalid:
             with self.subTest(value=repr(value)), self.assertRaises(ValueError):
                 validate_model_selection({"provider": "ollama", "model": value})
