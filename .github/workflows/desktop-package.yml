@@ -99,6 +99,47 @@ jobs:
           & $iscc "/DAppVersion=$version" installer/yuki.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify release bundle contents
+        shell: pwsh
+        run: |
+          $requiredFiles = @(
+            "dist/YukiDesktop/YukiDesktop.exe",
+            "dist/YukiRuntime/YukiRuntime.exe",
+            "dist/Yuki-Setup.exe",
+            "dist/Yuki-Windows-x64.zip"
+          )
+          foreach ($path in $requiredFiles) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Required release file is missing: $path"
+            }
+            if ((Get-Item -LiteralPath $path).Length -le 0) {
+              throw "Required release file is empty: $path"
+            }
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead(
+            (Resolve-Path "dist/Yuki-Windows-x64.zip").Path
+          )
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace("\\", "/") })
+            $requiredEntries = @(
+              "YukiDesktop/YukiDesktop.exe",
+              "YukiRuntime/YukiRuntime.exe",
+              "config.yaml",
+              "README.md",
+              "docs/INSTALLATION.md"
+            )
+            foreach ($entry in $requiredEntries) {
+              if ($entries -notcontains $entry) {
+                throw "Portable bundle is missing required entry: $entry"
+              }
+            }
+          }
+          finally {
+            $archive.Dispose()
+          }
+
       - name: Upload Windows desktop artifacts
         uses: actions/upload-artifact@v4
         with:
