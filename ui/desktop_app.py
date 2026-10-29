@@ -482,8 +482,8 @@ def run_desktop() -> None:
             if discovered_ids:
                 messagebox.showinfo(
                     "Local Ollama models",
-                    "Found installed models:\\n" + "\\n".join(discovered_ids)
-                    + "\\n\\nNo model was downloaded or selected automatically.",
+                    "Found installed models:\n" + "\n".join(discovered_ids)
+                    + "\n\nNo model was downloaded or selected automatically.",
                     parent=window,
                 )
             else:
