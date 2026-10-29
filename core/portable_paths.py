@@ -26,8 +26,6 @@ def _default_user_root() -> Path:
     if system == "Windows":
         base = os.environ.get("LOCALAPPDATA")
         return Path(base).expanduser() / "Yuki" if base else Path.home() / "AppData" / "Local" / "Yuki"
-    if system == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "Yuki"
     base = os.environ.get("XDG_DATA_HOME")
     return (Path(base).expanduser() if base else Path.home() / ".local" / "share") / "Yuki"
 
