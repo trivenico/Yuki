@@ -34,7 +34,7 @@ PROVIDERS = tuple(item["id"] for item in _SUPPORTED_PROVIDERS)
 MODEL_SETTING_BY_PROVIDER = {
     item["id"]: item["model_config"]
     for item in _SUPPORTED_PROVIDERS
-    if item["model_config"] is not None
+    if item["model_config"] is not None and item["id"] != "ollama"
 }
 OPTIONAL_MODEL_SETTINGS = tuple(
     key for key in MODEL_SETTING_BY_PROVIDER.values() if key != "openai_model"
