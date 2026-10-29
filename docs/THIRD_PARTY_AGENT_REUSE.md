@@ -76,6 +76,12 @@ python yuki_cli.py skills add open-jarvis/OpenJarvis --path <verified-skill-dire
 
 Do not run these commands unattended as a production bootstrap: the user should inspect the preview and approve the selected skill. The repository may contain no compatible skill, many skills, or a different path after an upstream update.
 
+### Extension-store boundary hardening
+
+A follow-up audit found that installed extension directories and JSON manifest paths could follow symbolic links. The extension store now rejects a symlinked installed_skills / installed_plugins directory, rejects symlinked manifest inputs, and requires manifest files discovered by loaders to be regular non-symlink files. Regression tests cover manifest-source symlinks, installed-manifest symlinks, and redirected store directories.
+
+This is defense-in-depth for local filesystem boundaries, not a complete defense against a same-user attacker racing filesystem changes (TOCTOU). The desktop app still needs platform-specific review of data-directory ACLs, installer behavior, and permission prompts. CI for the current commit is pending.
+
 ### Proposed code-reuse sequence
 
 1. **Now:** use the existing skill importer and tests; do not add a new runtime dependency just to consume markdown skills.
