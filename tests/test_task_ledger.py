@@ -5,6 +5,7 @@ from threading import Barrier
 from pathlib import Path
 
 from core.task_ledger import TASK_STATUSES, TaskLedger
+from core.task_contracts import TaskEvent
 
 
 class TaskLedgerTests(unittest.TestCase):
@@ -141,6 +142,55 @@ class TaskLedgerTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(tasks)")}
         self.assertIn("verification_evidence", columns)
+
+    def test_task_events_persist_across_reopen_and_are_chronological(self):
+        task = self.ledger.create("Timeline")
+        first = TaskEvent(
+            task_id=task["id"], event_type="task.created",
+            payload={"source": "desktop", "meta": {"attempt": 1}},
+            event_id="event-1", occurred_at="2026-01-01T00:00:00+00:00",
+        )
+        second = TaskEvent(
+            task_id=task["id"], event_type="task.started",
+            payload={"worker": "planner"},
+            event_id="event-2", occurred_at="2026-01-01T00:00:01+00:00",
+        )
+        self.ledger.append_event(first)
+        self.ledger.append_event(second)
+        reopened = TaskLedger(self.path)
+        events = reopened.list_events(task["id"])
+        self.assertEqual([event["event_id"] for event in events], ["event-1", "event-2"])
+        self.assertEqual(events[0]["payload"], {"source": "desktop", "meta": {"attempt": 1}})
+        self.assertEqual(events[1]["event_type"], "task.started")
+
+    def test_appending_same_event_is_idempotent_but_conflicts_are_rejected(self):
+        task = self.ledger.create("Idempotent events")
+        event = TaskEvent(
+            task_id=task["id"], event_type="tool.completed",
+            payload={"call_id": "call-1", "ok": True},
+            event_id="event-stable", occurred_at="2026-01-01T00:00:00+00:00",
+        )
+        first = self.ledger.append_event(event)
+        second = self.ledger.append_event(event)
+        self.assertEqual(first, second)
+        self.assertEqual(len(self.ledger.list_events(task["id"])), 1)
+        conflicting = TaskEvent(
+            task_id=task["id"], event_type="tool.failed",
+            payload={"call_id": "call-1", "ok": False},
+            event_id="event-stable", occurred_at="2026-01-01T00:00:01+00:00",
+        )
+        with self.assertRaisesRegex(ValueError, "different content"):
+            self.ledger.append_event(conflicting)
+
+    def test_event_append_validates_task_and_list_limits(self):
+        event = TaskEvent("task-missing", "task.created", {}, event_id="event-missing")
+        with self.assertRaisesRegex(KeyError, "Task not found"):
+            self.ledger.append_event(event)
+        task = self.ledger.create("Event limit")
+        with self.assertRaisesRegex(ValueError, "between 1 and 500"):
+            self.ledger.list_events(task["id"], limit=0)
+        with self.assertRaisesRegex(KeyError, "Task not found"):
+            self.ledger.list_events("missing")
 
     def test_status_set_is_explicit(self):
         self.assertEqual(TASK_STATUSES, {
