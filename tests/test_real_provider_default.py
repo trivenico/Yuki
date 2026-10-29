@@ -19,6 +19,14 @@ class RealProviderDefaultTests(unittest.TestCase):
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OllamaProvider)
 
+    def test_provider_environment_override_takes_precedence_over_config(self):
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"YUKI_PROVIDER": "ollama"},
+        )
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
+
     def test_openai_key_is_read_from_environment(self):
         manager = ProviderManager({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
         adapter = manager.create_selected_adapter()
