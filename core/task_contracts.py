@@ -13,6 +13,7 @@ import json
 import re
 import hashlib
 from typing import Any, Mapping
+from types import MappingProxyType
 from uuid import uuid4
 
 
@@ -48,6 +49,22 @@ def _require_text(value: str, label: str, *, maximum: int, allow_empty: bool = F
         qualifier = "non-empty " if not allow_empty else ""
         raise ValueError(f"{label} must be {qualifier}text of at most {maximum} characters.")
     return normalized
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 def _validate_json_object(value: Mapping[str, Any], label: str, maximum: int) -> dict[str, Any]:
@@ -89,7 +106,7 @@ class ToolDefinition:
             not isinstance(item, str) or not _NAME_RE.fullmatch(item) for item in self.capabilities
         ):
             raise ValueError("Capabilities must be a tuple of lowercase identifiers.")
-        object.__setattr__(self, "input_schema", schema)
+        object.__setattr__(self, "input_schema", _freeze_json(schema))
 
 
 @dataclass(frozen=True)
@@ -114,7 +131,7 @@ class ToolCall:
         ):
             raise ValueError("Idempotency key is invalid.")
         object.__setattr__(
-            self, "arguments", _validate_json_object(self.arguments, "Tool arguments", _MAX_ARGUMENTS)
+            self, "arguments", _freeze_json(_validate_json_object(self.arguments, "Tool arguments", _MAX_ARGUMENTS))
         )
 
     @property
