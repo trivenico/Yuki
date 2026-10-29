@@ -34,6 +34,43 @@ class OllamaSmokeScriptTests(unittest.TestCase):
         self.assertIn("No request was sent", output.getvalue())
         create.assert_not_called()
 
+    def test_cloud_environment_override_is_rejected_before_provider_creation(self):
+        with patch.dict(os.environ, {"YUKI_PROVIDER": "openai"}, clear=True), \
+             patch.object(smoke_test_ollama, "load_config", return_value={
+                 "provider": "ollama", "ollama_model": "llama3.2:3b",
+                 "ollama_base_url": "http://127.0.0.1:11434",
+             }), \
+             patch.object(smoke_test_ollama, "create_provider") as create, \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            code = smoke_test_ollama.main([])
+        self.assertEqual(code, 2)
+        self.assertIn("No request was sent to any provider", output.getvalue())
+        create.assert_not_called()
+
+    def test_ollama_environment_override_wins_over_saved_provider_and_model(self):
+        provider = Mock()
+        provider.is_available.return_value = False
+        config = {
+            "provider": "openai",
+            "ollama_model": "saved-model",
+            "ollama_base_url": "http://127.0.0.1:11434",
+        }
+        with patch.dict(os.environ, {
+            "YUKI_PROVIDER": "ollama",
+            "YUKI_OLLAMA_MODEL": "env-model",
+            "YUKI_OLLAMA_BASE_URL": "http://127.0.0.1:11435",
+        }, clear=True), \
+             patch.object(smoke_test_ollama, "load_config", return_value=config), \
+             patch.object(smoke_test_ollama, "create_provider", return_value=provider) as create, \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = smoke_test_ollama.main([])
+        self.assertEqual(code, 4)
+        args, kwargs = create.call_args
+        self.assertEqual(args[0]["ollama_model"], "env-model")
+        self.assertEqual(args[0]["ollama_base_url"], "http://127.0.0.1:11435")
+        self.assertEqual(kwargs["environ"]["YUKI_PROVIDER"], "ollama")
+        self.assertEqual(kwargs["environ"]["YUKI_OLLAMA_MODEL"], "env-model")
+
     def test_missing_model_is_rejected(self):
         code, output = self.run_main({
             "provider": "ollama", "ollama_model": " ", "ollama_base_url": "http://127.0.0.1:11434"
