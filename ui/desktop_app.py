@@ -110,7 +110,7 @@ def provider_environment_override(
     model_env_name = model_env_by_provider.get(selected)
     if model_env_name and model_env_name in env:
         environment_model = str(env[model_env_name]).strip()
-        if environment_model != selected_model.strip():
+        if not environment_model or environment_model != selected_model.strip():
             shown_model = environment_model or "(empty)"
             return (
                 f"{model_env_name} is set to '{shown_model}', so the runtime will ignore "
