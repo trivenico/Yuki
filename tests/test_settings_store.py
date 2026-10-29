@@ -23,6 +23,7 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(settings["provider"], "ollama")
         self.assertEqual(settings["ollama_model"], "llama3.2:3b")
         self.assertEqual(settings["openai_model"], "gpt-4.1-mini")
+        self.assertEqual(settings["anthropic_model"], "")
         self.assertFalse(settings["voice_enabled"])
         self.assertTrue(settings["firewall_dry_run"])
         self.assertFalse(settings["background_evolution_enabled"])
@@ -64,6 +65,7 @@ class SettingsStoreTests(unittest.TestCase):
         invalid_changes = (
             {"ollama_model": "../../unsafe"},
             {"provider": "mock"},
+            {"provider": "deepseek", "deepseek_model": "../../unsafe"},
             {"arbitrary_command": "run"},
             {"voice_enabled": "yes"},
         )
@@ -78,6 +80,19 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             save_user_settings({"voice_enabled": True}, self.path)
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
+
+
+    def test_cloud_provider_models_are_editable_without_saving_credentials(self):
+        saved = save_user_settings(
+            {"provider": "deepseek", "deepseek_model": "deepseek-chat"},
+            self.path,
+        )
+        self.assertEqual(saved["provider"], "deepseek")
+        self.assertEqual(saved["deepseek_model"], "deepseek-chat")
+        self.assertNotIn("DEEPSEEK_API_KEY", self.path.read_text(encoding="utf-8"))
+        with self.assertRaises(ValueError):
+            save_user_settings({"provider": "anthropic", "anthropic_model": ""}, self.path)
+        self.assertEqual(read_user_settings(self.path)["deepseek_model"], "deepseek-chat")
 
 
 if __name__ == "__main__":
