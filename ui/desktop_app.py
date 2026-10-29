@@ -95,6 +95,8 @@ def provider_environment_override(
     model_env_by_provider = {
         "ollama": "YUKI_OLLAMA_MODEL",
         "openai": "YUKI_OPENAI_MODEL",
+        "gemini": "YUKI_GEMINI_MODEL",
+        "hybrid": "YUKI_CLOUD_MODEL",
         "anthropic": "YUKI_ANTHROPIC_MODEL",
         "deepseek": "YUKI_DEEPSEEK_MODEL",
         "kimi": "YUKI_KIMI_MODEL",
