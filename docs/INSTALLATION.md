@@ -13,15 +13,15 @@ python -m unittest discover -s tests -v
 python yuki_cli.py start
 ```
 
-Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_yuki_desktop_windows.bat` for GUI. macOS/Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh` for CLI or `sh run_yuki_desktop_unix.sh` for GUI. The launchers run the guided model setup first and then continue to the runtime even if setup is unavailable or declined; no download occurs without consent. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI. The Windows packaging workflow builds standalone executables, a portable ZIP, and an Inno Setup installer. Wait for the workflow to pass on the current commit and for release review before using a packaged release. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
+Windows: run `install_windows.bat`, then `run_yuki_windows.bat` for CLI or `run_yuki_desktop_windows.bat` for GUI. Linux: run `sh install_unix.sh`, then `sh run_yuki_unix.sh` for CLI or `sh run_yuki_desktop_unix.sh` for GUI. The launchers run the guided model setup first and then continue to the runtime even if setup is unavailable or declined; no download occurs without consent. Use `python yuki_cli.py desktop` or the platform desktop launcher to open the Tk GUI console. It forwards commands and approval prompts to the same guarded runtime as the CLI. The Windows packaging workflow builds standalone executables, a portable ZIP, and an Inno Setup installer. The Linux packaging workflow builds and smoke-tests a portable x86_64 tarball. Wait for the workflow to pass on the current commit and for release review before using a packaged release. The legacy Textual dashboard remains optional via `requirements-ui.txt`.
 
-## Standalone Windows desktop package (preview)
+## Desktop packages (preview)
 
 The `Windows desktop package` GitHub Actions workflow builds a per-user installer (`Yuki-Setup.exe`) and a portable ZIP. Do not treat these as a release until the workflow has passed on the current PR head and the release is reviewed.
 
 For a validated CI build, open the workflow run in GitHub Actions and download the `yuki-windows-x64` artifact. Run `Yuki-Setup.exe` to install under your LocalAppData Programs folder; administrator privileges are not required. The installer creates Start Menu shortcuts for the desktop GUI and console runtime. The portable ZIP contains the same onedir app folders plus the default configuration and docs.
 
-Ollama remains a separate install and must be running locally with the selected model available. The packaged app copies its bundled default configuration into a writable per-user data directory on first launch and preserves an existing user configuration on subsequent launches. A version tag (`vX.Y.Z`) triggers a GitHub Release containing the installer and portable ZIP after the packaging job succeeds.
+Ollama remains a separate install and must be running locally with the selected model available. The packaged app copies its bundled default configuration into a writable per-user data directory on first launch and preserves an existing user configuration on subsequent launches. A version tag (`vX.Y.Z`) triggers the Windows GitHub Release containing the installer and portable ZIP after the Windows packaging job succeeds. The Linux tarball is currently uploaded as a CI artifact; Linux release publishing still needs to be wired into the release job.
 
 ## Local AI provider (default)
 
