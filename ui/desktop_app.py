@@ -12,7 +12,7 @@ import sys
 import threading
 from pathlib import Path
 
-from core.settings_store import BOOLEAN_SETTINGS, read_user_settings, save_user_settings
+from core.settings_store import BOOLEAN_SETTINGS, MODEL_SETTING_BY_PROVIDER, PROVIDERS, read_user_settings, save_user_settings
 from core.perception import (
     PerceptionUnavailable,
     active_window_title,
@@ -415,7 +415,7 @@ def run_desktop() -> None:
         provider_value = tk.StringVar(value=current["provider"])
         provider_picker = ttk.Combobox(
             ai_group, textvariable=provider_value,
-            values=("ollama", "openai", "gemini", "hybrid"), state="readonly", width=20,
+            values=PROVIDERS, state="readonly", width=20,
         )
         provider_picker.grid(row=1, column=0, sticky="ew", pady=(3, 8))
 
@@ -423,9 +423,13 @@ def run_desktop() -> None:
         model_value = tk.StringVar(value=current["ollama_model"])
         ttk.Entry(ai_group, textvariable=model_value, width=34).grid(row=3, column=0, sticky="ew", pady=(3, 8))
 
-        ttk.Label(ai_group, text="OpenAI-compatible model").grid(row=4, column=0, sticky="w")
-        cloud_model_value = tk.StringVar(value=current["openai_model"])
-        ttk.Entry(ai_group, textvariable=cloud_model_value, width=34).grid(row=5, column=0, sticky="ew", pady=(3, 8))
+        ttk.Label(ai_group, text="Selected cloud provider model").grid(row=4, column=0, sticky="w")
+        cloud_model_key = MODEL_SETTING_BY_PROVIDER.get(provider_value.get())
+        cloud_model_value = tk.StringVar(value=current.get(cloud_model_key, "") if cloud_model_key else "")
+        cloud_model_entry = ttk.Entry(ai_group, textvariable=cloud_model_value, width=34)
+        cloud_model_entry.grid(row=5, column=0, sticky="ew", pady=(3, 8))
+        if not cloud_model_key:
+            cloud_model_entry.configure(state="disabled")
 
         provider_help = tk.StringVar()
         ttk.Label(ai_group, textvariable=provider_help, wraplength=410).grid(row=6, column=0, sticky="w", pady=(0, 6))
@@ -436,7 +440,16 @@ def run_desktop() -> None:
                 "openai": "Cloud provider: prompts leave this device. Set OPENAI_API_KEY in the launch environment; keys are never saved here.",
                 "gemini": "Uses the installed Gemini CLI and its own authentication. Check its setup separately.",
                 "hybrid": "Uses local Ollama by default; cloud routing requires explicit environment configuration and allow-listed task names.",
+                "anthropic": "Cloud provider: set ANTHROPIC_API_KEY in the launch environment. Model name is saved locally; credentials are not.",
+                "deepseek": "Cloud provider: set DEEPSEEK_API_KEY in the launch environment. Model name is saved locally; credentials are not.",
+                "kimi": "Cloud provider: set MOONSHOT_API_KEY in the launch environment. Model name is saved locally; credentials are not.",
+                "minimax": "Cloud provider: set MINIMAX_API_KEY in the launch environment. Model name is saved locally; credentials are not.",
+                "openrouter": "Third-party model gateway: set OPENROUTER_API_KEY in the launch environment. Prompts go through that service.",
+                "tokenrouter": "Third-party model gateway: set TOKENROUTER_API_KEY in the launch environment. Prompts go through that service.",
             }
+            model_key = MODEL_SETTING_BY_PROVIDER.get(provider_value.get())
+            cloud_model_value.set(current.get(model_key, "") if model_key else "")
+            cloud_model_entry.configure(state="normal" if model_key else "disabled")
             provider_help.set(notes.get(provider_value.get(), "Select a provider."))
         provider_value.trace_add("write", update_provider_help)
         update_provider_help()
@@ -449,7 +462,9 @@ def run_desktop() -> None:
                 config = load_config()
                 config["provider"] = selected
                 config["ollama_model"] = model_value.get().strip()
-                config["openai_model"] = cloud_model_value.get().strip()
+                model_key = MODEL_SETTING_BY_PROVIDER.get(selected)
+                if model_key:
+                    config[model_key] = cloud_model_value.get().strip()
                 provider = create_provider(config)
                 available = provider.is_available()
             except Exception as exc:
@@ -508,8 +523,10 @@ def run_desktop() -> None:
             changes = {
                 "provider": provider_value.get(),
                 "ollama_model": model_value.get(),
-                "openai_model": cloud_model_value.get(),
             }
+            model_key = MODEL_SETTING_BY_PROVIDER.get(provider_value.get())
+            if model_key:
+                changes[model_key] = cloud_model_value.get()
             changes.update({key: variable.get() for key, variable in variables.items()})
             try:
                 save_user_settings(changes)
