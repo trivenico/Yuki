@@ -188,11 +188,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 lines.append(f"- {len(errors) - 10} additional error(s) omitted.")
             return "\n".join(lines)
         if parts[1] == "install":
-            if len(parts) < 3:
+            source_path = command[len("/skill install"):].strip()
+            if not source_path:
                 return "Usage: /skill install PATH"
             try:
                 from core.skill_packs import install_skill_pack
-                target = install_skill_pack(parts[2])
+                target = install_skill_pack(source_path)
                 write_audit_event("skill:install", "completed")
                 return (
                     f"Installed data-only skill pack: {target.name}. "
