@@ -37,6 +37,44 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
+        specialist = SpecialistAgent(
+            "translator", "Translation specialist", frozenset({"translate"}), "emit",
+        )
+        with self.assertRaises(PermissionError):
+            self.coordinator.register_agent(actor_id="mallory", agent=specialist)
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="dynamic-agent", subtasks=[
+            SubtaskSpec("translate", "Translate the approved text", ("translate",)),
+        ])
+        self.assertEqual(plan.subtasks[0].agent_id, "translator")
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.register_agent(actor_id="alice", agent=specialist)
+
+    def test_agent_enable_disable_is_authorized_and_affects_future_routing(self):
+        with self.assertRaises(PermissionError):
+            self.coordinator.set_agent_enabled(actor_id="mallory", agent_id="research", enabled=False)
+        disabled = self.coordinator.set_agent_enabled(
+            actor_id="alice", agent_id="research", enabled=False,
+        )
+        self.assertFalse(disabled.enabled)
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(actor_id="alice", idempotency_key="disabled-research", subtasks=[
+                SubtaskSpec("collect", "Collect sources requiring web read", ("research",), required_permissions=("web:read",)),
+            ])
+        enabled = self.coordinator.set_agent_enabled(
+            actor_id="alice", agent_id="research", enabled=True,
+        )
+        self.assertTrue(enabled.enabled)
+
+    def test_registry_listing_is_authorized_and_sanitized(self):
+        with self.assertRaises(PermissionError):
+            self.coordinator.list_agents(actor_id="mallory")
+        agents = self.coordinator.list_agents(actor_id="alice")
+        research = next(item for item in agents if item["agent_id"] == "research")
+        self.assertEqual(research["capabilities"], ("research", "summarize"))
+        self.assertNotIn("permissions", research)
+
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
             SubtaskSpec("collect", "Collect public sources", ("research",), required_permissions=("web:read",)),
