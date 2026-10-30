@@ -43,9 +43,9 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertTrue(provider.is_available())
 
     def test_oci_iam_provider_factory_uses_configured_principal_mode(self):
-        with patch("providers.factory.create_oci_iam_auth", return_value=object()) as auth_factory, \\
-             patch("providers.factory.OciIamProvider") as provider_factory:
-            create_provider(
+        with patch("providers.factory.create_oci_iam_auth", return_value=object()) as auth_factory:
+            with patch("providers.factory.OciIamProvider") as provider_factory:
+                create_provider(
                 {"provider": "oci_iam"},
                 environ={
                     "YUKI_OCI_REGION": "eu-frankfurt-1",
@@ -53,7 +53,7 @@ class ProviderFactoryTests(unittest.TestCase):
                     "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
                     "YUKI_OCI_AUTH_MODE": "instance_principal",
                 },
-            )
+                )
         auth_factory.assert_called_once_with(
             "instance_principal", config_file=None, profile_name="DEFAULT"
         )
