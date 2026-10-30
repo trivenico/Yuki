@@ -24,7 +24,7 @@ report = download_model_snapshot(
 print(report)
 ```
 
-The downloader allows only configuration/tokenizer assets and safetensors weights, checks Hub file sizes against the configured budget before transfer, requires safetensors, and rechecks the resulting snapshot size. It does not activate a model or execute remote code. It is not a license approval or malware scanner.
+The downloader allows only configuration/tokenizer assets and safetensors weights, checks Hub file sizes and available disk space against the configured budget before transfer, requires safetensors, rechecks the resulting snapshot size, and records SHA-256 digests for downloaded weight files. These local digests support later integrity checks; they are not an independent upstream signature verification. It does not activate a model or execute remote code. It is not a license approval or malware scanner.
 
 ## Configure local inference
 
