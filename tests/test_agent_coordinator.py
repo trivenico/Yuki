@@ -110,20 +110,28 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIn("summarizer", visible)
 
     def test_persisted_registry_rejects_duplicate_or_oversized_capabilities(self):
-        with sqlite3.connect(self.db_path) as db:
+        db = sqlite3.connect(self.db_path)
+        try:
             db.execute(
                 "UPDATE specialist_agents SET capabilities_json=? WHERE agent_id=?",
                 ('["research","research"]', "research"),
             )
+            db.commit()
+        finally:
+            db.close()
         with self.assertRaises(AgentPlanError):
             self.coordinator.list_agents(actor_id="alice")
 
     def test_persisted_registry_corruption_fails_closed(self):
-        with sqlite3.connect(self.db_path) as db:
+        db = sqlite3.connect(self.db_path)
+        try:
             db.execute(
                 "UPDATE specialist_agents SET capabilities_json=? WHERE agent_id=?",
                 ('{"not":"an array"}', "research"),
             )
+            db.commit()
+        finally:
+            db.close()
         with self.assertRaises(AgentPlanError):
             self.coordinator.list_agents(actor_id="alice")
 
