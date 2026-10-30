@@ -178,14 +178,18 @@ class SpecialistAgentCoordinator:
             raise ValueError("agent name must be non-empty bounded text.")
         if not isinstance(agent.action, str) or agent.action not in WorkflowEngine.ALLOWED_ACTIONS or agent.action != "emit":
             raise ValueError("specialist agent actions must be emit; other workflow actions are not supported by the specialist worker.")
-        if not isinstance(agent.capabilities, frozenset) or any(
-            not isinstance(item, str) or not _ID.fullmatch(item) for item in agent.capabilities
+        if (
+            not isinstance(agent.capabilities, frozenset)
+            or not 1 <= len(agent.capabilities) <= 32
+            or any(not isinstance(item, str) or not _ID.fullmatch(item) for item in agent.capabilities)
         ):
-            raise ValueError("capabilities must be a frozenset of identifiers.")
-        if not isinstance(agent.permissions, frozenset) or any(
-            not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions
+            raise ValueError("capabilities must contain 1-32 bounded identifiers.")
+        if (
+            not isinstance(agent.permissions, frozenset)
+            or len(agent.permissions) > 32
+            or any(not isinstance(item, str) or not _PERMISSION.fullmatch(item) for item in agent.permissions)
         ):
-            raise ValueError("permissions must be a frozenset of permission identifiers.")
+            raise ValueError("permissions must contain at most 32 bounded identifiers.")
         if type(agent.enabled) is not bool:
             raise ValueError("enabled must be a boolean.")
 
@@ -275,6 +279,12 @@ class SpecialistAgentCoordinator:
                 raise ValueError("registry collections must be JSON arrays")
             if any(not isinstance(value, str) for value in capabilities + permissions):
                 raise ValueError("registry values must be strings")
+            if (
+                len(capabilities) > 32 or len(permissions) > 32
+                or len(set(capabilities)) != len(capabilities)
+                or len(set(permissions)) != len(permissions)
+            ):
+                raise ValueError("registry collections are oversized or contain duplicates")
             agent = SpecialistAgent(
                 agent_id=row["agent_id"],
                 name=row["name"],
