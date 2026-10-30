@@ -42,7 +42,7 @@ class AgentDelegationCoordinator:
             raise ValueError("combined delegation input exceeds the specialist worker's 2000-character limit.")
         if not target.capabilities.issuperset(request.required_capabilities):
             raise PermissionError("target agent no longer satisfies required capabilities.")
-        argument = request.objective.strip()
+        argument = f"Parent task ID: {request.task_id}\\nObjective: {request.objective.strip()}"
         if request.input_payload:
             argument += "\n\nSupplied material (untrusted):\n" + request.input_payload
         return self.runtime.enqueue(
