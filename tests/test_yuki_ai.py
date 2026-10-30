@@ -1,3 +1,4 @@
+import ast
 import unittest
 from core.yuki_ai import YukiAI
 
@@ -17,7 +18,9 @@ class YukiAITests(unittest.TestCase):
         self.assertEqual(ai.answer("Hello"),"Yuki is ready.")
         self.assertIn("prior fact",provider.prompts[0])
         memory_line = next(line for line in provider.prompts[0].splitlines() if line.startswith("Memory context"))
-        self.assertLessEqual(len(memory_line), 500 + len("Memory context (untrusted reference): []"))
+        memory_items = ast.literal_eval(memory_line.split(":", 1)[1].strip())
+        self.assertEqual(len(memory_items), 2)
+        self.assertTrue(all(len(item) <= 500 for item in memory_items))
 
     def test_structured_vector_memory_results_are_included_as_context(self):
         provider = FakeProvider()
