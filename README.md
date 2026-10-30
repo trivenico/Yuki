@@ -263,3 +263,25 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+## Personal always-on runtime direction
+
+The specialist runtime now supports a continuous worker supervisor and unbounded-by-default personal fleet configuration:
+
+- The SQLite agent registry has no default agent-count ceiling. An operator can still opt into a positive `max_agents` policy.
+- Agent concurrency and execution deadline fields default to `None` (no per-agent ceiling/deadline). Explicit positive values remain available for machines or providers that need tighter resource budgets.
+- The default worker pool drains eligible queued tasks until the queue is empty. Worker count defaults to the host CPU count; operators can supply a larger positive worker count. No fixed product-level task-count ceiling is imposed by the pool.
+- `AlwaysOnWorkerSupervisor` polls the durable specialist worker indefinitely, waits while idle, retries after transient cycle errors, exposes a health snapshot, and supports graceful shutdown.
+
+Example lifecycle:
+
+```python
+from automation.specialist_worker import AlwaysOnWorkerSupervisor
+
+supervisor = AlwaysOnWorkerSupervisor(worker)
+supervisor.start()
+# On application shutdown:
+supervisor.stop(timeout=30)
+```
+
+**Deployment status:** this is a lifecycle primitive, not yet an installed OS service. CLI/desktop startup wiring, OS-native service definitions (systemd/launchd/Windows Service), wake-from-sleep behavior, watchdog health integration, backup/restore, and long-duration soak testing remain before claiming reliable 24/7 production operation. The machine must remain powered and connected, and model providers/network services may impose their own quotas. Resource-aware scheduling is retained to prevent one personal agent from exhausting the host.
