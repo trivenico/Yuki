@@ -89,6 +89,13 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 "queued",
             )
 
+    def test_local_supervisor_uses_bounded_parallelism(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider(), max_workers=3)
+            self.assertEqual(built.supervisor.max_workers, 3)
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(directory, FakeProvider(), max_workers=5)
+
     def test_cycle_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
