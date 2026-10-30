@@ -5,6 +5,7 @@ import json
 import os
 
 from providers.gemini_cli import GeminiCLIProvider
+from providers.anthropic import AnthropicProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.multi import MultiProviderRouter
@@ -101,8 +102,39 @@ def create_provider(config=None, *, environ=None):
             auth=auth,
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
         )
+    if selected == "anthropic":
+        model = str(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", ""))).strip()
+        if not model:
+            raise ValueError("Configure YUKI_ANTHROPIC_MODEL with an available Anthropic model.")
+        return AnthropicProvider(model, timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env)
     if selected == "multi":
         providers = {}
+        openai_model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", ""))).strip()
+        if openai_model:
+            providers["openai"] = OpenAICompatibleProvider(
+                openai_model, api_key_env="OPENAI_API_KEY",
+                base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
+                timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env,
+            )
+        anthropic_model = str(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", ""))).strip()
+        if anthropic_model:
+            providers["anthropic"] = AnthropicProvider(
+                anthropic_model, timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env
+            )
+        deepseek_model = str(env.get("YUKI_DEEPSEEK_MODEL", cfg.get("deepseek_model", ""))).strip()
+        if deepseek_model:
+            providers["deepseek"] = OpenAICompatibleProvider(
+                deepseek_model, api_key_env="DEEPSEEK_API_KEY",
+                base_url=str(env.get("YUKI_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")),
+                timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env,
+            )
+        glm_model = str(env.get("YUKI_GLM_MODEL", cfg.get("glm_model", ""))).strip()
+        if glm_model:
+            providers["glm"] = OpenAICompatibleProvider(
+                glm_model, api_key_env="ZAI_API_KEY",
+                base_url=str(env.get("YUKI_GLM_BASE_URL", "https://api.z.ai/api/paas/v4")),
+                timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)), environ=env,
+            )
         local_model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
         if local_model:
             providers["local"] = OllamaProvider(
@@ -157,7 +189,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, oci, oci_iam, oci_responses, ollama, gemini, hybrid, multi (mock is test-only).")
+        raise ValueError("provider must be one of: openai, anthropic, oci, oci_iam, oci_responses, ollama, gemini, hybrid, multi (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
