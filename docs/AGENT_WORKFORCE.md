@@ -29,3 +29,7 @@ The registry and task runtime must share one SQLite database. Provider preferenc
 ## Verification
 
 Regression tests assert unique profile IDs, idempotent seeding, the 99-target coordinator allow-list, and construction of a worker handler for every persisted profile. CI must pass before this increment is treated as verified.
+
+## Specialist-specific prompt context
+
+The registered handler factory now injects each profile's stable agent ID, bounded specialist description, and declared capabilities into its provider prompt as explicitly untrusted metadata. The fixed role policy remains authoritative; profile text cannot grant tools or permissions or override role instructions. Profile context is passed separately from task input so the existing task-input size limit remains intact. Provider selection and cloud-consent policy are unchanged.
