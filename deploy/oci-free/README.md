@@ -47,3 +47,13 @@ The admin bootstrap token is a temporary single-operator provisioning mechanism,
 ## Important gaps before public production use
 
 This HTTP server is an early internal gateway. It bounds concurrent request workers (default 32) and request socket read timeouts, but it has no built-in TLS, user login/OIDC, rate limiting, CSRF/origin policy, refresh-token rotation, audit export, request correlation, distributed database, or backup automation. Do not expose the admin routes to the public internet. The next milestone is proper OIDC/user identity, CLI/desktop client credential storage, scoped API middleware, reverse proxy/TLS, rate limiting, and automated backup/restore tests. The task API only enqueues work; a separately running Yuki specialist worker must be configured against the same SQLite database to execute tasks.
+
+## Continuous specialist worker
+
+The Compose stack includes a separate `yuki-worker` service. It waits for the gateway health check, mounts the same persistent SQLite volume, seeds/loads the same 21-agent registry, and continuously claims eligible tasks. Expired leases are journaled as `interrupted`; they are not silently replayed. Provider latency therefore does not block gateway HTTP requests.
+
+Set `YUKI_PROVIDER` explicitly in the shell (for example, `ollama`, `openai`, or an OCI provider), configure that provider's required environment variables, then run `docker compose up -d --build`. The worker receives only the provider credentials explicitly passed through the Compose environment. Keep credentials in a local, untracked `.env` file or secret manager; never commit them. For local Ollama, its endpoint must be reachable from inside the worker container, not through the container's own `127.0.0.1`.
+
+**Cloud-consent safeguard:** the 21 starter profiles default to `allow_cloud=false`. The worker preserves each persisted agent's cloud-consent setting and fails closed if a selected cloud provider is not explicitly permitted for that agent. Do not weaken this default just to make a cloud provider start. Add a reviewed, owner-authorized agent-policy administration path before routing private task content to OCI/OpenAI.
+
+The current task endpoint creates bounded text-only specialist tasks. The worker does not execute generated code, run shell commands, or mutate workspaces. This is not yet the complete Yuki agent runtime.
