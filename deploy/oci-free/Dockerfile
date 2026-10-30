@@ -1,6 +1,9 @@
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 YUKI_GATEWAY_HOST=0.0.0.0 YUKI_GATEWAY_PORT=8765 YUKI_GATEWAY_DATABASE=/var/lib/yuki/gateway.sqlite3
 WORKDIR /app
+ARG INSTALL_OCI_AUTH=false
+COPY --chown=root:root requirements-oci.txt /app/requirements-oci.txt
+RUN case "$INSTALL_OCI_AUTH" in true) pip install --no-cache-dir -r /app/requirements-oci.txt ;; false) ;; *) echo "INSTALL_OCI_AUTH must be true or false" >&2; exit 1 ;; esac
 RUN groupadd --system --gid 10001 yuki && useradd --system --uid 10001 --gid yuki --home-dir /nonexistent yuki && install -d -o yuki -g yuki -m 0750 /var/lib/yuki
 COPY --chown=root:root cloud/ /app/cloud/
 COPY --chown=root:root automation/ /app/automation/
