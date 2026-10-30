@@ -3,11 +3,6 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from yuki_providers import ProviderManager
-from providers.factory import create_provider
-
-
-def create_oci_iam_for_test(mode, env, auth):
-    return create_provider({"provider": mode}, environ={**env, "YUKI_OCI_AUTH_MODE": "session"})
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_registry_reports_only_factory_supported_integrations(self):
@@ -33,16 +28,15 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_oci_iam_and_responses_adapters_are_constructible(self):
         from providers.oci_iam import OciIamProvider
         from providers.oci_responses import OciResponsesProvider
-        from unittest.mock import Mock
+        from unittest.mock import Mock, patch
         env = {"YUKI_OCI_REGION": "eu-frankfurt-1", "YUKI_OCI_MODEL": "model-x",
                "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1..example"}
         auth = Mock()
-        manager = ProviderManager({"provider": "oci_iam"}, environ=env)
-        manager._factories["oci_iam"] = lambda: create_oci_iam_for_test("oci_iam", env, auth)
-        self.assertIsInstance(manager.create_selected_adapter(), OciIamProvider)
-        manager = ProviderManager({"provider": "oci_responses"}, environ=env)
-        manager._factories["oci_responses"] = lambda: create_oci_iam_for_test("oci_responses", env, auth)
-        self.assertIsInstance(manager.create_selected_adapter(), OciResponsesProvider)
+        with patch("providers.factory.create_oci_iam_auth", return_value=auth):
+            manager = ProviderManager({"provider": "oci_iam"}, environ=env)
+            self.assertIsInstance(manager.create_selected_adapter(), OciIamProvider)
+            manager = ProviderManager({"provider": "oci_responses"}, environ=env)
+            self.assertIsInstance(manager.create_selected_adapter(), OciResponsesProvider)
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
         manager = ProviderManager(environ={})
