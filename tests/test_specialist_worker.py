@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from threading import Barrier, Lock
 from pathlib import Path
 
 from automation.agent_coordinator import (
@@ -137,6 +138,59 @@ class SpecialistWorkerTests(unittest.TestCase):
             build_handlers_from_provider_manager(EmptyManager(), {"agent": "coding"})
         with self.assertRaises(ValueError):
             build_handlers_from_provider_manager(object(), {"agent": "shell"})
+
+    def test_parallel_worker_pool_executes_independent_tasks_concurrently(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="parallel-plan",
+            subtasks=[
+                SubtaskSpec("first", "First independent review", ("coding",), requires_approval=False),
+                SubtaskSpec("second", "Second independent review", ("coding",), requires_approval=False),
+            ],
+        )
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(len([s for s in plan.subtasks if s.task_id]), 2)
+
+        rendezvous = Barrier(2, timeout=5)
+        active_lock = Lock()
+        active = 0
+        peak_active = 0
+
+        def handler(argument):
+            nonlocal active, peak_active
+            with active_lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            try:
+                rendezvous.wait()
+                return "completed: " + argument
+            finally:
+                with active_lock:
+                    active -= 1
+
+        results = self.worker({"code-review": handler}).run_concurrently(max_workers=2, max_tasks=2)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.state == "succeeded" for result in results))
+        self.assertEqual(peak_active, 2)
+
+    def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="parallel-budget-plan",
+            subtasks=[
+                SubtaskSpec("one", "First task", ("coding",), requires_approval=False),
+                SubtaskSpec("two", "Second task", ("coding",), requires_approval=False),
+                SubtaskSpec("three", "Third task", ("coding",), requires_approval=False),
+            ],
+        )
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently(
+            max_workers=2, max_tasks=2,
+        )
+        self.assertEqual(len(results), 2)
+        self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 1)
+        with self.assertRaises(ValueError):
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)
+        with self.assertRaises(ValueError):
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=101)
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):

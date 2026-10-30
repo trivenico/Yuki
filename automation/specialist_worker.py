@@ -6,7 +6,10 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+from threading import BoundedSemaphore, Lock
 from typing import Callable, Mapping
+from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
 
@@ -114,6 +117,48 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+
+    def run_concurrently(
+        self, *, max_workers: int = 4, max_tasks: int = 20,
+    ) -> tuple[TaskRecord, ...]:
+        """Execute a bounded batch using independent leased worker identities.
+
+        SQLite's atomic claim operation arbitrates across workers. A shared permit
+        budget caps total claims, while each worker gets its own lease owner so
+        completion and failure checks remain tied to the actual claimant.
+        """
+        if type(max_workers) is not int or not 1 <= max_workers <= 16:
+            raise ValueError("max_workers must be an integer from 1 to 16.")
+        if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
+            raise ValueError("max_tasks must be an integer from 1 to 100.")
+        pool_token = uuid4().hex[:12]
+        suffix = f".pool-{pool_token}-{max_workers - 1}"
+        if len(self.worker_id) + len(suffix) > 200:
+            raise ValueError("worker_id is too long for parallel worker identities.")
+
+        permits = BoundedSemaphore(max_tasks)
+        results: list[TaskRecord] = []
+        results_lock = Lock()
+
+        def drain(index: int) -> None:
+            worker_id = f"{self.worker_id}.pool-{pool_token}-{index}"
+            worker = SpecialistTaskWorker(
+                self.runtime, worker_id=worker_id,
+                service_actor_id=self.service_actor_id, handlers=self.handlers,
+            )
+            while permits.acquire(blocking=False):
+                result = worker.run_once()
+                if result is None:
+                    permits.release()
+                    return
+                with results_lock:
+                    results.append(result)
+
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="yuki-specialist") as pool:
+            futures = [pool.submit(drain, index) for index in range(max_workers)]
+            for future in futures:
+                future.result()
+        return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
