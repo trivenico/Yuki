@@ -52,11 +52,13 @@ from skills.mcp_plugin import MCPPluginSkill
 from skills.github_lifecycle import GitHubLifecycleSkill
 from skills.connector_management import ConnectorManagementSkill
 from core.plugin_loader import PluginLoader
+from core.skill_packs import load_installed_skill_packs
 
 
 class SkillRegistry:
     def __init__(self, skills: Iterable[Skill] = ()):
         self._skills = {}
+        self.skill_pack_load_errors = []
         for skill in skills:
             self.register(skill)
 
@@ -106,6 +108,19 @@ class SkillRegistry:
             MessagingExpandedSkill(root), TieredAutonomySkill(root),
             RoleSkill(), GitHubPushSkill(allowed_roots=configured_github_roots), GitHubLifecycleSkill(allowed_roots=configured_github_roots), MCPPluginSkill(servers=mcp_servers), ConnectorManagementSkill(servers=mcp_servers),
         ))
+        # Installed packs contain bounded, data-only guidance. They are loaded from
+        # the shared YUKI_HOME data root and remain subject to the normal skill
+        # approval runtime; importing a pack never imports or executes its code.
+        installed_packs, load_errors = load_installed_skill_packs()
+        registry.skill_pack_load_errors = load_errors
+        for skill in installed_packs:
+            try:
+                registry.register(skill)
+            except (TypeError, ValueError) as exc:
+                registry.skill_pack_load_errors.append({
+                    "file": skill.name,
+                    "error": f"skill pack could not be registered ({type(exc).__name__})",
+                })
         if plugin_discovery_enabled:
             loader = PluginLoader(enabled=True, trusted_modules=trusted_plugin_modules)
             discovered = loader.discover()
