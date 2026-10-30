@@ -4,6 +4,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from automation.agent_coordinator import SubtaskSpec
+from core.planner import Planner
 from ui.task_controls import approve_queued_task, execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
 
@@ -28,7 +29,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/task create ROLE REQUEST · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE", id="command")
+                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
@@ -70,6 +71,39 @@ def run_dashboard(
                     log.write("Task creation failed or the requested specialist is unavailable.")
                 return
             if command == "/plan" or command.startswith("/plan "):
+                if command.startswith("/plan create "):
+                    goal = command[len("/plan create "):].strip()
+                    if coordinator is None or actor_id is None or not goal:
+                        log.write("Usage: /plan create GOAL (planner unavailable or goal missing).")
+                        return
+                    try:
+                        proposed = Planner(max_steps=10).decompose(goal)
+                        plan = coordinator.submit(
+                            actor_id=actor_id,
+                            idempotency_key=f"planner:{uuid4().hex}",
+                            subtasks=[
+                                SubtaskSpec(
+                                    subtask_id=item.task_id,
+                                    description=item.description,
+                                    required_capabilities=item.required_capabilities,
+                                    depends_on=item.depends_on,
+                                    requires_approval=item.requires_approval,
+                                )
+                                for item in proposed
+                            ],
+                        )
+                        plan = coordinator.advance(actor_id=actor_id, plan_id=plan.plan_id)
+                        log.write(f"Proposed plan: {plan.plan_id} · {len(plan.subtasks)} specialist tasks")
+                        for item in plan.subtasks:
+                            log.write(
+                                f"{item.subtask_id} | {item.agent_id} | {item.status} | "
+                                f"depends_on={','.join(item.depends_on) or 'none'} | "
+                                f"task={item.task_id or 'waiting for dependencies'}"
+                            )
+                        log.write("Review the DAG. Approve queued tasks individually; nothing runs automatically.")
+                    except Exception:
+                        log.write("Plan proposal failed or a required specialist is unavailable.")
+                    return
                 parts = command.split()
                 if len(parts) == 2 and coordinator is not None and actor_id is not None:
                     try:
