@@ -229,7 +229,7 @@ class GatewayHttpTests(unittest.TestCase):
         self.assertEqual(data["error"], "insufficient_scope")
 
     def test_unknown_routes_are_not_exposed(self):
-        status, data, _ = self.request("GET", "/v1/tasks")
+        status, data, _ = self.request("GET", "/v1/not-a-route")
         self.assertEqual(status, 404)
         self.assertEqual(data["error"], "not_found")
 
