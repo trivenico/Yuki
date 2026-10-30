@@ -135,6 +135,23 @@ class GatewayHttpTests(unittest.TestCase):
             disabled.server_close()
             thread.join(timeout=2)
 
+    def test_server_returns_retryable_overload_when_worker_slots_are_full(self):
+        acquired = 0
+        try:
+            for _ in range(self.server._request_slots._initial_value):
+                self.assertTrue(self.server._request_slots.acquire(blocking=False))
+                acquired += 1
+            connection = HTTPConnection(self.host, self.port, timeout=2)
+            connection.request("GET", "/healthz")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 503)
+            self.assertEqual(response.getheader("Retry-After"), "1")
+            self.assertEqual(response.read(), b"")
+            connection.close()
+        finally:
+            for _ in range(acquired):
+                self.server._request_slots.release()
+
     def test_server_rejects_unbounded_worker_configuration(self):
         with self.assertRaises(ValueError):
             create_server(
