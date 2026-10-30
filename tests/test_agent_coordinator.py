@@ -23,7 +23,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
         self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
+            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage", "agent:message:send", "agent:message:read", "agent:message:ack"
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
@@ -38,6 +38,32 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
+
+    def test_coordinator_agent_messaging_is_persisted_and_recipient_scoped(self):
+        sent = self.coordinator.send_agent_message(
+            actor_id="alice", sender_agent_id="research", recipient_agent_id="writer",
+            body="Share the verified source notes.", idempotency_key="coordinator-msg-1",
+        )
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        inbox = restarted.read_agent_inbox(actor_id="alice", recipient_agent_id="writer")
+        self.assertEqual([message.message_id for message in inbox], [sent.message_id])
+        self.assertEqual(inbox[0].body, "Share the verified source notes.")
+        ack = restarted.acknowledge_agent_message(
+            actor_id="alice", recipient_agent_id="writer", message_id=sent.message_id,
+        )
+        self.assertIsNotNone(ack.acknowledged_at)
+        self.assertEqual(restarted.read_agent_inbox(actor_id="alice", recipient_agent_id="writer"), [])
+
+    def test_coordinator_rejects_unregistered_agent_message_endpoints(self):
+        with self.assertRaises(KeyError):
+            self.coordinator.send_agent_message(
+                actor_id="alice", sender_agent_id="unknown", recipient_agent_id="writer",
+                body="Hello", idempotency_key="unknown-sender",
+            )
+        with self.assertRaises(PermissionError):
+            self.coordinator.read_agent_inbox(actor_id="mallory", recipient_agent_id="writer")
 
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
