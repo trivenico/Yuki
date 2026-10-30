@@ -290,8 +290,8 @@ class WorkflowRunStore:
         """
         if workflow_prefix_limits is None:
             workflow_prefix_limits = {}
-        if not isinstance(workflow_prefix_limits, Mapping) or len(workflow_prefix_limits) > 32:
-            raise ValueError("workflow_prefix_limits must be a bounded mapping.")
+        if not isinstance(workflow_prefix_limits, Mapping):
+            raise ValueError("workflow_prefix_limits must be a mapping.")
         normalized_limits = {}
         for prefix, limit in workflow_prefix_limits.items():
             if (
@@ -299,8 +299,8 @@ class WorkflowRunStore:
                 or not prefix.endswith("-") or len(prefix) > 90 or chr(0) in prefix
             ):
                 raise ValueError("workflow prefixes must be bounded agent-name prefixes.")
-            if type(limit) is not int or not 1 <= limit <= 32:
-                raise ValueError("workflow prefix limits must be integers from 1 to 32.")
+            if type(limit) is not int or limit < 1:
+                raise ValueError("workflow prefix limits must be positive integers.")
             normalized_limits[prefix] = limit
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
@@ -315,7 +315,7 @@ class WorkflowRunStore:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
+                "ORDER BY created_at, run_id"
             ).fetchall()
             row = None
             for candidate in rows:
