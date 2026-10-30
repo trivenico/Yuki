@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
+        self.db_path = db
         self.store = WorkflowRunStore(db)
         self.grants = {"task:create", "task:read", "task:cancel"}
         self.runtime = TaskRuntime(
@@ -74,6 +76,64 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         research = next(item for item in agents if item["agent_id"] == "research")
         self.assertEqual(research["capabilities"], ("research", "summarize"))
         self.assertNotIn("permissions", research)
+
+    def test_agent_registration_and_enabled_state_survive_restart(self):
+        specialist = SpecialistAgent(
+            "translator", "Translation specialist", frozenset({"translate"}),
+            "emit", frozenset({"text:read"}),
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        self.coordinator.set_agent_enabled(
+            actor_id="alice", agent_id="translator", enabled=False,
+        )
+
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        agents = {item["agent_id"]: item for item in restarted.list_agents(actor_id="alice")}
+        self.assertIn("translator", agents)
+        self.assertFalse(agents["translator"]["enabled"])
+        with self.assertRaises(AgentPlanError):
+            restarted.submit(actor_id="alice", idempotency_key="restart-disabled", subtasks=[
+                SubtaskSpec("translate", "Translate approved text", ("translate",)),
+            ])
+
+    def test_registry_refreshes_changes_from_another_coordinator_instance(self):
+        second = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        specialist = SpecialistAgent(
+            "summarizer", "Summarization specialist", frozenset({"summarize"}), "emit",
+        )
+        self.coordinator.register_agent(actor_id="alice", agent=specialist)
+        visible = {item["agent_id"] for item in second.list_agents(actor_id="alice")}
+        self.assertIn("summarizer", visible)
+
+    def test_persisted_registry_rejects_duplicate_or_oversized_capabilities(self):
+        db = sqlite3.connect(self.db_path)
+        try:
+            db.execute(
+                "UPDATE specialist_agents SET capabilities_json=? WHERE agent_id=?",
+                ('["research","research"]', "research"),
+            )
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.list_agents(actor_id="alice")
+
+    def test_persisted_registry_corruption_fails_closed(self):
+        db = sqlite3.connect(self.db_path)
+        try:
+            db.execute(
+                "UPDATE specialist_agents SET capabilities_json=? WHERE agent_id=?",
+                ('{"not":"an array"}', "research"),
+            )
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.list_agents(actor_id="alice")
 
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
