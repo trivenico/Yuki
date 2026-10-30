@@ -51,6 +51,14 @@ def build_local_worker_runtime(
     This factory creates no threads, scheduler, daemon, or automatic work.
     Provider calls happen only after the operator explicitly runs a cycle.
     """
+    if provider is not None and provider_manager is not None:
+        raise ValueError("Pass either provider or provider_manager, not both.")
+    if provider is None and provider_manager is None:
+        raise ValueError("A provider or provider_manager is required.")
+    if provider_manager is None and (provider_preferences is not None or allow_cloud is not False):
+        raise ValueError("provider_preferences and allow_cloud require provider_manager.")
+    if type(allow_cloud) is not bool:
+        raise ValueError("allow_cloud must be a boolean.")
     root = Path(workspace).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
@@ -87,8 +95,6 @@ def build_local_worker_runtime(
             and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
     )
-    if provider is not None and provider_manager is not None:
-        raise ValueError("Pass either provider or provider_manager, not both.")
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
             provider_manager,
@@ -97,10 +103,6 @@ def build_local_worker_runtime(
             allow_cloud=allow_cloud,
         )
     else:
-        if provider is None:
-            raise ValueError("A provider or provider_manager is required.")
-        if provider_preferences is not None or allow_cloud is not False:
-            raise ValueError("provider_preferences and allow_cloud require provider_manager.")
         handlers = build_provider_specialist_handlers(provider)
     worker = SpecialistTaskWorker(
         runtime,
