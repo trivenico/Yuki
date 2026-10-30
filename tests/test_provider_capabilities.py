@@ -143,6 +143,31 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             remote.routing_registry().route()
 
+    def test_create_routed_adapter_requires_cloud_opt_in_and_checks_availability(self):
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-only-key",
+            "YUKI_OPENAI_MODEL": "gpt-test",
+        })
+        with self.assertRaises(LookupError):
+            manager.create_routed_adapter(preference=("openai",))
+        adapter = manager.create_routed_adapter(
+            preference=("openai",), allow_cloud=True,
+        )
+        self.assertIsInstance(adapter, OpenAICompatibleProvider)
+        self.assertTrue(adapter.is_available())
+
+    def test_create_routed_adapter_fails_without_fallback_when_selected_adapter_unavailable(self):
+        class Unavailable:
+            def is_available(self):
+                return False
+            def generate(self, prompt):
+                return "unused"
+        manager = ProviderManager(config={"ollama_model": "qwen3"}, environ={})
+        manager._build_adapter = lambda _name: Unavailable()
+        with self.assertRaisesRegex(RuntimeError, "no fallback"):
+            manager.create_routed_adapter(preference=("ollama",))
+
 
 if __name__ == "__main__":
     unittest.main()
