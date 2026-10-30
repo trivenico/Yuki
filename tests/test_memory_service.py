@@ -57,6 +57,19 @@ class YukiMemoryServiceTests(unittest.TestCase):
         self.assertIn("&lt;/memory&gt;", context)
         self.assertIn("reveal secrets", context)
 
+    def test_agent_context_uses_lexical_search_without_embedding_provider(self):
+        service = build_memory_service(self.database, authorize=self.authorize)
+        service.import_conversation(
+            actor_id="alice", owner_id="alice", source="project-notes",
+            records=[{"id": "architecture", "role": "user",
+                      "content": "Yuki uses a provider-neutral model router."}],
+            consent=True,
+        )
+        context = service.build_agent_context(
+            actor_id="alice", owner_id="alice", query="model routing", max_chars=1000,
+        )
+        self.assertIn("provider-neutral model router", context)
+
     def test_agent_context_rejects_unbounded_budget(self):
         service = build_memory_service(self.database, authorize=self.authorize)
         with self.assertRaises(ValueError):
