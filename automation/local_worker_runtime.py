@@ -40,6 +40,7 @@ def build_local_worker_runtime(
     provider,
     *,
     max_tasks_per_cycle: int = 3,
+    max_workers: int = 2,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -50,6 +51,8 @@ def build_local_worker_runtime(
     root.mkdir(parents=True, exist_ok=True)
     if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
         raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
+    if type(max_workers) is not int or not 1 <= max_workers <= 4:
+        raise ValueError("max_workers must be between 1 and 4.")
 
     def authorize(actor_id: str, action: str, task_id: str) -> bool:
         if actor_id == LOCAL_OPERATOR_ACTOR:
@@ -92,6 +95,7 @@ def build_local_worker_runtime(
         worker,
         max_tasks_per_cycle=max_tasks_per_cycle,
         recovery_limit=10,
+        max_workers=max_workers,
     )
     return LocalWorkerRuntime(
         runtime=runtime,
