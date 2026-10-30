@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 import json
 import sqlite3
+from pathlib import Path
 from threading import RLock
 
 from core.agent_contracts import AgentSpec, DelegationRequest
@@ -22,7 +23,8 @@ class SQLiteAgentRegistry:
             raise ValueError("database_path must be a non-empty path.")
         if type(max_agents) is not int or not 1 <= max_agents <= 10_000:
             raise ValueError("max_agents must be an integer from 1 to 10000.")
-        self.database_path = database_path
+        self.database_path = str(Path(database_path).expanduser())
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.max_agents = max_agents
         self._lock = RLock()
         with self._connect() as db:
