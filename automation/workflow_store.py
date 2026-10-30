@@ -296,7 +296,7 @@ class WorkflowRunStore:
         for prefix, limit in workflow_prefix_limits.items():
             if (
                 not isinstance(prefix, str) or not prefix.startswith("agent-")
-                or not prefix.endswith("-") or len(prefix) > 90 or "\\x00" in prefix
+                or not prefix.endswith("-") or len(prefix) > 90 or chr(0) in prefix
             ):
                 raise ValueError("workflow prefixes must be bounded agent-name prefixes.")
             if type(limit) is not int or not 1 <= limit <= 32:
