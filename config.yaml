@@ -11,6 +11,9 @@ openai_model: gpt-4.1-mini
 # OCI_GENAI_API_KEY=<OCI-Generative-AI-API-key-secret>
 # Production OCI service: prefer provider: oci_iam and:
 # oci_auth_mode: resource_principal
+# To use OCI's Responses API for agentic inference:
+# provider: oci_responses
+# Or with provider: multi, set YUKI_OCI_API_MODE=responses
 # For OCI Compute directly: oci_auth_mode: instance_principal
 # For local development: oci_auth_mode: session (uses local OCI CLI profile)
 # Install optional IAM support: pip install -r requirements-oci.txt
