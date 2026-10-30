@@ -65,6 +65,12 @@ class SQLiteAgentRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.register(AgentSpec("reader", "research", "Duplicate"))
 
+    def test_default_registry_has_no_product_level_agent_cap(self):
+        registry = SQLiteAgentRegistry(self.database)
+        for index in range(125):
+            registry.register(AgentSpec(f"agent-{index}", "research", "Research"))
+        self.assertEqual(len(registry.list_agents()), 125)
+
     def test_enforces_capacity(self):
         for name in ("one", "two", "three"):
             self.registry.register(AgentSpec(name, "research", name))
