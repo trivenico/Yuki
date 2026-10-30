@@ -87,8 +87,8 @@ def build_handlers_from_provider_manager(
     cloud routing requires the caller's explicit allow_cloud opt-in. A route
     failure never falls back to another provider.
     """
-    if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
-        raise ValueError("agent_roles must be a non-empty bounded mapping.")
+    if not isinstance(agent_roles, Mapping) or not agent_roles:
+        raise ValueError("agent_roles must be a non-empty mapping.")
     if type(allow_cloud) is not bool:
         raise ValueError("allow_cloud must be a boolean.")
     for agent_id, role in agent_roles.items():
@@ -98,13 +98,13 @@ def build_handlers_from_provider_manager(
             raise ValueError("each agent must map to a supported specialist role.")
     if provider_preferences is None:
         provider_preferences = {}
-    if not isinstance(provider_preferences, Mapping) or len(provider_preferences) > 32:
-        raise ValueError("provider_preferences must be a bounded mapping.")
+    if not isinstance(provider_preferences, Mapping):
+        raise ValueError("provider_preferences must be a mapping.")
     normalized_preferences = {}
     for agent_id, names in provider_preferences.items():
         if agent_id not in agent_roles:
             raise ValueError("provider preference references an unknown agent.")
-        if not isinstance(names, tuple) or not 1 <= len(names) <= 32:
+        if not isinstance(names, tuple) or not names:
             raise ValueError("each provider preference must be a non-empty tuple of provider names.")
         if any(not isinstance(name, str) or not name.strip() for name in names):
             raise ValueError("provider preferences must contain non-empty provider names.")
@@ -176,14 +176,16 @@ class SpecialistTaskWorker:
         self.service_actor_id = service_actor_id.strip()
         if agent_concurrency is None:
             agent_concurrency = {}
-        if not isinstance(agent_concurrency, Mapping) or len(agent_concurrency) > 32:
-            raise ValueError("agent_concurrency must be a bounded mapping.")
+        if not isinstance(agent_concurrency, Mapping):
+            raise ValueError("agent_concurrency must be a mapping.")
         limits = {}
         for agent_id, limit in agent_concurrency.items():
             if agent_id not in validated:
                 raise ValueError("concurrency limit references an unregistered worker handler.")
-            if type(limit) is not int or not 1 <= limit <= 32:
-                raise ValueError("agent concurrency limits must be integers from 1 to 32.")
+            if limit is None:
+                continue
+            if type(limit) is not int or limit < 1:
+                raise ValueError("agent concurrency limits must be None (unlimited) or positive integers.")
             limits["agent-" + agent_id + "-"] = limit
         self.workflow_prefix_limits = limits
         self.handlers = validated
