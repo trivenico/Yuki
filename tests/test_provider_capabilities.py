@@ -74,6 +74,17 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route(required=("text", "official_cli"))
 
+    def test_cloud_opt_in_keeps_local_provider_preferred_by_default(self):
+        registry = CapabilityRegistry([
+            provider("openai", privacy="cloud_provider"),
+            provider("ollama", caps=("text", "local_inference")),
+        ])
+        self.assertEqual(registry.route(allow_cloud=True).provider, "ollama")
+        self.assertEqual(
+            registry.route(allow_cloud=True, preference=("openai", "ollama")).provider,
+            "openai",
+        )
+
     def test_strict_preference_never_selects_an_unrequested_provider(self):
         registry = CapabilityRegistry([
             provider("ollama"),
