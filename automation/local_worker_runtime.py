@@ -13,6 +13,7 @@ from secrets import token_urlsafe
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.specialist_worker import (
     SpecialistTaskWorker,
+    build_handlers_from_provider_manager,
     build_provider_specialist_handlers,
 )
 from automation.task_runtime import TaskRuntime
@@ -37,8 +38,11 @@ class LocalWorkerRuntime:
 
 def build_local_worker_runtime(
     workspace: str | Path,
-    provider,
+    provider=None,
     *,
+    provider_manager=None,
+    provider_preferences=None,
+    allow_cloud: bool = False,
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
 ) -> LocalWorkerRuntime:
@@ -83,7 +87,21 @@ def build_local_worker_runtime(
             and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
     )
-    handlers = build_provider_specialist_handlers(provider)
+    if provider is not None and provider_manager is not None:
+        raise ValueError("Pass either provider or provider_manager, not both.")
+    if provider_manager is not None:
+        handlers = build_handlers_from_provider_manager(
+            provider_manager,
+            {role: role for role in ("research", "coding", "testing", "reporting")},
+            provider_preferences=provider_preferences,
+            allow_cloud=allow_cloud,
+        )
+    else:
+        if provider is None:
+            raise ValueError("A provider or provider_manager is required.")
+        if provider_preferences is not None or allow_cloud is not False:
+            raise ValueError("provider_preferences and allow_cloud require provider_manager.")
+        handlers = build_provider_specialist_handlers(provider)
     worker = SpecialistTaskWorker(
         runtime,
         worker_id="yuki-local-worker",
