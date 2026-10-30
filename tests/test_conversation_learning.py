@@ -27,6 +27,29 @@ class ConversationImportTests(unittest.TestCase):
             self.assertEqual(result["message_count"], 1)
             self.assertEqual(result["messages"][0]["text"], "Hello")
 
+    def test_preview_chatgpt_root_conversations_array(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "conversations.json"
+            source.write_text(json.dumps([{
+                "title": "Imported ChatGPT chat",
+                "mapping": {
+                    "node-1": {"message": {
+                        "id": "m1", "author": {"role": "user"},
+                        "content": {"content_type": "text", "parts": ["Hello from ChatGPT"]},
+                    }},
+                    "node-2": {"message": {
+                        "id": "m2", "author": {"role": "assistant"},
+                        "content": {"content_type": "text", "parts": ["Hello back"]},
+                    }},
+                },
+            }]), encoding="utf-8")
+            result = ConversationImportStore(Path(tmp) / "store.json").preview(source)
+            self.assertEqual(result["message_count"], 2)
+            self.assertEqual(
+                [message["text"] for message in result["messages"]],
+                ["Hello from ChatGPT", "Hello back"],
+            )
+
     def test_import_requires_explicit_consent_and_deduplicates(self):
         with tempfile.TemporaryDirectory() as tmp:
             source, store = Path(tmp) / "export.json", Path(tmp) / "store.json"
