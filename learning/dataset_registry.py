@@ -3,6 +3,7 @@
 Discovery is metadata-only. Approval records never trigger downloads or training.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import hashlib
 import hmac
@@ -78,6 +79,7 @@ class DatasetRegistry:
                     signature TEXT NOT NULL, PRIMARY KEY(repo_id,revision))""")
             self._verify_all()
 
+    @contextmanager
     def _connect(self):
         db=sqlite3.connect(self.path,timeout=5)
         db.execute("PRAGMA busy_timeout=5000")
