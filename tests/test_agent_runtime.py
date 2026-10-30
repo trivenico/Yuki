@@ -41,7 +41,8 @@ class AgentRuntimeCompositionTests(unittest.TestCase):
         self.assertEqual(set(worker.handlers), {spec.agent_id for spec in self.registry.list_agents()})
         self.assertEqual(len(worker.handlers), 20)
         self.assertEqual(len(worker.workflow_prefix_limits), 20)
-        self.assertEqual(worker.workflow_prefix_limits["agent-research-analyst-"], 2)
+        # Starter agents default to no per-agent concurrency ceiling.
+        self.assertNotIn("agent-research-analyst-", worker.workflow_prefix_limits)
 
     def test_rejects_split_registry_and_task_databases(self):
         other = SQLiteAgentRegistry(str(Path(self.temp_dir.name) / "other.db"))
