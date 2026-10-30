@@ -17,7 +17,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from core.extension_store import _UniqueKeyLoader
+from core.extension_store import _UniqueKeyLoader, _has_symlink_component
 
 ERROR = "error"
 WARNING = "warning"
@@ -201,7 +201,7 @@ def lint_content(content: str, *, skill_dir: Path | None = None) -> list[LintFin
 def lint_skill(path: str | Path) -> list[LintFinding]:
     """Lint a local SKILL.md, with bounded on-disk checks."""
     source = Path(path).expanduser()
-    if source.is_symlink() or source.name.lower() != "skill.md":
+    if _has_symlink_component(source) or source.name.lower() != "skill.md":
         return [_err("invalid-path", "select a regular file named SKILL.md (symbolic links are not followed).")]
     try:
         if source.stat().st_size > 64 * 1024:
