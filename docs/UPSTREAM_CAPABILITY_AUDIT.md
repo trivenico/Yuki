@@ -60,3 +60,11 @@ Do not wholesale-copy files simply because a feature looks useful. Reimplement t
 - Hermes' async delegation implementation is tightly coupled to its session gateway, worker ledger, context propagation, completion queue and state database. We are reusing its bounded delegation and recovery design patterns, not copying that implementation into Yuki.
 - OpenClaw's gateway and plugin host are TypeScript services with their own transport and authority model. They are not safe drop-in Python modules; Yuki will adopt isolated contracts and adapters rather than importing the whole gateway.
 - OpenJarvis' complete inference and benchmark stack has substantial optional dependencies and platform constraints. Only the small, directly useful statistics helper is imported in this milestone.
+
+### Bundled Hermes debugging skill
+
+- Source: [Hermes Agent systematic-debugging skill](https://github.com/NousResearch/hermes-agent/blob/0f3fcacd3f92d02d163789b4c3441b6388f8753d/skills/software-development/systematic-debugging/SKILL.md)
+- Yuki file: `skills/upstream/hermes/systematic-debugging/SKILL.md`
+- License: MIT; full license at `licenses/MIT-Hermes-Agent.txt`; attribution recorded in `THIRD_PARTY_NOTICES.md`.
+- The skill was adapted to remove Hermes-only tool invocations and replace them with Yuki's actual capability and verification boundaries. It is bundled as an opt-in skill file; it is not automatically loaded or executed.
+- Regression coverage imports the bundled file through Yuki's real `read_skill_pack` and `install_skill_pack` path, verifies MIT provenance and high-risk approval behavior, and checks that unsupported `delegate_task` calls are absent.
