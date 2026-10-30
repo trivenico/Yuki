@@ -89,6 +89,8 @@ class AgentHandlerFactoryTests(unittest.TestCase):
     def test_rejects_registry_with_unsupported_role(self):
         self.registry.register(AgentSpec("unknown", "unknown-role", "Unknown role"))
         manager = Mock()
+        manager.current.return_value.name = "ollama"
+        manager.create_routed_adapter.return_value = FakeProvider()
         with self.assertRaises(ValueError):
             build_agent_handlers(manager, self.registry)
 
