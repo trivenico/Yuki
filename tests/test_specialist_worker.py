@@ -258,6 +258,44 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
 
+
+    def test_parallel_worker_pool_preserves_per_agent_concurrency_budget(self):
+        import time
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="parallel-agent-budget-plan",
+            subtasks=[
+                SubtaskSpec("one", "First task", ("coding",), requires_approval=False),
+                SubtaskSpec("two", "Second task", ("coding",), requires_approval=False),
+            ],
+        )
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        active_lock = Lock()
+        active = 0
+        peak_active = 0
+
+        def handler(_argument):
+            nonlocal active, peak_active
+            with active_lock:
+                active += 1
+                peak_active = max(peak_active, active)
+            try:
+                time.sleep(0.05)
+                return "completed"
+            finally:
+                with active_lock:
+                    active -= 1
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="budget-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": handler},
+            agent_concurrency={"code-review": 1},
+        )
+        results = worker.run_concurrently(max_workers=2, max_tasks=2)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.state == "succeeded" for result in results))
+        self.assertEqual(peak_active, 1)
+
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="parallel-budget-plan",
