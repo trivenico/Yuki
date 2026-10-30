@@ -29,14 +29,17 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual(registry.route(allow_cloud=True, preference=("gemini",)).provider, "gemini")
 
     def test_unknown_privacy_never_routes_even_with_cloud_opt_in(self):
-        registry = CapabilityRegistry([
+        unknown_only = CapabilityRegistry([
             provider("unknown", privacy="unknown"),
-            provider("gateway", privacy="third_party_gateway"),
         ])
         with self.assertRaises(LookupError):
-            registry.route(allow_cloud=True, preference=("unknown",))
+            unknown_only.route(allow_cloud=True, preference=("unknown",))
+
+        known_cloud = CapabilityRegistry([
+            provider("gateway", privacy="third_party_gateway"),
+        ])
         self.assertEqual(
-            registry.route(allow_cloud=True, preference=("gateway",)).provider,
+            known_cloud.route(allow_cloud=True, preference=("gateway",)).provider,
             "gateway",
         )
 
