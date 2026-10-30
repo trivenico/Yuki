@@ -36,6 +36,12 @@ class AgentDelegationCoordinatorTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_rejects_registry_and_runtime_using_different_databases(self):
+        other_db = str(Path(self.temp_dir.name) / "other.db")
+        other_registry = SQLiteAgentRegistry(other_db)
+        with self.assertRaises(ValueError):
+            AgentDelegationCoordinator(other_registry, self.runtime, actor_id="yuki-service")
+
     def test_authorized_delegation_creates_approval_gated_durable_task(self):
         request = DelegationRequest(
             "request-1", "parent-task-1", "planner", "tester",
