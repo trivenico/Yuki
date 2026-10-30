@@ -86,6 +86,7 @@ Yuki commands:
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
+  /skill diagnostics              Show installed skill-pack load health
   /skill inspect NAME             Inspect a registered skill's metadata
   /skill approve NAME [argument]  Approve one exact high-risk invocation
   /skill invoke NAME [argument]   Invoke a registered skill through the guard
@@ -172,6 +173,20 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f'{item["name"]} [{item["risk"]}]: {item["description"]}'
                 for item in registry.describe()
             ) or "No skills registered."
+        if parts[1] == "diagnostics":
+            errors = getattr(registry, "skill_pack_load_errors", [])
+            if not isinstance(errors, list) or not errors:
+                return "Skill-pack loading: healthy; no installation or registration errors."
+            lines = [f"Skill-pack loading: {len(errors)} error(s)."]
+            for item in errors[:10]:
+                if not isinstance(item, dict):
+                    continue
+                filename = sanitize_text(str(item.get("file", "unknown")), 120).replace("\\n", " ")
+                reason = sanitize_text(str(item.get("error", "unspecified error")), 240).replace("\\n", " ")
+                lines.append(f"- {filename}: {reason}")
+            if len(errors) > 10:
+                lines.append(f"- {len(errors) - 10} additional error(s) omitted.")
+            return "\\n".join(lines)
         if parts[1] == "inspect":
             if len(parts) < 3:
                 return "Usage: /skill inspect NAME"
@@ -208,7 +223,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             argument = parts[3] if len(parts) == 4 else ""
             result = runtime.invoke(parts[2], argument)
             return result.message if result.ok else f"{result.status}: {result.message}"
-        return "Usage: /skill list | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
+        return "Usage: /skill list | diagnostics | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
     if command == "/durable" or command.startswith("/durable "):
         durable_command = command[len("/durable"):].strip()
