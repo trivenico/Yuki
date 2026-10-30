@@ -18,6 +18,14 @@ class YukiAITests(unittest.TestCase):
         self.assertIn("prior fact",provider.prompts[0])
         self.assertLessEqual(provider.prompts[0].count("x"),500)
 
+    def test_structured_vector_memory_results_are_included_as_context(self):
+        provider = FakeProvider()
+        ai = YukiAI(provider, memory_search=lambda query: [
+            {"id": "m1", "text": "Yuki uses shared desktop services", "score": 0.8}
+        ])
+        ai.answer("How does Yuki desktop work?")
+        self.assertIn("Yuki uses shared desktop services", provider.prompts[0])
+
     def test_memory_failure_does_not_break_chat(self):
         ai=YukiAI(FakeProvider(),memory_search=lambda q:(_ for _ in ()).throw(RuntimeError()))
         self.assertEqual(ai.answer("Hello"),"Yuki is ready.")
