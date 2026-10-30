@@ -520,7 +520,7 @@ def main():
                 def authorize_dashboard(actor_id, action):
                     return (
                         actor_id == local_workers.operator_actor_id
-                        and action in {"worker:run", "task:approve"}
+                        and action in {"worker:run", "task:approve", "task:cancel"}
                     )
 
                 run_dashboard(
