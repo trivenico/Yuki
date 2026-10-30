@@ -46,7 +46,7 @@ def recommend_model_profiles(hardware, *, task="general", max_results=4):
     elif ram_gib is not None:
         tiers = [
             (8, "1B–3B", "small", "CPU inference; quantization recommended"),
-            (16, "3B–7B", "balanced", "CPU inference; quantization strongly recommended"),
+            (16, "3B–7B", "balanced", "CPU inference; quantization strongly recommended; expect slower generation"),
             (32, "7B–14B", "large", "CPU inference; expect slower generation"),
             (64, "14B–32B", "xlarge", "CPU inference; check memory headroom and context"),
         ]
