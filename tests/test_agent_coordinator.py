@@ -69,6 +69,20 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(enabled.enabled)
 
+    def test_dispatch_observes_agent_disabled_by_another_instance(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="external-disable", subtasks=[
+            SubtaskSpec("collect", "Collect sources", ("research",)),
+        ])
+        second = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        second.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        subtask = advanced.subtasks[0]
+        self.assertEqual(subtask.status, "failed")
+        self.assertIsNone(subtask.task_id)
+
     def test_registry_listing_is_authorized_and_sanitized(self):
         with self.assertRaises(PermissionError):
             self.coordinator.list_agents(actor_id="mallory")
