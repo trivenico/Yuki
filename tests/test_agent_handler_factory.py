@@ -47,17 +47,20 @@ class AgentHandlerFactoryTests(unittest.TestCase):
         routed = {(tuple(call.kwargs["preference"]), call.kwargs["allow_cloud"]) for call in calls}
         self.assertEqual(routed, {(("ollama",), False), (("openai",), True)})
 
-    def test_uses_selected_provider_for_agent_without_preferences(self):
+    def test_pins_agent_without_preferences_to_selected_provider(self):
         self.registry.register(AgentSpec("reporter", "reporting", "Creates reports"))
         provider = FakeProvider()
         manager = Mock()
-        manager.create_selected_adapter.return_value = provider
-        manager.current.return_value = None
+        manager.create_routed_adapter.return_value = provider
+        manager.current.return_value.name = "ollama"
 
         handlers = build_agent_handlers(manager, self.registry)
 
         self.assertIn("reporter", handlers)
-        manager.create_selected_adapter.assert_called_once_with()
+        manager.create_routed_adapter.assert_called_once_with(
+            required=("text",), preference=("ollama",), allow_cloud=False,
+        )
+        manager.create_selected_adapter.assert_not_called()
 
     def test_cloud_opt_in_without_preference_uses_only_user_selected_provider(self):
         self.registry.register(AgentSpec(
@@ -75,10 +78,8 @@ class AgentHandlerFactoryTests(unittest.TestCase):
             required=("text",), preference=("openai",), allow_cloud=True,
         )
 
-    def test_cloud_opt_in_fails_closed_without_selected_provider(self):
-        self.registry.register(AgentSpec(
-            "cloud-reporter", "reporting", "Cloud-approved reporting", allow_cloud=True,
-        ))
+    def test_agent_without_preference_fails_closed_without_selected_provider(self):
+        self.registry.register(AgentSpec("reporter", "reporting", "Creates reports"))
         manager = Mock()
         manager.current.return_value = None
         with self.assertRaises(RuntimeError):
