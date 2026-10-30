@@ -9,10 +9,10 @@ import json
 import os
 import re
 import tempfile
-
-import yaml
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from skills.base import Skill, SkillResult
 from core.portable_paths import data_root
@@ -24,7 +24,9 @@ REQUIRED_KEYS = {"schema_version", "name", "description", "instructions", "risk"
 OPTIONAL_KEYS = {"source_format", "license", "author", "version", "compatibility"}
 _ALLOWED_SKILL_MD_FIELDS = {
     "name", "description", "license", "compatibility", "metadata",
-    "allowed-tools", "version", "author", "platforms",
+    "allowed-tools", "version", "author", "platforms", "homepage",
+    "user-invocable", "disable-model-invocation", "command-dispatch",
+    "command-tool", "command-arg-mode",
 }
 _MAX_FRONTMATTER_BYTES = 16 * 1024
 
@@ -224,6 +226,10 @@ class InstalledSkillPack(Skill):
         self.description = manifest["description"]
         self.instructions = manifest["instructions"]
         self.risk = manifest["risk"]
+        self.source_format = manifest.get("source_format", "json")
+        self.source_license = manifest.get("license")
+        self.source_author = manifest.get("author")
+        self.source_version = manifest.get("version")
         self.requires_approval = self.risk != "low"
         self.max_argument_length = 4000
 
