@@ -56,9 +56,12 @@ def build_worker_service(*, database_path: str, provider_manager=None,
         return actor == service_actor_id and action in _WORKER_ACTIONS
 
     runtime = TaskRuntime(store, authorize=authorize)
+    raw_consent = os.environ.get("YUKI_WORKER_CLOUD_CONSENT_AGENT_IDS", "")
+    cloud_consent_ids = tuple(item.strip() for item in raw_consent.split(",") if item.strip())
     worker = build_registered_agent_worker(
         runtime, registry, provider_manager,
         worker_id=worker_id, service_actor_id=service_actor_id,
+        cloud_consent_agent_ids=cloud_consent_ids,
     )
     recovering = RecoveringSpecialistWorker(worker, runtime, service_actor_id)
     supervisor = AlwaysOnWorkerSupervisor(
