@@ -45,6 +45,40 @@ class DatasetRegistryTests(unittest.TestCase):
         self.assertTrue(self.registry.is_approved("openai/gsm8k", "a" * 40))
         self.assertFalse(self.registry.is_approved("openai/gsm8k", "b" * 40))
 
+    def test_signed_approval_persists_across_registry_restart(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approvals.sqlite"
+            key = b"test-only-signing-key-at-least-32-bytes"
+            first = DatasetRegistry(database_path=path, signing_key=key)
+            first.approve(self.approval)
+            reopened = DatasetRegistry(database_path=path, signing_key=key)
+            self.assertTrue(reopened.is_approved("openai/gsm8k", "a" * 40))
+            self.assertEqual(reopened.approved_records()[0]["approved_by"], "reviewer")
+
+    def test_persistent_registry_rejects_missing_or_short_signing_key(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                DatasetRegistry(database_path=Path(tmp) / "approvals.sqlite", signing_key=b"short")
+
+    def test_persistent_registry_fails_closed_on_tampered_approval(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approvals.sqlite"
+            key = b"test-only-signing-key-at-least-32-bytes"
+            first = DatasetRegistry(database_path=path, signing_key=key)
+            first.approve(self.approval)
+            with sqlite3.connect(path) as db:
+                db.execute("UPDATE dataset_approvals SET approval_json=?",
+                           ('{"repo_id":"someone/else"}',))
+            with self.assertRaises(RuntimeError):
+                DatasetRegistry(database_path=path, signing_key=key)
+
 
 if __name__ == "__main__":
     unittest.main()
