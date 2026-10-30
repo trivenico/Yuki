@@ -147,6 +147,13 @@ class CapabilityRegistryTests(unittest.TestCase):
             "openai",
         )
 
+    def test_invalid_ollama_endpoint_is_never_classified_as_local(self):
+        invalid = ProviderManager(config={
+            "ollama_model": "qwen3", "ollama_base_url": "ftp://127.0.0.1:11434",
+        }, environ={})
+        with self.assertRaises(LookupError):
+            invalid.routing_registry().route()
+
     def test_ollama_local_endpoint_is_routable_but_custom_endpoint_is_not(self):
         local = ProviderManager(config={"ollama_model": "qwen3"}, environ={})
         self.assertEqual(local.routing_registry().route().provider, "ollama")
