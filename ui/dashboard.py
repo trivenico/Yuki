@@ -46,7 +46,7 @@ def run_dashboard(
                     return
                 try:
                     request = parts[3].strip()
-                    if not request or len(request) > 2000 or "\\x00" in request:
+                    if not request or len(request) > 2000 or "\x00" in request:
                         raise ValueError("request must be bounded non-empty text.")
                     plan = coordinator.submit(
                         actor_id=actor_id,
