@@ -9,6 +9,14 @@ Run from this directory on the OCI A1 host:
 ```bash
 export YUKI_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
 export YUKI_GATEWAY_OWNER_ID="your-stable-owner-id"  # choose once; all your devices must use this ID
+export YUKI_PROVIDER="oci_iam"  # choose an explicitly configured provider before starting
+export YUKI_INSTALL_OCI_AUTH=true  # required only for OCI IAM/Responses authentication
+export YUKI_OCI_REGION="your-home-region"
+export YUKI_OCI_MODEL="model-enabled-for-your-project"
+export YUKI_OCI_PROJECT_OCID="ocid1.generativeaiproject..."
+export YUKI_OCI_AUTH_MODE="instance_principal"  # use instance_principal on OCI Compute
+# Direct OCI routing requires explicit cloud consent for each enabled agent.
+# Keep the allowlist empty for local-only providers; never consent by default.
 export YUKI_GATEWAY_BOOTSTRAP_ENABLED=true  # only during operator enrollment
 # Set it back to false and restart immediately after enrollment
 docker compose up -d --build
@@ -50,7 +58,7 @@ This HTTP server is an early internal gateway. It bounds concurrent request work
 
 ## Continuous specialist worker
 
-The Compose stack includes a separate `yuki-worker` service. It waits for the gateway health check, mounts the same persistent SQLite volume, seeds/loads the same 21-agent registry, and continuously claims eligible tasks. Expired leases are journaled as `interrupted`; they are not silently replayed. Provider latency therefore does not block gateway HTTP requests.
+The Compose stack includes a separate `yuki-worker` service. It waits for the gateway health check, mounts the same persistent SQLite volume, seeds/loads the same 21-agent registry, and continuously claims eligible tasks. Expired leases are journaled as `interrupted`; they are not silently replayed. Provider latency therefore does not block gateway HTTP requests. Set `YUKI_PROVIDER` explicitly before `docker compose up`; the sample above illustrates OCI IAM settings but does not provision an OCI principal, policy, model access, or project.
 
 Set `YUKI_PROVIDER` explicitly in the shell (for example, `ollama`, `openai`, or an OCI provider), configure that provider's required environment variables, then run `docker compose up -d --build`. The worker receives only the provider credentials explicitly passed through the Compose environment. Keep credentials in a local, untracked `.env` file or secret manager; never commit them. For local Ollama, its endpoint must be reachable from inside the worker container, not through the container's own `127.0.0.1`.
 
