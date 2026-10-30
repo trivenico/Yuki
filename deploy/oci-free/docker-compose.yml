@@ -3,6 +3,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/oci-free/Dockerfile
+      args:
+        INSTALL_OCI_AUTH: ${YUKI_INSTALL_OCI_AUTH:-false}
     image: yuki-gateway:local
     restart: unless-stopped
     init: true
@@ -37,6 +39,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/oci-free/Dockerfile
+      args:
+        INSTALL_OCI_AUTH: ${YUKI_INSTALL_OCI_AUTH:-false}
     image: yuki-gateway:local
     command: ["python", "-m", "automation.worker_service"]
     restart: unless-stopped
