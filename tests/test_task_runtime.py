@@ -65,6 +65,32 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.list_task_summaries(actor_id="supervisor")
 
+    def test_event_stream_supports_bounded_incremental_pages(self):
+        task = self.create("event-pagination")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        first = self.runtime.record_progress(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, message="first update", percent=25,
+        )
+        self.runtime.record_progress(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=first.version, message="second update", percent=50,
+        )
+        page_one = self.runtime.events(
+            actor_id="alice", task_id=task.task_id, after_sequence=1, limit=1,
+        )
+        page_two = self.runtime.events(
+            actor_id="alice", task_id=task.task_id,
+            after_sequence=page_one[-1].sequence, limit=1,
+        )
+        self.assertEqual([event.sequence for event in page_one], [2])
+        self.assertEqual([event.sequence for event in page_two], [3])
+        self.assertEqual(page_one[0].payload["message"], "first update")
+        with self.assertRaises(ValueError):
+            self.runtime.events(actor_id="alice", task_id=task.task_id, limit=501)
+        with self.assertRaises(PermissionError):
+            self.runtime.events(actor_id="supervisor", task_id=task.task_id)
+
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
             TaskRuntime(self.store).enqueue(actor_id="alice", idempotency_key="no-auth",
