@@ -9,6 +9,7 @@ from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
 from providers.oci_iam import OciIamProvider
 from providers.oci_responses import OciResponsesProvider
+from providers.anthropic import AnthropicProvider
 from unittest.mock import Mock, patch
 import json
 
@@ -174,6 +175,30 @@ class ProviderFactoryTests(unittest.TestCase):
                     "YUKI_OCI_MODEL": "some-model",
                 },
             )
+
+    def test_anthropic_provider_factory_uses_native_messages_adapter(self):
+        provider = create_provider(
+            {"provider": "anthropic"},
+            environ={"YUKI_ANTHROPIC_MODEL": "claude-sonnet-latest", "ANTHROPIC_API_KEY": "test-key"},
+        )
+        self.assertIsInstance(provider, AnthropicProvider)
+        self.assertTrue(provider.is_available())
+        self.assertEqual(provider.model, "claude-sonnet-latest")
+
+    def test_multi_provider_registers_openai_anthropic_deepseek_and_glm(self):
+        router = create_provider(
+            {"provider": "multi", "provider_default_route": "deepseek",
+             "provider_routes": {"reasoning": "anthropic", "coding": "deepseek",
+                                 "general": "openai", "chinese-language": "glm"}},
+            environ={"YUKI_OPENAI_MODEL": "gpt-4.1", "OPENAI_API_KEY": "openai-test",
+                     "YUKI_ANTHROPIC_MODEL": "claude-sonnet-latest", "ANTHROPIC_API_KEY": "anthropic-test",
+                     "YUKI_DEEPSEEK_MODEL": "deepseek-chat", "DEEPSEEK_API_KEY": "deepseek-test",
+                     "YUKI_GLM_MODEL": "glm-4.5", "ZAI_API_KEY": "glm-test"},
+        )
+        self.assertEqual(router.provider_for("general").model, "gpt-4.1")
+        self.assertIsInstance(router.provider_for("reasoning"), AnthropicProvider)
+        self.assertEqual(router.provider_for("coding").model, "deepseek-chat")
+        self.assertEqual(router.provider_for("chinese-language").model, "glm-4.5")
 
     def test_multi_provider_routes_managed_and_self_hosted_models(self):
         router = create_provider(
