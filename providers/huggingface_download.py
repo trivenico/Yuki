@@ -12,7 +12,7 @@ _REVISION=re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_FILES=[
  "config.json","generation_config.json","tokenizer.json","tokenizer_config.json",
  "special_tokens_map.json","added_tokens.json","chat_template.jinja",
- "model.safetensors","model-*.safetensors","*.safetensors.index.json",
+ "*.safetensors","*.safetensors.index.json",
  "*.model","*.tiktoken","vocab.json","merges.txt","vocab.txt",
  "spiece.model","sentencepiece.bpe.model","preprocessor_config.json",
 ]
@@ -36,13 +36,16 @@ def download_model_snapshot(model_id,revision,cache_dir,*,max_bytes=20*1024**3,t
         info=HfApi(token=token).model_info(model_id,revision=revision,files_metadata=True)
         siblings=getattr(info,"siblings",None) or []
         sizes=[]
+        selected=[]
         for item in siblings:
             name=getattr(item,"rfilename","")
-            size=getattr(item,"size",None)
-            if any(Path(name).match(pattern) for pattern in _ALLOWED_FILES) and isinstance(size,int) and size>=0:
-                sizes.append((name,size))
-        if not any(name.endswith(".safetensors") for name,_ in sizes):
+            if any(Path(name).match(pattern) for pattern in _ALLOWED_FILES):
+                selected.append((name,getattr(item,"size",None)))
+        if not any(name.endswith(".safetensors") for name,_ in selected):
             raise ModelDownloadError("Pinned model revision does not expose safetensors weights")
+        if any(not isinstance(size,int) or size<0 for _,size in selected):
+            raise ModelDownloadError("Hub did not provide trustworthy file sizes; refusing an unbounded download")
+        sizes=selected
         estimated=sum(size for _,size in sizes)
         if estimated>max_bytes:
             raise ModelDownloadError("Model snapshot exceeds configured download budget")
