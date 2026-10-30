@@ -22,7 +22,8 @@ def build_agent_handlers(
     agent without an explicit preference is pinned to the provider currently
     selected by the user; if no selected provider is known, construction fails
     closed. The router enforces cloud consent and never searches/falls back
-    across providers. Each group is batched to the worker builder's 32-agent cap.
+    across providers. Groups are processed in bounded application batches without
+    imposing a product-level cap on the total registered fleet.
     """
     if not isinstance(registry, SQLiteAgentRegistry):
         raise TypeError("registry must be a SQLiteAgentRegistry.")
@@ -44,8 +45,9 @@ def build_agent_handlers(
 
     handlers: dict[str, Callable[[str], str]] = {}
     for (preferences, allow_cloud), specs in groups.items():
-        for offset in range(0, len(specs), 32):
-            batch = specs[offset:offset + 32]
+        batch_size = 256
+        for offset in range(0, len(specs), batch_size):
+            batch = specs[offset:offset + batch_size]
             roles = {spec.agent_id: spec.role for spec in batch}
             preference_map = {
                 spec.agent_id: preferences
