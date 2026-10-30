@@ -36,14 +36,18 @@ def create_provider(config=None, *, environ=None):
         model = str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip()
         if not region or not all(part.isalnum() or part == "-" for part in region.split("-")):
             raise ValueError("Configure YUKI_OCI_REGION with a valid OCI region identifier.")
+        project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
         if not model:
             raise ValueError("Configure YUKI_OCI_MODEL with a model enabled in your OCI region.")
+        if not project.startswith("ocid1.generativeaiproject."):
+            raise ValueError("Configure YUKI_OCI_PROJECT_OCID with your OCI Generative AI project OCID.")
         host = f"inference.generativeai.{region}.oci.oraclecloud.com"
         return OpenAICompatibleProvider(
             model,
             api_key_env="OCI_GENAI_API_KEY",
             base_url=f"https://{host}/openai/v1",
             allowed_hosts={host},
+            additional_headers={"openai-project": project},
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             environ=env,
         )
