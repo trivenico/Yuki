@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from core.config import load_config
 from core.readiness import build_readiness_report
 from core.model_manager import get_hardware_report, get_model_catalog
+from core.yuki_ai import YukiAI
 from providers.factory import create_provider
 
 def build_parser():
@@ -12,6 +13,8 @@ def build_parser():
     sub=parser.add_subparsers(dest="command",required=True)
     sub.add_parser("doctor",help="Report local runtime readiness")
     sub.add_parser("provider-status",help="Check configured provider")
+    sub.add_parser("ai-status",help="Show Yuki AI application-service status")
+    plan=sub.add_parser("plan",help="Create a bounded, inspectable plan"); plan.add_argument("goal")
     sub.add_parser("hardware",help="Show local read-only hardware inventory")
     models=sub.add_parser("models",help="Inspect model families and hardware-aware recommendations")
     models.add_argument("--task",choices=("general","coding","reasoning","multilingual","research","tool_use","multimodal","on_device"),default="general")
@@ -42,13 +45,27 @@ def run_cli(argv:Sequence[str]|None=None,*,config_loader:Callable=load_config,pr
         except Exception as exc: output_fn(f"Model catalog unavailable ({type(exc).__name__})."); return 4
     try: provider=provider_factory(config_loader())
     except Exception as exc: output_fn(f"Yuki could not initialize the configured provider ({type(exc).__name__})."); return 2
+    ai=YukiAI(provider)
+    if args.command=="ai-status":
+        status=ai.status(); _write_json(status,output_fn); return 0 if status["provider_available"] else 3
+    if args.command=="plan":
+        try:
+            plan=ai.plan(args.goal)
+            _write_json({"goal":plan.goal,"memory_context":list(plan.memory_context),"steps":[{"action":s.action,"description":s.description,"requires_approval":s.requires_approval} for s in plan.steps]},output_fn)
+            return 0
+        except Exception as exc:
+            output_fn(f"Planning failed ({type(exc).__name__})."); return 4
     if args.command=="provider-status":
         try: available=bool(provider.is_available())
         except Exception: available=False
         _write_json({"provider":type(provider).__name__,"available":available,"status":"ready" if available else "unavailable"},output_fn)
         return 0 if available else 3
     if args.command=="ask":
-        answer,status=_safe_ask(provider,args.prompt); output_fn(answer); return status
+        try:
+            if not provider.is_available(): output_fn("Yuki: The configured provider is unavailable."); return 3
+            answer=ai.answer(args.prompt); output_fn(answer); return 0
+        except Exception as exc:
+            output_fn(f"Yuki: AI request failed ({type(exc).__name__})."); return 4
     if args.command=="chat":
         output_fn("Yuki chat. Type /quit to exit. Tool execution is disabled in this CLI mode.")
         while True:
@@ -56,8 +73,11 @@ def run_cli(argv:Sequence[str]|None=None,*,config_loader:Callable=load_config,pr
             except (EOFError,KeyboardInterrupt): output_fn(""); return 0
             if message.strip().lower() in {"/quit","/exit"}: return 0
             if not message.strip(): continue
-            answer,status=_safe_ask(provider,message); output_fn("Yuki> "+answer)
-            if status in {3,4}: return status
+            try:
+                if not provider.is_available(): output_fn("Yuki: The configured provider is unavailable."); return 3
+                answer=ai.answer(message); output_fn("Yuki> "+answer)
+            except Exception as exc:
+                output_fn(f"Yuki: AI request failed ({type(exc).__name__})."); return 4
     return 0
 
 def main():
