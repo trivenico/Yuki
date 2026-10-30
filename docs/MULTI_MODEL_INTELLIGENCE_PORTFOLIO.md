@@ -65,3 +65,17 @@ Do not infer Tier 2+ from a model's marketing or API compatibility. In particula
 ## Day-one promise and honest limits
 
 On day one of the first usable Yuki release, users should be able to select/configure available model providers and Yuki should route eligible tasks among them. The quality of a given task depends on the actual model version, account entitlements, prompt/context, tool integration, hardware, latency and benchmark evidence. No architecture can guarantee that Yuki will equal or exceed every current Claude, OpenAI, DeepSeek or GLM model on every task. The goal is to combine their strengths through measured routing and robust execution rather than claim that Yuki itself has already trained a frontier model.
+
+## Bounded parallel specialist coordinator
+
+`core.multi_brain.MultiBrainCoordinator` provides an opt-in text-only ensemble. Callers explicitly inject named specialist provider adapters and a synthesis provider; the coordinator does not construct vendors, choose routes, or transmit data to cloud by itself.
+
+- At most eight configured specialists and eight concurrent workers.
+- Per-consultation timeout (1–180 seconds), configurable minimum successful responses, and bounded prompt/response sizes.
+- Unavailable providers, exceptions and invalid outputs are excluded and reported in `last_report`.
+- The synthesis prompt treats specialist output as untrusted evidence and asks Yuki to surface disagreement and uncertainty.
+- Synthesis fails closed if the synthesis provider is unavailable or the minimum specialist quorum is not met.
+- No tool execution, action authorization, or implicit cloud fallback is included.
+- Provider-level request timeouts should also be configured: cancelling a running Python thread cannot forcibly stop a provider call already in progress.
+
+`YukiAI.consult_specialists(message)` exposes this capability only when a coordinator is explicitly injected. Normal `answer()` remains single-provider unless the application opts into this path. The desktop facade exports the coordinator for shared UI integration. CLI provider auto-configuration is not yet wired to build an ensemble automatically.
