@@ -48,6 +48,23 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.list_tasks(actor_id="alice", state="unknown")
 
+    def test_redacted_dashboard_summaries_exclude_task_payloads(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="dashboard-private",
+            name="private-review",
+            steps=[{"name": "review", "action": "emit",
+                    "argument": "private customer data",
+                    "requires_approval": False}],
+        )
+        summaries = self.runtime.list_task_summaries(actor_id="alice", state="queued", limit=10)
+        summary = next(item for item in summaries if item.task_id == task.task_id)
+        self.assertEqual(summary.name, "private-review")
+        self.assertEqual(summary.state, "queued")
+        self.assertFalse(hasattr(summary, "steps"))
+        self.assertFalse(hasattr(summary, "result"))
+        with self.assertRaises(PermissionError):
+            self.runtime.list_task_summaries(actor_id="supervisor")
+
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
             TaskRuntime(self.store).enqueue(actor_id="alice", idempotency_key="no-auth",
