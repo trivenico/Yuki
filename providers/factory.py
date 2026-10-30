@@ -61,7 +61,7 @@ def create_provider(config=None, *, environ=None):
                 model=local_model,
             )
         if str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip():
-            providers["oci_managed"] = create_provider({"provider": "oci", **cfg}, environ=env)
+            providers["oci_managed"] = create_provider({**cfg, "provider": "oci"}, environ=env)
         self_hosted_model = str(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", ""))).strip()
         if self_hosted_model:
             base_url = str(env.get("YUKI_SELF_HOSTED_BASE_URL", cfg.get("self_hosted_base_url", ""))).strip()
