@@ -27,3 +27,12 @@ This is an application-level orchestration facade, not a newly trained foundatio
 - Chat memory retrieval and automatic exchange persistence are disabled by default. Enable them deliberately with \`YUKI_ENABLE_MEMORY=1\`; this is a local opt-in, not a model-training switch.
 - Conversation exports use the existing preview/redaction/consent importer. Imported content remains ineligible for training until separately reviewed and approved.
 - The desktop facade exports the same memory and conversation-import services. Desktop must provide clear memory controls, import preview, redaction visibility, and deletion controls before enabling persistence.
+
+## Hybrid memory retrieval
+
+- `VectorMemory` supports dependency-free lexical retrieval by default.
+- An explicitly injected `embedding_fn(text)` enables cosine-similarity retrieval blended with lexical overlap; no embedding model is downloaded or selected implicitly.
+- Invalid vectors, dimension mismatches and embedding failures fall back to lexical matching.
+- A bounded 512-entry in-process embedding cache avoids repeatedly embedding the same saved memories during a process lifetime. The first semantic search can still embed up to the bounded 200 most recent memories.
+- To enable semantic retrieval in a deployment, inject an embedding function backed by a locally installed, revision-pinned embedding model and document its model/license. CLI currently uses lexical fallback unless a future configuration explicitly supplies that adapter.
+- This change improves retrieval capability but does not fine-tune model weights or make a foundation model from scratch.
