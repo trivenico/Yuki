@@ -6,6 +6,7 @@ capabilities of individual remote models. Unknown is always safer than guessing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 from typing import Iterable, Mapping
 
 
@@ -105,8 +106,8 @@ class CapabilityRegistry:
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
         try:
-            required_values = tuple(required)
-            preference_values = tuple(preference)
+            required_values = tuple(islice(iter(required), _MAX_REQUIRED_CAPABILITIES + 1))
+            preference_values = tuple(islice(iter(preference), _MAX_PREFERENCES + 1))
         except TypeError as exc:
             raise TypeError("required and preference must be iterable") from exc
         if len(required_values) > _MAX_REQUIRED_CAPABILITIES:
