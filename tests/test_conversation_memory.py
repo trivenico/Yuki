@@ -44,6 +44,40 @@ class ConversationMemoryStoreTests(unittest.TestCase):
             self.store.search(actor_id="mallory", owner_id="alice", query="Architecture")
         self.assertEqual(self.store.count(actor_id="alice", owner_id="alice"), 1)
 
+    def test_semantic_search_is_owner_scoped_and_handles_paraphrases(self):
+        vectors = {"vehicle": [1.0, 0.0], "I drive a car every day": [1.0, 0.0], "banana bread recipe": [0.0, 1.0]}
+        semantic_store = ConversationMemoryStore(
+            str(Path(self.tmp.name) / "semantic.sqlite3"),
+            authorize=lambda actor, action, owner: actor == owner and action in {"memory:import", "memory:read"},
+            embedding_fn=lambda text: vectors.get(text, [0.0, 1.0]),
+        )
+        semantic_store.import_records(actor_id="alice", owner_id="alice", source="chatgpt", records=[
+            {"id": "car", "role": "user", "content": "I drive a car every day"},
+            {"id": "food", "role": "user", "content": "banana bread recipe"},
+        ], consent=True)
+        semantic_store.import_records(actor_id="bob", owner_id="bob", source="chatgpt", records=[
+            {"id": "secret", "role": "user", "content": "I drive a car every day"},
+        ], consent=True)
+        found = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
+        self.assertEqual(found[0].source_record_id, "car")
+        self.assertEqual(len(found), 2)
+        with self.assertRaises(PermissionError):
+            semantic_store.semantic_search(actor_id="mallory", owner_id="alice", query="vehicle")
+
+    def test_semantic_search_falls_back_when_embedder_fails(self):
+        semantic_store = ConversationMemoryStore(
+            str(Path(self.tmp.name) / "fallback.sqlite3"),
+            authorize=lambda actor, action, owner: actor == owner and action == "memory:read",
+            embedding_fn=lambda _: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+        with self.assertRaises(PermissionError):
+            semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="Yuki")
+
+    def test_import_rejects_unhashable_role_without_type_error(self):
+        with self.assertRaises(ValueError):
+            self.store.import_records(actor_id="alice", owner_id="alice", source="chatgpt",
+                records=[{"id": "bad-role", "role": ["user"], "content": "hello"}], consent=True)
+
     def test_delete_and_clear_are_owner_scoped(self):
         self.store.import_records(
             actor_id="alice", owner_id="alice", source="deepseek",
