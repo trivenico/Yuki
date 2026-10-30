@@ -308,18 +308,19 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent registration is not authorized.")
         self._validate_agent(agent)
         now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock, self._connect() as db:
+        with self._agent_lock:
             try:
-                db.execute("""
-                    INSERT INTO specialist_agents(
-                        agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
-                    agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                    now, now,
-                ))
+                with self._connect() as db:
+                    db.execute("""
+                        INSERT INTO specialist_agents(
+                            agent_id, name, capabilities_json, action, permissions_json,
+                            enabled, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
+                        agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
+                        now, now,
+                    ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
             self.agents[agent.agent_id] = agent
@@ -333,16 +334,18 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:manage", agent_id):
             raise PermissionError("agent management is not authorized.")
         now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock, self._connect() as db:
-            row = db.execute("SELECT * FROM specialist_agents WHERE agent_id=?", (agent_id,)).fetchone()
-            if row is None:
-                raise KeyError(agent_id)
-            agent = self._agent_from_row(row)
-            updated = replace(agent, enabled=enabled)
-            db.execute(
-                "UPDATE specialist_agents SET enabled=?, updated_at=? WHERE agent_id=?",
-                (int(enabled), now, agent_id),
-            )
+        with self._agent_lock:
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT * FROM specialist_agents WHERE agent_id=?", (agent_id,)).fetchone()
+                if row is None:
+                    raise KeyError(agent_id)
+                agent = self._agent_from_row(row)
+                updated = replace(agent, enabled=enabled)
+                db.execute(
+                    "UPDATE specialist_agents SET enabled=?, updated_at=? WHERE agent_id=?",
+                    (int(enabled), now, agent_id),
+                )
             self.agents[agent_id] = updated
             return updated
 
@@ -365,7 +368,6 @@ class SpecialistAgentCoordinator:
     def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
         needed_permissions = set(subtask.required_permissions)
-        self._refresh_agent_registry()
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
@@ -383,6 +385,8 @@ class SpecialistAgentCoordinator:
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
+        # Use one registry snapshot for the whole plan to avoid mixed-version routing.
+        self._refresh_agent_registry()
         assignments = {item.subtask_id: self._route(item) for item in items}
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
