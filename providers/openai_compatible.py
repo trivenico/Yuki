@@ -50,7 +50,7 @@ class OpenAICompatibleProvider:
     """Chat Completions adapter. API keys come from environment variables only."""
     def __init__(self, model, *, api_key_env="OPENAI_API_KEY",
                  base_url="https://api.openai.com/v1", timeout=45, allowed_hosts=None,
-                 environ=None):
+                 additional_headers=None, environ=None):
         if not isinstance(model, str) or not model.strip() or len(model) > 120:
             raise ValueError("Configure a valid cloud model name.")
         if not isinstance(api_key_env, str) or not api_key_env.isidentifier():
@@ -61,6 +61,18 @@ class OpenAICompatibleProvider:
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
+        if additional_headers is None:
+            additional_headers = {}
+        if not isinstance(additional_headers, dict):
+            raise ValueError("additional_headers must be a mapping.")
+        safe_headers = {}
+        for name, value in additional_headers.items():
+            if (not isinstance(name, str) or not name or not isinstance(value, str)
+                    or not value.strip() or "\r" in name + value or "\n" in name + value
+                    or name.lower() in {"authorization", "host", "content-length", "connection"}):
+                raise ValueError("Additional provider headers contain an invalid or reserved header.")
+            safe_headers[name] = value.strip()
+        self.additional_headers = safe_headers
         # Injectable environment mapping keeps provider construction deterministic in
         # tests while production defaults to the real process environment.
         self._environ = os.environ if environ is None else environ
@@ -83,7 +95,7 @@ class OpenAICompatibleProvider:
         request = urllib.request.Request(
             self.base_url + "/chat/completions", data=payload,
             headers={"Content-Type": "application/json", "Accept": "application/json",
-                     "Authorization": "Bearer " + api_key}, method="POST",
+                     "Authorization": "Bearer " + api_key, **self.additional_headers}, method="POST",
         )
         try:
             # Deliberately disable automatic redirects: even a valid initial host must
