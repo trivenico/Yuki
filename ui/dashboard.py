@@ -1,13 +1,17 @@
 """Optional Textual supervision UI for status and explicitly safe commands."""
 from __future__ import annotations
 
-from ui.task_controls import execute_worker_cycle
+from uuid import uuid4
+
+from automation.agent_coordinator import SubtaskSpec
+from ui.task_controls import approve_queued_task, execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
 
 
 def run_dashboard(
     agent=None, *, command_handler=None, task_runtime=None, actor_id=None,
-    worker_supervisor=None, authorize=None,
+    worker_supervisor=None, authorize=None, coordinator=None,
+    approval_session_id=None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -24,7 +28,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/tasks · /events TASK_ID [CURSOR] · /worker run RUN · /status · /quit", id="command")
+                yield Input(placeholder="/task create ROLE REQUEST · /approve TASK_ID VERSION APPROVE · /tasks · /worker run RUN", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
@@ -34,6 +38,56 @@ def run_dashboard(
             log = self.query_one("#log", RichLog)
             if command == "/quit":
                 self.exit()
+                return
+            if command.startswith("/task create "):
+                parts = command.split(maxsplit=3)
+                if len(parts) != 4 or coordinator is None or actor_id is None:
+                    log.write("Usage: /task create ROLE REQUEST (coordinator unavailable or request invalid).")
+                    return
+                try:
+                    request = parts[3].strip()
+                    if not request or len(request) > 2000 or "\\x00" in request:
+                        raise ValueError("request must be bounded non-empty text.")
+                    plan = coordinator.submit(
+                        actor_id=actor_id,
+                        idempotency_key=f"dashboard:{uuid4().hex}",
+                        subtasks=[SubtaskSpec(
+                            subtask_id=f"task-{uuid4().hex[:12]}",
+                            description=request,
+                            required_capabilities=(parts[2],),
+                            requires_approval=True,
+                        )],
+                    )
+                    plan = coordinator.advance(actor_id=actor_id, plan_id=plan.plan_id)
+                    log.write(f"Plan created: {plan.plan_id}")
+                    for item in plan.subtasks:
+                        log.write(
+                            f"{item.agent_id} | {item.status} | "
+                            f"task={item.task_id or 'not-dispatched'}"
+                        )
+                    log.write("Review the task, then approve it with /approve TASK_ID VERSION APPROVE.")
+                except Exception:
+                    log.write("Task creation failed or the requested specialist is unavailable.")
+                return
+            if command.startswith("/approve "):
+                parts = command.split()
+                if len(parts) != 4 or task_runtime is None or actor_id is None or approval_session_id is None:
+                    log.write("Usage: /approve TASK_ID VERSION APPROVE")
+                    return
+                try:
+                    version = int(parts[2])
+                    log.write(approve_queued_task(
+                        task_runtime, actor_id=actor_id,
+                        session_id=approval_session_id, authorize=authorize,
+                        task_id=parts[1], expected_version=version,
+                        confirmation=parts[3],
+                    ))
+                except PermissionError:
+                    log.write("Task approval is not authorized.")
+                except (ValueError, TypeError):
+                    log.write("Invalid approval command, task version, or task state.")
+                except Exception:
+                    log.write("Task approval failed; reload /tasks and verify the task version.")
                 return
             if command == "/worker run RUN":
                 if worker_supervisor is None or actor_id is None or authorize is None:
