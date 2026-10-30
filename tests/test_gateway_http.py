@@ -21,6 +21,7 @@ class GatewayHttpTests(unittest.TestCase):
             host="127.0.0.1",
             port=0,
             bootstrap_enabled=True,
+            owner_user_id="user-1",
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -167,6 +168,63 @@ class GatewayHttpTests(unittest.TestCase):
             token="wrong",
         )
         self.assertEqual(status, 401)
+
+
+    def test_owner_can_enqueue_list_and_read_agent_task(self):
+        issued = DeviceCredentialStore(self.database).issue(
+            user_id="user-1", device_name="Yuki CLI",
+            scopes=("profile:read", "tasks:read", "tasks:write"),
+        )
+        status, agents, _ = self.request("GET", "/v1/agents", token=issued.token)
+        self.assertEqual(status, 200)
+        self.assertIn("research-analyst", {item["agent_id"] for item in agents["agents"]})
+
+        status, created, _ = self.request(
+            "POST", "/v1/tasks",
+            {"agent_id": "research-analyst", "objective": "Summarize the supplied evidence."},
+            token=issued.token,
+        )
+        self.assertEqual(status, 202)
+        task_id = created["task"]["task_id"]
+        self.assertEqual(created["task"]["state"], "queued")
+
+        status, listing, _ = self.request("GET", "/v1/tasks?limit=10", token=issued.token)
+        self.assertEqual(status, 200)
+        self.assertIn(task_id, {item["task_id"] for item in listing["tasks"]})
+
+        status, detail, _ = self.request("GET", "/v1/tasks/" + task_id, token=issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["task"]["task_id"], task_id)
+        self.assertIn("Objective:", detail["task"]["definition"][0]["argument"])
+
+    def test_other_owner_cannot_list_or_create_tasks(self):
+        other = DeviceCredentialStore(self.database).issue(
+            user_id="other-user", device_name="Other device",
+            scopes=("profile:read", "tasks:read", "tasks:write"),
+        )
+        status, data, _ = self.request("GET", "/v1/tasks", token=other.token)
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "owner_only")
+        status, data, _ = self.request(
+            "POST", "/v1/tasks",
+            {"agent_id": "research-analyst", "objective": "Try cross-owner write."},
+            token=other.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "owner_only")
+
+    def test_task_write_scope_is_required(self):
+        limited = DeviceCredentialStore(self.database).issue(
+            user_id="user-1", device_name="Read only",
+            scopes=("profile:read", "tasks:read"),
+        )
+        status, data, _ = self.request(
+            "POST", "/v1/tasks",
+            {"agent_id": "research-analyst", "objective": "Should be denied."},
+            token=limited.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "insufficient_scope")
 
     def test_unknown_routes_are_not_exposed(self):
         status, data, _ = self.request("GET", "/v1/tasks")
