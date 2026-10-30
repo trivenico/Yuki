@@ -8,6 +8,7 @@ from .oci_iam import OciIamProvider
 from .oci_responses import OciResponsesProvider
 from .gemini_cli import GeminiCLIProvider
 from .factory import create_provider
+from .anthropic import AnthropicProvider
 
 __all__ = [
     "BaseProvider",
@@ -20,4 +21,5 @@ __all__ = [
     "OciResponsesProvider",
     "GeminiCLIProvider",
     "create_provider",
+    "AnthropicProvider",
 ]
