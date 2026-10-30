@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from automation.agent_coordinator import SubtaskSpec
+from core.planner import Planner
 
 from automation.local_worker_runtime import (
     LOCAL_OPERATOR_ACTOR,
@@ -109,6 +110,38 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 ).state,
                 "queued",
             )
+
+
+    def test_natural_language_plan_routes_into_local_specialist_dag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            proposed = Planner(max_steps=10).decompose(
+                "Research and build a secure app, then test and report results"
+            )
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="planner-integration",
+                subtasks=[
+                    SubtaskSpec(
+                        subtask_id=item.task_id,
+                        description=item.description,
+                        required_capabilities=item.required_capabilities,
+                        depends_on=item.depends_on,
+                        requires_approval=item.requires_approval,
+                    )
+                    for item in proposed
+                ],
+            )
+            plan = built.coordinator.advance(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            by_id = {item.subtask_id: item for item in plan.subtasks}
+            self.assertEqual(by_id["research"].agent_id, "research")
+            self.assertIsNotNone(by_id["research"].task_id)
+            self.assertIsNone(by_id["implementation"].task_id)
+            self.assertIsNone(by_id["verification"].task_id)
+            self.assertIsNone(by_id["summary"].task_id)
+            self.assertEqual(by_id["implementation"].depends_on, ("research",))
 
     def test_local_supervisor_uses_bounded_parallelism(self):
         with tempfile.TemporaryDirectory() as directory:
