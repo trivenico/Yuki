@@ -87,7 +87,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key="agent-budget-1", workflow_name="agent-reviewer-first",
             definition=definition,
         )
-        second = self.store.create(
+        self.store.create(
             idempotency_key="agent-budget-2", workflow_name="agent-reviewer-second",
             definition=definition,
         )
@@ -109,7 +109,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             worker_id="worker-c",
             workflow_prefix_limits={"agent-reviewer-": 1, "agent-writer-": 1},
         )
-        self.assertEqual(unrelated_claim.run_id, second.run_id if False else unrelated.run_id)
+        self.assertEqual(unrelated_claim.run_id, unrelated.run_id)
 
     def test_claim_next_validates_prefix_budgets(self):
         with self.assertRaises(ValueError):
