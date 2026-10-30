@@ -8,6 +8,7 @@ from automation.agent_coordinator import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.memory_service import build_memory_service
+from automation.agent_tool_gateway import AgentTool, SpecialistToolGateway
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
@@ -175,6 +176,57 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             db.close()
         with self.assertRaises(AgentPlanError):
             self.coordinator.list_agents(actor_id="alice")
+
+    def test_coordinator_lists_and_invokes_only_agent_granted_tools(self):
+        calls = []
+        gateway = SpecialistToolGateway([
+            AgentTool("workspace.read", "workspace:read",
+                      lambda path: calls.append(path) or {"path": path},
+                      "Read approved workspace files."),
+            AgentTool("workspace.write", "workspace:write",
+                      lambda path: {"written": path},
+                      "Write approved workspace files."),
+        ], authorize=lambda actor, action, agent: actor == "alice" and action in {
+            "agent:tool:list", "agent:tool:invoke",
+        })
+        agents = [
+            SpecialistAgent("reader", "Read-only agent", frozenset({"research"}), "emit",
+                            frozenset({"workspace:read"})),
+            SpecialistAgent("writer", "Writer agent", frozenset({"write"}), "emit",
+                            frozenset({"workspace:read", "workspace:write"})),
+        ]
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "tools.sqlite3"), agents,
+            authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        listed = coordinator.list_agent_tools(actor_id="alice", agent_id="reader")
+        self.assertEqual([tool["name"] for tool in listed], ["workspace.read"])
+        with self.assertRaises(PermissionError):
+            coordinator.invoke_agent_tool(
+                actor_id="alice", agent_id="reader", tool_name="workspace.write",
+                arguments={"path": "README.md"},
+            )
+        result = coordinator.invoke_agent_tool(
+            actor_id="alice", agent_id="reader", tool_name="workspace.read",
+            arguments={"path": "README.md"},
+        )
+        self.assertEqual(result["path"], "README.md")
+        self.assertEqual(calls, ["README.md"])
+
+    def test_disabled_agent_cannot_invoke_tools(self):
+        gateway = SpecialistToolGateway([
+            AgentTool("workspace.read", "workspace:read", lambda: "ok", "Read file."),
+        ], authorize=lambda *_: True)
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "disabled-tools.sqlite3"),
+            [self.agents[0]], authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+        with self.assertRaises(KeyError):
+            coordinator.invoke_agent_tool(
+                actor_id="alice", agent_id="research", tool_name="workspace.read",
+                arguments={},
+            )
 
     def test_dispatch_injects_bounded_authorized_memory_context(self):
         calls = []
