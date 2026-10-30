@@ -16,6 +16,7 @@ import sqlite3
 from threading import RLock
 from typing import Callable, Iterable
 
+from automation.agent_messaging import AgentMailbox, AgentMessage
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -95,6 +96,7 @@ class SpecialistAgentCoordinator:
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
+        self.mailbox = AgentMailbox(self.database_path, authorize=authorize)
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
@@ -433,6 +435,45 @@ class SpecialistAgentCoordinator:
                       json.dumps(sorted(item.required_permissions)),
                       json.dumps(list(item.depends_on)), int(item.requires_approval)))
             return self._read_plan(db, plan_id)
+
+    def send_agent_message(
+        self, *, actor_id: str, sender_agent_id: str, recipient_agent_id: str,
+        body: str, idempotency_key: str,
+    ) -> AgentMessage:
+        """Persist a bounded message between registered agents under user authorization."""
+        self._refresh_agent_registry()
+        if sender_agent_id not in self.agents or recipient_agent_id not in self.agents:
+            raise KeyError("sender and recipient must be registered agents.")
+        if not self._allowed(actor_id, "agent:message:send", sender_agent_id):
+            raise PermissionError("agent message send is not authorized.")
+        return self.mailbox.send(
+            actor_id=actor_id, sender_agent_id=sender_agent_id,
+            recipient_agent_id=recipient_agent_id, body=body,
+            idempotency_key=idempotency_key,
+        )
+
+    def read_agent_inbox(
+        self, *, actor_id: str, recipient_agent_id: str, limit: int = 50,
+    ) -> list[AgentMessage]:
+        """Read only the selected registered agent's authorized inbox."""
+        self._refresh_agent_registry()
+        if recipient_agent_id not in self.agents:
+            raise KeyError("recipient must be a registered agent.")
+        return self.mailbox.inbox(
+            actor_id=actor_id, recipient_agent_id=recipient_agent_id, limit=limit,
+        )
+
+    def acknowledge_agent_message(
+        self, *, actor_id: str, recipient_agent_id: str, message_id: int,
+    ) -> AgentMessage:
+        """Acknowledge a message only from its registered recipient's inbox."""
+        self._refresh_agent_registry()
+        if recipient_agent_id not in self.agents:
+            raise KeyError("recipient must be a registered agent.")
+        return self.mailbox.acknowledge(
+            actor_id=actor_id, recipient_agent_id=recipient_agent_id,
+            message_id=message_id,
+        )
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
