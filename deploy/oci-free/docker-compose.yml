@@ -33,5 +33,43 @@ services:
       retries: 3
       start_period: 10s
 
+  yuki-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/oci-free/Dockerfile
+    image: yuki-gateway:local
+    command: ["python", "-m", "automation.worker_service"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      yuki-gateway:
+        condition: service_healthy
+    environment:
+      YUKI_GATEWAY_DATABASE: /var/lib/yuki/gateway.sqlite3
+      YUKI_PROVIDER: ${YUKI_PROVIDER:?Set YUKI_PROVIDER explicitly}
+      YUKI_WORKER_ID: ${YUKI_WORKER_ID:-yuki-specialist-worker}
+      YUKI_WORKER_SERVICE_ACTOR_ID: yuki-worker-service
+      YUKI_WORKER_IDLE_POLL_SECONDS: ${YUKI_WORKER_IDLE_POLL_SECONDS:-1}
+      YUKI_WORKER_ERROR_BACKOFF_SECONDS: ${YUKI_WORKER_ERROR_BACKOFF_SECONDS:-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      YUKI_OCI_REGION: ${YUKI_OCI_REGION:-}
+      YUKI_OCI_MODEL: ${YUKI_OCI_MODEL:-}
+      YUKI_OCI_PROJECT_OCID: ${YUKI_OCI_PROJECT_OCID:-}
+      OCI_GENAI_API_KEY: ${OCI_GENAI_API_KEY:-}
+      YUKI_OCI_AUTH_MODE: ${YUKI_OCI_AUTH_MODE:-}
+      YUKI_OLLAMA_BASE_URL: ${YUKI_OLLAMA_BASE_URL:-}
+      YUKI_OLLAMA_MODEL: ${YUKI_OLLAMA_MODEL:-}
+    volumes:
+      - yuki-gateway-data:/var/lib/yuki
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    pids_limit: 128
+
 volumes:
   yuki-gateway-data:
