@@ -105,6 +105,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertIsNone(other_store.claim_next(
             worker_id="worker-b", workflow_prefix_limits={"agent-reviewer-": 1},
         ))
+        unrelated = self.store.create(
+            idempotency_key="agent-budget-3", workflow_name="agent-writer-first",
+            definition=definition,
+        )
         unrelated_claim = other_store.claim_next(
             worker_id="worker-c",
             workflow_prefix_limits={"agent-reviewer-": 1, "agent-writer-": 1},
