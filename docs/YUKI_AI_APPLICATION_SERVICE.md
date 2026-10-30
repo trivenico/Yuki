@@ -18,3 +18,12 @@ The CLI constructs this service from its configured provider and exposes `ai-sta
 ## Not claimed as complete
 
 This is an application-level orchestration facade, not a newly trained foundation model. Its intelligence depends on the selected pretrained provider/model. Persistent cross-session memory adapters, production streaming, native desktop shell and model lifecycle transactions remain separate deliverables.
+
+
+## Local memory and conversation history
+
+- \`VectorMemory\` is the current local lexical-retrieval adapter backed by the bounded \`MemoryStore\`; it does not yet perform embedding-based semantic retrieval.
+- CLI memory management is explicit: \`yuki memory add\`, \`search\`, \`list\`, and \`delete\`. Set \`YUKI_MEMORY_PATH\` to choose the local store location.
+- Chat memory retrieval and automatic exchange persistence are disabled by default. Enable them deliberately with \`YUKI_ENABLE_MEMORY=1\`; this is a local opt-in, not a model-training switch.
+- Conversation exports use the existing preview/redaction/consent importer. Imported content remains ineligible for training until separately reviewed and approved.
+- The desktop facade exports the same memory and conversation-import services. Desktop must provide clear memory controls, import preview, redaction visibility, and deletion controls before enabling persistence.
