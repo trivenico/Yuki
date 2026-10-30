@@ -31,6 +31,16 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             )
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
 
+    def test_operator_approval_is_allowed_and_session_is_ephemeral(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = build_local_worker_runtime(directory, FakeProvider())
+            second = build_local_worker_runtime(directory, FakeProvider())
+            self.assertTrue(first.runtime._allowed(
+                LOCAL_OPERATOR_ACTOR, "task:approve", "task-1",
+            ))
+            self.assertNotEqual(first.approval_session_id, second.approval_session_id)
+            self.assertGreaterEqual(len(first.approval_session_id), 32)
+
     def test_operator_can_list_but_unknown_actor_is_denied(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())

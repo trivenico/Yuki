@@ -520,7 +520,7 @@ def main():
                 def authorize_dashboard(actor_id, action):
                     return (
                         actor_id == local_workers.operator_actor_id
-                        and action == "worker:run"
+                        and action in {"worker:run", "task:approve"}
                     )
 
                 run_dashboard(
@@ -530,6 +530,8 @@ def main():
                     actor_id=local_workers.operator_actor_id,
                     worker_supervisor=local_workers.supervisor,
                     authorize=authorize_dashboard,
+                    coordinator=local_workers.coordinator,
+                    approval_session_id=local_workers.approval_session_id,
                 )
             except RuntimeError as exc:
                 print(f"Yuki > Dashboard unavailable: {exc}")
