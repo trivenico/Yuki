@@ -196,6 +196,14 @@ Imported Markdown is converted to Yuki's data-only skill-pack format. Third-part
 
 See [upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for reuse decisions and license attribution.
 
+Yuki also bundles an adapted Hermes Agent root-cause debugging skill. From a repository checkout, install it with:
+
+```text
+/skill install skills/upstream/hermes/systematic-debugging/SKILL.md
+```
+
+It is installed as high-risk guidance and requires the normal one-shot approval before invocation.
+
 ## Security and privacy
 
 - Security, microphone access, Gmail and firewall controls are opt-in; approval callbacks fail closed.
