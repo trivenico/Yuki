@@ -21,7 +21,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
         self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:dispatch", "agent:read"
+            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel"
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
