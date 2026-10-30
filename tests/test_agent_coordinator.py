@@ -9,6 +9,7 @@ from automation.agent_coordinator import (
 from automation.task_runtime import TaskRuntime
 from automation.memory_service import build_memory_service
 from automation.agent_tool_gateway import AgentTool, SpecialistToolGateway
+from automation.readonly_workspace import ReadOnlyWorkspace
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
@@ -212,6 +213,32 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(result["path"], "README.md")
         self.assertEqual(calls, ["README.md"])
+
+    def test_coordinator_runs_real_readonly_workspace_tools(self):
+        workspace_root = Path(self.tmp.name) / "approved-project"
+        workspace_root.mkdir()
+        (workspace_root / "README.md").write_text("# Approved project", encoding="utf-8")
+        workspace = ReadOnlyWorkspace(workspace_root)
+        gateway = SpecialistToolGateway(
+            workspace.agent_tools(),
+            authorize=lambda actor, action, agent: actor == "alice" and action in {
+                "agent:tool:list", "agent:tool:invoke",
+            },
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "workspace-agent.sqlite3"),
+            [SpecialistAgent("reader", "Read-only researcher", frozenset({"research"}),
+                             "emit", frozenset({"workspace:read"}))],
+            authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        available = coordinator.list_agent_tools(actor_id="alice", agent_id="reader")
+        self.assertEqual({tool["name"] for tool in available},
+                         {"workspace.list", "workspace.read"})
+        result = coordinator.invoke_agent_tool(
+            actor_id="alice", agent_id="reader", tool_name="workspace.read",
+            arguments={"path": "README.md"},
+        )
+        self.assertEqual(result["content"], "# Approved project")
 
     def test_disabled_agent_cannot_invoke_tools(self):
         gateway = SpecialistToolGateway([
