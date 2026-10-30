@@ -14,6 +14,16 @@ class VectorMemory:
         self.store = MemoryStore(path)
         self.embedding_fn = embedding_fn
         self.semantic_weight = float(semantic_weight)
+        self._embedding_cache = {}
+
+    def _embed(self, text):
+        if text in self._embedding_cache:
+            return self._embedding_cache[text]
+        vector = self._vector(self.embedding_fn(text))
+        if len(self._embedding_cache) >= 512:
+            self._embedding_cache.pop(next(iter(self._embedding_cache)))
+        self._embedding_cache[text] = vector
+        return vector
 
     @staticmethod
     def _tokens(text):
@@ -42,7 +52,7 @@ class VectorMemory:
         query_vector = None
         if self.embedding_fn is not None:
             try:
-                query_vector = self._vector(self.embedding_fn(query.strip()))
+                query_vector = self._embed(query.strip())
             except Exception:
                 pass
         ranked = []
@@ -52,7 +62,7 @@ class VectorMemory:
             semantic = None
             if query_vector is not None:
                 try:
-                    vector = self._vector(self.embedding_fn(item["text"]))
+                    vector = self._embed(item["text"])
                     if vector is not None and len(vector) == len(query_vector):
                         semantic = max(0.0, min(1.0, sum(a*b for a,b in zip(query_vector, vector))))
                 except Exception:
