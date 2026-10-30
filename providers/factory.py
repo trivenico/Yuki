@@ -171,6 +171,14 @@ def create_provider(config=None, *, environ=None):
             else:
                 oci_provider_mode = "oci_iam" if oci_mode != "api_key" else "oci"
             providers["oci_managed"] = create_provider({**cfg, "provider": oci_provider_mode}, environ=env)
+        local_openai_model = str(env.get("YUKI_LOCAL_OPENAI_MODEL", cfg.get("local_openai_model", ""))).strip()
+        if local_openai_model:
+            providers["local_openai"] = LocalOpenAICompatibleProvider(
+                local_openai_model,
+                base_url=str(env.get("YUKI_LOCAL_OPENAI_BASE_URL", cfg.get("local_openai_base_url", "http://127.0.0.1:8000/v1"))),
+                timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 60)),
+                api_key=env.get("YUKI_LOCAL_OPENAI_API_KEY"),
+            )
         self_hosted_model = str(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", ""))).strip()
         if self_hosted_model:
             base_url = str(env.get("YUKI_SELF_HOSTED_BASE_URL", cfg.get("self_hosted_base_url", ""))).strip()
