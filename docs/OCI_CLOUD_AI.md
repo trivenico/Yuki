@@ -50,6 +50,37 @@ and sends the `openai-project` header with the project OCID. The endpoint hostna
 
 This first adapter uses the Chat Completions-compatible interface. Oracle now recommends the Responses API for agentic workloads; it supports stateful conversations and OCI-supported tools including file search, code interpreter, function calling, and MCP calling. A separate Responses API adapter should be added before using OCI-managed agent tools; do not assume Chat Completions provides those capabilities. See Oracle's [OpenAI-compatible endpoints](https://docs.oracle.com/en-us/iaas/Content/generative-ai/openai-compatible-api.htm) and [Responses API](https://docs.oracle.com/en-us/iaas/Content/generative-ai/responses-api.htm).
 
+## OCI IAM authentication
+
+For production services running inside OCI, select `provider: oci_iam` and use the Oracle-maintained `oci-genai-auth` signer. Install the pinned optional dependency with:
+
+```bash
+pip install -r requirements-oci.txt
+```
+
+Supported authentication modes:
+
+- `resource_principal`: recommended for supported OCI-hosted application resources.
+- `instance_principal`: for Yuki running directly on OCI Compute instances with the appropriate dynamic group and IAM policy.
+- `session`: for a developer using an OCI CLI session profile.
+- `user_principal`: for a configured OCI user API-key profile.
+
+Configuration example:
+
+```yaml
+provider: oci_iam
+oci_region: eu-frankfurt-1
+oci_model: <model-id-enabled-for-the-project>
+oci_project_ocid: <generative-ai-project-ocid>
+oci_auth_mode: resource_principal
+```
+
+For local development, set `oci_auth_mode: session` and optionally `YUKI_OCI_CONFIG_FILE` / `YUKI_OCI_PROFILE`. Do not copy local OCI config/private keys into desktop application settings or the repository. On OCI, assign only the least-privilege IAM policy required to invoke the chosen Generative AI project/model. Instance/resource principal support depends on the OCI service environment and IAM policy.
+
+In `provider: multi`, set `YUKI_OCI_AUTH_MODE=resource_principal` (or another supported mode) to select IAM for the managed OCI route; use `api_key` to retain the existing API-key adapter. The IAM provider uses Oracle's signer with token refresh, keeps redirects disabled, and sends the project OCID header. This adapter currently supports Chat Completions; it does not yet implement OCI's Responses API or its stateful agent tools.
+
+The dependency and UPL attribution are recorded in `requirements-oci.txt`, `THIRD_PARTY_NOTICES.md`, and `licenses/UPL-1.0-Oracle-oci-genai-auth.txt`.
+
 ## Explicit multi-model routing in Yuki
 
 Yuki now includes a `multi` provider mode that can configure both OCI-managed inference and a separately hosted OpenAI-compatible model server at the same time. Task names are explicitly mapped to providers; the router does not silently fall back when a selected provider is unavailable.
