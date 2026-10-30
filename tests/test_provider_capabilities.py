@@ -74,6 +74,19 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route(required=("text", "official_cli"))
 
+    def test_strict_preference_never_selects_an_unrequested_provider(self):
+        registry = CapabilityRegistry([
+            provider("ollama"),
+            provider("gemini", privacy="cloud_provider"),
+        ])
+        with self.assertRaises(LookupError):
+            registry.route(preference=("openai",), allow_cloud=True, strict_preference=True)
+        self.assertEqual(
+            registry.route(preference=("gemini", "ollama"), allow_cloud=True,
+                           strict_preference=True).provider,
+            "gemini",
+        )
+
     def test_unimplemented_or_unready_provider_never_selected(self):
         registry = CapabilityRegistry([
             provider("unimplemented", implemented=False, ready=False),
