@@ -89,11 +89,22 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             try:
                 parsed = urlsplit(str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")).strip())
                 host = (parsed.hostname or "").rstrip(".").lower()
+                parsed.port  # Reject malformed ports before assigning a privacy class.
+                valid_endpoint = (
+                    parsed.scheme.lower() in {"http", "https"}
+                    and bool(host)
+                    and not parsed.username and not parsed.password
+                    and not parsed.query and not parsed.fragment
+                )
                 try:
                     is_loopback = ipaddress.ip_address(host).is_loopback
                 except ValueError:
                     is_loopback = host == "localhost"
-                item["privacy"] = "local_runtime" if is_loopback else "local_or_configured_endpoint"
+                item["privacy"] = (
+                    "local_runtime" if valid_endpoint and is_loopback
+                    else "local_or_configured_endpoint" if valid_endpoint
+                    else "unknown"
+                )
             except ValueError:
                 item["privacy"] = "unknown"
         elif item["name"] == "gemini":
