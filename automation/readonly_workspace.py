@@ -11,7 +11,7 @@ import os
 from automation.agent_tool_gateway import AgentTool
 
 _IGNORED_DIRS = {".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh"}
-_SENSITIVE_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
+_SENSITIVE_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519", "credentials", "credentials.json", "secrets.json", "service-account.json"}
 _SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 
 
@@ -47,10 +47,11 @@ class ReadOnlyWorkspace:
     @staticmethod
     def _is_sensitive(path: Path) -> bool:
         parts = path.relative_to(path.anchor).parts
-        if any(part in _IGNORED_DIRS or part.startswith(".") for part in parts):
+        normalized_parts = tuple(part.casefold() for part in parts)
+        if any(part in _IGNORED_DIRS or part.startswith(".") for part in normalized_parts):
             return True
-        name = path.name.lower()
-        return name in _SENSITIVE_NAMES or path.suffix.lower() in _SENSITIVE_SUFFIXES
+        name = path.name.casefold()
+        return name in _SENSITIVE_NAMES or path.suffix.casefold() in _SENSITIVE_SUFFIXES
 
     def list_files(self, path: str = ".") -> dict:
         directory = self._resolve(path)
