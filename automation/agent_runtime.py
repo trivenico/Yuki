@@ -34,4 +34,9 @@ def build_registered_agent_worker(
         worker_id=worker_id,
         service_actor_id=service_actor_id,
         handlers=handlers,
+        agent_concurrency={
+            spec.agent_id: spec.max_concurrency
+            for spec in registry.list_agents()
+            if spec.agent_id in handlers
+        },
     )
