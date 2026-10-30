@@ -312,9 +312,23 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 1)
         with self.assertRaises(ValueError):
-            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=0)
         with self.assertRaises(ValueError):
-            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=101)
+            self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=0)
+
+    def test_default_pool_drains_more_than_legacy_twenty_task_cap(self):
+        for index in range(25):
+            plan = self.coordinator.submit(
+                actor_id="alice", idempotency_key=f"unbounded-drain-{index}",
+                subtasks=[SubtaskSpec(
+                    f"task-{index}", f"Task {index}", ("coding",),
+                    requires_approval=False,
+                )],
+            )
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently()
+        self.assertEqual(len(results), 25)
+        self.assertTrue(all(result.state == "succeeded" for result in results))
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
