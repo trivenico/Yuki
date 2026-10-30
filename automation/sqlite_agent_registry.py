@@ -18,11 +18,11 @@ from core.agent_contracts import AgentSpec, DelegationRequest
 class SQLiteAgentRegistry:
     """Durable registry using the same SQLite database as WorkflowRunStore."""
 
-    def __init__(self, database_path: str, *, max_agents: int = 100) -> None:
+    def __init__(self, database_path: str, *, max_agents: int | None = None) -> None:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        if type(max_agents) is not int or not 1 <= max_agents <= 10_000:
-            raise ValueError("max_agents must be an integer from 1 to 10000.")
+        if max_agents is not None and (type(max_agents) is not int or max_agents < 1):
+            raise ValueError("max_agents must be None (unlimited) or a positive integer.")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.max_agents = max_agents
@@ -75,8 +75,8 @@ class SQLiteAgentRegistry:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             count = db.execute("SELECT COUNT(*) AS total FROM specialist_agents").fetchone()["total"]
-            if count >= self.max_agents:
-                raise ValueError("agent registry capacity reached.")
+            if self.max_agents is not None and count >= self.max_agents:
+                raise ValueError("configured agent registry capacity reached.")
             if db.execute("SELECT 1 FROM specialist_agents WHERE agent_id=?", (spec.agent_id,)).fetchone():
                 raise ValueError("agent is already registered.")
             unknown = set(spec.delegation_targets)
