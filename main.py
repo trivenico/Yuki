@@ -31,6 +31,7 @@ from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
+from automation.local_worker_runtime import build_local_worker_runtime
 
 
 def _ask_approval(request):
@@ -113,6 +114,7 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -515,7 +517,20 @@ def main():
         elif command == "/dashboard":
             try:
                 from ui.dashboard import run_dashboard
-                run_dashboard(agent, command_handler=dashboard_command)
+                def authorize_dashboard(actor_id, action):
+                    return (
+                        actor_id == local_workers.operator_actor_id
+                        and action == "worker:run"
+                    )
+
+                run_dashboard(
+                    agent,
+                    command_handler=dashboard_command,
+                    task_runtime=local_workers.runtime,
+                    actor_id=local_workers.operator_actor_id,
+                    worker_supervisor=local_workers.supervisor,
+                    authorize=authorize_dashboard,
+                )
             except RuntimeError as exc:
                 print(f"Yuki > Dashboard unavailable: {exc}")
         else:
