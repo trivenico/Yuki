@@ -92,8 +92,13 @@ class ConversationImportStore:
         self.path = Path(path).expanduser().resolve()
 
     def preview(self, source: str | Path) -> dict:
-        path = Path(source).expanduser().resolve(strict=True)
-        if not path.is_file() or path.is_symlink() or path.suffix.lower() != ".json":
+        supplied_path = Path(source).expanduser()
+        # Check the user-supplied path before resolving it; checking is_symlink()
+        # after resolve() would miss a symlink at the final path component.
+        if supplied_path.is_symlink():
+            raise ValueError("Symbolic-link exports are not supported.")
+        path = supplied_path.resolve(strict=True)
+        if not path.is_file() or path.suffix.lower() != ".json":
             raise ValueError("Only a regular JSON export file is supported.")
         if path.stat().st_size > MAX_FILE_BYTES:
             raise ValueError("Conversation export exceeds the 20 MB limit.")
