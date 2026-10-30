@@ -1,6 +1,6 @@
 # Upstream capability audit for Yuki
 
-Audit date: 2026-10-17. This is an architecture and feature review of the public repositories below, not a claim that their entire codebases were imported or independently security-audited.
+Audit date: 2026-10-30. This is an architecture and feature review of the public repositories below, not a claim that their entire codebases were imported or independently security-audited.
 
 ## Upstream projects reviewed
 
@@ -36,3 +36,27 @@ Do not wholesale-copy files simply because a feature looks useful. Reimplement t
 - Secrets, health data, tokens, browser profiles and personal memory are never committed.
 - Tool execution remains approval-gated and bounded.
 - Windows and Linux path/launch tests run in CI before claiming portable support.
+
+## Implemented upstream reuse — 2026-10-30
+
+### OpenJarvis benchmark statistics
+
+- Source: [`src/openjarvis/bench/_stats.py`](https://github.com/open-jarvis/OpenJarvis/blob/336a68ac3b6206e3f3037c5c6d9d40722c4ab4cb/src/openjarvis/bench/_stats.py)
+- Reused file: `providers/evaluation_stats.py`
+- Integration: `providers/model_evaluation.py` now reports mean, p50, p95, min, max and standard deviation for successful inference latency samples.
+- License: Apache-2.0. The complete upstream license is included at `licenses/Apache-2.0-OpenJarvis.txt`; see `THIRD_PARTY_NOTICES.md`.
+- The statistics helper is copied from upstream with an attribution header. Yuki's integration and surrounding evaluation code remain Yuki-owned code.
+
+### OpenClaw / Hermes portable skill format
+
+- OpenClaw's [SKILL.md format documentation](https://github.com/openclaw/openclaw/blob/80b9e7b71fb262a53a37bda6d29c32e4e1ef0f8d/docs/tools/skills.md) and Hermes Agent's [example skill](https://github.com/NousResearch/hermes-agent/blob/088f657ecf77674c7b8e2ededf4e3576d82e042c/optional-skills/software-development/subagent-driven-development/SKILL.md) informed Yuki's Markdown importer in `core/skill_packs.py`.
+- This is a compatibility implementation of the documented frontmatter format, not copied upstream parser code.
+- Imported skills are converted to Yuki's existing data-only JSON pack format. Unknown frontmatter fields, duplicate keys, YAML aliases, oversized content and unsafe names are rejected.
+- Imported risk defaults to high; metadata never grants tool, shell, network or account permissions. Existing approval and audit gates remain authoritative.
+- Upstream skill content is not automatically downloaded or executed.
+
+### Reuse boundaries
+
+- Hermes' async delegation implementation is tightly coupled to its session gateway, worker ledger, context propagation, completion queue and state database. We are reusing its bounded delegation and recovery design patterns, not copying that implementation into Yuki.
+- OpenClaw's gateway and plugin host are TypeScript services with their own transport and authority model. They are not safe drop-in Python modules; Yuki will adopt isolated contracts and adapters rather than importing the whole gateway.
+- OpenJarvis' complete inference and benchmark stack has substantial optional dependencies and platform constraints. Only the small, directly useful statistics helper is imported in this milestone.

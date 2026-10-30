@@ -187,6 +187,26 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             if len(errors) > 10:
                 lines.append(f"- {len(errors) - 10} additional error(s) omitted.")
             return "\n".join(lines)
+        if parts[1] == "install":
+            source_path = command[len("/skill install"):].strip()
+            if not source_path:
+                return "Usage: /skill install PATH"
+            try:
+                from core.skill_packs import install_skill_pack
+                target = install_skill_pack(source_path)
+                write_audit_event("skill:install", "completed")
+                return (
+                    f"Installed data-only skill pack: {target.name}. "
+                    "It will appear in the skill registry on the next command. "
+                    "Imported instructions remain untrusted and do not grant tools or permissions."
+                )
+            except FileExistsError:
+                write_audit_event("skill:install", "rejected")
+                return "A skill with that name is already installed."
+            except (OSError, ValueError):
+                write_audit_event("skill:install", "rejected")
+                return "Skill import rejected. Check the SKILL.md frontmatter, size limits, and skill name."
+
         if parts[1] == "inspect":
             if len(parts) < 3:
                 return "Usage: /skill inspect NAME"
@@ -223,7 +243,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             argument = parts[3] if len(parts) == 4 else ""
             result = runtime.invoke(parts[2], argument)
             return result.message if result.ok else f"{result.status}: {result.message}"
-        return "Usage: /skill list | diagnostics | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
+        return "Usage: /skill list | diagnostics | install PATH | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
     if command == "/durable" or command.startswith("/durable "):
         durable_command = command[len("/durable"):].strip()

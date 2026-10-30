@@ -171,7 +171,7 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 ## Runtime commands
 
 - `/help`, `/status`, `/providers`, `/provider select NAME`, `/dashboard`
-- `/skill list`, `/skill inspect NAME`, `/skill approve NAME [argument]`, `/skill invoke NAME [argument]`
+- `/skill list`, `/skill install PATH`, `/skill inspect NAME`, `/skill approve NAME [argument]`, `/skill invoke NAME [argument]`
 - `/durable goal create`, `/durable task submit KEY | GOAL_ID | SKILL | ARGUMENT`, `/durable task list GOAL_ID`, `/durable task cancel TASK_ID`, `/durable run`
 - `/plan GOAL` — proposal only, no automatic execution
 - `/memory add TEXT`, `/memory list`, `/memory search QUERY`, `/memory delete ID`, `/memory clear`
@@ -181,6 +181,20 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 - `/security status`, `/security recon PRIVATE_IP`, `/sandbox status`, `/sandbox run IMAGE | ARGS`
 - `/defense status`, `/defense sniff`, `/defense block IP`, `/defense remove RULE_ID`
 - `/metasploit status`, `/dashboard`, `/quit`
+
+### Portable Agent Skills imports
+
+Yuki accepts its existing JSON skill-pack format and portable `SKILL.md` files with YAML frontmatter:
+
+```text
+/skill install /path/to/SKILL.md
+/skill list
+/skill inspect SKILL_NAME
+```
+
+Imported Markdown is converted to Yuki's data-only skill-pack format. Third-party skills default to high risk and require the normal one-shot invocation approval. Frontmatter such as `allowed-tools`, `command-tool`, and `command-dispatch` is descriptive only: it does not grant tools, shell access, network access, or execution permissions. Imported skill instructions are untrusted content; no Python or shell code is imported or run. License and author metadata are retained for provenance.
+
+See [upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for reuse decisions and license attribution.
 
 ## Security and privacy
 

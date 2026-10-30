@@ -12,6 +12,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
+from providers.evaluation_stats import compute_stats
+
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 _ALLOWED_HOST = "router.huggingface.co"
 _MAX_RESPONSE_BYTES = 1_000_000
@@ -144,7 +146,7 @@ def evaluate_model(model_id, cases, generate, *, max_cases=5):
         })
     scored = [item["score"] for item in results if item["score"] is not None and item["status"] == "ok"]
     latencies = [item["latency_ms"] for item in results if item["status"] == "ok"]
-    return {
+    report = {
         "schema_version": 1,
         "model_id": model_id,
         "source": "huggingface_inference_router",
@@ -157,3 +159,7 @@ def evaluate_model(model_id, cases, generate, *, max_cases=5):
         "activation_policy": "manual_review_required",
         "interpretation": "Expected-term coverage is a narrow task-specific proxy, not a general quality, safety, or factuality score. Review outputs manually and compare candidates on the same benchmark.",
     }
+    # OpenJarvis's per-sample statistics helper adds distribution metrics without
+    # changing Yuki's existing mean_latency_ms field or model activation policy.
+    report.update(compute_stats("latency_ms", latencies))
+    return report

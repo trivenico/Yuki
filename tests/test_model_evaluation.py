@@ -24,6 +24,16 @@ class ModelEvaluationTests(unittest.TestCase):
         ]:
             with self.assertRaises(ValueError): validate_cases(cases)
 
+    def test_latency_distribution_statistics(self):
+        from providers.evaluation_stats import compute_stats
+        metrics = compute_stats("latency_ms", [10.0, 20.0, 30.0, 40.0])
+        self.assertEqual(metrics["mean_latency_ms"], 25.0)
+        self.assertEqual(metrics["p50_latency_ms"], 25.0)
+        self.assertEqual(metrics["p95_latency_ms"], 38.5)
+        self.assertEqual(metrics["min_latency_ms"], 10.0)
+        self.assertEqual(metrics["max_latency_ms"], 40.0)
+        self.assertEqual(compute_stats("latency_ms", []), {})
+
     def test_expected_term_coverage_is_case_insensitive(self):
         result = score_response("Use Python and pytest", ["python","pytest","mypy"])
         self.assertEqual(result["score"], 2/3)
@@ -37,6 +47,8 @@ class ModelEvaluationTests(unittest.TestCase):
         ], lambda prompt: "alpha" if "alpha" in prompt else "beta")
         self.assertEqual(report["successful_cases"], 2)
         self.assertEqual(report["mean_expected_term_coverage"], 1)
+        self.assertGreaterEqual(report["p50_latency_ms"], 0)
+        self.assertGreaterEqual(report["p95_latency_ms"], report["p50_latency_ms"])
         self.assertEqual(report["activation_policy"], "manual_review_required")
 
     def test_failed_generation_is_redacted(self):
