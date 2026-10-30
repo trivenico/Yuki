@@ -77,9 +77,10 @@ def build_handlers_from_provider_manager(
 ) -> dict[str, Callable[[str], str]]:
     """Build specialist handlers with optional per-agent provider preferences.
 
-    Unspecified agents use the explicitly selected provider. Agents with a
-    preference list use the capability router; cloud routing requires the
-    caller's explicit allow_cloud opt-in. A route failure never falls back.
+    Unspecified agents route only to the explicitly selected provider through
+    the same privacy gate. Agents with a preference list use that strict list;
+    cloud routing requires the caller's explicit allow_cloud opt-in. A route
+    failure never falls back to another provider.
     """
     if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
         raise ValueError("agent_roles must be a non-empty bounded mapping.")
@@ -121,7 +122,16 @@ def build_handlers_from_provider_manager(
                     required=("text",), preference=preferences, allow_cloud=allow_cloud,
                 )
             else:
-                cache[cache_key] = selected_factory()
+                current_factory = getattr(provider_manager, "current", None)
+                current_info = current_factory() if callable(current_factory) else None
+                selected_name = getattr(current_info, "name", None)
+                if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                    cache[cache_key] = routed_factory(
+                        required=("text",), preference=(selected_name,),
+                        allow_cloud=allow_cloud,
+                    )
+                else:
+                    cache[cache_key] = selected_factory()
             if cache[cache_key] is None:
                 raise RuntimeError("no provider is available for a specialist agent.")
         role_handlers = build_provider_specialist_handlers(cache[cache_key])
