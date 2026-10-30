@@ -1,4 +1,4 @@
-""""Validated registry for Yuki's explicitly enabled skills."""
+"""Validated registry for Yuki's explicitly enabled skills."""
 from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
@@ -98,7 +98,7 @@ class SkillRegistry:
             DeepReadSkill(allowed_hosts=web_allowed_hosts),
             KnowledgeSkill(root), HealthSkill(root), ExploitSuggesterSkill(),
             BrowserSkill(allowed_hosts=web_allowed_hosts), YouTubeSkill(), ImageGenerationSkill(), WebcamSkill(),
-            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(), 
+            WikiSkill(allowed_hosts=web_allowed_hosts), IdentitySkill(IdentityManager(root / "yuki_identities.json")), ProjectSkill(),
             ContentMarketerSkill(), SEOOptimizerSkill(), MonetizationAdvisorSkill(),
             PredictionEngineSkill(), MultiModelCritiqueSkill(), AIMentorSkill(root), AIHumanizerSkill(),
             YouTubeShortsSkill(), SEOGEOOptimizerSkill(), ConversationAnalyzerSkill(root), VibeCoderSkill(), LongVideoGeneratorSkill(),
