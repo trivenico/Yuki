@@ -1,10 +1,14 @@
 """Optional Textual supervision UI for status and explicitly safe commands."""
 from __future__ import annotations
 
+from ui.task_controls import execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
 
 
-def run_dashboard(agent=None, *, command_handler=None, task_runtime=None, actor_id=None) -> None:
+def run_dashboard(
+    agent=None, *, command_handler=None, task_runtime=None, actor_id=None,
+    worker_supervisor=None, authorize=None,
+) -> None:
     try:
         from textual.app import App, ComposeResult
         from textual.containers import Vertical
@@ -20,7 +24,7 @@ def run_dashboard(agent=None, *, command_handler=None, task_runtime=None, actor_
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/tasks · /events TASK_ID [CURSOR] · /status · /quit", id="command")
+                yield Input(placeholder="/tasks · /events TASK_ID [CURSOR] · /worker run RUN · /status · /quit", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
@@ -30,6 +34,22 @@ def run_dashboard(agent=None, *, command_handler=None, task_runtime=None, actor_
             log = self.query_one("#log", RichLog)
             if command == "/quit":
                 self.exit()
+                return
+            if command == "/worker run RUN":
+                if worker_supervisor is None or actor_id is None or authorize is None:
+                    log.write("Worker execution is not configured.")
+                    return
+                try:
+                    log.write(execute_worker_cycle(
+                        worker_supervisor, actor_id=actor_id,
+                        authorize=authorize, confirmation="RUN",
+                    ))
+                except PermissionError:
+                    log.write("Worker execution is not authorized.")
+                except (TypeError, ValueError):
+                    log.write("Worker execution configuration or confirmation is invalid.")
+                except Exception:
+                    log.write("Worker cycle failed safely; inspect the authorized task event log.")
                 return
             if command == "/tasks":
                 if task_runtime is None or actor_id is None:
