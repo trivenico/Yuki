@@ -9,6 +9,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
 from typing import Callable, Mapping
+from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
 
@@ -130,7 +131,8 @@ class SpecialistTaskWorker:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
-        suffix = f".pool-{max_workers - 1}"
+        pool_token = uuid4().hex[:12]
+        suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
             raise ValueError("worker_id is too long for parallel worker identities.")
 
@@ -139,7 +141,7 @@ class SpecialistTaskWorker:
         results_lock = Lock()
 
         def drain(index: int) -> None:
-            worker_id = f"{self.worker_id}.pool-{index}"
+            worker_id = f"{self.worker_id}.pool-{pool_token}-{index}"
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
