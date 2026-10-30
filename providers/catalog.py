@@ -19,6 +19,14 @@ _CATALOG = (
      "implemented":True,"capabilities":["text","per_task_routing"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
     {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
+    {"name":"oci","label":"Oracle Cloud Generative AI (API key)","auth":"oci_genai_api_key","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text"],"model_env":"YUKI_OCI_MODEL","key_env":"OCI_GENAI_API_KEY"},
+    {"name":"oci_iam","label":"Oracle Cloud Generative AI (OCI IAM)","auth":"oci_iam_principal","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text"],"model_env":"YUKI_OCI_MODEL","key_env":None},
+    {"name":"oci_responses","label":"Oracle Cloud Generative AI Responses API","auth":"oci_iam_principal","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text","responses_api"],"model_env":"YUKI_OCI_MODEL","key_env":None},
+    {"name":"multi","label":"Multi-provider router","auth":"per_provider","privacy":"task_policy","implemented":True,
+     "capabilities":["text","per_task_routing"],"model_env":None,"key_env":None},
     {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
     {"name":"deepseek","label":"DeepSeek API","auth":"api_key","privacy":"cloud_provider","implemented":False,
@@ -66,6 +74,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
+        elif item["name"] == "multi":
+            model = "multi-route" if (env.get("YUKI_OCI_MODEL") or env.get("YUKI_OLLAMA_MODEL") or cfg.get("ollama_model")) else None
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
         if item["name"] == "hybrid":
             key_name = str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")).strip()
@@ -114,6 +124,19 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         elif item["name"] == "hybrid":
             ready = bool(_model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))))
             reason = "local_model_configured_cloud_opt_in_required" if ready else "local_model_not_configured"
+        elif item["name"] == "oci":
+            project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
+            region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip()
+            ready = bool(model and configured_key and project.startswith("ocid1.generativeaiproject.") and region)
+            reason = "api_key_project_region_and_model_configured" if ready else "oci_api_key_project_region_or_model_missing"
+        elif item["name"] in {"oci_iam", "oci_responses"}:
+            project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
+            region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip()
+            ready = bool(model and configured_key and project.startswith("ocid1.generativeaiproject.") and region)
+            reason = "iam_project_region_and_model_configured" if ready else "oci_iam_project_region_or_model_missing"
+        elif item["name"] == "multi":
+            ready = bool(model)
+            reason = "at_least_one_route_configured" if ready else "no_provider_routes_configured"
         else:
             ready = False
             reason = "adapter_not_implemented"
