@@ -46,8 +46,8 @@ class AgentSpec:
     allowed_tools: frozenset[str] = field(default_factory=frozenset)
     provider_preferences: tuple[str, ...] = ()
     allow_cloud: bool = False
-    max_concurrency: int = 1
-    timeout_seconds: int = 120
+    max_concurrency: int | None = None
+    timeout_seconds: int | None = None
     delegation_targets: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
@@ -79,10 +79,10 @@ class AgentSpec:
         object.__setattr__(self, "provider_preferences", tuple(normalized))
         if type(self.allow_cloud) is not bool:
             raise ValueError("allow_cloud must be a boolean.")
-        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 32:
-            raise ValueError("max_concurrency must be an integer from 1 to 32.")
-        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 3600:
-            raise ValueError("timeout_seconds must be an integer from 1 to 3600.")
+        if self.max_concurrency is not None and (type(self.max_concurrency) is not int or self.max_concurrency < 1):
+            raise ValueError("max_concurrency must be None (unlimited) or a positive integer.")
+        if self.timeout_seconds is not None and (type(self.timeout_seconds) is not int or self.timeout_seconds < 1):
+            raise ValueError("timeout_seconds must be None (no agent deadline) or a positive integer.")
         if self.delegation_targets and "agent:delegate" not in self.capabilities:
             raise ValueError("delegation targets require the agent:delegate capability.")
 
@@ -122,9 +122,9 @@ class AgentRegistry:
     validation and authorization boundary shared by those adapters.
     """
 
-    def __init__(self, *, max_agents: int = 100) -> None:
-        if type(max_agents) is not int or not 1 <= max_agents <= 10_000:
-            raise ValueError("max_agents must be an integer from 1 to 10000.")
+    def __init__(self, *, max_agents: int | None = None) -> None:
+        if max_agents is not None and (type(max_agents) is not int or max_agents < 1):
+            raise ValueError("max_agents must be None (unlimited) or a positive integer.")
         self._max_agents = max_agents
         self._agents: dict[str, AgentSpec] = {}
         self._lock = RLock()
@@ -135,8 +135,8 @@ class AgentRegistry:
         with self._lock:
             if spec.agent_id in self._agents:
                 raise ValueError("agent is already registered.")
-            if len(self._agents) >= self._max_agents:
-                raise ValueError("agent registry capacity reached.")
+            if self._max_agents is not None and len(self._agents) >= self._max_agents:
+                raise ValueError("configured agent registry capacity reached.")
             unknown = spec.delegation_targets.difference(self._agents)
             if unknown:
                 raise ValueError("delegation targets must be registered before the delegating agent.")
