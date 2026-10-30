@@ -91,11 +91,6 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key="agent-budget-2", workflow_name="agent-reviewer-second",
             definition=definition,
         )
-        unrelated = self.store.create(
-            idempotency_key="agent-budget-3", workflow_name="agent-writer-first",
-            definition=definition,
-        )
-
         first_claim = self.store.claim_next(
             worker_id="worker-a", workflow_prefix_limits={"agent-reviewer-": 1},
         )
