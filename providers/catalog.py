@@ -11,8 +11,6 @@ from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
-    {"name":"mock","label":"Mock","auth":"none","privacy":"local","implemented":False,
-     "capabilities":["text","tests"],"model_env":None,"key_env":None},
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
