@@ -73,6 +73,28 @@ class ConversationMemoryStoreTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="Yuki")
 
+    def test_semantic_search_reuses_cached_owner_embeddings_and_ranks_query(self):
+        vectors = {"car": [1.0, 0.0], "food": [0.0, 1.0], "vehicle": [1.0, 0.0]}
+        calls = []
+        def embed(text):
+            calls.append(text)
+            return vectors[text]
+        semantic_store = ConversationMemoryStore(
+            str(Path(self.tmp.name) / "cached.sqlite3"),
+            authorize=lambda actor, action, owner: actor == owner and action in {"memory:import", "memory:read"},
+            embedding_fn=embed,
+        )
+        semantic_store.import_records(actor_id="alice", owner_id="alice", source="chatgpt", records=[
+            {"id": "car", "role": "user", "content": "car"},
+            {"id": "food", "role": "user", "content": "food"},
+        ], consent=True)
+        first = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
+        second = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
+        self.assertEqual(first[0].source_record_id, "car")
+        self.assertEqual(second[0].source_record_id, "car")
+        self.assertEqual(calls.count("car"), 2)
+        self.assertEqual(calls.count("food"), 2)
+
     def test_import_rejects_unhashable_role_without_type_error(self):
         with self.assertRaises(ValueError):
             self.store.import_records(actor_id="alice", owner_id="alice", source="chatgpt",
