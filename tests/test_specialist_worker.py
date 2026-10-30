@@ -138,6 +138,18 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             handlers["research"]("x" * 2_001)
 
+    def test_hybrid_specialists_use_only_explicit_cloud_task_allowlist(self):
+        from providers.hybrid import HybridProvider
+        local = FakeProvider(output="local result")
+        cloud = FakeProvider(output="cloud result")
+        hybrid = HybridProvider(local, cloud, cloud_tasks=("research",))
+        handlers = build_provider_specialist_handlers(hybrid)
+
+        self.assertEqual(handlers["research"]("Research this"), "cloud result")
+        self.assertEqual(handlers["coding"]("Review this"), "local result")
+        self.assertEqual(len(cloud.prompts), 1)
+        self.assertEqual(len(local.prompts), 1)
+
     def test_provider_unavailable_fails_closed(self):
         handlers = build_provider_specialist_handlers(FakeProvider(available=False))
         with self.assertRaises(RuntimeError):
