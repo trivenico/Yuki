@@ -14,7 +14,7 @@ import sys
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 from dataclasses import asdict, dataclass
 from typing import Callable
 
@@ -49,6 +49,13 @@ def _module_available(name: str, finder: Callable = importlib.util.find_spec) ->
         return False
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Prevent a loopback readiness request from escaping via HTTP redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None = None) -> Capability:
     """Probe Ollama's local tags endpoint with a strict timeout and no credentials."""
     if not 0 < timeout <= 3:
@@ -65,13 +72,18 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
             return Capability("unavailable", "Only loopback Ollama endpoints are allowed for local readiness checks.")
         endpoint = base_url.rstrip("/") + "/api/tags"
         request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
-        open_url = urlopen if opener is None else opener
+        # urllib's default opener follows redirects, which could turn an allowed
+        # loopback probe into a request to an unrelated host. Refuse redirects.
+        open_url = (build_opener(_NoRedirectHandler()).open if opener is None else opener)
         with open_url(request, timeout=timeout) as response:
             status = getattr(response, "status", 200)
             if status != 200:
                 return Capability("unavailable", f"Ollama endpoint returned HTTP {status}.")
-            payload = json.loads(response.read(1_000_001))
-        if not isinstance(payload, dict) or not isinstance(payload.get("models", []), list):
+            raw_payload = response.read(1_000_001)
+            if len(raw_payload) > 1_000_000:
+                return Capability("unavailable", "Ollama endpoint response exceeded the 1 MB readiness limit.")
+            payload = json.loads(raw_payload)
+        if not isinstance(payload, dict) or "models" not in payload or not isinstance(payload["models"], list):
             return Capability("unavailable", "Ollama endpoint returned an invalid model-list response.")
         return Capability("verified", "Ollama tags endpoint responded successfully; inference was not tested.")
     except (HTTPError, URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
@@ -88,22 +100,33 @@ def build_readiness_report(
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
+    configured_model = str(env.get("YUKI_OLLAMA_MODEL", "")).strip()
+    if not configured_model and environ is None:
+        try:
+            from core.config import load_config
+            configured_model = str(load_config().get("ollama_model", "")).strip()
+        except Exception:
+            configured_model = ""
+
+    # The CLI and server are separate capabilities: Ollama may be running as a
+    # service even when its CLI is not on this process's PATH. The probe itself
+    # enforces loopback-only URLs and a strict timeout.
+    ollama_cli_available = executable_finder("ollama") is not None
+    ollama_server = ollama_probe(
+        str(env.get("YUKI_OLLAMA_BASE_URL", "http://127.0.0.1:11434")).strip(), 1.0
+    )
     capabilities: dict[str, Capability] = {
         "python_runtime": Capability("detected", sys.version.split()[0]),
         "ollama_cli": (
             Capability("detected", "Ollama executable is on PATH; server/model not verified.")
-            if executable_finder("ollama")
+            if ollama_cli_available
             else Capability("unavailable", "Ollama executable not found on PATH.")
         ),
-        "ollama_server": (
-            ollama_probe(str(env.get("YUKI_OLLAMA_BASE_URL", "http://127.0.0.1:11434")).strip(), 1.0)
-            if executable_finder("ollama")
-            else Capability("unavailable", "Ollama CLI is unavailable; server connectivity was not checked.")
-        ),
+        "ollama_server": ollama_server,
         "ollama_model_config": (
             Capability("configured", "A local model name is configured; model availability not verified.")
-            if str(env.get("YUKI_OLLAMA_MODEL", "")).strip()
-            else Capability("unconfigured", "Set YUKI_OLLAMA_MODEL to select a local model.")
+            if configured_model
+            else Capability("unconfigured", "Set YUKI_OLLAMA_MODEL or configure ollama_model to select a local model.")
         ),
         "pytorch": (
             Capability("detected", "PyTorch is import-discoverable; accelerator availability not verified.")

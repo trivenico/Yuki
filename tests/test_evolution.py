@@ -42,6 +42,72 @@ class DailyEvolutionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cycle.review(proposal_id, "rejected")
 
+    def test_report_is_read_only_and_returns_latest_proposals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            self.assertIsNone(cycle.report())
+            now = datetime(2026, 10, 17, 3, tzinfo=timezone.utc)
+            cycle.record("failure", "build failed", occurred_at=now)
+            generated = cycle.run_cycle(now=now)
+            report_path = cycle.report_path
+            before = report_path.read_text(encoding="utf-8")
+            loaded = cycle.report()
+            after = report_path.read_text(encoding="utf-8")
+            self.assertEqual(loaded, generated)
+            self.assertEqual(before, after)
+            self.assertGreaterEqual(len(loaded["proposals"]), 1)
+
+    def test_oversized_observation_file_is_rejected_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.observations_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.status()
+
+    def test_oversized_report_file_is_rejected_before_json_parse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.report_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.report()
+
+    def test_status_and_review_reject_oversized_report_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.MAX_DATA_FILE_BYTES = 32
+            cycle.report_path.write_bytes(b" " * 33)
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.status()
+            with self.assertRaisesRegex(RuntimeError, "size limit"):
+                cycle.review("proposal", "rejected")
+
+    def test_status_and_review_reject_malformed_report_structures(self):
+        malformed_reports = (
+            [],
+            {"proposals": "not-a-list"},
+            {"proposals": [None]},
+        )
+        for report in malformed_reports:
+            with self.subTest(report=report), tempfile.TemporaryDirectory() as directory:
+                cycle = DailyEvolutionCycle(directory)
+                import json
+                cycle.report_path.write_text(json.dumps(report), encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.status()
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.review("proposal", "rejected")
+                with self.assertRaisesRegex(RuntimeError, "invalid structure"):
+                    cycle.report()
+
+    def test_report_fails_closed_for_invalid_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cycle = DailyEvolutionCycle(directory)
+            cycle.report_path.write_text("{invalid", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "unreadable"):
+                cycle.report()
+
     def test_cycle_rejects_naive_clock_and_invalid_lookback(self):
         with tempfile.TemporaryDirectory() as directory:
             cycle = DailyEvolutionCycle(directory)

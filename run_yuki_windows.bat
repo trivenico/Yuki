@@ -6,5 +6,6 @@ if not exist ".venv\Scripts\python.exe" (
   echo Run install_windows.bat first.
   exit /b 1
 )
-".venv\Scripts\python.exe" yuki.py
+".venv\Scripts\python.exe" yuki_cli.py setup
+".venv\Scripts\python.exe" yuki_cli.py start
 endlocal

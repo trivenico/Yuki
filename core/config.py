@@ -11,6 +11,8 @@ from core.portable_paths import config_path as resolve_config_path, workspace_pa
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
 
+_MCP_HOST_RE = re.compile(r"^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$")
+
 
 def _bounded_int(value, minimum, maximum):
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -51,18 +53,51 @@ def _mcp_servers(raw):
         hosts, tools = item.get("allowed_hosts"), item.get("allowed_tools")
         if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name) or name in seen:
             raise RuntimeError("MCP server names must be unique simple identifiers.")
-        if not isinstance(endpoint, str) or not endpoint.startswith("https://") or len(endpoint) > 2048:
-            raise RuntimeError("MCP endpoint must be a bounded HTTPS URL.")
+        if (
+            not isinstance(endpoint, str)
+            or len(endpoint) > 2048
+            or endpoint != endpoint.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in endpoint)
+        ):
+            raise RuntimeError("MCP endpoint must be a bounded HTTPS URL without surrounding whitespace or control characters.")
         if (not isinstance(hosts, list) or not hosts or len(hosts) > 20
-                or any(not isinstance(h, str) or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", h) for h in hosts)):
+                or any(not isinstance(h, str) or not _MCP_HOST_RE.fullmatch(h) for h in hosts)):
             raise RuntimeError("MCP allowed_hosts must be a non-empty list of hostnames.")
+        normalized_hosts = list(dict.fromkeys(host.lower() for host in hosts))
+        try:
+            parsed = urlsplit(endpoint)
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("MCP endpoint must contain a valid port.") from exc
+        if port == 0:
+            raise RuntimeError("MCP endpoint port must be between 1 and 65535.")
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
+            raise RuntimeError("MCP endpoint must be HTTPS and must not contain credentials or a fragment.")
+        if parsed.hostname.lower() not in normalized_hosts:
+            raise RuntimeError("MCP endpoint hostname must appear in allowed_hosts.")
         if (not isinstance(tools, list) or len(tools) > 100
                 or any(not isinstance(t, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", t) for t in tools)):
             raise RuntimeError("MCP allowed_tools must be a list of simple tool names.")
-        result.append({"name": name, "endpoint": endpoint, "allowed_hosts": list(dict.fromkeys(hosts)),
+        result.append({"name": name, "endpoint": endpoint, "allowed_hosts": normalized_hosts,
                        "allowed_tools": list(dict.fromkeys(tools))})
         seen.add(name)
     return result
+
+
+def _optional_model_setting(raw, key, default=""):
+    value = raw.get(key, default)
+    if not isinstance(value, str):
+        raise RuntimeError(f"{key} must be a valid model identifier string.")
+    value = value.strip()
+    if len(value) > 120 or (value and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", value)):
+        raise RuntimeError(f"{key} must be a valid model identifier of at most 120 characters.")
+    return value
 
 
 def load_config(path=None):
@@ -106,8 +141,13 @@ def load_config(path=None):
             raise RuntimeError("YUKI_GITHUB_ALLOWED_ROOTS may contain at most 50 paths.")
     else:
         github_roots = _string_list(raw, "github_allowed_roots")
-    model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
-    if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    model_override = os.environ.get("YUKI_OLLAMA_MODEL")
+    if model_override is not None:
+        model = model_override.strip()
+    else:
+        model = _optional_model_setting(raw, "ollama_model", "llama3.2:3b")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}", model):
+        raise RuntimeError("ollama_model must be a valid model identifier of at most 120 characters.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -126,14 +166,26 @@ def load_config(path=None):
         "firewall_dry_run": _bool_setting("YUKI_FIREWALL_DRY_RUN", raw, "firewall_dry_run", True),
         "wakeword_enabled": _bool_setting("YUKI_WAKEWORD_ENABLED", raw, "wakeword_enabled", False),
         "plugin_discovery_enabled": _bool_setting("YUKI_PLUGIN_DISCOVERY_ENABLED", raw, "plugin_discovery_enabled", False),
+        "background_evolution_enabled": _bool_setting("YUKI_BACKGROUND_EVOLUTION_ENABLED", raw, "background_evolution_enabled", False),
+        "agent_council_enabled": _bool_setting("YUKI_AGENT_COUNCIL_ENABLED", raw, "agent_council_enabled", True),
+        "screen_observation_enabled": _bool_setting("YUKI_SCREEN_OBSERVATION_ENABLED", raw, "screen_observation_enabled", False),
+        "camera_access_enabled": _bool_setting("YUKI_CAMERA_ACCESS_ENABLED", raw, "camera_access_enabled", False),
+        "desktop_control_enabled": _bool_setting("YUKI_DESKTOP_CONTROL_ENABLED", raw, "desktop_control_enabled", False),
         "trusted_plugin_modules": _string_list(raw, "trusted_plugin_modules"),
         "github_allowed_roots": [str(Path(p).expanduser().resolve()) for p in github_roots],
         "mcp_servers": _mcp_servers(raw),
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "ollama"))).strip().lower(),
         "ollama_base_url": base_url, "ollama_model": model,
+        "openai_model": _optional_model_setting(raw, "openai_model", "gpt-4.1-mini"),
+        "deepseek_model": _optional_model_setting(raw, "deepseek_model"),
+        "kimi_model": _optional_model_setting(raw, "kimi_model"),
+        "minimax_model": _optional_model_setting(raw, "minimax_model"),
+        "openrouter_model": _optional_model_setting(raw, "openrouter_model"),
+        "tokenrouter_model": _optional_model_setting(raw, "tokenrouter_model"),
+        "anthropic_model": _optional_model_setting(raw, "anthropic_model"),
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),

@@ -73,6 +73,9 @@ class SkillRegistry:
     def get(self, name):
         return self._skills.get(name)
 
+    def unregister(self, name):
+        return self._skills.pop(name, None)
+
     def names(self):
         return tuple(sorted(self._skills))
 
@@ -115,4 +118,19 @@ class SkillRegistry:
                         registry.register(skill)
                     except (ValueError, TypeError):
                         continue
+        from core.extension_store import load_installed_skills
+        for skill in load_installed_skills():
+            if skill.name not in registry._skills:
+                try:
+                    registry.register(skill)
+                except (ValueError, TypeError):
+                    continue
+        from core.skill_packs import load_installed_skill_packs
+        installed_packs, _pack_errors = load_installed_skill_packs()
+        for skill in installed_packs:
+            if skill.name not in registry._skills:
+                try:
+                    registry.register(skill)
+                except (ValueError, TypeError):
+                    continue
         return registry

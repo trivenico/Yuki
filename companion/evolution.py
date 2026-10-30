@@ -39,6 +39,7 @@ class DailyEvolutionCycle:
     MAX_OBSERVATIONS = 2000
     MAX_OBSERVATION_CHARS = 1200
     MAX_PROPOSALS = 500
+    MAX_DATA_FILE_BYTES = 16 * 1024 * 1024
 
     def __init__(self, workspace: str | Path):
         root = Path(workspace).expanduser().resolve()
@@ -49,9 +50,27 @@ class DailyEvolutionCycle:
         self.report_path = root / "yuki_evolution_report.json"
         self._lock = RLock()
 
+    def _read_json(self, path: Path):
+        """Read bounded local JSON so corrupt/hostile files cannot exhaust memory."""
+        try:
+            with path.open("rb") as handle:
+                raw = handle.read(self.MAX_DATA_FILE_BYTES + 1)
+        except OSError:
+            raise
+        if len(raw) > self.MAX_DATA_FILE_BYTES:
+            raise RuntimeError(
+                f"Evolution data at {path.name} exceeds the size limit; refusing to load."
+            )
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Evolution data at {path.name} is unreadable; nothing was overwritten."
+            ) from exc
+
     def _read_list(self, path: Path, limit: int) -> list:
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            value = self._read_json(path)
         except FileNotFoundError:
             return []
         except (OSError, json.JSONDecodeError) as exc:
@@ -59,6 +78,19 @@ class DailyEvolutionCycle:
         if not isinstance(value, list) or len(value) > limit:
             raise RuntimeError(f"Evolution data at {path.name} has an invalid structure or exceeds limits.")
         return value
+
+    def _validate_report(self, report: object) -> dict:
+        """Validate report structure before status/review code inspects proposal entries."""
+        if (
+            not isinstance(report, dict)
+            or not isinstance(report.get("proposals"), list)
+            or len(report["proposals"]) > self.MAX_PROPOSALS
+            or any(not isinstance(proposal, dict) for proposal in report["proposals"])
+        ):
+            raise RuntimeError(
+                "Evolution report has an invalid structure or exceeds limits; no data was overwritten."
+            )
+        return report
 
     def _atomic_write(self, path: Path, value) -> None:
         fd, temp_name = tempfile.mkstemp(prefix=".yuki-evolution-", suffix=".tmp", dir=str(self.workspace))
@@ -163,15 +195,28 @@ class DailyEvolutionCycle:
             self._atomic_write(self.state_path, state)
             return report
 
+    def report(self) -> dict | None:
+        """Read the latest report without changing it or creating a new cycle."""
+        with self._lock:
+            try:
+                report = self._read_json(self.report_path)
+            except FileNotFoundError:
+                return None
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            return self._validate_report(report)
+
     def status(self) -> dict:
         with self._lock:
             observations = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
             try:
-                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report = self._read_json(self.report_path)
             except FileNotFoundError:
                 report = None
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            if report is not None:
+                report = self._validate_report(report)
             return {"observations": len(observations), "last_report_at": report.get("generated_at") if isinstance(report, dict) else None,
                     "pending_proposals": sum(1 for p in report.get("proposals", []) if p.get("status") == "pending_review") if isinstance(report, dict) else 0,
                     "report_path": str(self.report_path)}
@@ -183,13 +228,14 @@ class DailyEvolutionCycle:
             raise ValueError("decision must be accepted_for_manual_followup or rejected.")
         with self._lock:
             try:
-                report = json.loads(self.report_path.read_text(encoding="utf-8"))
+                report = self._read_json(self.report_path)
             except FileNotFoundError:
                 raise ValueError("No evolution report exists yet.") from None
             except (OSError, json.JSONDecodeError) as exc:
                 raise RuntimeError("Evolution report is unreadable; no data was overwritten.") from exc
+            report = self._validate_report(report)
             found = False
-            for proposal in report.get("proposals", []):
+            for proposal in report["proposals"]:
                 if proposal.get("id") == proposal_id:
                     if proposal.get("status") != "pending_review":
                         raise ValueError("This proposal has already been reviewed.")

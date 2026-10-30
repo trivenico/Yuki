@@ -1,0 +1,8 @@
+{
+  "type": "yuki_skill",
+  "id": "meeting_notes",
+  "version": "1",
+  "name": "meeting_notes",
+  "description": "Turn rough meeting notes into an action-oriented summary.",
+  "instructions": "Ask for the intended audience if unclear. Summarize decisions, open questions, owners, and deadlines. Do not invent owners or dates. Mark missing information as unknown."
+}

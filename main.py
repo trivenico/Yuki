@@ -1,4 +1,5 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
+import atexit
 from datetime import datetime, timezone
 from pathlib import Path
 import shlex
@@ -6,7 +7,9 @@ import shlex
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
 from companion.proactive import ReminderQueue
+from companion.briefing import render_morning_briefing
 from companion.evolution import DailyEvolutionCycle
+from core.evolution_scheduler import EvolutionScheduler
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
@@ -27,10 +30,18 @@ from providers.factory import create_provider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
+from core.agent_council import AgentCouncil
+from core.perception import get_screen_context
+from core.task_ledger import TaskLedger
+from core.task_verifier import verify_workspace_file
+from core.test_runner import run_project_unittest_suite
 from core.readiness import build_readiness_report
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
+from core.extension_store import install_extension, install_skill_file, list_extensions, remove_extension, load_installed_skills, load_installed_mcp_servers
+from skills.mcp_plugin import MCPPluginSkill
+from skills.connector_management import ConnectorManagementSkill
 
 
 def _ask_approval(request):
@@ -46,9 +57,39 @@ def _confirm(action, reason, risk="medium"):
     return _ask_approval(ApprovalRequest(action=action, reason=reason, risk=risk))
 
 
+def _one_path_argument(raw):
+    """Parse one quoted manifest path without treating Windows backslashes as escapes."""
+    tokens = shlex.split(raw, posix=False)
+    if len(tokens) != 1:
+        raise ValueError("Use quotes around a manifest path containing spaces.")
+    value = tokens[0]
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    if not value:
+        raise ValueError("Manifest path must not be empty.")
+    return value
+
+
+def _all_mcp_servers(config):
+    configured = list(config.get("mcp_servers", []))
+    configured_names = {item.get("name") for item in configured}
+    installed = [item for item in load_installed_mcp_servers()
+                 if item.get("name") not in configured_names]
+    return configured + installed
+
+
+def _refresh_plugin_skills(agent, config):
+    servers = _all_mcp_servers(config)
+    for name, cls in (("mcp_plugin", MCPPluginSkill), ("connector_management", ConnectorManagementSkill)):
+        skill = agent.registry.get(name)
+        if skill is not None:
+            skill.servers = cls(servers=servers).servers
+
+
 def build_agent(config):
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
+    all_servers = _all_mcp_servers(config)
     registry = SkillRegistry.defaults(
         workspace, gmail_enabled=config["gmail_enabled"],
         gmail_credentials=workspace / "google_oauth_client.json",
@@ -57,7 +98,7 @@ def build_agent(config):
         plugin_discovery_enabled=config["plugin_discovery_enabled"],
         trusted_plugin_modules=config["trusted_plugin_modules"],
         github_allowed_roots=config.get("github_allowed_roots", []),
-        mcp_servers=config.get("mcp_servers", []),
+        mcp_servers=all_servers,
     )
     return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
 
@@ -66,13 +107,29 @@ def print_help():
     print("""Yuki guarded core
   /help                          Show commands
   /status                        Show capability status
+  /briefing                     Show a read-only personal morning briefing
   /readiness                     Detect runtime and local model readiness
   /health                        Run read-only core health checks
   /recovery actions               List approved recovery handlers
   /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
+  /skills install PATH           Install a declarative skill pack (JSON)
+  /skills import PATH            Import a declarative Agent Skills SKILL.md file
+  /skills remove ID              Remove an installed skill pack
+  /plugins                       List installed MCP plugin manifests
+  /plugins install PATH          Install an allow-listed HTTPS MCP plugin (JSON)
+  /plugins remove ID             Remove an installed MCP plugin
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
+  /council status                 Show whether council planning is enabled for tasks
+  /council run GOAL               Convene parallel specialists and synthesize a plan
+  /observe status                 Show screen/camera privacy settings
+  /observe window                 Read active-window metadata locally (opt-in)
+  /tasks                          List recent tracked tasks
+  /task show ID                   Show one tracked task
+  /task verify ID --file PATH [--contains TEXT]  Verify file presence/hash and optional literal text
+  /task test ID --project PATH    Run approved Python unittest discovery for a workspace project
+  /task cancel ID                 Cancel a queued task record (running-task interruption is not implemented)
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
   /skill NAME [ARG]              Request one registered skill
   /plan GOAL                     Propose a bounded plan (no automatic execution)
@@ -84,6 +141,8 @@ def print_help():
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
+  /evolution auto status           Show opt-in background review setting
+  /evolution report                Show latest local proposals without running a cycle
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -113,12 +172,14 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    council = AgentCouncil(ai.provider, on_event=lambda message: print("Yuki > " + message))
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
     indexer = KnowledgeIndexer(searchable_memory)
     planner = Planner(max_steps=config["max_agent_steps"])
     recovery_audit = RecoveryAuditLog(workspace / "recovery_audit.sqlite3")
+    task_ledger = TaskLedger(workspace / "yuki_tasks.sqlite3")
     recovery = SelfHealingEngine(
         approve=lambda proposal: _confirm(
             "recovery:" + proposal.action, proposal.reason, proposal.risk
@@ -133,6 +194,13 @@ def main():
     )
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     evolution = DailyEvolutionCycle(workspace)
+    evolution_scheduler = EvolutionScheduler(
+        evolution, enabled=bool(config.get("background_evolution_enabled", False)),
+        on_error=lambda exc: print(f"Yuki background evolution skipped ({type(exc).__name__})."),
+    )
+    evolution_scheduler.start()
+    # Also stop the daemon worker on exceptional runtime shutdown paths.
+    atexit.register(evolution_scheduler.stop)
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
@@ -165,11 +233,13 @@ def main():
             command = input("\nYou > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nYuki > Goodbye.")
+            evolution_scheduler.stop()
             return
         if not command:
             continue
         if command in {"/quit", "/exit"}:
             print("Yuki > Goodbye.")
+            evolution_scheduler.stop()
             return
         if command == "/help":
             print_help()
@@ -213,6 +283,15 @@ def main():
                 print(f"Yuki recovery: {result.status} — {result.message}")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Recovery request rejected: {exc}")
+        elif command == "/briefing":
+            print(render_morning_briefing(
+                now=datetime.now().astimezone(),
+                workspace=str(workspace),
+                provider=str(config["provider"]),
+                skills_count=len(agent.available_skills()),
+                reminders=reminders.list(),
+                voice_enabled=bool(config["voice_enabled"]),
+            ))
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
@@ -225,14 +304,273 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command.startswith("/skills import "):
+            try:
+                skill_path = _one_path_argument(command[len("/skills import "):].strip())
+                installed = install_skill_file(skill_path)
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == installed["id"]), None)
+                if skill is None:
+                    remove_extension(installed["id"], "skill")
+                    raise ValueError("Imported skill failed validation.")
+                try:
+                    agent.registry.register(skill)
+                except Exception:
+                    remove_extension(installed["id"], "skill")
+                    raise
+                print(f"Yuki > Imported Agent Skill '{installed['id']}' as declarative guidance for this session.")
+            except Exception as exc:
+                print(f"Yuki > Agent Skill import failed safely ({type(exc).__name__}): {str(exc)[:240]}")
+        elif command.startswith("/skills install "):
+            try:
+                manifest_path = _one_path_argument(command[len("/skills install "):].strip())
+                installed = install_extension(manifest_path, "skill")
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == installed["id"]), None)
+                if skill is None:
+                    remove_extension(installed["id"], "skill")
+                    raise ValueError("Installed skill failed validation.")
+                try:
+                    agent.registry.register(skill)
+                except Exception:
+                    remove_extension(installed["id"], "skill")
+                    raise
+                print(f"Yuki > Installed skill '{installed['id']}' and made it available in this session.")
+            except Exception as exc:
+                print(f"Yuki > Skill installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
+        elif command.startswith("/skills remove "):
+            extension_id = command[len("/skills remove "):].strip()
+            try:
+                skill = next((item for item in load_installed_skills()
+                              if item.manifest["id"] == extension_id), None)
+                removed = remove_extension(extension_id, "skill")
+                if skill is not None:
+                    agent.registry.unregister(skill.name)
+                print("Yuki > Skill pack removed." if removed else "Yuki > Skill pack was not installed.")
+            except Exception as exc:
+                print(f"Yuki > Skill removal failed safely ({type(exc).__name__}).")
+        elif command == "/plugins":
+            for plugin in list_extensions("plugin"):
+                status = "valid" if plugin["valid"] else "invalid"
+                print(f"- {plugin['id']} ({plugin['name']}): {status}")
+            if not list_extensions("plugin"):
+                print("No user-installed MCP plugins. Plugin install registers an allow-listed HTTPS endpoint; it never installs Python code.")
+        elif command.startswith("/plugins install "):
+            try:
+                manifest_path = _one_path_argument(command[len("/plugins install "):].strip())
+                installed = install_extension(manifest_path, "plugin")
+                if any(item.get("name") == installed["name"] for item in config.get("mcp_servers", [])):
+                    remove_extension(installed["id"], "plugin")
+                    raise ValueError("A configured MCP server already uses that name.")
+                _refresh_plugin_skills(agent, config)
+                print(f"Yuki > Installed MCP plugin '{installed['id']}'. Remote tool execution still requires explicit allow-listing and exact confirmation.")
+            except Exception as exc:
+                print(f"Yuki > Plugin installation failed safely ({type(exc).__name__}): {str(exc)[:180]}")
+        elif command.startswith("/plugins remove "):
+            extension_id = command[len("/plugins remove "):].strip()
+            try:
+                removed = remove_extension(extension_id, "plugin")
+                _refresh_plugin_skills(agent, config)
+                print("Yuki > Plugin removed from the installed plugin store." if removed else "Yuki > Plugin was not installed.")
+            except Exception as exc:
+                print(f"Yuki > Plugin removal failed safely ({type(exc).__name__}).")
+        elif command == "/observe status":
+            print("Screen observation: " + ("enabled (manual actions only)" if config.get("screen_observation_enabled", False) else "disabled"))
+            print("Camera access: " + ("enabled (one-shot snapshots only)" if config.get("camera_access_enabled", False) else "disabled"))
+            print("Desktop control: " + ("permission flag enabled, but control actions are not implemented yet" if config.get("desktop_control_enabled", False) else "disabled"))
+            print("No background screen or camera capture is running.")
+        elif command == "/observe window":
+            try:
+                context = get_screen_context(enabled=bool(config.get("screen_observation_enabled", False)))
+                print("Yuki local screen context:")
+                print(context.as_prompt_context())
+                print("This command reads only the active-window title. It does not capture pixels or send anything to a model.")
+            except PermissionError as exc:
+                print(f"Yuki > {exc}")
+        elif command == "/council status":
+            enabled = bool(config.get("agent_council_enabled", True))
+            print("Yuki Council automatic task planning: " + ("enabled" if enabled else "disabled"))
+            print("Council uses 3 parallel advisory specialists and one synthesis call; it does not execute tools.")
+        elif command.startswith("/council run "):
+            goal = command[len("/council run "):].strip()
+            if not goal:
+                print("Yuki > Provide a goal: /council run review the architecture and identify the next milestone")
+                continue
+            result = council.run(goal)
+            print(f"Yuki Council [{result.status}] synthesis:\n{result.summary}")
+            for role, notes in result.contributions:
+                print(f"\n--- {role} peer-review notes ---\n{notes[:2200]}")
+        elif command == "/tasks":
+            tasks = task_ledger.list(limit=20)
+            if not tasks:
+                print("Yuki > No tracked tasks yet.")
+            else:
+                for item in tasks:
+                    print(f"Yuki > [{item['status']}] {item['id']} — {item['title']}")
+        elif command.startswith("/task show "):
+            task_id = command[len("/task show "):].strip()
+            item = task_ledger.get(task_id)
+            if item is None:
+                print("Yuki > Task not found.")
+            else:
+                print(f"Yuki task {item['id']}\nTitle: {item['title']}\nStatus: {item['status']}\nCreated: {item['created_at']}\nUpdated: {item['updated_at']}")
+                if item["result"]:
+                    print("Result: " + item["result"])
+                if item["error_code"]:
+                    print("Error code: " + item["error_code"])
+                if item.get("verification_evidence"):
+                    print("Verification evidence: " + item["verification_evidence"])
+                elif item["status"] == "awaiting_verification":
+                    print("Verification: required; a model response alone is not proof of success.")
+        elif command.startswith("/task verify "):
+            try:
+                parts = shlex.split(command)
+                if (
+                    parts[0:2] != ["/task", "verify"]
+                    or len(parts) not in (5, 7)
+                    or parts[3] != "--file"
+                    or (len(parts) == 7 and parts[5] != "--contains")
+                ):
+                    print('Yuki > Usage: /task verify ID --file "relative/path" [--contains "expected text"]')
+                    continue
+                task_id, relative_path = parts[2], parts[4]
+                expected_text = parts[6] if len(parts) == 7 else None
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                    continue
+                if item["status"] != "awaiting_verification":
+                    print("Yuki > Only tasks awaiting verification can be verified this way.")
+                    continue
+                artifact = verify_workspace_file(
+                    workspace, relative_path, expected_text=expected_text
+                )
+                evidence = (
+                    f"Workspace file: {artifact['path']}; size={artifact['size_bytes']} bytes; "
+                    f"SHA-256={artifact['sha256']}. "
+                )
+                if expected_text is None:
+                    evidence += "Scope: presence and identity only; content correctness is not verified."
+                else:
+                    evidence += (
+                        f"Literal expected-text check: {'MATCH' if artifact['content_match'] else 'NO MATCH'}. "
+                        "Scope: exact substring assertion only; broader task correctness is not verified."
+                    )
+                updated = task_ledger.record_verification_evidence(task_id, evidence)
+                print(f"Yuki > Artifact check recorded for task {updated['id']}.")
+                print("Yuki > Evidence: " + evidence)
+                print("Yuki > Task remains awaiting_verification; an artifact check alone does not prove the full goal is complete.")
+            except (KeyError, ValueError, OSError) as exc:
+                print(f"Yuki > Verification refused safely: {exc}")
+        elif command.startswith("/task test "):
+            try:
+                parts = shlex.split(command)
+                if len(parts) != 5 or parts[0:2] != ["/task", "test"] or parts[3] != "--project":
+                    print('Yuki > Usage: /task test ID --project "relative/project/path"')
+                    continue
+                task_id, project_path = parts[2], parts[4]
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                    continue
+                if item["status"] != "awaiting_verification":
+                    print("Yuki > Only tasks awaiting_verification can run this acceptance check.")
+                    continue
+                if not _confirm(
+                    "task:test-suite",
+                    f"Run Python unittest discovery in workspace project '{project_path}'. "
+                    "Project tests execute project-controlled code; this is a one-time approval.",
+                    "high",
+                ):
+                    print("Yuki > Test run not approved; task status was not changed.")
+                    continue
+                outcome = run_project_unittest_suite(workspace, project_path)
+                state = "PASS" if outcome["passed"] else "FAIL"
+                evidence = (
+                    f"Acceptance check: Python unittest discovery; project={project_path}; "
+                    f"exit_code={outcome['exit_code']}; timed_out={outcome['timed_out']}; "
+                    f"test_count={outcome.get('test_count', 0)}; outcome={state}. "
+                    "Scope: discovered Python unittest suite only. "
+                    f"stdout_tail={outcome['stdout'][-1200:]!r}; "
+                    f"stderr_tail={outcome['stderr'][-1200:]!r}"
+                )[:3900]
+                if outcome["passed"]:
+                    updated = task_ledger.transition(
+                        task_id, "completed",
+                        result=f"Approved Python unittest suite passed ({outcome['test_count']} tests).",
+                        verification_evidence=evidence,
+                    )
+                    print(f"Yuki > Task {updated['id']} completed: approved test suite passed.")
+                else:
+                    updated = task_ledger.record_verification_evidence(task_id, evidence)
+                    print(f"Yuki > Test suite did not pass; task {updated['id']} remains awaiting_verification.")
+                print(f"Yuki > Exit code: {outcome['exit_code']}; tests reported: {outcome.get('test_count', 0)}; timed out: {outcome['timed_out']}")
+                if outcome["stdout"]:
+                    print("Yuki test stdout (tail):\n" + outcome["stdout"])
+                if outcome["stderr"]:
+                    print("Yuki test stderr (tail):\n" + outcome["stderr"])
+            except (KeyError, ValueError, OSError) as exc:
+                print(f"Yuki > Test run refused safely: {exc}")
+        elif command.startswith("/task cancel "):
+            task_id = command[len("/task cancel "):].strip()
+            try:
+                item = task_ledger.get(task_id)
+                if item is None:
+                    print("Yuki > Task not found.")
+                elif item["status"] != "queued":
+                    print("Yuki > This task is not queued. Live interruption is not supported yet; no status was changed.")
+                else:
+                    item = task_ledger.cancel(task_id)
+                    print(f"Yuki > Queued task {item['id']} cancelled.")
+            except (KeyError, ValueError) as exc:
+                print(f"Yuki > Cannot cancel task: {exc}")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
                 print("Yuki > Provide a task goal: /task summarize the available time and file skills")
                 continue
-            print("Yuki > Preparing a bounded plan. Every skill call requires fresh approval.")
-            result = task_agent.run(goal)
-            print(f"Yuki > {result.message} [status={result.status}, steps={result.steps}]")
+            try:
+                tracked = task_ledger.create(goal)
+                task_ledger.transition(tracked["id"], "running")
+            except Exception as exc:
+                print(f"Yuki > Task tracking unavailable ({type(exc).__name__}); no task was started.")
+                continue
+            print(f"Yuki > Task {tracked['id']} created. Preparing a bounded plan; each skill call requires fresh approval.")
+            try:
+                council_context = ""
+                if bool(config.get("agent_council_enabled", True)):
+                    print("Yuki > Convening the specialist council before planning this task.")
+                    council_result = council.run(goal)
+                    if council_result.ok:
+                        council_context = council_result.context
+                        print(f"Yuki Council [{council_result.status}] synthesis:\n{council_result.summary[:3500]}")
+                        for role, notes in council_result.contributions:
+                            print(f"Council [{role}]: {notes[:900]}")
+                    else:
+                        print("Yuki > Council unavailable; continuing with the bounded single-agent planner.")
+                result = task_agent.run(goal, council_context=council_context)
+                # A model's final response is not independent proof that the user's goal
+                # was achieved. Keep successful runs awaiting verification until an
+                # acceptance check can confirm the actual outcome.
+                final_status = "awaiting_verification" if result.ok else "failed"
+                task_ledger.transition(
+                    tracked["id"], final_status,
+                    result=result.message,
+                    error_code="" if result.ok else result.status,
+                )
+                display_status = "awaiting_verification" if result.ok else result.status
+                print(f"Yuki > {result.message} [status={display_status}, steps={result.steps}, task_id={tracked['id']}]")
+            except KeyboardInterrupt:
+                try:
+                    task_ledger.transition(tracked["id"], "cancelled")
+                finally:
+                    print("Yuki > Task cancelled by keyboard interrupt.")
+            except Exception as exc:
+                try:
+                    task_ledger.transition(tracked["id"], "failed", error_code=type(exc).__name__)
+                except Exception:
+                    pass
+                print(f"Yuki > Task failed safely ({type(exc).__name__}); task record retained.")
         elif command.startswith("/ask "):
             prompt = command[len("/ask "):].strip()
             if not prompt:
@@ -346,8 +684,23 @@ def main():
             due = reminders.due()
             if not due: print("Yuki > No reminders are due.")
             for item in due: print(f"Yuki reminder: {item['text']} (due {item['due_at']})")
+        elif command == "/evolution auto status":
+            print("Background proposal reviews: " + ("enabled" if evolution_scheduler.enabled else "disabled"))
+            print("Runs locally after 03:00 once per local day; creates proposals only, never applies changes.")
         elif command == "/evolution status":
             print(evolution.status())
+        elif command == "/evolution report":
+            try:
+                report = evolution.report()
+                if report is None:
+                    print("Yuki > No evolution report exists yet. Enable background reviews or run /evolution run with approval.")
+                else:
+                    print(f"Yuki > Latest local review: {report.get('generated_at', 'unknown time')}; reviewed {report.get('observations_reviewed', 0)} observations.")
+                    for proposal in report["proposals"]:
+                        print(f"- {proposal.get('id', 'unknown')} [{proposal.get('status', 'unknown')}] {proposal.get('title', 'Untitled')}: {proposal.get('detail', '')}")
+                    print(f"Pending review: {evolution.status()['pending_proposals']}")
+            except RuntimeError as exc:
+                print(f"Yuki > Evolution report unavailable: {exc}")
         elif command.startswith("/evolution record "):
             payload = command[len("/evolution record "):]
             if "|" not in payload:

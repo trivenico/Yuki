@@ -5,4 +5,9 @@ if [ ! -x ".venv/bin/python" ]; then
   echo "Yuki's virtual environment is missing. Run: sh install_unix.sh"
   exit 1
 fi
-exec .venv/bin/python yuki.py
+if .venv/bin/python yuki_cli.py setup; then
+  :
+else
+  echo "First-run setup did not complete; continuing to the Yuki runtime."
+fi
+exec .venv/bin/python yuki_cli.py start

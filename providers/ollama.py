@@ -1,10 +1,18 @@
 """Local Ollama chat/generation adapter using only the Python standard library."""
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Prevent prompts from being forwarded to an unexpected redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class OllamaProvider:
@@ -45,9 +53,11 @@ class OllamaProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+            with urllib.request.build_opener(_NoRedirectHandler).open(
+                request, timeout=min(self.timeout, 5)
+            ) as response:
                 raw = response.read(500_001)
-        except (urllib.error.URLError, TimeoutError, OSError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError):
             return False
         if len(raw) > 500_000:
             return False
@@ -81,9 +91,11 @@ class OllamaProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.build_opener(_NoRedirectHandler).open(
+                request, timeout=self.timeout
+            ) as response:
                 raw = response.read(2_000_001)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama request failed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")

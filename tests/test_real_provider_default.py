@@ -1,6 +1,7 @@
 """Regression tests for real-provider runtime defaults."""
 import unittest
 
+from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from yuki_providers import ProviderManager
 
@@ -10,17 +11,17 @@ class RealProviderDefaultTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         names = {item["name"] for item in manager.list_providers()}
         self.assertNotIn("mock", names)
-        self.assertIn("openai", names)
+        self.assertIn("ollama", names)
 
-    def test_openai_is_selected_by_default_without_network_access(self):
+    def test_ollama_is_selected_by_default_without_network_access(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_openai_key_is_read_from_environment(self):
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
+        manager = ProviderManager({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertTrue(adapter.is_available())
@@ -29,7 +30,7 @@ class RealProviderDefaultTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         result = manager.select("mock")
         self.assertIn("Unknown provider", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
 
 if __name__ == "__main__":

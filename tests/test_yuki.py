@@ -8,6 +8,7 @@ import yuki_learning
 import yuki_tasks
 import yuki_security
 from providers import MockProvider
+from providers.ollama import OllamaProvider
 from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
@@ -70,20 +71,19 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
-    def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
+    def test_real_provider_is_default_and_anthropic_requires_explicit_model(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
-        self.assertIn("not implemented", result)
+        self.assertIn("Cannot select anthropic", result)
         self.assertEqual(manager.current().name, "openai")
 
     def test_selected_adapter_is_created(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
         manager = ProviderManager(environ={})
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
         manager = ProviderManager()
@@ -109,14 +109,59 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIs(agent.provider, created[0])
         self.assertIs(manager.create_selected_adapter(), created[0])
 
-    def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
+    def test_terminal_anthropic_selection_requires_model_and_preserves_current_adapter(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("not implemented", result)
-        from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertIn("Cannot select anthropic", result)
+        self.assertIsInstance(agent.provider, OllamaProvider)
+        self.assertEqual(manager.current().name, "ollama")
+
+    def test_provider_route_command_updates_agent_only_after_success(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+
+        class AvailableAdapter(MockProvider):
+            def is_available(self):
+                return True
+
+        adapter = AvailableAdapter()
+        class Registry:
+            def route(self, *, required, preference=(), allow_cloud=False):
+                self.required = required
+                self.allow_cloud = allow_cloud
+                return SimpleNamespace(provider="ollama")
+
+        registry = Registry()
+        with patch.object(manager, "routing_registry", return_value=registry), \
+             patch.object(manager, "_build_adapter", return_value=adapter):
+            result = handle_command(
+                "/provider route text local_inference",
+                [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys())
+            )
+        self.assertEqual(result, "Selected provider for task: ollama")
+        self.assertEqual(registry.required, ("text", "local_inference"))
+        self.assertFalse(registry.allow_cloud)
+        self.assertIs(agent.provider, adapter)
+
+    def test_provider_route_command_requires_capability_and_explicit_cloud_opt_in(self):
+        manager = ProviderManager()
+        agent = YukiAgent(provider=manager.create_selected_adapter())
+        result = handle_command(
+            "/provider route native_messages_api --allow-cloud",
+            [], [], agent, manager, SecurityPolicy(allowed_tools=TOOLS.keys())
+        )
+        self.assertIn("Task routing failed", result)
+        self.assertIsInstance(agent.provider, OllamaProvider)
+        usage = handle_command(
+            "/provider route", [], [], agent, manager,
+            SecurityPolicy(allowed_tools=TOOLS.keys())
+        )
+        self.assertIn("Usage:", usage)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
@@ -124,7 +169,7 @@ class ProviderManagerTests(unittest.TestCase):
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
-        self.assertIn("Provider: openai", result)
+        self.assertIn("Provider: ollama", result)
 
 
 class ToolTests(unittest.TestCase):
@@ -213,8 +258,8 @@ class LearningTests(unittest.TestCase):
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertIn("\nProvider: ollama", result)
+        self.assertNotIn("\\nProvider: ollama", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()

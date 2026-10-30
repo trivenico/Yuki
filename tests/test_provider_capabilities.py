@@ -42,6 +42,19 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route()
 
+    def test_native_messages_api_capability_is_preserved(self):
+        registry = CapabilityRegistry([
+            ProviderCapabilities(
+                provider="anthropic",
+                capabilities=frozenset({"text", "native_messages_api"}),
+                implemented=True,
+                ready=True,
+                privacy="cloud_provider",
+                configured_model="claude-test",
+            )
+        ])
+        self.assertIn("native_messages_api", registry.list()[0]["capabilities"])
+
     def test_unknown_capabilities_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "unknown required capabilities"):
             CapabilityRegistry([provider("mock")]).route(required=("text", "magic"))
@@ -72,12 +85,28 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual([item["provider"] for item in items], ["mock", "ollama"])
         self.assertNotIn("secret", repr(items))
 
+    def test_remote_ollama_endpoint_is_not_routed_as_local(self):
+        manager = ProviderManager(
+            config={
+                "provider": "ollama",
+                "ollama_base_url": "https://remote.example",
+                "ollama_model": "qwen3",
+            },
+            environ={},
+        )
+        registry = manager.routing_registry()
+        self.assertEqual(registry.get("ollama").privacy, "configured_remote_endpoint")
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+
     def test_provider_manager_exposes_registry_from_real_catalog(self):
         manager = ProviderManager(environ={})
         registry = manager.routing_registry()
-        self.assertEqual(registry.route(required=("text",)).provider, "mock")
-        self.assertIsNone(registry.get("openai").configured_model)
-        self.assertFalse(registry.get("openai").implemented)
+        self.assertEqual(registry.route(required=("text",)).provider, "ollama")
+        self.assertEqual(registry.get("ollama").configured_model, "llama3.2:3b")
+        self.assertEqual(registry.get("openai").configured_model, "gpt-4.1-mini")
+        self.assertTrue(registry.get("openai").implemented)
+        self.assertFalse(registry.get("openai").ready)
 
 
 if __name__ == "__main__":

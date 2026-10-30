@@ -12,17 +12,16 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
-        self.assertFalse(entries["anthropic"]["implemented"])
+        self.assertTrue(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
-    def test_default_openai_adapter_is_constructible_without_credentials(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
+    def test_default_ollama_adapter_is_constructible_without_network_access(self):
         adapter = ProviderManager(environ={}).create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager({"provider": "openai", "ollama_model": ""}, environ={})
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
         self.assertEqual(manager.current().name, "openai")
@@ -34,11 +33,16 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
-    def test_unimplemented_provider_does_not_change_selection(self):
+    def test_anthropic_selection_requires_configuration_and_keeps_current_provider(self):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
-        self.assertIn("not implemented", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIn("Cannot select anthropic", message)
+        self.assertEqual(manager.current().name, "ollama")
+        configured = ProviderManager(
+            {"anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "test-key"},
+        )
+        self.assertEqual(configured.select("anthropic"), "Selected provider: anthropic")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})

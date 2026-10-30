@@ -1,0 +1,9 @@
+{
+  "type": "yuki_mcp_plugin",
+  "id": "example_docs",
+  "version": "1",
+  "name": "example_docs",
+  "endpoint": "https://mcp.example.com/api",
+  "allowed_hosts": ["mcp.example.com"],
+  "allowed_tools": ["search_docs", "read_doc"]
+}

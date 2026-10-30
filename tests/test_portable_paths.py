@@ -24,6 +24,35 @@ class PortablePathTests(unittest.TestCase):
             with patch.dict(os.environ, {"YUKI_HOME": "/not-used"}, clear=True):
                 self.assertEqual(workspace_path(str(absolute)), absolute)
 
+    def test_frozen_build_initializes_writable_per_user_config(self):
+        from core import portable_paths
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            (bundle / "config.yaml").write_text("provider: ollama\nollama_model: llama3.2:3b\n", encoding="utf-8")
+            user_data = root / "user-data"
+            with patch.object(portable_paths.sys, "frozen", True, create=True), patch.object(
+                portable_paths.sys, "_MEIPASS", str(bundle), create=True
+            ), patch.object(portable_paths.platform, "system", return_value="Linux"), patch.dict(
+                os.environ, {"XDG_DATA_HOME": str(user_data)}, clear=True
+            ):
+                config = config_path()
+                self.assertEqual(config, (user_data / "Yuki" / "config.yaml").resolve())
+                self.assertIn("provider: ollama", config.read_text(encoding="utf-8"))
+                self.assertEqual(workspace_path("./yuki_workspace"),
+                                 (user_data / "Yuki" / "yuki_workspace").resolve())
+
+    def test_frozen_relative_home_override_is_anchored_to_user_home(self):
+        from core import portable_paths
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(portable_paths.sys, "frozen", True, create=True), patch.dict(
+                os.environ, {"YUKI_HOME": "YukiData"}, clear=True
+            ), patch.object(portable_paths.Path, "home", return_value=Path(temporary)):
+                self.assertEqual(data_root(), (Path(temporary) / "YukiData").resolve())
+
     def test_config_override_can_be_absolute(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "portable-config.yaml"

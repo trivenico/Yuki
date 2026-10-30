@@ -1,5 +1,9 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+
+from core.task_ledger import TaskLedger
 
 from core.task_agent import ApprovedTaskAgent
 from core.agent import AgentResponse
@@ -9,9 +13,11 @@ class FakeProvider:
     def __init__(self, outputs):
         self.outputs = list(outputs)
         self.calls = 0
+        self.prompts = []
 
     def generate(self, prompt):
         self.calls += 1
+        self.prompts.append(prompt)
         return self.outputs.pop(0)
 
 
@@ -55,6 +61,18 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertEqual(skills.calls, [("time", "")])
         self.assertEqual(provider.calls, 2)
 
+    def test_council_context_is_advisory_input_to_task_planning(self):
+        skills = FakeSkillAgent()
+        provider = FakeProvider(['{"type":"final","message":"Use the reviewed plan."}'])
+        result = ApprovedTaskAgent(provider, skills).run(
+            "Improve reliability",
+            council_context="Consensus: add regression tests first.",
+        )
+        self.assertTrue(result.ok)
+        self.assertIn("Consensus: add regression tests first.", provider.prompts[0])
+        self.assertIn("never authorization", provider.prompts[0])
+        self.assertEqual(skills.calls, [])
+
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
         result = ApprovedTaskAgent(FakeProvider(["not JSON"]), skills).run("Do a task")
@@ -68,6 +86,54 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         result = ApprovedTaskAgent(provider, skills).run("Do a task")
         self.assertEqual(result.status, "approval_denied")
         self.assertEqual(provider.calls, 1)
+
+    def test_ledger_backed_final_response_awaits_independent_verification(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = TaskLedger(Path(temp) / "tasks.sqlite3")
+            provider = FakeProvider(['{"type":"final","message":"The report is ready."}'])
+            result = ApprovedTaskAgent(provider, FakeSkillAgent(), ledger=ledger).run("Prepare report")
+            self.assertFalse(result.ok)
+            self.assertEqual(result.status, "awaiting_verification")
+            task = ledger.list(limit=1)[0]
+            self.assertEqual(task["status"], "awaiting_verification")
+            self.assertEqual(task["result"], "The report is ready.")
+            events = ledger.list_events(task["id"])
+            self.assertEqual(
+                [event["event_type"] for event in events],
+                ["task.started", "task.awaiting_verification"],
+            )
+
+    def test_ledger_backed_tool_call_records_proposal_and_observation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = TaskLedger(Path(temp) / "tasks.sqlite3")
+            provider = FakeProvider([
+                json.dumps({"type": "tool_call", "skill": "time", "argument": ""}),
+                json.dumps({"type": "final", "message": "Time was retrieved."}),
+            ])
+            result = ApprovedTaskAgent(
+                provider, FakeSkillAgent(), max_steps=2, ledger=ledger
+            ).run("Retrieve time")
+            self.assertEqual(result.status, "awaiting_verification")
+            task = ledger.list(limit=1)[0]
+            self.assertEqual(task["status"], "awaiting_verification")
+            self.assertEqual(
+                [event["event_type"] for event in ledger.list_events(task["id"])],
+                ["task.started", "tool.proposed", "tool.observed", "task.awaiting_verification"],
+            )
+
+    def test_ledger_backed_provider_failure_is_persisted(self):
+        class BrokenProvider:
+            def generate(self, prompt):
+                raise RuntimeError("private provider detail")
+
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = TaskLedger(Path(temp) / "tasks.sqlite3")
+            result = ApprovedTaskAgent(BrokenProvider(), FakeSkillAgent(), ledger=ledger).run("Do work")
+            self.assertEqual(result.status, "provider_error")
+            task = ledger.list(limit=1)[0]
+            self.assertEqual(task["status"], "failed")
+            self.assertEqual(task["error_code"], "provider_error")
+            self.assertEqual(ledger.list_events(task["id"])[-1]["event_type"], "task.failed")
 
     def test_bounds_step_count(self):
         with self.assertRaises(ValueError):

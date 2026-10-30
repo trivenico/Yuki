@@ -15,24 +15,32 @@ class ProviderInfo:
 class ProviderManager:
     """Provider capability registry; availability is checked separately from construction."""
     def __init__(self, config=None, *, environ=None):
-        self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
+        self._config = dict(config or {})
+        self._config.setdefault("ollama_model", self._environ.get("YUKI_OLLAMA_MODEL", "llama3.2:3b"))
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
-            "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
-            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            name: (lambda provider_name=name: create_provider(
+                {**self._config, "provider": provider_name}, environ=self._environ
+            ))
+            for name in (
+                "openai", "gemini", "anthropic", "deepseek", "kimi", "minimax",
+                "openrouter", "tokenrouter",
+            )
         }
-        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
+        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "ollama"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
-            ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
-            ProviderInfo("kimi", ("official_api_key_flow_planned",)),
-            ProviderInfo("minimax", ("official_api_key_flow_planned",)),
+            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY",), True),
+            ProviderInfo("deepseek", ("DEEPSEEK_API_KEY",), True),
+            ProviderInfo("kimi", ("MOONSHOT_API_KEY",), True),
+            ProviderInfo("minimax", ("MINIMAX_API_KEY",), True),
+            ProviderInfo("openrouter", ("OPENROUTER_API_KEY",), True),
+            ProviderInfo("tokenrouter", ("TOKENROUTER_API_KEY",), True),
         ):
             self.register(item)
 
@@ -115,3 +123,40 @@ class ProviderManager:
         """Return a capability-filtered registry for explicit, policy-aware routing."""
         from providers.capabilities import registry_from_catalog
         return registry_from_catalog(self.catalog())
+
+    def resolve_for_task(
+        self, *, required_capabilities=("text",), preference=(), allow_cloud=False
+    ) -> tuple[str, BaseProvider]:
+        """Resolve a ready adapter for one task without mutating global selection.
+
+        Use this method for parallel agents and per-task model routing. Cloud
+        providers are excluded unless the caller explicitly opts in. No network
+        fallback is attempted when the selected adapter is unavailable.
+        """
+        candidate = self.routing_registry().route(
+            required=required_capabilities,
+            preference=preference,
+            allow_cloud=allow_cloud,
+        )
+        adapter = self._build_adapter(candidate.provider)
+        if adapter.is_available() is not True:
+            raise RuntimeError(
+                f"Selected routing candidate {candidate.provider} is not available; "
+                "no provider switch was made."
+            )
+        return candidate.provider, adapter
+
+    def route_for_task(self, *, required_capabilities=("text",), preference=(), allow_cloud=False) -> str:
+        """Select a task-suitable adapter as the interactive default.
+
+        Parallel tasks should use resolve_for_task() to avoid changing shared
+        provider selection while another task is running.
+        """
+        provider, adapter = self.resolve_for_task(
+            required_capabilities=required_capabilities,
+            preference=preference,
+            allow_cloud=allow_cloud,
+        )
+        self._selected = provider
+        self._selected_adapter = adapter
+        return f"Selected provider for task: {provider}"

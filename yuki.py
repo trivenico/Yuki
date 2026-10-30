@@ -83,6 +83,7 @@ Yuki commands:
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
   /provider select NAME           Select an implemented provider adapter
+  /provider route CAPABILITIES     Route by capability; use --allow-cloud to permit cloud models
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
@@ -128,9 +129,28 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         current = providers.current()
         return f"Agent status: {agent.status()} Selected provider: {current.name if current else 'none'}."
     if command == "/provider" or command.startswith("/provider "):
-        parts = command.split(maxsplit=2)
+        parts = command.split()
+        if len(parts) >= 3 and parts[1] == "route":
+            allow_cloud = "--allow-cloud" in parts[2:]
+            capabilities = tuple(part for part in parts[2:] if part != "--allow-cloud")
+            if not capabilities:
+                return "Usage: /provider route CAPABILITY [CAPABILITY ...] [--allow-cloud]"
+            try:
+                result = providers.route_for_task(
+                    required_capabilities=capabilities,
+                    allow_cloud=allow_cloud,
+                )
+                adapter = providers.create_selected_adapter()
+                if adapter is None:
+                    return "Task routing failed: no adapter is available; the previous provider remains active."
+                agent.set_provider(adapter)
+            except Exception as error:
+                write_audit_event("provider:route", "rejected")
+                return f"Task routing failed ({type(error).__name__}); the previous provider remains active."
+            write_audit_event("provider:route", "completed")
+            return result
         if len(parts) != 3 or parts[1] != "select":
-            return "Usage: /provider select NAME"
+            return "Usage: /provider select NAME | /provider route CAPABILITY [CAPABILITY ...] [--allow-cloud]"
         result = providers.select(parts[2])
         if result.startswith("Selected provider:"):
             try:

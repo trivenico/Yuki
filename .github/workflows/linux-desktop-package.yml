@@ -1,0 +1,137 @@
+name: Linux desktop package
+
+on:
+  pull_request:
+    paths:
+      - "main.py"
+      - "README.md"
+      - "docs/**"
+      - "ui/**"
+      - "core/**"
+      - "providers/**"
+      - "skills/**"
+      - "companion/**"
+      - "voice/**"
+      - "defense/**"
+      - "hackback/**"
+      - "knowledge/**"
+      - "requirements*.txt"
+      - "config.yaml"
+      - ".github/workflows/linux-desktop-package.yml"
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: linux-package-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install Linux GUI runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends xvfb libglib2.0-0 libgl1 libxkbcommon0 libxcb-cursor0
+
+      - name: Install runtime and build dependencies
+        run: python -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build console runtime
+        run: |
+          pyinstaller --clean --noconfirm --name YukiRuntime --console --add-data "config.yaml:." --collect-submodules core --collect-submodules providers --collect-submodules skills --collect-submodules companion --collect-submodules voice --collect-submodules defense --collect-submodules hackback --collect-submodules knowledge main.py
+
+      - name: Build desktop GUI
+        run: |
+          pyinstaller --clean --noconfirm --name YukiDesktop --windowed --add-data "config.yaml:." ui/desktop_app.py
+
+      - name: Smoke-test packaged console runtime
+        env:
+          YUKI_HOME: ${{ runner.temp }}/yuki-package-smoke
+        run: |
+          printf '/quit\n' | ./dist/YukiRuntime/YukiRuntime | tee runtime-smoke.log
+          grep -q "guarded core is ready" runtime-smoke.log
+
+      - name: Smoke-test packaged desktop launch
+        env:
+          YUKI_HOME: ${{ runner.temp }}/yuki-desktop-smoke
+        run: |
+          xvfb-run -a timeout 8s ./dist/YukiDesktop/YukiDesktop &
+          gui_pid=$!
+          sleep 3
+          if ! kill -0 "$gui_pid" 2>/dev/null; then
+            wait "$gui_pid" || status=$?
+            if [ "${status:-0}" -ne 124 ]; then
+              echo "Packaged desktop GUI exited unexpectedly (status ${status:-unknown})."
+              exit 1
+            fi
+          else
+            kill "$gui_pid" 2>/dev/null || true
+            wait "$gui_pid" || true
+          fi
+
+      - name: Assemble portable Linux bundle
+        run: |
+          mkdir -p dist/portable/docs
+          cp -a dist/YukiDesktop dist/portable/YukiDesktop
+          cp -a dist/YukiRuntime dist/portable/YukiRuntime
+          cp config.yaml README.md dist/portable/
+          cp docs/INSTALLATION.md dist/portable/docs/
+          tar -czf dist/Yuki-Linux-x86_64.tar.gz -C dist/portable YukiDesktop YukiRuntime config.yaml README.md docs
+
+      - name: Verify release bundle contents
+        run: |
+          test -s dist/Yuki-Linux-x86_64.tar.gz
+          tar -tzf dist/Yuki-Linux-x86_64.tar.gz | grep -q '^YukiDesktop/YukiDesktop$'
+          tar -tzf dist/Yuki-Linux-x86_64.tar.gz | grep -q '^YukiRuntime/YukiRuntime$'
+          tar -tzf dist/Yuki-Linux-x86_64.tar.gz | grep -q '^config.yaml$'
+          tar -tzf dist/Yuki-Linux-x86_64.tar.gz | grep -q '^docs/INSTALLATION.md$'
+
+      - name: Upload Linux desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-linux-x86_64
+          path: dist/Yuki-Linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    needs: build-linux
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: yuki-linux-x86_64
+          path: dist
+
+      - name: Publish Linux artifact to tagged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --generate-notes --title "Yuki $tag" || gh release view "$tag"
+          fi
+          gh release upload "$tag" dist/Yuki-Linux-x86_64.tar.gz --clobber
