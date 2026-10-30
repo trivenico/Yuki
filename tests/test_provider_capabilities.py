@@ -28,6 +28,46 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual(registry.route().provider, "mock")
         self.assertEqual(registry.route(allow_cloud=True, preference=("gemini",)).provider, "gemini")
 
+    def test_unknown_privacy_never_routes_even_with_cloud_opt_in(self):
+        unknown_only = CapabilityRegistry([
+            provider("unknown", privacy="unknown"),
+        ])
+        with self.assertRaises(LookupError):
+            unknown_only.route(allow_cloud=True, preference=("unknown",))
+
+        known_cloud = CapabilityRegistry([
+            provider("gateway", privacy="third_party_gateway"),
+        ])
+        self.assertEqual(
+            known_cloud.route(allow_cloud=True, preference=("gateway",)).provider,
+            "gateway",
+        )
+
+    def test_route_rejects_string_iterables_and_invalid_cloud_flags(self):
+        registry = CapabilityRegistry([provider("mock")])
+        for kwargs in (
+            {"required": "text"},
+            {"preference": "mock"},
+            {"allow_cloud": 1},
+            {"required": ("text", "local_inference", "official_cli", "model_discovery", "per_task_routing", "multi_provider_routing", "text")},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises((TypeError, ValueError)):
+                registry.route(**kwargs)
+
+    def test_route_bounds_generator_consumption(self):
+        consumed = []
+        def required():
+            for index in range(100):
+                consumed.append(index)
+                yield "text"
+        with self.assertRaises(ValueError):
+            CapabilityRegistry([provider("mock")]).route(required=required())
+        self.assertEqual(consumed, list(range(7)))
+
+    def test_unrecognized_privacy_classification_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "recognized classification"):
+            provider("unsafe", privacy="anything")
+
     def test_requires_all_capabilities(self):
         registry = CapabilityRegistry([provider("mock"), provider("ollama", caps=("text", "local_inference"))])
         self.assertEqual(registry.route(required=("text", "local_inference")).provider, "ollama")

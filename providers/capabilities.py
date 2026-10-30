@@ -6,6 +6,7 @@ capabilities of individual remote models. Unknown is always safer than guessing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 from typing import Iterable, Mapping
 
 
@@ -13,6 +14,11 @@ _ALLOWED_CAPABILITIES = frozenset({
     "text", "local_inference", "per_task_routing", "official_cli",
     "model_discovery", "multi_provider_routing",
 })
+_LOCAL_PRIVACY = frozenset({"local", "local_runtime", "local_only"})
+_CLOUD_PRIVACY = frozenset({"cloud_provider", "third_party_gateway", "task_policy"})
+_KNOWN_PRIVACY = _LOCAL_PRIVACY | _CLOUD_PRIVACY | frozenset({"local_or_configured_endpoint", "unknown"})
+_MAX_REQUIRED_CAPABILITIES = 6
+_MAX_PREFERENCES = 32
 
 
 @dataclass(frozen=True)
@@ -39,8 +45,8 @@ class ProviderCapabilities:
             raise TypeError("implemented and ready must be booleans")
         if self.ready and not self.implemented:
             raise ValueError("an unimplemented provider cannot be ready")
-        if not isinstance(self.privacy, str) or not self.privacy.strip():
-            raise ValueError("privacy must be a non-empty string")
+        if not isinstance(self.privacy, str) or self.privacy not in _KNOWN_PRIVACY:
+            raise ValueError("privacy must use a recognized classification")
         if self.configured_model is not None and (
             not isinstance(self.configured_model, str) or not self.configured_model.strip()
         ):
@@ -93,13 +99,30 @@ class CapabilityRegistry:
         considered afterward alphabetically. Cloud adapters are excluded unless
         the caller explicitly opts in.
         """
-        required_set = frozenset(required)
+        if isinstance(required, (str, bytes)):
+            raise TypeError("required must be an iterable of capability names, not text")
+        if isinstance(preference, (str, bytes)):
+            raise TypeError("preference must be an iterable of provider names, not text")
+        if type(allow_cloud) is not bool:
+            raise TypeError("allow_cloud must be a boolean")
+        try:
+            required_values = tuple(islice(iter(required), _MAX_REQUIRED_CAPABILITIES + 1))
+            preference_values = tuple(islice(iter(preference), _MAX_PREFERENCES + 1))
+        except TypeError as exc:
+            raise TypeError("required and preference must be iterable") from exc
+        if len(required_values) > _MAX_REQUIRED_CAPABILITIES:
+            raise ValueError("too many required capabilities")
+        if len(preference_values) > _MAX_PREFERENCES:
+            raise ValueError("too many provider preferences")
+        required_set = frozenset(required_values)
+        if any(not isinstance(item, str) for item in required_set):
+            raise ValueError("required capabilities must be strings")
         unknown = required_set - _ALLOWED_CAPABILITIES
         if unknown:
             raise ValueError("unknown required capabilities: " + ", ".join(sorted(unknown)))
         preferences = []
         seen = set()
-        for name in preference:
+        for name in preference_values:
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("preference entries must be non-empty provider names")
             normalized = name.strip().lower()
@@ -111,7 +134,10 @@ class CapabilityRegistry:
             item for item in self._providers.values()
             if item.implemented and item.ready
             and required_set.issubset(item.capabilities)
-            and (allow_cloud or item.privacy in {"local", "local_runtime", "local_only"})
+            and (
+                item.privacy in _LOCAL_PRIVACY
+                or (allow_cloud and item.privacy in _CLOUD_PRIVACY)
+            )
         ]
         candidates.sort(key=lambda p: (order.get(p.provider, len(order)), p.provider))
         if not candidates:
