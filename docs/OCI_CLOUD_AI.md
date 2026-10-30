@@ -40,7 +40,7 @@ Configure these environment variables in the Yuki server process:
 - `YUKI_OCI_PROJECT_OCID`: Generative AI project OCID.
 - `OCI_GENAI_API_KEY`: OCI Generative AI API key secret.
 
-OCI documents API-key access for a limited set of regions (Germany Central, India South, Japan Central, US East, US Midwest, and US West). Do not assume that every OCI region supports this API-key flow. For production workloads hosted inside OCI, prefer OCI IAM/resource-principal authentication; Yuki's current adapter does not implement OCI request signing yet. See Oracle's [API key region requirements](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) and [IAM authentication guide](https://docs.oracle.com/en-us/iaas/Content/generative-ai/oci-genai-auth.htm).
+OCI Generative AI API-key authentication is currently documented for six regions: Germany Central (Frankfurt), India South (Hyderabad), Japan Central (Osaka), US East (Ashburn), US Midwest (Chicago), and US West (Phoenix). Model availability must also overlap the selected region. UK South (London) has H100 hardware listed for dedicated AI clusters, but it is not in the documented six-region API-key list. OCI IAM-based authentication is the intended production option and is documented separately. Yuki's current adapter implements API-key authentication only; IAM request signing is not implemented yet. See Oracle's [API-key region requirements](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm), [project setup](https://docs.oracle.com/en-us/iaas/Content/generative-ai/use-project.htm), and [IAM authentication](https://docs.oracle.com/en-us/iaas/Content/generative-ai/oci-genai-auth.htm).
 
 Select `oci` as the provider in the server configuration. The adapter builds:
 
@@ -48,7 +48,7 @@ Select `oci` as the provider in the server configuration. The adapter builds:
 
 and sends the `openai-project` header with the project OCID. The endpoint hostname is allow-listed for that configured region. Credentials are read from environment variables, never committed to the repository or desktop config.
 
-This first adapter uses the Chat Completions-compatible interface. OCI's Responses API has additional stateful and agent-oriented features; it should be a separate adapter after the gateway/runtime contracts are in place.
+This first adapter uses the Chat Completions-compatible interface. Oracle now recommends the Responses API for agentic workloads; it supports stateful conversations and OCI-supported tools including file search, code interpreter, function calling, and MCP calling. A separate Responses API adapter should be added before using OCI-managed agent tools; do not assume Chat Completions provides those capabilities. See Oracle's [OpenAI-compatible endpoints](https://docs.oracle.com/en-us/iaas/Content/generative-ai/openai-compatible-api.htm) and [Responses API](https://docs.oracle.com/en-us/iaas/Content/generative-ai/responses-api.htm).
 
 ## Hosted models versus Yuki-owned models
 
@@ -78,6 +78,30 @@ OpenAI and Anthropic do not publish the proprietary weights behind their flagshi
 A personal deployment can avoid Yuki-imposed agent-count or task-count quotas. It cannot create infinite compute. GPU capacity, concurrency, model context, storage, bandwidth, provider quotas, regional capacity, and budget are real constraints.
 
 A GPU instance left running 24/7 can incur continuous charges even while idle. Before provisioning, estimate monthly compute, boot/block storage, object storage, networking/egress, load balancing, logs, backups, and any managed model token charges. Start with a small test deployment and scale after measuring real throughput and latency.
+
+## Starter-budget deployment choice
+
+Do not begin with a permanently running multi-GPU dedicated AI cluster. For the first usable cloud version:
+
+1. Use OCI's on-demand managed inference for the always-available general/reasoning model. This avoids reserving a dedicated GPU cluster while the workload is small.
+2. Add one self-hosted open-weight model as a separately metered OpenAI-compatible inference service on a single GPU Compute instance, initially started only for development, coding batches, or scheduled workloads. Stop it when idle if the chosen compute shape and deployment support safe shutdown; persistent storage must keep model artifacts and configuration.
+3. Route tasks explicitly between managed OCI inference and the self-hosted endpoint. Do not silently send private prompts to external APIs. Keep the existing local-first and cloud-consent policy.
+4. Add a monthly budget alert and compartment-level cost tracking before creating any GPU resource. Add a hard operator-controlled kill switch for self-hosted GPU compute.
+5. Measure tokens/second, time-to-first-token, concurrent sessions, VRAM use, and actual monthly spend before increasing replicas or moving to dedicated AI clusters.
+
+OCI documents a 744-unit-hour minimum commitment for dedicated clusters hosting OCI pretrained/custom models; imported-model clusters have a different billing treatment and still incur AI-unit-hour charges. Dedicated cluster cost is therefore not the starter default. Check current pricing and service limits in the target tenancy before provisioning. See [dedicated cluster endpoint and billing details](https://docs.oracle.com/en-us/iaas/Content/generative-ai/endpoint.htm), [hardware by region](https://docs.oracle.com/en-us/iaas/Content/generative-ai/hardware-unit-shapes-by-region.htm), and the [OCI cost estimator](https://www.oracle.com/cloud/costestimator.html).
+
+## Region selection for a flexible deployment
+
+Do not hard-code a region until the OCI tenancy has been checked. Select the first region that satisfies all of these gates:
+
+- The required managed model is available there.
+- The required authentication method is supported there.
+- A suitable GPU Compute shape or dedicated-cluster shape is available and the tenancy has service limits/quota.
+- The estimated monthly cost fits the approved starter budget.
+- Network latency and data-residency requirements are acceptable.
+
+For API-key based initial testing, Frankfurt and Chicago are useful candidates because they are in the documented API-key region set and have H100 dedicated-cluster shapes listed. London has H100 dedicated-cluster hardware listed, but the current API-key region list does not include London; London would therefore require IAM auth for the managed endpoint, which Yuki does not implement yet. This is a capability comparison, not a final region selection. Oracle's region/model and hardware tables change; re-check them before deployment.
 
 ## Deployment status
 
