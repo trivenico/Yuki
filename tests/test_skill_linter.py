@@ -102,6 +102,24 @@ class SkillLinterTests(unittest.TestCase):
             rules = {finding.rule for finding in lint_skill(skill)}
             self.assertNotIn("platforms-gating", rules)
 
+    def test_rejects_skill_file_inside_symlinked_parent_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            real = root / "real"
+            real.mkdir()
+            skill = real / "SKILL.md"
+            skill.write_text(
+                "---\\nname: safe\\ndescription: Test skill.\\n---\\nBody.\\n",
+                encoding="utf-8",
+            )
+            linked = root / "linked"
+            try:
+                linked.symlink_to(real, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Directory symlink creation is unavailable")
+            findings = lint_skill(linked / "SKILL.md")
+            self.assertEqual(findings[0].rule, "invalid-path")
+
     def test_rejects_symlink_and_oversized_skill(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
