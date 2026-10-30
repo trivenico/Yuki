@@ -54,6 +54,13 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
     cfg = config if isinstance(config, dict) else {}
     env = os.environ if environ is None else environ
     current = str(cfg.get("provider", "mock")).strip().lower()
+    if provider_manager is not None:
+        try:
+            selected_info = provider_manager.current()
+            if selected_info is not None:
+                current = selected_info.name
+        except Exception:
+            pass
     manager = {}
     if provider_manager is not None:
         try:
@@ -135,7 +142,11 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             ready = bool(model and configured_key and project.startswith("ocid1.generativeaiproject.") and region)
             reason = "iam_project_region_and_model_configured" if ready else "oci_iam_project_region_or_model_missing"
         elif item["name"] == "multi":
-            ready = bool(model)
+            ready = bool(
+                _model(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", "")))
+                or _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
+                or _model(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", "")))
+            )
             reason = "at_least_one_route_configured" if ready else "no_provider_routes_configured"
         else:
             ready = False
