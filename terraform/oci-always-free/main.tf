@@ -1,3 +1,4 @@
+# Starter profile deliberately consumes only the tenancy-wide Always Free A1 allowance.
 data "oci_identity_availability_domains" "ads" {
   compartment_id = var.tenancy_ocid
 }
