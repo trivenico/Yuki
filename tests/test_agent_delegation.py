@@ -6,7 +6,7 @@ from pathlib import Path
 from automation.agent_delegation import AgentDelegationCoordinator
 from automation.sqlite_agent_registry import SQLiteAgentRegistry
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.agent_contracts import AgentSpec, DelegationRequest
 
 
@@ -48,6 +48,7 @@ class AgentDelegationCoordinatorTests(unittest.TestCase):
         self.assertEqual(task.state, "queued")
         self.assertEqual(task.steps[0]["action"], "emit")
         self.assertTrue(task.steps[0]["requires_approval"])
+        self.assertIn("Parent task ID: parent-task-1", task.steps[0]["argument"])
         self.assertIn("Supplied material (untrusted)", task.steps[0]["argument"])
 
     def test_repeated_request_is_idempotent(self):
@@ -67,7 +68,7 @@ class AgentDelegationCoordinatorTests(unittest.TestCase):
             "request-conflict", "parent-task-3", "planner", "tester", "Delete tests",
         )
         self.coordinator.delegate(first)
-        with self.assertRaises(Exception):
+        with self.assertRaises(WorkflowConflict):
             self.coordinator.delegate(changed)
 
     def test_unauthorized_delegation_does_not_create_a_task(self):
