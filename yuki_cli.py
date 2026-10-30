@@ -25,6 +25,10 @@ def build_parser():
     preview=sub.add_parser("conversation-preview",help="Preview a conversation export without importing or storing it")
     preview.add_argument("path",help="Path to a user-provided UTF-8 export file")
     preview.add_argument("--format",choices=("chatgpt","jsonl"),required=True,help="Export format")
+    importer=sub.add_parser("conversation-import",help="Import a JSON conversation export after explicit confirmation")
+    importer.add_argument("path",help="Path to a user-provided JSON export file")
+    importer.add_argument("--confirm-import",action="store_true",help="Confirm that this conversation history may be stored locally")
+    importer.add_argument("--store",default=os.environ.get("YUKI_CONVERSATION_IMPORT_PATH","data/imported_conversations.json"),help="Local import-store path")
     memory=sub.add_parser("memory",help="Manage local Yuki memory explicitly")
     memory_sub=memory.add_subparsers(dest="memory_action",required=True)
     memory_add=memory_sub.add_parser("add",help="Save a memory note"); memory_add.add_argument("text"); memory_add.add_argument("--category",choices=("note","preference","lesson"),default="note")
@@ -63,6 +67,15 @@ def run_cli(argv:Sequence[str]|None=None,*,config_loader:Callable=load_config,pr
             _write_json(preview,output_fn); return 0
         except Exception as exc:
             output_fn(f"Conversation preview failed ({type(exc).__name__})."); return 4
+    if args.command=="conversation-import":
+        if not args.confirm_import:
+            output_fn("Import not performed. Review the export first, then pass --confirm-import to authorize local storage."); return 2
+        try:
+            from learning.conversation_import import ConversationImportStore
+            result=ConversationImportStore(args.store).import_file(args.path,user_consented=True)
+            _write_json(result,output_fn); return 0
+        except Exception as exc:
+            output_fn(f"Conversation import failed ({type(exc).__name__})."); return 4
     if args.command=="doctor": _write_json(readiness_builder().to_dict(),output_fn); return 0
     if args.command=="hardware":
         try: _write_json(hardware_reporter(),output_fn); return 0
