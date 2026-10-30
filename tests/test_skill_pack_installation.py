@@ -81,6 +81,26 @@ class SkillPackTests(unittest.TestCase):
         self.assertTrue(skill.requires_approval)
         self.assertEqual(skill.risk, "high")
 
+    def test_bundled_hermes_debugging_skill_imports_through_yuki_installer(self):
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "skills" / "upstream" / "hermes" / "systematic-debugging" / "SKILL.md"
+        )
+        manifest = read_skill_pack(source)
+        self.assertEqual(manifest["name"], "systematic-debugging")
+        self.assertEqual(manifest["source_format"], "agentskills-md")
+        self.assertEqual(manifest["license"], "MIT")
+        self.assertEqual(manifest["risk"], "high")
+        self.assertIn("root cause", manifest["instructions"].lower())
+        self.assertNotIn("delegate_task(", manifest["instructions"])
+
+        target = install_skill_pack(source, self.root / "installed")
+        loaded, errors = load_installed_skill_packs(self.root / "installed")
+        self.assertEqual(errors, [])
+        self.assertEqual([item.name for item in loaded], ["systematic-debugging"])
+        self.assertTrue(loaded[0].requires_approval)
+        self.assertEqual(target.name, "systematic-debugging.json")
+
     def test_imports_agent_skills_markdown_frontmatter_and_body(self):
         source = self.root / "SKILL.md"
         source.write_text(
