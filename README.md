@@ -64,6 +64,10 @@ This is the target layout, not a claim that the migration is already complete.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
 
+## Yuki Cloud AI (Oracle Cloud)
+
+Yuki now includes an OCI Generative AI provider adapter using the regional OpenAI-compatible Chat Completions endpoint. See [Yuki Cloud AI on OCI](docs/OCI_CLOUD_AI.md) for configuration, model-hosting options, security boundaries, and the 24/7 cloud architecture. The adapter is not a deployed cloud service: no OCI tenancy, GPU fleet, gateway, Vault secrets, or device-authenticated CLI/desktop connection has been provisioned yet.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
