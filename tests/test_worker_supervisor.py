@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from threading import Barrier, Lock
 from pathlib import Path
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
@@ -58,6 +59,38 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(two.succeeded_count, 1)
         self.assertEqual(self.store.get(second).state, "succeeded")
 
+    def test_parallel_cycle_runs_independent_tasks_concurrently(self):
+        self.create_task("parallel-a")
+        self.create_task("parallel-b")
+        rendezvous = Barrier(2, timeout=5)
+        lock = Lock()
+        active = 0
+        peak = 0
+
+        def concurrent_handler(request):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                rendezvous.wait()
+                return "Report: " + request
+            finally:
+                with lock:
+                    active -= 1
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="parallel-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": concurrent_handler},
+        )
+        report = WorkerSupervisor(
+            self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
+        ).run_cycle()
+        self.assertEqual(report.processed_count, 2)
+        self.assertEqual(report.succeeded_count, 2)
+        self.assertEqual(peak, 2)
+
     def test_cycle_recovers_expired_leases_without_replay(self):
         task_id = self.create_task("expired")
         claimed = self.store.claim_next(worker_id="crashed-worker", lease_seconds=60)
@@ -77,6 +110,8 @@ class WorkerSupervisorTests(unittest.TestCase):
             WorkerSupervisor(self.runtime, self.worker, max_tasks_per_cycle=0)
         with self.assertRaises(ValueError):
             WorkerSupervisor(self.runtime, self.worker, recovery_limit=101)
+        with self.assertRaises(ValueError):
+            WorkerSupervisor(self.runtime, self.worker, max_workers=17)
         other = TaskRuntime(self.store, authorize=lambda *_: True)
         with self.assertRaises(ValueError):
             WorkerSupervisor(other, self.worker)
