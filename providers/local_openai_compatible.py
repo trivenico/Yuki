@@ -22,12 +22,15 @@ class LocalOpenAICompatibleProvider:
             parsed=urlsplit(base_url.strip().rstrip("/"))
             host=parsed.hostname or ""
             parsed.port
-            loopback=host.lower()=="localhost" or ipaddress.ip_address(host).is_loopback
+            try:
+                loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = False
         except ValueError as exc:
             raise ValueError("Invalid local inference endpoint.") from exc
         if (parsed.scheme not in {"http","https"} or not loopback or parsed.username
                 or parsed.password or parsed.query or parsed.fragment):
-            raise ValueError("Local inference endpoint must be loopback HTTP(S), without URL credentials.")
+            raise ValueError("Local inference endpoint must use a loopback host over HTTP(S), without URL credentials.")
         if isinstance(timeout,bool) or not isinstance(timeout,(int,float)) or not 1<=timeout<=180:
             raise ValueError("timeout must be between 1 and 180 seconds")
         if api_key is not None and (not isinstance(api_key,str) or len(api_key)>4096
