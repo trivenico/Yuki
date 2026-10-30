@@ -110,9 +110,9 @@ def _read_agent_skill_markdown(source: Path) -> dict[str, Any]:
         text = raw.decode("utf-8")
     except UnicodeError as exc:
         raise ValueError("Skill markdown must be UTF-8.") from exc
-    if not text.startswith("---\\n"):
+    if not text.startswith("---\n"):
         raise ValueError("SKILL.md must begin with YAML frontmatter.")
-    end = text.find("\\n---\\n", 4)
+    end = text.find("\n---\n", 4)
     if end < 0:
         raise ValueError("SKILL.md frontmatter closing delimiter is missing.")
     frontmatter_text = text[4:end]
@@ -129,7 +129,7 @@ def _read_agent_skill_markdown(source: Path) -> dict[str, Any]:
         raise ValueError("SKILL.md frontmatter must be a YAML mapping.")
     if set(metadata) - _ALLOWED_SKILL_MD_FIELDS:
         raise ValueError("SKILL.md contains unsupported frontmatter fields.")
-    body = text[end + len("\\n---\\n"):].strip()
+    body = text[end + len("\n---\n"):].strip()
     if not body:
         raise ValueError("SKILL.md instruction body must not be empty.")
     custom = metadata.get("metadata", {})
