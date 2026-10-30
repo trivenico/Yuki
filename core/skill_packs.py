@@ -109,7 +109,7 @@ def _read_agent_skill_markdown(source: Path) -> dict[str, Any]:
     if len(raw) > MAX_PACK_BYTES:
         raise ValueError("Skill pack file exceeds the 64 KiB limit.")
     try:
-        text = raw.decode("utf-8")
+        text = raw.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     except UnicodeError as exc:
         raise ValueError("Skill markdown must be UTF-8.") from exc
     if not text.startswith("---\n"):
