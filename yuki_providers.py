@@ -125,6 +125,7 @@ class ProviderManager:
         """
         selected = self.routing_registry().route(
             required=required, preference=preference, allow_cloud=allow_cloud,
+            strict_preference=bool(tuple(preference)),
         )
         adapter = self._build_adapter(selected.provider)
         try:
