@@ -13,6 +13,7 @@ from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.oci_iam import OciIamProvider, create_oci_iam_auth
 from providers.oci_responses import OciResponsesProvider
+from providers.huggingface_local import HuggingFaceLocalProvider
 
 
 def create_provider(config=None, *, environ=None):
@@ -28,6 +29,15 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected == "huggingface_local":
+        model_path = str(env.get("YUKI_HF_LOCAL_MODEL_PATH", cfg.get("hf_local_model_path", ""))).strip()
+        if not model_path:
+            raise ValueError("Configure YUKI_HF_LOCAL_MODEL_PATH with a downloaded local model directory.")
+        return HuggingFaceLocalProvider(
+            model_path,
+            device=str(env.get("YUKI_HF_DEVICE", cfg.get("hf_device", "auto"))),
+            max_new_tokens=int(env.get("YUKI_HF_MAX_NEW_TOKENS", cfg.get("hf_max_new_tokens", 512))),
+        )
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
