@@ -109,7 +109,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
                 item["privacy"] = "unknown"
         elif item["name"] == "gemini":
             installed = bool(shutil_which("gemini"))
-            ready = False
+            ready = installed
             reason = "cli_detected_auth_not_verified" if installed else "cli_not_installed"
         elif item["name"] == "hybrid":
             ready = bool(_model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))))
