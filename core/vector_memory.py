@@ -54,7 +54,7 @@ class VectorMemory:
                 try:
                     vector = self._vector(self.embedding_fn(item["text"]))
                     if vector is not None and len(vector) == len(query_vector):
-                        semantic = max(0.0, min(1.0, sum(a*b for a,b in zip(query_vector, vector)))
+                        semantic = max(0.0, min(1.0, sum(a*b for a,b in zip(query_vector, vector))))
                 except Exception:
                     pass
             if semantic is None:
