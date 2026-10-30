@@ -19,8 +19,9 @@ def build_agent_handlers(
     """Create handlers using each registered agent's model and privacy policy.
 
     Agents are grouped by provider preference and cloud-consent settings. An
-    agent that permits cloud use but has no explicit preference is pinned to
-    the provider currently selected by the user; it never searches/falls back
+    agent without an explicit preference is pinned to the provider currently
+    selected by the user; if no selected provider is known, construction fails
+    closed. The router enforces cloud consent and never searches/falls back
     across providers. Each group is batched to the worker builder's 32-agent cap.
     """
     if not isinstance(registry, SQLiteAgentRegistry):
@@ -33,10 +34,10 @@ def build_agent_handlers(
     groups = defaultdict(list)
     for spec in registry.list_agents():
         preferences = spec.provider_preferences
-        if spec.allow_cloud and not preferences:
+        if not preferences:
             if not isinstance(selected_name, str) or not selected_name.strip():
                 raise RuntimeError(
-                    f"agent {spec.agent_id!r} allows cloud use but no selected provider is available."
+                    f"agent {spec.agent_id!r} has no explicit provider preference and no selected provider is available."
                 )
             preferences = (selected_name.strip().lower(),)
         groups[(preferences, spec.allow_cloud)].append(spec)
