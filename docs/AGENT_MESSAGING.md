@@ -15,3 +15,7 @@ This is the persistence/API foundation; automatic coordinator delivery, event st
 ## Coordinator integration
 
 `SpecialistAgentCoordinator` exposes `send_agent_message`, `read_agent_inbox`, and `acknowledge_agent_message`. These methods verify registered sender/recipient IDs, use the coordinator's trusted authorization callback for each mailbox action, and persist to the same coordinator SQLite database. The coordinator does not auto-execute inbox contents; a receiving worker must explicitly read and handle the message under its own task and tool policies.
+
+## Local runtime access
+
+The opt-in local runtime grants the local operator the three mailbox actions. It does not grant those actions to the worker service identity. The coordinator continues to enforce registered sender and recipient IDs and its dedicated message authorization callback.
