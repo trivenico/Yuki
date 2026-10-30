@@ -64,7 +64,7 @@ def _content(value: Any) -> str:
 
 
 def _record(record_id: Any, role: Any, content: Any, created_at: Any) -> dict | None:
-    if role not in _ALLOWED_ROLES:
+    if not isinstance(role, str) or role not in _ALLOWED_ROLES:
         return None
     text = _content(content)
     if not text:
