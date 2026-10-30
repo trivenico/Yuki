@@ -158,14 +158,14 @@ class ConversationMemoryStore:
             raise ValueError("query must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 50:
             raise ValueError("limit must be an integer from 1 to 50.")
-        # Escape LIKE metacharacters: user input is a literal phrase.
-        term = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        # instr() performs literal substring matching without LIKE wildcard
+        # interpretation or cross-platform SQL ESCAPE quoting differences.
         with self._connect() as db:
             rows = db.execute("""
                 SELECT * FROM conversation_memories
-                WHERE owner_id=? AND content LIKE ? ESCAPE '\'
+                WHERE owner_id=? AND instr(lower(content), lower(?)) > 0
                 ORDER BY memory_id DESC LIMIT ?
-            """, (owner_id, f"%{term}%", limit)).fetchall()
+            """, (owner_id, query.strip(), limit)).fetchall()
         return [self._row(row) for row in rows]
 
     def delete(
