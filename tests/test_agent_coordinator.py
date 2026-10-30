@@ -7,6 +7,7 @@ from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
 from automation.task_runtime import TaskRuntime
+from automation.memory_service import build_memory_service
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
@@ -198,6 +199,32 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(calls[0]["owner_id"], "alice")
         self.assertEqual(calls[0]["query"], "Research the provider architecture")
         self.assertEqual(calls[0]["max_chars"], 512)
+
+    def test_coordinator_uses_real_shared_memory_service(self):
+        memory = build_memory_service(
+            str(Path(self.tmp.name) / "shared-memory.sqlite3"),
+            authorize=lambda actor, action, owner: actor == owner and action in {
+                "memory:import", "memory:read",
+            },
+        )
+        memory.import_conversation(
+            actor_id="alice", owner_id="alice", source="project-notes",
+            records=[{"id": "architecture", "role": "user",
+                      "content": "Yuki uses a provider-neutral model router."}],
+            consent=True,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            memory_context_builder=memory.build_agent_context,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="real-shared-memory", subtasks=[
+            SubtaskSpec("research-task", "How is model routing implemented?", ("research",)),
+        ])
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task = self.runtime.get(actor_id="alice", task_id=advanced.subtasks[0].task_id)
+        argument = task.definition[0]["argument"]
+        self.assertIn("provider-neutral model router", argument)
+        self.assertIn("untrusted historical notes", argument)
 
     def test_dispatch_rejects_memory_builder_output_over_configured_budget(self):
         coordinator = SpecialistAgentCoordinator(
