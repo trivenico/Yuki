@@ -50,7 +50,7 @@ class AgentDelegationCoordinatorTests(unittest.TestCase):
             input_payload="Patch summary: handle empty input.",
         )
         task = self.coordinator.delegate(request)
-        self.assertEqual(task.name, "agent-tester-request-1")
+        self.assertEqual(task.name, "agent-tester-delegated")
         self.assertEqual(task.state, "queued")
         self.assertEqual(task.steps[0]["action"], "emit")
         self.assertTrue(task.steps[0]["requires_approval"])
