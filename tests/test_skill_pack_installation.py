@@ -139,6 +139,14 @@ class SkillPackTests(unittest.TestCase):
         self.assertNotIn("permissions", manifest)
         self.assertNotIn("command-tool", manifest)
 
+    def test_agent_skills_markdown_accepts_bom_and_crlf(self):
+        source = self.root / "SKILL.md"
+        source.write_text(
+            "\ufeff---\r\nname: crlf_helper\r\ndescription: Windows format\r\n---\r\nInstructions.\r\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(read_skill_pack(source)["name"], "crlf_helper")
+
     def test_agent_skills_markdown_defaults_to_high_risk(self):
         source = self.root / "SKILL.md"
         source.write_text(
