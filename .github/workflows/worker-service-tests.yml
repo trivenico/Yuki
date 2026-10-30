@@ -9,6 +9,8 @@ on:
       - "automation/specialist_worker.py"
       - "automation/default_agents.py"
       - "automation/sqlite_agent_registry.py"
+      - "providers/factory.py"
+      - "deploy/oci-free/**"
       - "yuki_agent_runtime.py"
       - "yuki_agent_worker.py"
       - "yuki_provider_worker.py"
