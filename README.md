@@ -205,7 +205,7 @@ See [upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md) and [third-pa
 - No hack-back, retaliation, unrestricted exploit execution, credential theft, or arbitrary host shell skill is supported.
 - Local memory, reminders, recordings, OAuth credentials, and tokens should never be committed to Git.
 
-See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), and [security policy](SECURITY.md).
+See [installation](docs/INSTALLATION.md), [project structure](docs/PROJECT_STRUCTURE.md), [provider routing](docs/PROVIDER_ROUTING.md), and [security policy](SECURITY.md).
 
 Yuki is still under active engineering. Passing CI verifies tested code paths, not production readiness or optional local hardware/software.
 

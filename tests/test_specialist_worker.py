@@ -138,6 +138,18 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             handlers["research"]("x" * 2_001)
 
+    def test_hybrid_specialists_use_only_explicit_cloud_task_allowlist(self):
+        from providers.hybrid import HybridProvider
+        local = FakeProvider(output="local result")
+        cloud = FakeProvider(output="cloud result")
+        hybrid = HybridProvider(local, cloud, cloud_tasks=("research",))
+        handlers = build_provider_specialist_handlers(hybrid)
+
+        self.assertEqual(handlers["research"]("Research this"), "cloud result")
+        self.assertEqual(handlers["coding"]("Review this"), "local result")
+        self.assertEqual(len(cloud.prompts), 1)
+        self.assertEqual(len(local.prompts), 1)
+
     def test_provider_unavailable_fails_closed(self):
         handlers = build_provider_specialist_handlers(FakeProvider(available=False))
         with self.assertRaises(RuntimeError):
@@ -153,6 +165,51 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         self.assertEqual(set(handlers), {"code-review", "qa-check"})
         self.assertEqual(handlers["code-review"]("Review this patch"), "provider result")
+
+    def test_provider_preferences_route_each_specialist_independently(self):
+        class RoutedManager:
+            def __init__(self):
+                self.calls = []
+                self.selected = FakeProvider(output="selected")
+                self.cloud = FakeProvider(output="cloud-routed")
+            def create_selected_adapter(self):
+                return self.selected
+            def create_routed_adapter(self, *, required, preference, allow_cloud):
+                self.calls.append((required, preference, allow_cloud))
+                return self.cloud
+
+        manager = RoutedManager()
+        handlers = build_handlers_from_provider_manager(
+            manager,
+            {"local-review": "coding", "cloud-research": "research"},
+            provider_preferences={"cloud-research": ("openai", "gemini")},
+            allow_cloud=True,
+        )
+        self.assertEqual(handlers["local-review"]("Review this"), "selected")
+        self.assertEqual(handlers["cloud-research"]("Research this"), "cloud-routed")
+        self.assertEqual(manager.calls, [(("text",), ("openai", "gemini"), True)])
+
+    def test_provider_preference_failures_never_fall_back_to_selected_provider(self):
+        class RoutedManager:
+            def __init__(self):
+                self.selected = FakeProvider(output="must-not-be-used")
+            def create_selected_adapter(self):
+                return self.selected
+            def create_routed_adapter(self, **kwargs):
+                raise RuntimeError("no eligible route")
+
+        manager = RoutedManager()
+        with self.assertRaisesRegex(RuntimeError, "no eligible route"):
+            build_handlers_from_provider_manager(
+                manager, {"research-agent": "research"},
+                provider_preferences={"research-agent": ("openai",)},
+                allow_cloud=True,
+            )
+        with self.assertRaises(ValueError):
+            build_handlers_from_provider_manager(
+                manager, {"research-agent": "research"},
+                provider_preferences={"research-agent": ["openai"]},
+            )
 
     def test_provider_manager_role_map_fails_closed(self):
         class MissingManager:

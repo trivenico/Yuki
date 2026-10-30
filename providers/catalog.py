@@ -4,20 +4,20 @@ This catalog reports configured intent and adapter readiness without making
 provider requests, enumerating remote models, or exposing secret values.
 """
 from __future__ import annotations
+import ipaddress
 import os
 import re
+from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
-    {"name":"mock","label":"Mock","auth":"none","privacy":"local","implemented":True,
-     "capabilities":["text","tests"],"model_env":None,"key_env":None},
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
      "implemented":True,"capabilities":["text","official_cli"],"model_env":"YUKI_GEMINI_MODEL","key_env":None},
     {"name":"hybrid","label":"Hybrid local/cloud","auth":"local_runtime_and_optional_api_key","privacy":"task_policy",
      "implemented":True,"capabilities":["text","per_task_routing"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
-    {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":False,
+    {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
     {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
@@ -62,6 +62,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
+        elif item["name"] == "openai":
+            model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
@@ -71,17 +73,44 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
                                   and str(env.get(key_name, "")).strip())
         status = manager.get(item["name"], {})
         implemented = bool(status.get("implemented", item["implemented"]))
-        if item["name"] in {"openai","anthropic","deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
+        if item["name"] in {"anthropic","deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
             implemented = False
         if item["name"] == "mock":
-            ready = True
-            reason = "always_ready"
+            ready = False
+            reason = "test_only_adapter_not_exposed"
+        elif item["name"] == "openai":
+            ready = bool(model and configured_key)
+            reason = "api_key_and_model_configured" if ready else (
+                "api_key_not_configured" if not configured_key else "model_not_configured"
+            )
         elif item["name"] == "ollama":
             ready = bool(model)
-            reason = "model_configured" if ready else "model_not_configured"
+            reason = "model_configured_runtime_not_probed" if ready else "model_not_configured"
+            try:
+                parsed = urlsplit(str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")).strip())
+                host = (parsed.hostname or "").rstrip(".").lower()
+                _ = parsed.port  # Reject malformed ports before assigning a privacy class.
+                valid_endpoint = (
+                    parsed.scheme.lower() in {"http", "https"}
+                    and bool(host)
+                    and not parsed.username and not parsed.password
+                    and not parsed.query and not parsed.fragment
+                )
+                try:
+                    is_loopback = ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    is_loopback = host == "localhost"
+                item["privacy"] = (
+                    "local_runtime" if valid_endpoint and is_loopback
+                    else "local_or_configured_endpoint" if valid_endpoint
+                    else "unknown"
+                )
+            except ValueError:
+                item["privacy"] = "unknown"
         elif item["name"] == "gemini":
-            ready = bool(shutil_which("gemini"))
-            reason = "cli_detected_auth_not_verified" if ready else "cli_not_installed"
+            installed = bool(shutil_which("gemini"))
+            ready = installed
+            reason = "cli_detected_auth_not_verified" if installed else "cli_not_installed"
         elif item["name"] == "hybrid":
             ready = bool(_model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))))
             reason = "local_model_configured_cloud_opt_in_required" if ready else "local_model_not_configured"

@@ -74,6 +74,30 @@ class CapabilityRegistryTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route(required=("text", "official_cli"))
 
+    def test_cloud_opt_in_keeps_local_provider_preferred_by_default(self):
+        registry = CapabilityRegistry([
+            provider("openai", privacy="cloud_provider"),
+            provider("ollama", caps=("text", "local_inference")),
+        ])
+        self.assertEqual(registry.route(allow_cloud=True).provider, "ollama")
+        self.assertEqual(
+            registry.route(allow_cloud=True, preference=("openai", "ollama")).provider,
+            "openai",
+        )
+
+    def test_strict_preference_never_selects_an_unrequested_provider(self):
+        registry = CapabilityRegistry([
+            provider("ollama"),
+            provider("gemini", privacy="cloud_provider"),
+        ])
+        with self.assertRaises(LookupError):
+            registry.route(preference=("openai",), allow_cloud=True, strict_preference=True)
+        self.assertEqual(
+            registry.route(preference=("gemini", "ollama"), allow_cloud=True,
+                           strict_preference=True).provider,
+            "gemini",
+        )
+
     def test_unimplemented_or_unready_provider_never_selected(self):
         registry = CapabilityRegistry([
             provider("unimplemented", implemented=False, ready=False),
@@ -112,12 +136,68 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual([item["provider"] for item in items], ["mock", "ollama"])
         self.assertNotIn("secret", repr(items))
 
-    def test_provider_manager_exposes_registry_from_real_catalog(self):
+    def test_provider_manager_exposes_only_real_ready_runtime_providers(self):
         manager = ProviderManager(environ={})
         registry = manager.routing_registry()
-        self.assertEqual(registry.route(required=("text",)).provider, "mock")
-        self.assertIsNone(registry.get("openai").configured_model)
-        self.assertFalse(registry.get("openai").implemented)
+        self.assertIsNone(registry.get("mock"))
+        self.assertTrue(registry.get("openai").implemented)
+        self.assertFalse(registry.get("openai").ready)
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+
+    def test_openai_requires_explicit_cloud_opt_in_for_routing(self):
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-only-key",
+            "YUKI_OPENAI_MODEL": "gpt-test",
+        })
+        registry = manager.routing_registry()
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+        self.assertEqual(
+            registry.route(required=("text",), allow_cloud=True, preference=("openai",)).provider,
+            "openai",
+        )
+
+    def test_invalid_ollama_endpoint_is_never_classified_as_local(self):
+        invalid = ProviderManager(config={
+            "ollama_model": "qwen3", "ollama_base_url": "ftp://127.0.0.1:11434",
+        }, environ={})
+        with self.assertRaises(LookupError):
+            invalid.routing_registry().route()
+
+    def test_ollama_local_endpoint_is_routable_but_custom_endpoint_is_not(self):
+        local = ProviderManager(config={"ollama_model": "qwen3"}, environ={})
+        self.assertEqual(local.routing_registry().route().provider, "ollama")
+        remote = ProviderManager(config={
+            "ollama_model": "qwen3", "ollama_base_url": "https://models.example.com",
+        }, environ={})
+        with self.assertRaises(LookupError):
+            remote.routing_registry().route()
+
+    def test_create_routed_adapter_requires_cloud_opt_in_and_checks_availability(self):
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-only-key",
+            "YUKI_OPENAI_MODEL": "gpt-test",
+        })
+        with self.assertRaises(LookupError):
+            manager.create_routed_adapter(preference=("openai",))
+        adapter = manager.create_routed_adapter(
+            preference=("openai",), allow_cloud=True,
+        )
+        self.assertIsInstance(adapter, OpenAICompatibleProvider)
+        self.assertTrue(adapter.is_available())
+
+    def test_create_routed_adapter_fails_without_fallback_when_selected_adapter_unavailable(self):
+        class Unavailable:
+            def is_available(self):
+                return False
+            def generate(self, prompt):
+                return "unused"
+        manager = ProviderManager(config={"ollama_model": "qwen3"}, environ={})
+        manager._build_adapter = lambda _name: Unavailable()
+        with self.assertRaisesRegex(RuntimeError, "no fallback"):
+            manager.create_routed_adapter(preference=("ollama",))
 
 
 if __name__ == "__main__":
