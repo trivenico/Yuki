@@ -22,3 +22,13 @@ OpenClaw is used as a format and architecture reference for the Agent Skills Mar
 - License: MIT License; full text in `licenses/MIT-Hermes-Agent.txt`.
 - Changes: Adapted the root-cause debugging workflow for Yuki, removed Hermes-specific tool calls and unsupported delegation examples, added Yuki's actual verification and permission boundaries. The bundled skill is opt-in and imported through the data-only SKILL.md installer.
 - The upstream skill itself credits obra/superpowers; that attribution is retained in the Yuki skill's frontmatter.
+
+## Oracle OCI GenAI authentication library
+
+- Project: OCI GenAI Auth — https://github.com/oracle-samples/oci-genai-auth-python
+- Source revision: `main` as inspected on 2026-10-30; packaged upstream version pinned to `oci-genai-auth==1.1.1`.
+- Reused in Yuki: dependency used by `providers/oci_iam.py`; Yuki does not copy Oracle's signer implementation.
+- Copyright: Copyright (c) 2026 Oracle and/or its affiliates.
+- License: Universal Permissive License (UPL), Version 1.0; full text retained in `licenses/UPL-1.0-Oracle-oci-genai-auth.txt`.
+- Changes: Yuki adds its own OCI endpoint validation, model request/response bounds, explicit project header, provider-factory integration, and tests. Oracle's library supplies OCI IAM signing and credential refresh.
+- Dependency manifest: `requirements-oci.txt`.
