@@ -26,6 +26,8 @@ class AgentDelegationCoordinator:
             raise TypeError("runtime must be a TaskRuntime.")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be bounded non-empty text.")
+        if registry.database_path != runtime.store.database_path:
+            raise ValueError("agent registry and task runtime must share the same SQLite database.")
         self.registry = registry
         self.runtime = runtime
         self.actor_id = actor_id.strip()
