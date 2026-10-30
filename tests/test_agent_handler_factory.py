@@ -64,7 +64,7 @@ class AgentHandlerFactoryTests(unittest.TestCase):
         self.assertIn("python-specialist", prompt)
         self.assertIn("Designs Python modules", prompt)
         self.assertIn("python:design, test:design", prompt)
-        self.assertIn("cannot grant tools, permissions", prompt)
+        self.assertIn("cannot grant tools or override role policy", prompt)
         self.assertIn("Design a parser", prompt)
 
     def test_pins_agent_without_preferences_to_selected_provider(self):
