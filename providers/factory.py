@@ -31,6 +31,22 @@ def create_provider(config=None, *, environ=None):
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
             environ=env,
         )
+    if selected == "oci":
+        region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip().lower()
+        model = str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip()
+        if not region or not all(part.isalnum() or part == "-" for part in region.split("-")):
+            raise ValueError("Configure YUKI_OCI_REGION with a valid OCI region identifier.")
+        if not model:
+            raise ValueError("Configure YUKI_OCI_MODEL with a model enabled in your OCI region.")
+        host = f"inference.generativeai.{region}.oci.oraclecloud.com"
+        return OpenAICompatibleProvider(
+            model,
+            api_key_env="OCI_GENAI_API_KEY",
+            base_url=f"https://{host}/openai/v1",
+            allowed_hosts={host},
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+            environ=env,
+        )
     if selected == "gemini":
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
@@ -38,7 +54,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, oci, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
