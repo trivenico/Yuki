@@ -40,6 +40,26 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertIsInstance(registry, WorkflowRunStore)
             self.assertEqual(registry.database_path, database)
 
+    def test_worker_executes_task_written_to_shared_gateway_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "gateway.sqlite3")
+            service = build_worker_service(
+                database_path=database,
+                provider_manager=FakeProviderManager(),
+            )
+            queued = service.runtime.store.create(
+                idempotency_key="gateway-task-1",
+                workflow_name="agent-research-analyst-request",
+                definition=[{"name": "specialist-output", "action": "emit",
+                             "argument": "Objective: summarize supplied evidence",
+                             "requires_approval": False}],
+            )
+            result = service.worker.run_once()
+            self.assertIsNotNone(result)
+            self.assertEqual(result.task_id, queued.run_id)
+            self.assertEqual(result.state, "succeeded")
+            self.assertIn("completed:", result.result["output"])
+
     def test_worker_service_rejects_missing_provider_selection(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:
