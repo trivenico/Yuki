@@ -5,6 +5,7 @@ grants capabilities; receivers must treat every message as untrusted input.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -59,13 +60,22 @@ class AgentMailbox:
                 ON agent_messages(recipient_agent_id, acknowledged_at, message_id)
             """)
 
+    @contextmanager
     def _connect(self):
+        """Open a short-lived connection and always release its file handle."""
         db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _allowed(self, actor_id: str, action: str, resource: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
