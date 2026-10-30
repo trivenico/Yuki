@@ -34,7 +34,10 @@ class YukiMemoryService:
     ) -> list[ConversationMemory]:
         if type(semantic) is not bool:
             raise ValueError("semantic must be a boolean.")
-        search = self.store.semantic_search if semantic else self.store.search
+        # Keep retrieval useful on free/local deployments without an embedding
+        # model. Semantic search is an enhancement, never a reason to lose memories.
+        use_semantic = semantic and self.store.embedding_fn is not None
+        search = self.store.semantic_search if use_semantic else self.store.search
         return search(actor_id=actor_id, owner_id=owner_id, query=query, limit=limit)
 
     def build_agent_context(
