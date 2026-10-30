@@ -4,6 +4,29 @@ from core.planner import Planner
 
 
 class PlannerTests(unittest.TestCase):
+
+    def test_decomposes_build_goal_into_dependency_gated_specialists(self):
+        tasks = Planner().decompose("Research and build a secure app, then test and report results")
+        by_id = {task.task_id: task for task in tasks}
+        self.assertEqual(set(by_id), {"research", "implementation", "verification", "summary"})
+        self.assertEqual(by_id["implementation"].depends_on, ("research",))
+        self.assertEqual(by_id["verification"].depends_on, ("implementation",))
+        self.assertEqual(by_id["summary"].depends_on, ("research", "implementation", "verification"))
+        self.assertTrue(all(task.requires_approval for task in tasks[:-1]))
+        self.assertFalse(by_id["summary"].requires_approval)
+
+    def test_decomposition_falls_back_to_research_and_is_bounded(self):
+        tasks = Planner().decompose("Help me think through an unfamiliar request")
+        self.assertEqual([task.required_capabilities for task in tasks], [("research",)])
+        with self.assertRaises(ValueError):
+            Planner(max_steps=1).decompose("Build and test an app and report results")
+
+    def test_decomposition_rejects_invalid_goals(self):
+        planner = Planner(max_goal_chars=5)
+        for goal in ("", "      ", "x" * 6, None):
+            with self.subTest(goal=goal), self.assertRaises(ValueError):
+                planner.decompose(goal)
+
     def test_rejects_empty_and_oversized_goals(self):
         planner = Planner(max_goal_chars=8)
         for goal in ("", "   ", "x" * 9, None, 123):
