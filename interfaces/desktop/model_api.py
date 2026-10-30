@@ -1,8 +1,5 @@
-"""Stable desktop-facing facade over Yuki's shared model services.
-
-Native desktop shells should call these functions rather than reimplement
-model discovery, hardware inspection or selection policy.
-"""
+"""Desktop API facade over Yuki shared application services."""
 from core.model_manager import get_hardware_report, get_model_catalog
+from core.yuki_ai import YukiAI
 
-__all__ = ["get_hardware_report", "get_model_catalog"]
+__all__ = ["YukiAI", "get_hardware_report", "get_model_catalog"]
