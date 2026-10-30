@@ -139,8 +139,9 @@ def _read_agent_skill_markdown(source: Path) -> dict[str, Any]:
         custom = {}
     if not isinstance(custom, dict) or len(custom) > 32:
         raise ValueError("SKILL.md metadata must be a bounded mapping.")
-    risk = custom.get("risk", "high")
-    # Metadata is descriptive only; it never grants tool or execution access.
+    # Third-party metadata cannot downgrade approval requirements. Every imported
+    # SKILL.md starts high-risk until the user reviews it in Yuki.
+    risk = "high"
     value = {
         "schema_version": 1,
         "name": metadata.get("name"),
