@@ -1,4 +1,4 @@
-"""Tests for Yuki's curated 21-agent starter fleet."""
+"""Tests for Yuki's curated 100-profile starter fleet."""
 import tempfile
 import unittest
 from pathlib import Path
