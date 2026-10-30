@@ -28,7 +28,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/task create ROLE REQUEST · /approve TASK_ID VERSION APPROVE · /tasks · /worker run RUN", id="command")
+                yield Input(placeholder="/task create ROLE REQUEST · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE", id="command")
             yield Footer()
         def on_mount(self):
             self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
@@ -68,6 +68,34 @@ def run_dashboard(
                     log.write("Review the task, then approve it with /approve TASK_ID VERSION APPROVE.")
                 except Exception:
                     log.write("Task creation failed or the requested specialist is unavailable.")
+                return
+            if command == "/plan" or command.startswith("/plan "):
+                parts = command.split()
+                if len(parts) == 2 and coordinator is not None and actor_id is not None:
+                    try:
+                        plan = coordinator.get_plan(actor_id=actor_id, plan_id=parts[1])
+                        log.write(f"Plan {plan.plan_id}")
+                        for item in plan.subtasks:
+                            log.write(
+                                f"{item.subtask_id} | {item.agent_id} | {item.status} | "
+                                f"task={item.task_id or 'not-dispatched'} | "
+                                f"depends_on={','.join(item.depends_on) or 'none'}"
+                            )
+                    except Exception:
+                        log.write("Plan not found or plan inspection is not authorized.")
+                    return
+                if len(parts) == 4 and parts[1] == "cancel" and parts[3] == "CANCEL" and coordinator is not None and actor_id is not None:
+                    try:
+                        plan = coordinator.cancel_plan(actor_id=actor_id, plan_id=parts[2])
+                        log.write(f"Cancellation reconciled for plan {plan.plan_id}.")
+                        for item in plan.subtasks:
+                            log.write(f"{item.subtask_id} | {item.status}")
+                    except PermissionError:
+                        log.write("Plan cancellation is not authorized.")
+                    except Exception:
+                        log.write("Plan cancellation failed; inspect current task states before retrying.")
+                    return
+                log.write("Usage: /plan PLAN_ID | /plan cancel PLAN_ID CANCEL")
                 return
             if command.startswith("/approve "):
                 parts = command.split()
