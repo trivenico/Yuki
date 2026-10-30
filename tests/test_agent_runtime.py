@@ -40,7 +40,7 @@ class AgentRuntimeCompositionTests(unittest.TestCase):
 
         self.assertEqual(set(worker.handlers), {spec.agent_id for spec in self.registry.list_agents()})
         self.assertEqual(len(worker.handlers), 20)
-        self.assertEqual(len(worker.workflow_prefix_limits), 20)
+        self.assertEqual(len(worker.workflow_prefix_limits), 0)
         # Starter agents default to no per-agent concurrency ceiling.
         self.assertNotIn("agent-research-analyst-", worker.workflow_prefix_limits)
 
