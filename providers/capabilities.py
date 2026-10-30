@@ -92,6 +92,7 @@ class CapabilityRegistry:
         required: Iterable[str] = ("text",),
         preference: Iterable[str] = (),
         allow_cloud: bool = False,
+        strict_preference: bool = False,
     ) -> ProviderCapabilities:
         """Select a ready adapter without probing networks or silently changing policy.
 
@@ -105,6 +106,8 @@ class CapabilityRegistry:
             raise TypeError("preference must be an iterable of provider names, not text")
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
+        if type(strict_preference) is not bool:
+            raise TypeError("strict_preference must be a boolean")
         try:
             required_values = tuple(islice(iter(required), _MAX_REQUIRED_CAPABILITIES + 1))
             preference_values = tuple(islice(iter(preference), _MAX_PREFERENCES + 1))
@@ -133,6 +136,7 @@ class CapabilityRegistry:
         candidates = [
             item for item in self._providers.values()
             if item.implemented and item.ready
+            and (not strict_preference or item.provider in seen)
             and required_set.issubset(item.capabilities)
             and (
                 item.privacy in _LOCAL_PRIVACY
