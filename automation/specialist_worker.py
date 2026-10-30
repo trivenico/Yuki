@@ -215,6 +215,10 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                agent_concurrency={
+                    prefix[len("agent-"):-1]: limit
+                    for prefix, limit in self.workflow_prefix_limits.items()
+                },
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
