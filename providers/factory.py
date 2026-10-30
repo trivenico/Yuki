@@ -6,6 +6,7 @@ import os
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
+from providers.multi import MultiProviderRouter
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
@@ -51,6 +52,41 @@ def create_provider(config=None, *, environ=None):
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             environ=env,
         )
+    if selected == "multi":
+        providers = {}
+        local_model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
+        if local_model:
+            providers["local"] = OllamaProvider(
+                base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
+                model=local_model,
+            )
+        if str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip():
+            providers["oci_managed"] = create_provider({"provider": "oci", **cfg}, environ=env)
+        self_hosted_model = str(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", ""))).strip()
+        if self_hosted_model:
+            base_url = str(env.get("YUKI_SELF_HOSTED_BASE_URL", cfg.get("self_hosted_base_url", ""))).strip()
+            allowed_hosts = {
+                item.strip().lower().rstrip(".")
+                for item in str(env.get("YUKI_CLOUD_ALLOWED_HOSTS", "")).split(",")
+                if item.strip()
+            }
+            if not base_url or not allowed_hosts:
+                raise ValueError(
+                    "Self-hosted inference requires YUKI_SELF_HOSTED_BASE_URL and "
+                    "an exact hostname in YUKI_CLOUD_ALLOWED_HOSTS."
+                )
+            key_env = str(env.get("YUKI_SELF_HOSTED_API_KEY_ENV", "YUKI_SELF_HOSTED_API_KEY")).strip()
+            providers["self_hosted"] = OpenAICompatibleProvider(
+                self_hosted_model,
+                api_key_env=key_env,
+                base_url=base_url,
+                allowed_hosts=allowed_hosts,
+                timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+                environ=env,
+            )
+        routes = cfg.get("provider_routes", {})
+        default_route = str(cfg.get("provider_default_route", "oci_managed")).strip().lower()
+        return MultiProviderRouter(providers, routes=routes, default_route=default_route)
     if selected == "gemini":
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
@@ -58,7 +94,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, oci, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, oci, ollama, gemini, hybrid, multi (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
