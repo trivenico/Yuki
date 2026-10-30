@@ -10,6 +10,38 @@ import json
 from providers.openai_compatible import _trusted_https_endpoint
 
 
+def create_oci_iam_auth(mode="resource_principal", *, config_file=None, profile_name="DEFAULT"):
+    """Create an Oracle-maintained OCI signer for the selected runtime identity."""
+    try:
+        from oci_genai_auth import (
+            OciInstancePrincipalAuth,
+            OciResourcePrincipalAuth,
+            OciSessionAuth,
+            OciUserPrincipalAuth,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "OCI IAM requires oci-genai-auth==1.1.1; install requirements-oci.txt."
+        ) from exc
+
+    classes = {
+        "resource_principal": OciResourcePrincipalAuth,
+        "instance_principal": OciInstancePrincipalAuth,
+        "session": OciSessionAuth,
+        "user_principal": OciUserPrincipalAuth,
+    }
+    if mode not in classes:
+        raise ValueError(
+            "YUKI_OCI_AUTH_MODE must be resource_principal, instance_principal, session, or user_principal."
+        )
+    if mode in {"session", "user_principal"}:
+        kwargs = {"profile_name": profile_name}
+        if config_file:
+            kwargs["config_file"] = config_file
+        return classes[mode](**kwargs)
+    return classes[mode]()
+
+
 class OciIamProvider:
     """Call OCI Generative AI with a refreshable OCI IAM signer."""
 
