@@ -14,6 +14,10 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
+        self.assertTrue(entries["oci"]["implemented"])
+        self.assertTrue(entries["oci_iam"]["implemented"])
+        self.assertTrue(entries["oci_responses"]["implemented"])
+        self.assertTrue(entries["multi"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
         from providers.openai_compatible import OpenAICompatibleProvider
@@ -39,6 +43,16 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
+
+    def test_oci_provider_selection_uses_shared_factory(self):
+        env = {"YUKI_OCI_REGION": "eu-frankfurt-1", "YUKI_OCI_MODEL": "test-model",
+               "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1..example",
+               "OCI_GENAI_API_KEY": "test-secret"}
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager({"provider": "oci"}, environ=env)
+        adapter = manager.create_selected_adapter()
+        self.assertIsInstance(adapter, OpenAICompatibleProvider)
+        self.assertEqual(adapter.base_url, "https://inference.generativeai.eu-frankfurt-1.oci.oraclecloud.com/openai/v1")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
