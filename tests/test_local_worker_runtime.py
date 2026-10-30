@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.agent_coordinator import SubtaskSpec
+
 from automation.local_worker_runtime import (
     LOCAL_OPERATOR_ACTOR,
     WORKER_SERVICE_ACTOR,
@@ -44,6 +46,38 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             built = build_local_worker_runtime(directory, FakeProvider())
             with self.assertRaises(PermissionError):
                 built.runtime.list_task_summaries(actor_id=WORKER_SERVICE_ACTOR)
+
+    def test_coordinator_dispatches_to_matching_provider_specialist_but_requires_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="local-coordinator-test",
+                subtasks=[
+                    SubtaskSpec(
+                        subtask_id="research-brief",
+                        description="Summarize the supplied requirements",
+                        required_capabilities=("research",),
+                    )
+                ],
+            )
+            plan = built.coordinator.advance(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            subtask = plan.subtasks[0]
+            self.assertEqual(subtask.agent_id, "research")
+            self.assertIsNotNone(subtask.task_id)
+            task = built.runtime.get(
+                actor_id=LOCAL_OPERATOR_ACTOR, task_id=subtask.task_id,
+            )
+            self.assertEqual(task.state, "queued")
+            self.assertIsNone(built.supervisor.worker.run_once())
+            self.assertEqual(
+                built.runtime.get(
+                    actor_id=LOCAL_OPERATOR_ACTOR, task_id=subtask.task_id,
+                ).state,
+                "queued",
+            )
 
     def test_cycle_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
