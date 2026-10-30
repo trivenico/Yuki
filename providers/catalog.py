@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
+    {"name":"huggingface_local","label":"Hugging Face Transformers (local)","auth":"local_checkpoint","privacy":"local_runtime","implemented":True,"capabilities":["text","local_inference","offline"],"model_env":None,"key_env":None},
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
@@ -73,7 +74,9 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         model_env = item.pop("model_env")
         key_env = item.pop("key_env")
         model = _model(env.get(model_env, "")) if model_env else None
-        if item["name"] == "ollama":
+        if item["name"] == "huggingface_local":
+            model = "local-checkpoint" if str(env.get("YUKI_HF_LOCAL_MODEL_PATH", cfg.get("hf_local_model_path", ""))).strip() else None
+        elif item["name"] == "ollama":
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
@@ -95,6 +98,9 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         if item["name"] == "mock":
             ready = False
             reason = "test_only_adapter_not_exposed"
+        elif item["name"] == "huggingface_local":
+            ready = bool(model)
+            reason = "local_checkpoint_configured_runtime_not_probed" if ready else "local_checkpoint_not_configured"
         elif item["name"] == "openai":
             ready = bool(model and configured_key)
             reason = "api_key_and_model_configured" if ready else (
