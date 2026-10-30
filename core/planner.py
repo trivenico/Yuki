@@ -29,6 +29,7 @@ class PlanTask:
     requires_approval: bool = True
 
 
+class Planner:
     _TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
     _CAPABILITY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
@@ -44,7 +45,7 @@ class PlanTask:
         if isinstance(tasks, (str, bytes)):
             raise ValueError("tasks must be an iterable of PlanTask values")
         try:
-            items = tuple(tasks)
+            items = tuple(islice(iter(tasks), max_steps + 1))
         except TypeError as exc:
             raise ValueError("tasks must be iterable") from exc
         if not 1 <= len(items) <= max_steps:
@@ -99,7 +100,7 @@ class PlanTask:
             visit(task.task_id)
         return items
 
-class Planner:
+
     def __init__(self, *, max_steps=5, max_goal_chars=2000):
         if isinstance(max_steps, bool) or not isinstance(max_steps, int) or not 1 <= max_steps <= 10:
             raise ValueError("max_steps must be between 1 and 10")
