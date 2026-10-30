@@ -1,6 +1,6 @@
 import tempfile
 import unittest
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
 
 from automation.agent_coordinator import (
@@ -86,6 +86,35 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda _: "approved result"}).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
+
+    def test_cancellation_during_handler_prevents_late_completion(self):
+        task_id = self.create_task()
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "late provider response"
+
+        worker = self.worker({"code-review": slow_handler})
+        thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "worker did not start handler")
+        running = self.store.get(task_id)
+        cancelled = self.runtime.cancel(
+            actor_id="alice", task_id=task_id, expected_version=running.version,
+        )
+        self.assertEqual(cancelled.state, "cancelled")
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
+        self.assertEqual(outcome["result"].state, "cancelled")
+        self.assertEqual(self.store.get(task_id).state, "cancelled")
+        events = self.runtime.events(actor_id="worker-service", task_id=task_id)
+        self.assertEqual(events[-1].kind, "task.cancelled")
 
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
