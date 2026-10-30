@@ -10,6 +10,7 @@ from providers.multi import MultiProviderRouter
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.oci_iam import OciIamProvider, create_oci_iam_auth
+from providers.oci_responses import OciResponsesProvider
 
 
 def create_provider(config=None, *, environ=None):
@@ -76,6 +77,29 @@ def create_provider(config=None, *, environ=None):
             auth=auth,
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
         )
+    if selected == "oci_responses":
+        region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip().lower()
+        model = str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip()
+        project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
+        if not region or not all(part.isalnum() or part == "-" for part in region.split("-")):
+            raise ValueError("Configure YUKI_OCI_REGION with a valid OCI region identifier.")
+        if not model:
+            raise ValueError("Configure YUKI_OCI_MODEL with a model enabled in your OCI region.")
+        if not project.startswith("ocid1.generativeaiproject."):
+            raise ValueError("Configure YUKI_OCI_PROJECT_OCID with your OCI Generative AI project OCID.")
+        mode = str(env.get("YUKI_OCI_AUTH_MODE", cfg.get("oci_auth_mode", "resource_principal"))).strip().lower()
+        auth = create_oci_iam_auth(
+            mode,
+            config_file=env.get("YUKI_OCI_CONFIG_FILE", cfg.get("oci_config_file")),
+            profile_name=str(env.get("YUKI_OCI_PROFILE", cfg.get("oci_profile", "DEFAULT"))),
+        )
+        return OciResponsesProvider(
+            model,
+            region=region,
+            project_ocid=project,
+            auth=auth,
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+        )
     if selected == "multi":
         providers = {}
         local_model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
@@ -86,7 +110,11 @@ def create_provider(config=None, *, environ=None):
             )
         if str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip():
             oci_mode = str(env.get("YUKI_OCI_AUTH_MODE", cfg.get("oci_auth_mode", "api_key"))).strip().lower()
-            oci_provider_mode = "oci_iam" if oci_mode != "api_key" else "oci"
+            oci_api_mode = str(env.get("YUKI_OCI_API_MODE", cfg.get("oci_api_mode", "chat_completions"))).strip().lower()
+            if oci_mode != "api_key" and oci_api_mode == "responses":
+                oci_provider_mode = "oci_responses"
+            else:
+                oci_provider_mode = "oci_iam" if oci_mode != "api_key" else "oci"
             providers["oci_managed"] = create_provider({**cfg, "provider": oci_provider_mode}, environ=env)
         self_hosted_model = str(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", ""))).strip()
         if self_hosted_model:
@@ -120,7 +148,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, oci, oci_iam, ollama, gemini, hybrid, multi (mock is test-only).")
+        raise ValueError("provider must be one of: openai, oci, oci_iam, oci_responses, ollama, gemini, hybrid, multi (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
