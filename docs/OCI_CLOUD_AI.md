@@ -196,6 +196,6 @@ The current HTTP routes are:
 - `DELETE /v1/admin/devices/{device_id}` to revoke an installation.
 - `GET /v1/me` and `GET /v1/devices` for scope-checked device identity and device listing.
 
-The container binds to host loopback on port 8765; it is not internet-facing. A TLS reverse proxy is not yet included. The operator bootstrap token is not end-user login and must never be shipped to desktop/CLI installations. The service currently lacks OIDC/user login, request rate limiting, refresh-token rotation, public API hardening, and automated backup/restore. Treat it as an internal integration prototype until those controls are complete.
+The container binds to host loopback on port 8765; it is not internet-facing. A TLS reverse proxy is not yet included. The operator bootstrap token is not end-user login and must never be shipped to desktop/CLI installations. Bootstrap routes are disabled by default and must only be enabled for a short enrollment window. The service currently lacks OIDC/user login, request rate limiting, refresh-token rotation, public API hardening, and automated backup/restore. Treat it as an internal integration prototype until those controls are complete.
 
 The Compose service has host-level CPU/memory/process guardrails for the small Always Free VM. Those are infrastructure protection settings, not Yuki agent/task product quotas.
