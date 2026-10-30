@@ -51,6 +51,16 @@ class CapabilityRegistryTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises((TypeError, ValueError)):
                 registry.route(**kwargs)
 
+    def test_route_bounds_generator_consumption(self):
+        consumed = []
+        def required():
+            for index in range(100):
+                consumed.append(index)
+                yield "text"
+        with self.assertRaises(ValueError):
+            CapabilityRegistry([provider("mock")]).route(required=required())
+        self.assertEqual(consumed, list(range(7)))
+
     def test_unrecognized_privacy_classification_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "recognized classification"):
             provider("unsafe", privacy="anything")
