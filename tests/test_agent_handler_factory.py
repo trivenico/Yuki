@@ -59,6 +59,32 @@ class AgentHandlerFactoryTests(unittest.TestCase):
         self.assertIn("reporter", handlers)
         manager.create_selected_adapter.assert_called_once_with()
 
+    def test_cloud_opt_in_without_preference_uses_only_user_selected_provider(self):
+        self.registry.register(AgentSpec(
+            "cloud-reporter", "reporting", "Cloud-approved reporting", allow_cloud=True,
+        ))
+        provider = FakeProvider()
+        manager = Mock()
+        manager.current.return_value.name = "openai"
+        manager.create_routed_adapter.return_value = provider
+
+        handlers = build_agent_handlers(manager, self.registry)
+
+        self.assertIn("cloud-reporter", handlers)
+        manager.create_routed_adapter.assert_called_once_with(
+            required=("text",), preference=("openai",), allow_cloud=True,
+        )
+
+    def test_cloud_opt_in_fails_closed_without_selected_provider(self):
+        self.registry.register(AgentSpec(
+            "cloud-reporter", "reporting", "Cloud-approved reporting", allow_cloud=True,
+        ))
+        manager = Mock()
+        manager.current.return_value = None
+        with self.assertRaises(RuntimeError):
+            build_agent_handlers(manager, self.registry)
+        manager.create_selected_adapter.assert_not_called()
+
     def test_rejects_registry_with_unsupported_role(self):
         self.registry.register(AgentSpec("unknown", "unknown-role", "Unknown role"))
         manager = Mock()
