@@ -1,6 +1,7 @@
 """Construct the configured provider without implicit cloud fallback."""
 from __future__ import annotations
 
+import json
 import os
 
 from providers.gemini_cli import GeminiCLIProvider
@@ -105,7 +106,7 @@ def create_provider(config=None, *, environ=None):
         local_model = str(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))).strip()
         if local_model:
             providers["local"] = OllamaProvider(
-                base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
+                base_url=str(env.get("YUKI_OLLAMA_BASE_URL", cfg.get("ollama_base_url", "http://127.0.0.1:11434"))),
                 model=local_model,
             )
         if str(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", ""))).strip():
@@ -139,7 +140,15 @@ def create_provider(config=None, *, environ=None):
                 environ=env,
             )
         routes = cfg.get("provider_routes", {})
-        default_route = str(cfg.get("provider_default_route", "oci_managed")).strip().lower()
+        raw_routes = str(env.get("YUKI_PROVIDER_ROUTES_JSON", "")).strip()
+        if raw_routes:
+            try:
+                routes = json.loads(raw_routes)
+            except json.JSONDecodeError as exc:
+                raise ValueError("YUKI_PROVIDER_ROUTES_JSON must contain a JSON object.") from exc
+            if not isinstance(routes, dict):
+                raise ValueError("YUKI_PROVIDER_ROUTES_JSON must contain a JSON object.")
+        default_route = str(env.get("YUKI_PROVIDER_DEFAULT_ROUTE", cfg.get("provider_default_route", "oci_managed"))).strip().lower()
         return MultiProviderRouter(providers, routes=routes, default_route=default_route)
     if selected == "gemini":
         return GeminiCLIProvider(
