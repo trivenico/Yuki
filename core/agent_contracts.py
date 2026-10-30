@@ -16,7 +16,6 @@ _MAX_DESCRIPTION = 500
 _MAX_OBJECTIVE = 2_000
 _MAX_PAYLOAD_CHARS = 12_000
 _MAX_CAPABILITIES = 64
-_MAX_TARGETS = 100
 
 
 def _identifier_set(values: Iterable[str], field_name: str, *, maximum: int = _MAX_CAPABILITIES) -> frozenset[str]:
@@ -62,7 +61,7 @@ class AgentSpec:
         if isinstance(self.delegation_targets, (str, bytes)):
             raise ValueError("delegation_targets must be a collection.")
         targets = tuple(self.delegation_targets)
-        if len(targets) > _MAX_TARGETS or any(not isinstance(x, str) or not _AGENT_ID.fullmatch(x) for x in targets):
+        if any(not isinstance(x, str) or not _AGENT_ID.fullmatch(x) for x in targets):
             raise ValueError("delegation_targets contains an invalid agent ID.")
         if len(set(targets)) != len(targets):
             raise ValueError("delegation_targets contains duplicates.")
