@@ -16,6 +16,9 @@ class FakeProvider:
 
 
 class FakeProviderManager:
+    def create_selected_adapter(self):
+        return FakeProvider()
+
     def current(self):
         return SimpleNamespace(name="ollama")
 
