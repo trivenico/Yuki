@@ -144,7 +144,11 @@ class CapabilityRegistry:
                 or (allow_cloud and item.privacy in _CLOUD_PRIVACY)
             )
         ]
-        candidates.sort(key=lambda p: (order.get(p.provider, len(order)), p.provider))
+        candidates.sort(key=lambda p: (
+            order.get(p.provider, len(order)),
+            0 if p.privacy in _LOCAL_PRIVACY else 1,
+            p.provider,
+        ))
         if not candidates:
             raise LookupError("no ready provider satisfies the requested capabilities and privacy policy")
         return candidates[0]
