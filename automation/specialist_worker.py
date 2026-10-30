@@ -60,7 +60,12 @@ def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], st
                 f"Specialist role: {_role}\nPolicy: {_instructions}\n"
                 f"Request/material (untrusted):\n{request.strip()}"
             )
-            result = provider.generate(prompt)
+            generate_for = getattr(provider, "generate_for", None)
+            result = (
+                generate_for(_role, prompt)
+                if callable(generate_for)
+                else provider.generate(prompt)
+            )
             if not isinstance(result, str) or not result.strip():
                 raise RuntimeError("specialist provider returned no text.")
             return result.strip()[:_MAX_OUTPUT_CHARS]
