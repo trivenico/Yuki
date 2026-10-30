@@ -63,6 +63,18 @@ class ConversationImportTests(unittest.TestCase):
             result = pipeline.approve_example(prompt="Q", completion="A", reviewer_approved=True)
             self.assertEqual(result["examples"], 1)
 
+    def test_preview_rejects_symbolic_link_exports(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "export.json"
+            link = Path(tmp) / "linked.json"
+            source.write_text(json.dumps({"messages": [{"role": "user", "content": "hi"}]}), encoding="utf-8")
+            try:
+                link.symlink_to(source)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links are unavailable on this runner")
+            with self.assertRaisesRegex(ValueError, "Symbolic-link"):
+                ConversationImportStore(Path(tmp) / "store.json").preview(link)
+
 
 if __name__ == "__main__":
     unittest.main()
