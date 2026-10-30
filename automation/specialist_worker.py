@@ -5,10 +5,12 @@ run shell commands, perform implicit network access, or modify the workspace.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -302,3 +304,118 @@ class SpecialistTaskWorker:
             if workflow_name.startswith("agent-" + agent_id + "-"):
                 return agent_id
         return ""
+
+
+
+class AlwaysOnWorkerSupervisor:
+    """Run a specialist worker continuously until graceful shutdown is requested.
+
+    There is no task-count, retry-count, or process-lifetime ceiling. Idle polling
+    and transient-error backoff are configurable. Use an OS service manager or
+    desktop background host to restart the process after machine/process failure.
+    """
+
+    def __init__(
+        self, worker, *, idle_poll_seconds: float = 1.0,
+        error_backoff_seconds: float = 5.0,
+    ):
+        if not callable(getattr(worker, "run_once", None)):
+            raise TypeError("worker must expose run_once().")
+        if not isinstance(idle_poll_seconds, (int, float)) or idle_poll_seconds <= 0:
+            raise ValueError("idle_poll_seconds must be positive.")
+        if not isinstance(error_backoff_seconds, (int, float)) or error_backoff_seconds <= 0:
+            raise ValueError("error_backoff_seconds must be positive.")
+        self.worker = worker
+        self.idle_poll_seconds = float(idle_poll_seconds)
+        self.error_backoff_seconds = float(error_backoff_seconds)
+        self._stop = Event()
+        self._lock = Lock()
+        self._thread = None
+        self._started_at = None
+        self._last_cycle_at = None
+        self._last_success_at = None
+        self._completed_tasks = 0
+        self._idle_cycles = 0
+        self._total_errors = 0
+        self._consecutive_errors = 0
+        self._last_error_type = None
+
+    @staticmethod
+    def _now():
+        return datetime.now(timezone.utc).isoformat()
+
+    def snapshot(self):
+        with self._lock:
+            return {
+                "running": self._thread is not None and self._thread.is_alive(),
+                "started_at": self._started_at,
+                "last_cycle_at": self._last_cycle_at,
+                "last_success_at": self._last_success_at,
+                "completed_tasks": self._completed_tasks,
+                "idle_cycles": self._idle_cycles,
+                "total_errors": self._total_errors,
+                "consecutive_errors": self._consecutive_errors,
+                "last_error_type": self._last_error_type,
+            }
+
+    def request_stop(self):
+        """Stop after the current handler returns."""
+        self._stop.set()
+
+    def run_forever(self):
+        """Continuously poll and recover from transient worker-cycle exceptions."""
+        with self._lock:
+            if self._started_at is not None:
+                raise RuntimeError("supervisor instances can only be run once.")
+            self._started_at = self._now()
+        while not self._stop.is_set():
+            try:
+                result = self.worker.run_once()
+                now = self._now()
+                with self._lock:
+                    self._last_cycle_at = now
+                    self._last_success_at = now
+                    self._consecutive_errors = 0
+                    self._last_error_type = None
+                    if result is None:
+                        self._idle_cycles += 1
+                    else:
+                        self._completed_tasks += 1
+                if result is None:
+                    self._stop.wait(self.idle_poll_seconds)
+            except Exception as exc:
+                with self._lock:
+                    self._last_cycle_at = self._now()
+                    self._consecutive_errors += 1
+                    self._total_errors += 1
+                    self._last_error_type = type(exc).__name__
+                logging.getLogger(__name__).warning(
+                    "Yuki worker cycle failed; retrying after backoff (%s).",
+                    type(exc).__name__,
+                )
+                self._stop.wait(self.error_backoff_seconds)
+        return self.snapshot()
+
+    def start(self):
+        """Start a non-daemon background thread."""
+        with self._lock:
+            if self._thread is not None:
+                raise RuntimeError("supervisor has already been started.")
+            self._thread = Thread(
+                target=self.run_forever, name="yuki-always-on-worker", daemon=False,
+            )
+            self._thread.start()
+
+    def stop(self, timeout: float | None = None) -> bool:
+        """Request graceful shutdown and optionally wait for thread termination."""
+        if timeout is not None and (
+            not isinstance(timeout, (int, float)) or timeout < 0
+        ):
+            raise ValueError("timeout must be None or a non-negative number.")
+        self.request_stop()
+        with self._lock:
+            thread = self._thread
+        if thread is None:
+            return True
+        thread.join(None if timeout is None else float(timeout))
+        return not thread.is_alive()
