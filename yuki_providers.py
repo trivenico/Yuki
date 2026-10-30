@@ -115,3 +115,24 @@ class ProviderManager:
         """Return a capability-filtered registry for explicit, policy-aware routing."""
         from providers.capabilities import registry_from_catalog
         return registry_from_catalog(self.catalog())
+
+    def create_routed_adapter(self, *, required=("text",), preference=(), allow_cloud=False):
+        """Create the explicitly routed adapter; never fall back after selection.
+
+        Cloud providers require allow_cloud=True. The capability catalog is
+        metadata-only; this method performs the selected adapter's availability
+        check before returning it. A failed check is terminal for this route.
+        """
+        selected = self.routing_registry().route(
+            required=required, preference=preference, allow_cloud=allow_cloud,
+        )
+        adapter = self._build_adapter(selected.provider)
+        try:
+            available = adapter.is_available()
+        except Exception:
+            available = False
+        if available is not True:
+            raise RuntimeError(
+                f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
+            )
+        return adapter
