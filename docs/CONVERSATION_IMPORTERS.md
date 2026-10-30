@@ -22,3 +22,7 @@ Each non-empty line is an object with `id`, `role`, `content`, and optional `cre
 ## Not yet supported
 
 Claude, DeepSeek, Kimi, GLM, and other exports have distinct schemas and must receive separately tested adapters. Generic JSONL is available as an explicit conversion format; it is not claimed to parse those vendors' native archives. ZIP extraction, desktop upload/preview UI, CLI commands, semantic retrieval, and model fine-tuning remain separate milestones.
+
+## CLI preview
+
+Use `yuki conversation-preview /path/to/conversations.json --format chatgpt` or `yuki conversation-preview /path/to/history.jsonl --format jsonl` to inspect a local export. The command is read-only: it reports supported record counts and a short sample, does not initialize an AI provider, and does not write to memory. This is a preview step only; a separate authenticated import flow with explicit consent is required before persistence.
