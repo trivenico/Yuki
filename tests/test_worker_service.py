@@ -60,6 +60,27 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(result.state, "succeeded")
             self.assertIn("completed:", result.result["output"])
 
+    def test_cloud_provider_requires_explicit_consent_for_each_registered_agent(self):
+        import os
+        from unittest.mock import patch
+        from automation.default_agents import starter_agent_specs
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "gateway.sqlite3")
+            cloud_manager = FakeProviderManager()
+            cloud_manager.current = lambda: SimpleNamespace(name="oci")
+            cloud_manager.create_routed_adapter = lambda **kwargs: (
+                FakeProvider() if kwargs["allow_cloud"] else
+                (_ for _ in ()).throw(RuntimeError("cloud route denied"))
+            )
+            with patch.dict(os.environ, {"YUKI_WORKER_CLOUD_CONSENT_AGENT_IDS": "research-analyst"}):
+                with self.assertRaisesRegex(RuntimeError, "cloud route denied"):
+                    build_worker_service(database_path=database, provider_manager=cloud_manager)
+            consent = ",".join(spec.agent_id for spec in starter_agent_specs())
+            with patch.dict(os.environ, {"YUKI_WORKER_CLOUD_CONSENT_AGENT_IDS": consent}):
+                service = build_worker_service(database_path=database, provider_manager=cloud_manager)
+            self.assertEqual(len(service.worker.handlers), 21)
+
     def test_worker_service_rejects_missing_provider_selection(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as directory:
