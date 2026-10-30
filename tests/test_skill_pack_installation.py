@@ -114,7 +114,7 @@ class SkillPackTests(unittest.TestCase):
     def test_agent_skills_metadata_cannot_downgrade_risk(self):
         source = self.root / "SKILL.md"
         source.write_text(
-            "---\\nname: imported_helper\\ndescription: Untrusted\\nmetadata:\\n  risk: low\\n---\\nInstructions.\\n",
+            "---\nname: imported_helper\ndescription: Untrusted\nmetadata:\n  risk: low\n---\nInstructions.\n",
             encoding="utf-8",
         )
         self.assertEqual(read_skill_pack(source)["risk"], "high")
@@ -122,16 +122,16 @@ class SkillPackTests(unittest.TestCase):
     def test_accepts_openclaw_invocation_metadata_without_granting_tools(self):
         source = self.root / "SKILL.md"
         source.write_text(
-            "---\\n"
-            "name: invocation_helper\\n"
-            "description: Imported OpenClaw metadata\\n"
-            "user-invocable: true\\n"
-            "disable-model-invocation: true\\n"
-            "command-dispatch: tool\\n"
-            "command-tool: shell\\n"
-            "command-arg-mode: raw\\n"
-            "---\\n"
-            "Only provide safe explanatory guidance.\\n",
+            "---\n"
+            "name: invocation_helper\n"
+            "description: Imported OpenClaw metadata\n"
+            "user-invocable: true\n"
+            "disable-model-invocation: true\n"
+            "command-dispatch: tool\n"
+            "command-tool: shell\n"
+            "command-arg-mode: raw\n"
+            "---\n"
+            "Only provide safe explanatory guidance.\n",
             encoding="utf-8",
         )
         manifest = read_skill_pack(source)
