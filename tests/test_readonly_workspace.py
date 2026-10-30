@@ -14,6 +14,8 @@ class ReadOnlyWorkspaceTests(unittest.TestCase):
         (self.root / "README.md").write_text("# Yuki\\n", encoding="utf-8")
         (self.root / ".env").write_text("SECRET=value", encoding="utf-8")
         (self.root / "notes.pem").write_text("private key", encoding="utf-8")
+        (self.root / "credentials.json").write_text("cloud secret", encoding="utf-8")
+        (self.root / "Secrets.JSON").write_text("another secret", encoding="utf-8")
         (self.root / "src").mkdir()
         (self.root / "src" / "main.py").write_text("print('hello')\\n", encoding="utf-8")
         self.workspace = ReadOnlyWorkspace(self.root, max_read_bytes=1024)
@@ -25,6 +27,8 @@ class ReadOnlyWorkspaceTests(unittest.TestCase):
         self.assertIn("src", names)
         self.assertNotIn(".env", names)
         self.assertNotIn("notes.pem", names)
+        self.assertNotIn("credentials.json", names)
+        self.assertNotIn("Secrets.JSON", names)
         result = self.workspace.read_file("src/main.py")
         self.assertIn("print('hello')", result["content"])
 
@@ -46,6 +50,10 @@ class ReadOnlyWorkspaceTests(unittest.TestCase):
     def test_rejects_sensitive_files_and_oversized_content(self):
         with self.assertRaises(PermissionError):
             self.workspace.read_file(".env")
+        with self.assertRaises(PermissionError):
+            self.workspace.read_file("credentials.json")
+        with self.assertRaises(PermissionError):
+            self.workspace.read_file("Secrets.JSON")
         (self.root / "large.txt").write_text("x" * 1025, encoding="utf-8")
         with self.assertRaises(ValueError):
             self.workspace.read_file("large.txt")
