@@ -186,7 +186,7 @@ def make_handler(
             }
             if include_detail:
                 result.update({
-                    "definition": task.definition,
+                    "definition": task.steps,
                     "result": task.result,
                     "error_code": task.error_code,
                 })
