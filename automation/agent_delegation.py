@@ -56,7 +56,9 @@ class AgentDelegationCoordinator:
         return self.runtime.enqueue(
             actor_id=self.actor_id,
             idempotency_key="agent-delegation:" + request.request_id,
-            name=f"agent-{target.agent_id}-{request.request_id}",
+            # Workflow names are capped at 100 characters; keep the stable
+            # agent prefix used by SpecialistTaskWorker._agent_id().
+            name=f"agent-{target.agent_id}-delegated",
             steps=[{
                 "name": "specialist-output",
                 "action": "emit",
