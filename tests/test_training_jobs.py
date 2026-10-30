@@ -49,4 +49,17 @@ class TrainingQueueTests(unittest.TestCase):
         reopened=TrainingJobQueue(self.path,dataset_registry=self.registry)
         self.assertEqual(reopened.get(j.job_id).dataset_revision,"a"*40)
 
+
+    def test_durable_dataset_approval_can_authorize_job_after_restart(self):
+        approval_db = self.path.parent / "approvals.sqlite"
+        key = b"test-signing-key-that-is-at-least-32-bytes"
+        durable_registry = DatasetRegistry(database_path=approval_db, signing_key=key)
+        durable_registry.approve(self.approval)
+        reopened_registry = DatasetRegistry(database_path=approval_db, signing_key=key)
+        reopened_queue = TrainingJobQueue(self.path.parent / "durable-jobs.sqlite",
+                                          dataset_registry=reopened_registry)
+        job = reopened_queue.create(approval=self.approval, base_model="org/model",
+                                    method="lora", requested_ram_gb=4)
+        self.assertEqual(job.state, "queued")
+
 if __name__=="__main__": unittest.main()
