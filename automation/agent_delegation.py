@@ -38,8 +38,6 @@ class AgentDelegationCoordinator:
         by the durable task store's request digest.
         """
         target = self.registry.authorize_delegation(request)
-        if len(request.objective) + (len(request.input_payload) + 1 if request.input_payload else 0) > 2_000:
-            raise ValueError("combined delegation input exceeds the specialist worker's 2000-character limit.")
         if not target.capabilities.issuperset(request.required_capabilities):
             raise PermissionError("target agent no longer satisfies required capabilities.")
         argument = f"Parent task ID: {request.task_id}\\nObjective: {request.objective.strip()}"
