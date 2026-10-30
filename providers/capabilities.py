@@ -96,9 +96,10 @@ class CapabilityRegistry:
     ) -> ProviderCapabilities:
         """Select a ready adapter without probing networks or silently changing policy.
 
-        Preference is a caller-supplied ordering. Providers outside that list are
-        considered afterward alphabetically. Cloud adapters are excluded unless
-        the caller explicitly opts in.
+        Preference is a caller-supplied ordering. By default, providers outside
+        that list are considered afterward alphabetically; strict_preference turns
+        the list into an allowlist. Cloud adapters are excluded unless the caller
+        explicitly opts in.
         """
         if isinstance(required, (str, bytes)):
             raise TypeError("required must be an iterable of capability names, not text")
