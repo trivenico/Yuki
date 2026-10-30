@@ -41,6 +41,27 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertNotEqual(first.approval_session_id, second.approval_session_id)
             self.assertGreaterEqual(len(first.approval_session_id), 32)
 
+    def test_local_operator_can_cancel_a_plan_through_authorized_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="local-plan-cancel",
+                subtasks=[SubtaskSpec("research", "Collect public sources", ("research",))],
+            )
+            plan = built.coordinator.advance(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            task_id = plan.subtasks[0].task_id
+            cancelled = built.coordinator.cancel_plan(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            self.assertEqual(cancelled.subtasks[0].status, "cancelled")
+            self.assertEqual(
+                built.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id).state,
+                "cancelled",
+            )
+
     def test_operator_can_list_but_unknown_actor_is_denied(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())
