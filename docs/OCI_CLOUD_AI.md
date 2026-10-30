@@ -50,6 +50,40 @@ and sends the `openai-project` header with the project OCID. The endpoint hostna
 
 This first adapter uses the Chat Completions-compatible interface. Oracle now recommends the Responses API for agentic workloads; it supports stateful conversations and OCI-supported tools including file search, code interpreter, function calling, and MCP calling. A separate Responses API adapter should be added before using OCI-managed agent tools; do not assume Chat Completions provides those capabilities. See Oracle's [OpenAI-compatible endpoints](https://docs.oracle.com/en-us/iaas/Content/generative-ai/openai-compatible-api.htm) and [Responses API](https://docs.oracle.com/en-us/iaas/Content/generative-ai/responses-api.htm).
 
+## Explicit multi-model routing in Yuki
+
+Yuki now includes a `multi` provider mode that can configure both OCI-managed inference and a separately hosted OpenAI-compatible model server at the same time. Task names are explicitly mapped to providers; the router does not silently fall back when a selected provider is unavailable.
+
+Example non-secret configuration:
+
+```yaml
+provider: multi
+provider_default_route: oci_managed
+provider_routes:
+  reasoning: oci_managed
+  general: oci_managed
+  coding: self_hosted
+  code_review: self_hosted
+```
+
+Managed-model environment (secrets must come from OCI Vault or a server secret manager):
+
+- `YUKI_OCI_REGION=eu-frankfurt-1`
+- `YUKI_OCI_MODEL=<model-id-available-in-region>`
+- `YUKI_OCI_PROJECT_OCID=<project-ocid>`
+- `OCI_GENAI_API_KEY=<secret>`
+
+Self-hosted inference environment:
+
+- `YUKI_SELF_HOSTED_MODEL=<exact-model-id>`
+- `YUKI_SELF_HOSTED_BASE_URL=https://<private-inference-host>/v1`
+- `YUKI_CLOUD_ALLOWED_HOSTS=<exact-inference-hostname>`
+- `YUKI_SELF_HOSTED_API_KEY=<secret>`
+
+The self-hosted endpoint must use HTTPS and its exact hostname must be allow-listed. Do not expose the inference server directly to the public internet; place it in a private subnet and allow ingress only from the Yuki gateway. The current adapter uses a bearer key for the self-hosted endpoint. A private DNS hostname with a valid TLS certificate is supported; raw private IP URLs are deliberately rejected. Configure routes only for task categories whose data policy permits that provider.
+
+The `multi` router validates that every configured task route references a provider that is actually configured. It never retries a failed request against another provider, because silent cross-provider fallback could leak private prompts or change model behavior. Add an explicit fallback policy only after privacy classification, consent, and audit are wired into the gateway.
+
 ## Hosted models versus Yuki-owned models
 
 There are two different operating modes:
