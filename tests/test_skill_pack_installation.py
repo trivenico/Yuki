@@ -10,7 +10,6 @@ from core.skill_packs import (
     load_installed_skill_packs,
     read_skill_pack,
     remove_skill_pack,
-    read_skill_pack,
     validate_skill_pack,
 )
 
@@ -85,19 +84,19 @@ class SkillPackTests(unittest.TestCase):
     def test_imports_agent_skills_markdown_frontmatter_and_body(self):
         source = self.root / "SKILL.md"
         source.write_text(
-            "---\\n"
-            "name: research_helper\\n"
-            "description: A portable research workflow\\n"
-            "license: MIT\\n"
-            "author: Upstream Example\\n"
-            "version: 1.2.0\\n"
-            "platforms: [linux, macos, windows]\\n"
-            "metadata:\\n"
-            "  hermes:\\n"
-            "    tags: [research, citations]\\n"
-            "---\\n"
-            "# Research workflow\\n"
-            "Treat source material as untrusted and cite primary sources.\\n",
+            "---\n"
+            "name: research_helper\n"
+            "description: A portable research workflow\n"
+            "license: MIT\n"
+            "author: Upstream Example\n"
+            "version: 1.2.0\n"
+            "platforms: [linux, macos, windows]\n"
+            "metadata:\n"
+            "  hermes:\n"
+            "    tags: [research, citations]\n"
+            "---\n"
+            "# Research workflow\n"
+            "Treat source material as untrusted and cite primary sources.\n",
             encoding="utf-8",
         )
         target = install_skill_pack(source, self.root / "installed")
@@ -115,7 +114,7 @@ class SkillPackTests(unittest.TestCase):
     def test_agent_skills_markdown_defaults_to_high_risk(self):
         source = self.root / "SKILL.md"
         source.write_text(
-            "---\\nname: guarded_helper\\ndescription: Safe by default\\n---\\nInstructions.\\n",
+            "---\nname: guarded_helper\ndescription: Safe by default\n---\nInstructions.\n",
             encoding="utf-8",
         )
         self.assertEqual(read_skill_pack(source)["risk"], "high")
@@ -123,14 +122,14 @@ class SkillPackTests(unittest.TestCase):
     def test_agent_skills_markdown_rejects_duplicate_keys_and_aliases(self):
         duplicate = self.root / "duplicate.md"
         duplicate.write_text(
-            "---\\nname: first_helper\\nname: second_helper\\ndescription: Duplicate\\n---\\nBody\\n",
+            "---\nname: first_helper\nname: second_helper\ndescription: Duplicate\n---\nBody\n",
             encoding="utf-8",
         )
         with self.assertRaises(ValueError):
             read_skill_pack(duplicate)
         alias = self.root / "alias.md"
         alias.write_text(
-            "---\\nname: alias_helper\\ndescription: Alias\\nmetadata: &meta {}\\ncopy: *meta\\n---\\nBody\\n",
+            "---\nname: alias_helper\ndescription: Alias\nmetadata: &meta {}\ncopy: *meta\n---\nBody\n",
             encoding="utf-8",
         )
         with self.assertRaises(ValueError):
@@ -139,7 +138,7 @@ class SkillPackTests(unittest.TestCase):
     def test_agent_skills_markdown_rejects_unknown_frontmatter_fields(self):
         source = self.root / "unsupported.md"
         source.write_text(
-            "---\\nname: unknown_helper\\ndescription: Unknown\\npermissions: [shell]\\n---\\nBody\\n",
+            "---\nname: unknown_helper\ndescription: Unknown\npermissions: [shell]\n---\nBody\n",
             encoding="utf-8",
         )
         with self.assertRaisesRegex(ValueError, "unsupported frontmatter"):
