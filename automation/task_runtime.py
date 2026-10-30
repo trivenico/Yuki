@@ -86,6 +86,20 @@ class TaskRuntime:
                                          expected_version=run.version)
         return self._record(self.store.get(run.run_id))
 
+    def list_tasks(
+        self, *, actor_id: str, state: str | None = None, limit: int = 50,
+    ) -> list[TaskRecord]:
+        """List recent tasks for an explicitly authorized supervisor/dashboard.
+
+        Listing is a separate capability from reading a known task ID because it
+        exposes task existence and metadata across the runtime. Results are newest
+        first and bounded by the store to at most 100 records.
+        """
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:list", ""):
+            raise PermissionError("task listing is not authorized.")
+        return [self._record(run) for run in self.store.list_runs(state=state, limit=limit)]
+
     def get(self, *, actor_id: str, task_id: str) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:read", task_id):
