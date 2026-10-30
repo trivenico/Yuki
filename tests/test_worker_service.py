@@ -37,7 +37,7 @@ class WorkerServiceTests(unittest.TestCase):
                 provider_manager=FakeProviderManager(),
             )
             self.assertEqual(service.runtime.store.database_path, database)
-            self.assertEqual(len(service.worker.handlers), 21)
+            self.assertEqual(len(service.worker.handlers), 100)
             self.assertIsNotNone(service.supervisor)
             registry = service.runtime.store
             self.assertIsInstance(registry, WorkflowRunStore)
@@ -82,7 +82,7 @@ class WorkerServiceTests(unittest.TestCase):
             consent = ",".join(spec.agent_id for spec in starter_agent_specs())
             with patch.dict(os.environ, {"YUKI_WORKER_CLOUD_CONSENT_AGENT_IDS": consent}):
                 service = build_worker_service(database_path=database, provider_manager=cloud_manager)
-            self.assertEqual(len(service.worker.handlers), 21)
+            self.assertEqual(len(service.worker.handlers), 100)
 
     def test_worker_service_rejects_missing_provider_selection(self):
         from unittest.mock import patch
