@@ -42,6 +42,7 @@ class ConversationMemoryStore:
         self, database_path: str, *,
         authorize: Callable[[str, str, str], bool],
         embedding_fn: Callable[[str], Iterable[float]] | None = None,
+        embedding_model_id: str = "default",
     ) -> None:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
@@ -53,6 +54,9 @@ class ConversationMemoryStore:
         if embedding_fn is not None and not callable(embedding_fn):
             raise TypeError("embedding_fn must be callable.")
         self.embedding_fn = embedding_fn
+        if not isinstance(embedding_model_id, str) or not embedding_model_id.strip() or len(embedding_model_id) > 200:
+            raise ValueError("embedding_model_id must be non-empty bounded text.")
+        self.embedding_model_id = embedding_model_id.strip()
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_memories (
@@ -72,6 +76,20 @@ class ConversationMemoryStore:
                 CREATE INDEX IF NOT EXISTS idx_conversation_memory_owner
                 ON conversation_memories(owner_id, memory_id)
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_memory_embeddings (
+                    owner_id TEXT NOT NULL,
+                    memory_id INTEGER NOT NULL,
+                    model_id TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(owner_id, memory_id, model_id),
+                    FOREIGN KEY(memory_id) REFERENCES conversation_memories(memory_id)
+                        ON DELETE CASCADE
+                )
+            """)
+            db.execute("PRAGMA foreign_keys=ON")
 
     @contextmanager
     def _connect(self):
@@ -202,17 +220,34 @@ class ConversationMemoryStore:
             return self.search(actor_id=actor_id, owner_id=owner_id, query=query, limit=limit)
         with self._connect() as db:
             rows = db.execute("SELECT * FROM conversation_memories WHERE owner_id=? ORDER BY memory_id DESC LIMIT ?", (owner_id, _MAX_RECORDS)).fetchall()
-        ranked = []
-        for row in rows:
-            try:
-                vector = self._normalized_vector(self.embedding_fn(row["content"]))
-            except Exception:
+            cached = {int(item["memory_id"]): item for item in db.execute(
+                "SELECT memory_id, dimensions, vector_json FROM conversation_memory_embeddings WHERE owner_id=? AND model_id=?",
+                (owner_id, self.embedding_model_id),
+            ).fetchall()}
+            ranked = []
+            for row in rows:
+                item = cached.get(int(row["memory_id"]))
                 vector = None
-            if vector is None or len(vector) != len(query_vector):
-                continue
-            score = sum(a * b for a, b in zip(query_vector, vector))
-            if score > 0:
-                ranked.append((score, self._row(row)))
+                if item is not None:
+                    try:
+                        vector = self._normalized_vector(json.loads(item["vector_json"]))
+                        if vector is not None and len(vector) != int(item["dimensions"]):
+                            vector = None
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        vector = None
+                if vector is None:
+                    try:
+                        vector = self._normalized_vector(self.embedding_fn(row["content"]))
+                    except Exception:
+                        vector = None
+                    if vector is not None:
+                        db.execute("INSERT OR REPLACE INTO conversation_memory_embeddings(owner_id, memory_id, model_id, dimensions, vector_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (owner_id, row["memory_id"], self.embedding_model_id, len(vector), json.dumps(vector, separators=(",", ":")), datetime.now(timezone.utc).isoformat()))
+                if vector is None or len(vector) != len(query_vector):
+                    continue
+                score = sum(a * b for a, b in zip(query_vector, vector))
+                if score > 0:
+                    ranked.append((score, self._row(row)))
         ranked.sort(key=lambda item: (item[0], item[1].memory_id), reverse=True)
         if ranked:
             return [item for _, item in ranked[:limit]]
