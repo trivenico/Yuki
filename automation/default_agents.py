@@ -1,4 +1,4 @@
-"""Curated starter fleet of 21 bounded specialist-agent profiles.
+"""Curated starter fleet of 100 bounded agent profiles (99 specialists plus coordinator).
 
 These profiles share Yuki's existing four text-only worker roles. They are
 metadata/configuration, not 20 independent runtimes or grants of tool access.
@@ -114,7 +114,7 @@ _STARTER_PROFILES = (
 
 
 def starter_agent_specs() -> tuple[AgentSpec, ...]:
-    """Return 20 specialists followed by a coordinator allowed to delegate to them."""
+    """Return 99 specialists followed by a coordinator allowed to delegate to them."""
     specialists = tuple(
         AgentSpec(
             agent_id=agent_id,
