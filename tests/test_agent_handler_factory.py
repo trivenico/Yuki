@@ -10,10 +10,14 @@ from core.agent_contracts import AgentSpec
 
 
 class FakeProvider:
+    def __init__(self):
+        self.prompts = []
+
     def is_available(self):
         return True
 
     def generate(self, prompt):
+        self.prompts.append(prompt)
         return "specialist response"
 
 
@@ -60,7 +64,7 @@ class AgentHandlerFactoryTests(unittest.TestCase):
 
         handlers = build_agent_handlers(manager, self.registry)
         self.assertEqual(handlers["python-specialist"]("Design a parser"), "specialist response")
-        prompt = manager.create_routed_adapter.return_value.generate.call_args.args[0]
+        prompt = provider.prompts[0]
         self.assertIn("python-specialist", prompt)
         self.assertIn("Designs Python modules", prompt)
         self.assertIn("python:design, test:design", prompt)
