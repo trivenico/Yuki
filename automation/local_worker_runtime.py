@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.specialist_worker import (
     SpecialistTaskWorker,
     build_provider_specialist_handlers,
@@ -28,6 +29,7 @@ _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 class LocalWorkerRuntime:
     runtime: TaskRuntime
     supervisor: WorkerSupervisor
+    coordinator: SpecialistAgentCoordinator
     operator_actor_id: str
 
 
@@ -54,9 +56,27 @@ def build_local_worker_runtime(
             return action in _WORKER_ACTIONS
         return False
 
+    database_path = str(root / "yuki_tasks.sqlite3")
     runtime = TaskRuntime(
-        WorkflowRunStore(str(root / "yuki_tasks.sqlite3")),
+        WorkflowRunStore(database_path),
         authorize=authorize,
+    )
+    coordinator = SpecialistAgentCoordinator(
+        runtime,
+        database_path,
+        [
+            SpecialistAgent(
+                agent_id=role,
+                name=f"Yuki {role.title()} Specialist",
+                capabilities=frozenset({role}),
+                action="emit",
+            )
+            for role in ("research", "coding", "testing", "reporting")
+        ],
+        authorize=lambda actor_id, action, _resource: (
+            actor_id == LOCAL_OPERATOR_ACTOR
+            and action in {"agent:plan", "agent:dispatch", "agent:read"}
+        ),
     )
     handlers = build_provider_specialist_handlers(provider)
     worker = SpecialistTaskWorker(
@@ -74,5 +94,6 @@ def build_local_worker_runtime(
     return LocalWorkerRuntime(
         runtime=runtime,
         supervisor=supervisor,
+        coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
     )
