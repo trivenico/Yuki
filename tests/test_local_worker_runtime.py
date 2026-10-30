@@ -32,6 +32,50 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             )
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
 
+    def test_local_runtime_accepts_per_specialist_provider_preferences(self):
+        class RoutedManager:
+            def __init__(self):
+                self.selected = FakeProvider()
+                self.calls = []
+            def create_selected_adapter(self):
+                return self.selected
+            def create_routed_adapter(self, *, required, preference, allow_cloud):
+                self.calls.append((required, preference, allow_cloud))
+                return FakeProvider()
+
+        manager = RoutedManager()
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(
+                directory,
+                provider_manager=manager,
+                provider_preferences={
+                    "research": ("ollama",),
+                    "coding": ("openai",),
+                },
+                allow_cloud=True,
+            )
+            self.assertEqual(
+                set(built.supervisor.worker.handlers),
+                {"research", "coding", "testing", "reporting"},
+            )
+            self.assertEqual(manager.calls, [
+                (("text",), ("ollama",), True),
+                (("text",), ("openai",), True),
+            ])
+
+    def test_local_runtime_rejects_ambiguous_provider_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(directory)
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(), provider_manager=object(),
+                )
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(), provider_preferences={"research": ("ollama",)},
+                )
+
     def test_operator_approval_is_allowed_and_session_is_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             first = build_local_worker_runtime(directory, FakeProvider())
