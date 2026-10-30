@@ -1,14 +1,15 @@
 """Minimal authenticated HTTP boundary for the Yuki Cloud Gateway.
 
 Run behind a TLS-terminating reverse proxy. Bind to loopback by default.
-Enrollment/revocation require a high-entropy operator bootstrap secret; never
-expose this bootstrap API as an unauthenticated public registration endpoint.
+Bootstrap enrollment is disabled unless explicitly enabled for a short,
+operator-controlled provisioning window.
 """
 from __future__ import annotations
 
 import hmac
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -16,6 +17,52 @@ from cloud.device_registry import DeviceCredentialError, DeviceCredentialStore
 
 
 MAX_BODY_BYTES = 16 * 1024
+MAX_WORKERS = 32
+REQUEST_TIMEOUT_SECONDS = 10
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threaded HTTP server with bounded concurrency and socket read timeouts."""
+
+    daemon_threads = True
+    request_queue_size = 64
+
+    def __init__(self, server_address, handler, *, max_workers=MAX_WORKERS):
+        if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 64:
+            raise ValueError("max_workers must be an integer between 1 and 64.")
+        self._request_slots = threading.BoundedSemaphore(max_workers)
+        super().__init__(server_address, handler)
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        request.settimeout(REQUEST_TIMEOUT_SECONDS)
+        return request, client_address
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\\r\\n"
+                    b"Connection: close\\r\\n"
+                    b"Content-Length: 0\\r\\n"
+                    b"Retry-After: 1\\r\\n\\r\\n"
+                )
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def _bearer(header):
@@ -27,9 +74,11 @@ def _bearer(header):
     return token
 
 
-def make_handler(store, admin_token):
+def make_handler(store, admin_token, *, bootstrap_enabled=False):
     if not isinstance(admin_token, str) or len(admin_token) < 32:
         raise ValueError("YUKI_GATEWAY_ADMIN_TOKEN must contain at least 32 characters.")
+    if not isinstance(bootstrap_enabled, bool):
+        raise ValueError("bootstrap_enabled must be a boolean.")
 
     class GatewayHandler(BaseHTTPRequestHandler):
         server_version = "YukiGateway"
@@ -46,17 +95,21 @@ def make_handler(store, admin_token):
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(encoded)
+            self.close_connection = True
 
         def _body(self):
             raw_length = self.headers.get("Content-Length", "")
-            if not raw_length.isdigit():
+            if not raw_length.isascii() or not raw_length.isdecimal():
                 raise ValueError("A valid Content-Length is required.")
             length = int(raw_length)
             if length > MAX_BODY_BYTES:
                 raise OverflowError
             raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError("Incomplete request body.")
             value = json.loads(raw.decode("utf-8"))
             if not isinstance(value, dict):
                 raise ValueError("JSON body must be an object.")
@@ -102,7 +155,7 @@ def make_handler(store, admin_token):
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if path != "/v1/admin/devices":
+            if path != "/v1/admin/devices" or not bootstrap_enabled:
                 self._json(404, {"error": "not_found"})
                 return
             if not self._is_admin():
@@ -131,7 +184,7 @@ def make_handler(store, admin_token):
         def do_DELETE(self):
             path = urlsplit(self.path).path
             prefix = "/v1/admin/devices/"
-            if not path.startswith(prefix) or not path[len(prefix):] or "/" in path[len(prefix):]:
+            if not bootstrap_enabled or not path.startswith(prefix) or not path[len(prefix):] or "/" in path[len(prefix):]:
                 self._json(404, {"error": "not_found"})
                 return
             if not self._is_admin():
@@ -157,10 +210,18 @@ def make_handler(store, admin_token):
     return GatewayHandler
 
 
-def create_server(*, database_path, admin_token, host="127.0.0.1", port=8765):
+def create_server(
+    *,
+    database_path,
+    admin_token,
+    host="127.0.0.1",
+    port=8765,
+    bootstrap_enabled=False,
+    max_workers=MAX_WORKERS,
+):
     store = DeviceCredentialStore(database_path)
-    handler = make_handler(store, admin_token)
-    return ThreadingHTTPServer((host, int(port)), handler)
+    handler = make_handler(store, admin_token, bootstrap_enabled=bootstrap_enabled)
+    return BoundedThreadingHTTPServer((host, int(port)), handler, max_workers=max_workers)
 
 
 def main():
@@ -168,11 +229,13 @@ def main():
     database_path = os.environ.get("YUKI_GATEWAY_DATABASE", "/var/lib/yuki/gateway.sqlite3")
     host = os.environ.get("YUKI_GATEWAY_HOST", "127.0.0.1")
     port = int(os.environ.get("YUKI_GATEWAY_PORT", "8765"))
+    bootstrap_enabled = os.environ.get("YUKI_GATEWAY_BOOTSTRAP_ENABLED", "false").lower() == "true"
     server = create_server(
         database_path=database_path,
         admin_token=admin_token,
         host=host,
         port=port,
+        bootstrap_enabled=bootstrap_enabled,
     )
     try:
         server.serve_forever(poll_interval=0.5)
