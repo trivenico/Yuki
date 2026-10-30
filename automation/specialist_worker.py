@@ -180,6 +180,16 @@ class SpecialistTaskWorker:
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
             output = handler(argument)
+            # A running handler may not be interruptible (for example, an in-flight
+            # provider request). If an operator cancels while it runs, do not try to
+            # complete the now-terminal task or turn cancellation into a pool error.
+            current = self.runtime.store.get(claimed.run_id)
+            if current is None:
+                raise RuntimeError("claimed task disappeared.")
+            if current.state == "cancelled":
+                return self.runtime._record(current)
+            if current.state != "running" or current.lease_owner != self.worker_id:
+                raise RuntimeError("task is no longer owned by this worker.")
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
