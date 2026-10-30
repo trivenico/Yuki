@@ -46,13 +46,13 @@ class ProviderFactoryTests(unittest.TestCase):
         with patch("providers.factory.create_oci_iam_auth", return_value=object()) as auth_factory:
             with patch("providers.factory.OciIamProvider") as provider_factory:
                 create_provider(
-                {"provider": "oci_iam"},
-                environ={
-                    "YUKI_OCI_REGION": "eu-frankfurt-1",
-                    "YUKI_OCI_MODEL": "meta.llama",
-                    "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
-                    "YUKI_OCI_AUTH_MODE": "instance_principal",
-                },
+                    {"provider": "oci_iam"},
+                    environ={
+                        "YUKI_OCI_REGION": "eu-frankfurt-1",
+                        "YUKI_OCI_MODEL": "meta.llama",
+                        "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
+                        "YUKI_OCI_AUTH_MODE": "instance_principal",
+                    },
                 )
         auth_factory.assert_called_once_with(
             "instance_principal", config_file=None, profile_name="DEFAULT"
