@@ -100,7 +100,7 @@ resource "oci_core_instance" "yuki" {
   }
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
-    user_data            = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    user_data          = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
       instance_name = var.instance_name
       ssh_cidr      = var.ssh_cidr
     }))
