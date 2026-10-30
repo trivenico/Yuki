@@ -438,6 +438,9 @@ class SpecialistAgentCoordinator:
         """Create only dependency-ready tasks; workers still execute them separately."""
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
+        # Refresh persisted operator changes before dispatch. A coordinator that
+        # has been running for a long time must not keep using stale enablement.
+        self._refresh_agent_registry()
         # Never hold a coordinator SQLite write lock while calling TaskRuntime:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
