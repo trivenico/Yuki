@@ -75,6 +75,20 @@ class DelegationTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.registry.authorize_delegation(request)
 
+    def test_default_registry_has_no_product_level_agent_cap(self):
+        registry = AgentRegistry()
+        for index in range(150):
+            registry.register(AgentSpec(f"agent-{index}", "research", "Research"))
+        self.assertEqual(len(registry.list_agents()), 150)
+
+    def test_unlimited_agent_concurrency_and_timeout_are_valid(self):
+        spec = AgentSpec(
+            "always-on", "research", "Continuous personal agent",
+            max_concurrency=None, timeout_seconds=None,
+        )
+        self.assertIsNone(spec.max_concurrency)
+        self.assertIsNone(spec.timeout_seconds)
+
     def test_registry_capacity_and_duplicate_ids(self):
         tiny = AgentRegistry(max_agents=1)
         tiny.register(AgentSpec("first", "research", "First"))
