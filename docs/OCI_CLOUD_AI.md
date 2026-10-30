@@ -40,6 +40,8 @@ Configure these environment variables in the Yuki server process:
 - `YUKI_OCI_PROJECT_OCID`: Generative AI project OCID.
 - `OCI_GENAI_API_KEY`: OCI Generative AI API key secret.
 
+OCI documents API-key access for a limited set of regions (Germany Central, India South, Japan Central, US East, US Midwest, and US West). Do not assume that every OCI region supports this API-key flow. For production workloads hosted inside OCI, prefer OCI IAM/resource-principal authentication; Yuki's current adapter does not implement OCI request signing yet. See Oracle's [API key region requirements](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) and [IAM authentication guide](https://docs.oracle.com/en-us/iaas/Content/generative-ai/oci-genai-auth.htm).
+
 Select `oci` as the provider in the server configuration. The adapter builds:
 
 `https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1`
@@ -55,7 +57,11 @@ There are two different operating modes:
 1. **OCI-hosted managed models** — select models Oracle makes available in the target region. Oracle manages model serving. Availability, model list, features, and prices vary by region/project.
 2. **Yuki-hosted open-weight models** — deploy model weights we are licensed to use on OCI GPU compute or a dedicated AI cluster. Yuki owns the serving stack, model routing, versioning, evaluation, and deployment lifecycle. We must follow each model's licence and usage terms.
 
+OCI Generative AI can host supported pretrained, custom, and imported models on dedicated AI clusters. Oracle also documents importing models from Object Storage or Hugging Face and hosting them on a dedicated cluster. A self-managed OCI Compute GPU instance can instead run a serving stack such as vLLM or TGI, subject to the model's supported runtime and hardware needs.
+
 A sensible first self-hosted candidate evaluation set is a compact instruct model for low-cost routing, a strong coding model, and a larger reasoning/general model. Candidate families include Qwen, DeepSeek, and Mistral; pin exact model revisions and verify licence, hardware fit, context length, quantization quality, and benchmark performance before deployment. Do not assume all models in a family have identical licences or commercial terms.
+
+OpenAI and Anthropic do not publish the proprietary weights behind their flagship GPT and Claude models for us to self-host. OCI's currently documented model catalogue includes specific offerings such as Meta Llama, OpenAI gpt-oss, and xAI Grok; it does not mean that proprietary GPT or Claude weights are available. Check exact model and region availability before selecting the deployment.
 
 ## 24/7 service design
 
