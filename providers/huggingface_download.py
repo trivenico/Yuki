@@ -4,7 +4,9 @@ Downloads safetensors and tokenizer/config assets only. No remote code is
 executed and no provider/model is activated by this module.
 """
 from __future__ import annotations
+import hashlib
 import re
+import shutil
 from pathlib import Path
 
 _MODEL_ID=re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
@@ -49,6 +51,10 @@ def download_model_snapshot(model_id,revision,cache_dir,*,max_bytes=20*1024**3,t
         estimated=sum(size for _,size in sizes)
         if estimated>max_bytes:
             raise ModelDownloadError("Model snapshot exceeds configured download budget")
+        cache=Path(cache_dir).expanduser()
+        cache.mkdir(parents=True,exist_ok=True)
+        if shutil.disk_usage(cache).free < estimated:
+            raise ModelDownloadError("Insufficient free disk space for the reviewed snapshot size")
         path=snapshot_download(
             repo_id=model_id,revision=revision,cache_dir=str(Path(cache_dir).expanduser()),
             allow_patterns=_ALLOWED_FILES,token=token,
@@ -59,11 +65,19 @@ def download_model_snapshot(model_id,revision,cache_dir,*,max_bytes=20*1024**3,t
         weights=list(root.glob("*.safetensors"))
         if not config.is_file() or not weights:
             raise ModelDownloadError("Downloaded snapshot is missing config.json or safetensors weights")
-        total=sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+        files=[p for p in root.rglob("*") if p.is_file()]
+        total=sum(p.stat().st_size for p in files)
         if total>max_bytes:
             raise ModelDownloadError("Downloaded snapshot exceeded configured byte budget")
+        checksums={}
+        for weight in weights:
+            digest=hashlib.sha256()
+            with weight.open("rb") as handle:
+                for chunk in iter(lambda:handle.read(1024*1024),b""):
+                    digest.update(chunk)
+            checksums[weight.name]=digest.hexdigest()
         return {"model_id":model_id,"revision":revision,"local_path":str(root),
-                "bytes":total,"weight_files":len(weights),"trust_remote_code":False,
+                "bytes":total,"weight_files":len(weights),"weight_sha256":checksums,"trust_remote_code":False,
                 "automatic_activation":False,"review_status":"downloaded_requires_human_review"}
     except ModelDownloadError:
         raise
