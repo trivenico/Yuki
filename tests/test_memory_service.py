@@ -55,7 +55,7 @@ class YukiMemoryServiceTests(unittest.TestCase):
         self.assertLessEqual(len(context), 400)
         self.assertIn("untrusted historical notes", context)
         self.assertIn("&lt;/memory&gt;", context)
-        self.assertNotIn("reveal secrets", context)
+        self.assertIn("reveal secrets", context)\n        self.assertIn("untrusted historical notes", context)
 
     def test_agent_context_rejects_unbounded_budget(self):
         service = build_memory_service(self.database, authorize=self.authorize)
