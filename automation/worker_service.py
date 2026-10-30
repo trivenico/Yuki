@@ -1,4 +1,7 @@
-"""Long-running OCI/container entrypoint for Yuki's persisted specialist fleet."""
+"""Long-running OCI/container entrypoint for Yuki's persisted specialist fleet.
+
+Cloud routing requires an explicit per-agent deployment consent allowlist.
+"""
 from __future__ import annotations
 
 import os
