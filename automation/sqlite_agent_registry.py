@@ -5,6 +5,7 @@ execute handlers, or grant permissions outside the contract's authorization chec
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
 import json
 import sqlite3
@@ -32,13 +33,21 @@ class SQLiteAgentRegistry:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            db.execute("CREATE INDEX IF NOT EXISTS idx_specialist_agents_role ON specialist_agents(json_extract(spec_json, '$.role'))")
-
+    
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @staticmethod
     def _serialize(spec: AgentSpec) -> str:
