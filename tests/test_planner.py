@@ -27,6 +27,47 @@ class PlannerTests(unittest.TestCase):
             with self.subTest(goal=goal), self.assertRaises(ValueError):
                 planner.decompose(goal)
 
+    def test_validate_tasks_rejects_duplicate_ids_unknown_dependencies_and_cycles(self):
+        valid = PlanTask("one", "Collect evidence", ("research",))
+        cases = (
+            (valid, valid),
+            (PlanTask("one", "Collect evidence", ("research",), ("missing",)),),
+            (PlanTask("one", "First", ("research",), ("two",)), PlanTask("two", "Second", ("coding",), ("one",))),
+            (PlanTask("one", "Self reference", ("research",), ("one",)),),
+        )
+        for tasks in cases:
+            with self.subTest(tasks=tasks), self.assertRaises(ValueError):
+                Planner.validate_tasks(tasks)
+
+    def test_validate_tasks_rejects_invalid_shapes(self):
+        cases = (
+            (PlanTask("bad id", "Description", ("research",)),),
+            (PlanTask("one", " ", ("research",)),),
+            (PlanTask("one", "Description", ()),),
+            (PlanTask("one", "Description", ("Research",)),),
+            (PlanTask("one", "Description", ("research", "research")),),
+            (PlanTask("one", "Description", ("research",), requires_approval=1),),
+            ({"task_id": "one"},),
+        )
+        for tasks in cases:
+            with self.subTest(tasks=tasks), self.assertRaises(ValueError):
+                Planner.validate_tasks(tasks)
+
+    def test_validate_tasks_bounds_iterable_consumption(self):
+        consumed = []
+        tasks = (PlanTask(f"task-{index}", "Bounded task", ("research",)) for index in range(100))
+        def counted():
+            for index, task in enumerate(tasks):
+                consumed.append(index)
+                yield task
+        with self.assertRaises(ValueError):
+            Planner.validate_tasks(counted(), max_steps=3)
+        self.assertEqual(consumed, [0, 1, 2, 3])
+
+    def test_validate_tasks_accepts_valid_dag_without_reordering(self):
+        tasks = (PlanTask("research", "Gather evidence", ("research",)), PlanTask("build", "Implement scope", ("coding",), ("research",)), PlanTask("verify", "Verify implementation", ("testing",), ("build",)))
+        self.assertEqual(Planner.validate_tasks(tasks), tasks)
+
     def test_rejects_empty_and_oversized_goals(self):
         planner = Planner(max_goal_chars=8)
         for goal in ("", "   ", "x" * 9, None, 123):
