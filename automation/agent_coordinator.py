@@ -6,13 +6,14 @@ engine's approval policy. Workers remain responsible for execution.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
 import sqlite3
+from threading import RLock
 from typing import Callable, Iterable
 
 from automation.task_runtime import TaskRecord, TaskRuntime
@@ -95,6 +96,7 @@ class SpecialistAgentCoordinator:
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
         self.max_subtasks = max_subtasks
+        self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
         for agent in agents:
             self._validate_agent(agent)
@@ -238,18 +240,64 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("plan definition exceeds the byte limit.")
         return items
 
+    def register_agent(self, *, actor_id: str, agent: SpecialistAgent) -> None:
+        """Register a specialist at runtime after explicit registry authorization.
+
+        Registration changes routing metadata only; it does not execute code,
+        install skills, or grant permissions beyond the supplied manifest.
+        """
+        if not self._allowed(actor_id, "agent:register", getattr(agent, "agent_id", "")):
+            raise PermissionError("agent registration is not authorized.")
+        self._validate_agent(agent)
+        with self._agent_lock:
+            if agent.agent_id in self.agents:
+                raise AgentPlanError("agent ID is already registered.")
+            self.agents[agent.agent_id] = agent
+
+    def set_agent_enabled(self, *, actor_id: str, agent_id: str, enabled: bool) -> SpecialistAgent:
+        """Enable or disable a registered specialist with separate authorization."""
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a boolean.")
+        if not isinstance(agent_id, str) or not _ID.fullmatch(agent_id):
+            raise ValueError("agent_id must be a bounded identifier.")
+        if not self._allowed(actor_id, "agent:manage", agent_id):
+            raise PermissionError("agent management is not authorized.")
+        with self._agent_lock:
+            agent = self.agents.get(agent_id)
+            if agent is None:
+                raise KeyError(agent_id)
+            updated = replace(agent, enabled=enabled)
+            self.agents[agent_id] = updated
+            return updated
+
+    def list_agents(self, *, actor_id: str) -> tuple[dict, ...]:
+        """Return sanitized registry metadata; permissions are not disclosed."""
+        if not self._allowed(actor_id, "agent:read", ""):
+            raise PermissionError("agent registry access is not authorized.")
+        with self._agent_lock:
+            return tuple(
+                {
+                    "agent_id": agent.agent_id,
+                    "name": agent.name,
+                    "capabilities": tuple(sorted(agent.capabilities)),
+                    "enabled": agent.enabled,
+                }
+                for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
+            )
+
     def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
         needed_permissions = set(subtask.required_permissions)
-        candidates = [
-            agent for agent in self.agents.values()
-            if agent.enabled and needed <= agent.capabilities
-            and needed_permissions <= agent.permissions
-        ]
-        if not candidates:
-            raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
-        # Deterministic least-overprovisioned match, then stable ID tie-break.
-        return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+        with self._agent_lock:
+            candidates = [
+                agent for agent in self.agents.values()
+                if agent.enabled and needed <= agent.capabilities
+                and needed_permissions <= agent.permissions
+            ]
+            if not candidates:
+                raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
+            # Deterministic least-overprovisioned match, then stable ID tie-break.
+            return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
