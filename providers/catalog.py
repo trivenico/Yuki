@@ -74,7 +74,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         item = dict(entry)
         model_env = item.pop("model_env")
         key_env = item.pop("key_env")
-        model = _model(env.get(model_env, "")) if model_env else None
+        model = _model(env.get(model_env, cfg.get("oci_model", "") if item["name"] in {"oci_iam", "oci_responses"} else "")) if model_env else None
         if item["name"] == "huggingface_local":
             model = "local-checkpoint" if str(env.get("YUKI_HF_LOCAL_MODEL_PATH", cfg.get("hf_local_model_path", ""))).strip() else None
         elif item["name"] == "local_openai_compatible":
