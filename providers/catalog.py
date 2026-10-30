@@ -139,8 +139,13 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         elif item["name"] in {"oci_iam", "oci_responses"}:
             project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
             region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip()
-            ready = bool(model and configured_key and project.startswith("ocid1.generativeaiproject.") and region)
-            reason = "iam_project_region_and_model_configured" if ready else "oci_iam_project_region_or_model_missing"
+            # OCI IAM uses a signer/principal, not an API key. Catalog readiness
+            # describes non-secret configuration only; identity is not probed here.
+            ready = bool(model and project.startswith("ocid1.generativeaiproject.") and region)
+            reason = (
+                "iam_project_region_and_model_configured_principal_not_probed"
+                if ready else "oci_iam_project_region_or_model_missing"
+            )
         elif item["name"] == "multi":
             ready = bool(
                 _model(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", "")))
