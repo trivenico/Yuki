@@ -41,8 +41,8 @@ def starter_agent_specs() -> tuple[AgentSpec, ...]:
             role=role,
             description=description,
             capabilities=frozenset(capabilities),
-            max_concurrency=2,
-            timeout_seconds=180,
+            max_concurrency=None,
+            timeout_seconds=None,
             allow_cloud=False,
         )
         for agent_id, role, description, capabilities in _STARTER_PROFILES
@@ -53,8 +53,8 @@ def starter_agent_specs() -> tuple[AgentSpec, ...]:
         description="Coordinates the starter specialist fleet and delegates bounded tasks.",
         capabilities=frozenset({"agent:delegate", "project:coordinate"}),
         delegation_targets=frozenset(spec.agent_id for spec in specialists),
-        max_concurrency=2,
-        timeout_seconds=180,
+        max_concurrency=None,
+        timeout_seconds=None,
         allow_cloud=False,
     )
     return specialists + (coordinator,)
