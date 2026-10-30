@@ -28,6 +28,33 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual(registry.route().provider, "mock")
         self.assertEqual(registry.route(allow_cloud=True, preference=("gemini",)).provider, "gemini")
 
+    def test_unknown_privacy_never_routes_even_with_cloud_opt_in(self):
+        registry = CapabilityRegistry([
+            provider("unknown", privacy="unknown"),
+            provider("gateway", privacy="third_party_gateway"),
+        ])
+        with self.assertRaises(LookupError):
+            registry.route(allow_cloud=True, preference=("unknown",))
+        self.assertEqual(
+            registry.route(allow_cloud=True, preference=("gateway",)).provider,
+            "gateway",
+        )
+
+    def test_route_rejects_string_iterables_and_invalid_cloud_flags(self):
+        registry = CapabilityRegistry([provider("mock")])
+        for kwargs in (
+            {"required": "text"},
+            {"preference": "mock"},
+            {"allow_cloud": 1},
+            {"required": ("text", "local_inference", "official_cli", "model_discovery", "per_task_routing", "multi_provider_routing", "text")},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises((TypeError, ValueError)):
+                registry.route(**kwargs)
+
+    def test_unrecognized_privacy_classification_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "recognized classification"):
+            provider("unsafe", privacy="anything")
+
     def test_requires_all_capabilities(self):
         registry = CapabilityRegistry([provider("mock"), provider("ollama", caps=("text", "local_inference"))])
         self.assertEqual(registry.route(required=("text", "local_inference")).provider, "ollama")
