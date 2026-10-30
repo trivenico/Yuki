@@ -403,6 +403,59 @@ class SpecialistAgentCoordinator:
                 self._set_subtask(plan_id, row["subtask_id"], status=state)
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Cancel every non-terminal subtask in a plan using versioned task transitions.
+
+        Pending subtasks are marked cancelled without creating runtime tasks.
+        Dispatched tasks are cancelled through TaskRuntime so authorization,
+        state transitions, and audit events remain centralized.
+        """
+        if not self._allowed(actor_id, "agent:cancel", plan_id):
+            raise PermissionError("agent plan cancellation is not authorized.")
+        with self._connect() as db:
+            plan = db.execute(
+                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
+                (plan_id,),
+            ).fetchall()]
+
+        for row in rows:
+            if row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
+                continue
+            task_id = row["task_id"]
+            if task_id is None:
+                self._set_subtask(plan_id, row["subtask_id"], status="cancelled")
+                continue
+            try:
+                task = self.runtime.get(actor_id=actor_id, task_id=task_id)
+                if task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
+                    task = self.runtime.cancel(
+                        actor_id=actor_id, task_id=task_id,
+                        expected_version=task.version,
+                    )
+                state = (
+                    "succeeded" if task.state == "succeeded"
+                    else "failed" if task.state in {"failed", "interrupted"}
+                    else "cancelled"
+                )
+            except WorkflowConflict:
+                # A worker may have completed concurrently. Never overwrite its
+                # terminal result; reconcile from the authoritative task record.
+                task = self.runtime.get(actor_id=actor_id, task_id=task_id)
+                state = (
+                    "succeeded" if task.state == "succeeded"
+                    else "failed" if task.state in {"failed", "interrupted"}
+                    else "cancelled" if task.state == "cancelled"
+                    else row["status"]
+                )
+            self._set_subtask(plan_id, row["subtask_id"], status=state)
+
+        return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
         with self._connect() as db:
             if task_id is None:
