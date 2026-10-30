@@ -68,23 +68,65 @@ def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], st
     return handlers
 
 
-def build_handlers_from_provider_manager(provider_manager, agent_roles: Mapping[str, str]) -> dict[str, Callable[[str], str]]:
-    """Build handlers from Yuki's already-selected provider and explicit role map."""
-    if not isinstance(agent_roles, Mapping) or not agent_roles:
-        raise ValueError("agent_roles must be a non-empty mapping.")
+def build_handlers_from_provider_manager(
+    provider_manager,
+    agent_roles: Mapping[str, str],
+    *,
+    provider_preferences: Mapping[str, tuple[str, ...]] | None = None,
+    allow_cloud: bool = False,
+) -> dict[str, Callable[[str], str]]:
+    """Build specialist handlers with optional per-agent provider preferences.
+
+    Unspecified agents use the explicitly selected provider. Agents with a
+    preference list use the capability router; cloud routing requires the
+    caller's explicit allow_cloud opt-in. A route failure never falls back.
+    """
+    if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
+        raise ValueError("agent_roles must be a non-empty bounded mapping.")
+    if type(allow_cloud) is not bool:
+        raise ValueError("allow_cloud must be a boolean.")
     for agent_id, role in agent_roles.items():
         if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
             raise ValueError("agent IDs must be bounded identifiers.")
         if not isinstance(role, str) or role not in _SPECIALIST_INSTRUCTIONS:
             raise ValueError("each agent must map to a supported specialist role.")
-    factory = getattr(provider_manager, "create_selected_adapter", None)
-    if not callable(factory):
+    if provider_preferences is None:
+        provider_preferences = {}
+    if not isinstance(provider_preferences, Mapping) or len(provider_preferences) > 32:
+        raise ValueError("provider_preferences must be a bounded mapping.")
+    normalized_preferences = {}
+    for agent_id, names in provider_preferences.items():
+        if agent_id not in agent_roles:
+            raise ValueError("provider preference references an unknown agent.")
+        if not isinstance(names, tuple) or not 1 <= len(names) <= 32:
+            raise ValueError("each provider preference must be a non-empty tuple of provider names.")
+        if any(not isinstance(name, str) or not name.strip() for name in names):
+            raise ValueError("provider preferences must contain non-empty provider names.")
+        normalized_preferences[agent_id] = tuple(name.strip().lower() for name in names)
+
+    selected_factory = getattr(provider_manager, "create_selected_adapter", None)
+    if not callable(selected_factory):
         raise TypeError("provider_manager must expose create_selected_adapter().")
-    provider = factory()
-    if provider is None:
-        raise RuntimeError("no provider is selected.")
-    role_handlers = build_provider_specialist_handlers(provider)
-    return {agent_id: role_handlers[role] for agent_id, role in agent_roles.items()}
+    routed_factory = getattr(provider_manager, "create_routed_adapter", None)
+    cache = {}
+    handlers = {}
+    for agent_id, role in agent_roles.items():
+        preferences = normalized_preferences.get(agent_id)
+        cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
+        if cache_key not in cache:
+            if preferences:
+                if not callable(routed_factory):
+                    raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
+                cache[cache_key] = routed_factory(
+                    required=("text",), preference=preferences, allow_cloud=allow_cloud,
+                )
+            else:
+                cache[cache_key] = selected_factory()
+            if cache[cache_key] is None:
+                raise RuntimeError("no provider is available for a specialist agent.")
+        role_handlers = build_provider_specialist_handlers(cache[cache_key])
+        handlers[agent_id] = role_handlers[role]
+    return handlers
 
 
 class SpecialistTaskWorker:
