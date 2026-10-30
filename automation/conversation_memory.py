@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sqlite3
@@ -40,6 +41,7 @@ class ConversationMemoryStore:
     def __init__(
         self, database_path: str, *,
         authorize: Callable[[str, str, str], bool],
+        embedding_fn: Callable[[str], Iterable[float]] | None = None,
     ) -> None:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
@@ -48,6 +50,9 @@ class ConversationMemoryStore:
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
+        if embedding_fn is not None and not callable(embedding_fn):
+            raise TypeError("embedding_fn must be callable.")
+        self.embedding_fn = embedding_fn
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS conversation_memories (
@@ -126,7 +131,7 @@ class ConversationMemoryStore:
             created_at = record.get("created_at", "")
             if not isinstance(record_id, str) or not record_id.strip() or len(record_id) > _MAX_SOURCE_ID:
                 raise ValueError("each record needs a bounded stable source id.")
-            if role not in {"user", "assistant", "system", "tool"}:
+            if not isinstance(role, str) or role not in {"user", "assistant", "system", "tool"}:
                 raise ValueError("record role is not supported.")
             if not isinstance(content, str) or not content.strip() or len(content) > _MAX_TEXT or "\x00" in content:
                 raise ValueError("record content must be bounded non-empty text.")
@@ -168,6 +173,50 @@ class ConversationMemoryStore:
             """, (owner_id, query.strip(), limit)).fetchall()
         return [self._row(row) for row in rows]
 
+    @staticmethod
+    def _normalized_vector(value: Iterable[float]) -> tuple[float, ...] | None:
+        try:
+            vector = tuple(float(component) for component in value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not vector or len(vector) > 16384 or any(not math.isfinite(x) for x in vector):
+            return None
+        norm = math.sqrt(sum(x * x for x in vector))
+        return tuple(x / norm for x in vector) if norm else None
+
+    def semantic_search(self, *, actor_id: str, owner_id: str, query: str, limit: int = 10) -> list[ConversationMemory]:
+        """Search this owner's records with an injected local embedder and lexical fallback."""
+        if self.embedding_fn is None:
+            return self.search(actor_id=actor_id, owner_id=owner_id, query=query, limit=limit)
+        if not self._allowed(actor_id, "memory:read", owner_id):
+            raise PermissionError("conversation memory read is not authorized.")
+        if not isinstance(query, str) or not query.strip() or len(query) > 500:
+            raise ValueError("query must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("limit must be an integer from 1 to 50.")
+        try:
+            query_vector = self._normalized_vector(self.embedding_fn(query.strip()))
+        except Exception:
+            query_vector = None
+        if query_vector is None:
+            return self.search(actor_id=actor_id, owner_id=owner_id, query=query, limit=limit)
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM conversation_memories WHERE owner_id=? ORDER BY memory_id DESC LIMIT ?", (owner_id, _MAX_RECORDS)).fetchall()
+        ranked = []
+        for row in rows:
+            try:
+                vector = self._normalized_vector(self.embedding_fn(row["content"]))
+            except Exception:
+                vector = None
+            if vector is None or len(vector) != len(query_vector):
+                continue
+            score = sum(a * b for a, b in zip(query_vector, vector))
+            if score > 0:
+                ranked.append((score, self._row(row)))
+        ranked.sort(key=lambda item: (item[0], item[1].memory_id), reverse=True)
+        if ranked:
+            return [item for _, item in ranked[:limit]]
+        return self.search(actor_id=actor_id, owner_id=owner_id, query=query, limit=limit)
     def delete(
         self, *, actor_id: str, owner_id: str, memory_id: int,
     ) -> bool:
