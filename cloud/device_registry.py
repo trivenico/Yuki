@@ -6,6 +6,7 @@ routes; this module deliberately contains no public self-registration path.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -72,11 +73,21 @@ class DeviceCredentialStore:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_gateway_devices_user ON gateway_devices(user_id)")
 
+    @contextmanager
     def _connect(self):
+        """Yield a configured SQLite connection and always close its handle.
+
+        sqlite3.Connection.__exit__ commits or rolls back but does not close
+        the connection. Explicit closure is important on Windows, where open
+        SQLite handles prevent temporary database files from being removed.
+        """
         connection = sqlite3.connect(self.database_path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys=ON")
+            yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _token_digest(token):
