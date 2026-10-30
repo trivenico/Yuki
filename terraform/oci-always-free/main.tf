@@ -41,9 +41,9 @@ resource "oci_core_security_list" "gateway" {
   vcn_id         = oci_core_vcn.yuki.id
   display_name   = "yuki-gateway-ingress"
   ingress_security_rules {
-    protocol     = "6"
-    source       = "0.0.0.0/0"
-    description  = "HTTPS gateway only"
+    protocol    = "6"
+    source      = "0.0.0.0/0"
+    description = "HTTPS gateway only"
     tcp_options {
       min = 443
       max = 443
@@ -100,7 +100,7 @@ resource "oci_core_instance" "yuki" {
   }
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
-    user_data = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    user_data            = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
       instance_name = var.instance_name
       ssh_cidr      = var.ssh_cidr
     }))
