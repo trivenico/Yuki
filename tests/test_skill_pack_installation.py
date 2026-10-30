@@ -45,8 +45,8 @@ class SkillPackTests(unittest.TestCase):
         result = loaded[0].execute("Improve this paragraph")
         self.assertTrue(result.ok)
         self.assertIn("untrusted task instructions", result.message)
-        self.assertFalse(remove_skill_pack("taste_helper", self.root / "installed"))
         self.assertTrue(remove_skill_pack("taste_helper", self.root / "installed"))
+        self.assertFalse(remove_skill_pack("taste_helper", self.root / "installed"))
 
     def test_rejects_unknown_fields_and_duplicate_json_keys(self):
         with self.assertRaises(ValueError):
