@@ -109,6 +109,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         visible = {item["agent_id"] for item in second.list_agents(actor_id="alice")}
         self.assertIn("summarizer", visible)
 
+    def test_persisted_registry_rejects_duplicate_or_oversized_capabilities(self):
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(
+                "UPDATE specialist_agents SET capabilities_json=? WHERE agent_id=?",
+                ('["research","research"]', "research"),
+            )
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.list_agents(actor_id="alice")
+
     def test_persisted_registry_corruption_fails_closed(self):
         with sqlite3.connect(self.db_path) as db:
             db.execute(
