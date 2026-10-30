@@ -16,6 +16,40 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
 
+    def test_oci_provider_uses_regional_endpoint_and_project_header(self):
+        provider = create_provider(
+            {"provider": "oci"},
+            environ={
+                "YUKI_OCI_REGION": "us-chicago-1",
+                "YUKI_OCI_MODEL": "meta.llama-4-maverick",
+                "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1.us-chicago-1.example",
+                "OCI_GENAI_API_KEY": "test-secret",
+            },
+        )
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
+        self.assertEqual(
+            provider.base_url,
+            "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/openai/v1",
+        )
+        self.assertEqual(provider.api_key_env, "OCI_GENAI_API_KEY")
+        self.assertEqual(
+            provider.additional_headers["openai-project"],
+            "ocid1.generativeaiproject.oc1.us-chicago-1.example",
+        )
+        self.assertTrue(provider.is_available())
+
+    def test_oci_provider_requires_region_model_and_project(self):
+        with self.assertRaisesRegex(ValueError, "YUKI_OCI_REGION"):
+            create_provider({"provider": "oci"}, environ={})
+        with self.assertRaisesRegex(ValueError, "YUKI_OCI_PROJECT_OCID"):
+            create_provider(
+                {"provider": "oci"},
+                environ={
+                    "YUKI_OCI_REGION": "us-chicago-1",
+                    "YUKI_OCI_MODEL": "some-model",
+                },
+            )
+
     def test_gemini_provider_is_constructible_without_cli_installation(self):
         provider = create_provider({"provider": "gemini"}, environ={})
         self.assertIsInstance(provider, GeminiCLIProvider)
