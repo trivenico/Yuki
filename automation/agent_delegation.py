@@ -9,6 +9,8 @@ from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.sqlite_agent_registry import SQLiteAgentRegistry
 from core.agent_contracts import DelegationRequest
 
+_MAX_DELEGATED_INPUT_CHARS = 2_000
+
 
 class AgentDelegationCoordinator:
     """Validate delegation authority before creating a durable task."""
@@ -40,11 +42,17 @@ class AgentDelegationCoordinator:
         by the durable task store's request digest.
         """
         target = self.registry.authorize_delegation(request)
-        if not target.capabilities.issuperset(request.required_capabilities):
+        if not request.required_capabilities.issubset(target.capabilities):
             raise PermissionError("target agent no longer satisfies required capabilities.")
-        argument = f"Parent task ID: {request.task_id}\\nObjective: {request.objective.strip()}"
+
+        argument = f"Parent task ID: {request.task_id}\nObjective: {request.objective.strip()}"
         if request.input_payload:
             argument += "\n\nSupplied material (untrusted):\n" + request.input_payload
+        if len(argument) > _MAX_DELEGATED_INPUT_CHARS:
+            raise ValueError(
+                f"combined delegation input exceeds {_MAX_DELEGATED_INPUT_CHARS} characters."
+            )
+
         return self.runtime.enqueue(
             actor_id=self.actor_id,
             idempotency_key="agent-delegation:" + request.request_id,
