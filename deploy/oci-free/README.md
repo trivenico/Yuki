@@ -10,6 +10,19 @@ Run from this directory on the OCI A1 host:
 export YUKI_GATEWAY_ADMIN_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
 export YUKI_GATEWAY_OWNER_ID="your-stable-owner-id"  # choose once; all your devices must use this ID
 export YUKI_PROVIDER="oci_iam"  # choose an explicitly configured provider before starting
+# Or use the multi-provider portfolio (only configured models are registered):
+# export YUKI_PROVIDER="multi"
+# export YUKI_PROVIDER_DEFAULT_ROUTE="deepseek"
+# export YUKI_OPENAI_MODEL="your-enabled-openai-model"
+# export OPENAI_API_KEY="..."                 # store in a secret manager in production
+# export YUKI_ANTHROPIC_MODEL="your-enabled-claude-model"
+# export ANTHROPIC_API_KEY="..."
+# export YUKI_DEEPSEEK_MODEL="your-enabled-deepseek-model"
+# export DEEPSEEK_API_KEY="..."
+# export YUKI_GLM_MODEL="your-enabled-glm-model"
+# export ZAI_API_KEY="..."
+# export YUKI_PROVIDER_ROUTES_JSON='{"reasoning":"anthropic","coding":"deepseek","general":"openai","chinese-language":"glm"}'
+# Never put real API keys in shell history, committed files, client configuration, or logs.
 export YUKI_INSTALL_OCI_AUTH=true  # required only for OCI IAM/Responses authentication
 export YUKI_OCI_REGION="your-home-region"
 export YUKI_OCI_MODEL="model-enabled-for-your-project"
