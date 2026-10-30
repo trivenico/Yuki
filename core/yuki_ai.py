@@ -49,6 +49,8 @@ class YukiAI:
                     break
                 if isinstance(item, str) and item.strip():
                     context.append(item.strip()[:self.max_context_chars])
+                elif isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
+                    context.append(item["text"].strip()[:self.max_context_chars])
             return tuple(context)
         except Exception:
             # Memory is optional; retrieval failure must not block ordinary chat.
