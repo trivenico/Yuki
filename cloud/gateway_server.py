@@ -24,7 +24,10 @@ REQUEST_TIMEOUT_SECONDS = 10
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     """Threaded HTTP server with bounded concurrency and socket read timeouts."""
 
-    daemon_threads = True
+    # Wait for active handlers on shutdown so SQLite files can be closed
+    # before temporary directories or persistent volumes are detached.
+    daemon_threads = False
+    block_on_close = True
     request_queue_size = 64
 
     def __init__(self, server_address, handler, *, max_workers=MAX_WORKERS):
