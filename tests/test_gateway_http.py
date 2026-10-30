@@ -6,7 +6,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from cloud.device_registry import DeviceCredentialStore
-from cloud.gateway_server import create_server
+from cloud.gateway_server import MAX_WORKERS, create_server
 
 
 class GatewayHttpTests(unittest.TestCase):
@@ -138,7 +138,7 @@ class GatewayHttpTests(unittest.TestCase):
     def test_server_returns_retryable_overload_when_worker_slots_are_full(self):
         acquired = 0
         try:
-            for _ in range(self.server._request_slots._initial_value):
+            for _ in range(MAX_WORKERS):
                 self.assertTrue(self.server._request_slots.acquire(blocking=False))
                 acquired += 1
             connection = HTTPConnection(self.host, self.port, timeout=2)
