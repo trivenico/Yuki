@@ -53,6 +53,7 @@ class TrainingJobQueue:
               max_runtime_minutes INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
               lease_owner TEXT,lease_expires_at TEXT,error_code TEXT)""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_training_queue ON training_jobs(state,created_at)")
+    @contextmanager
     def _connect(self):
         db=sqlite3.connect(self.path,timeout=5); db.row_factory=sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
