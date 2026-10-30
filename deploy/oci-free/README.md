@@ -15,8 +15,9 @@ export YUKI_OCI_REGION="your-home-region"
 export YUKI_OCI_MODEL="model-enabled-for-your-project"
 export YUKI_OCI_PROJECT_OCID="ocid1.generativeaiproject..."
 export YUKI_OCI_AUTH_MODE="instance_principal"  # use instance_principal on OCI Compute
-# Direct OCI routing requires explicit cloud consent for each enabled agent.
-# Keep the allowlist empty for local-only providers; never consent by default.
+# This example explicitly consents the entire starter fleet to send task text to OCI.
+# Remove agents from this list if their tasks must remain local.
+export YUKI_WORKER_CLOUD_CONSENT_AGENT_IDS="research-analyst,market-researcher,technical-researcher,security-researcher,documentation-reader,code-architect,backend-engineer,frontend-engineer,database-engineer,devops-engineer,security-engineer,performance-engineer,api-integrator,test-strategist,unit-test-designer,integration-test-designer,security-test-designer,qa-reviewer,release-reporter,project-coordinator,yuki-coordinator"
 export YUKI_GATEWAY_BOOTSTRAP_ENABLED=true  # only during operator enrollment
 # Set it back to false and restart immediately after enrollment
 docker compose up -d --build
