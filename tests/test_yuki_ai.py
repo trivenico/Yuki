@@ -55,6 +55,20 @@ class YukiAITests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"not configured"):
             ai.run_task("change files")
 
+    def test_multi_brain_consultation_is_explicit(self):
+        class Coordinator:
+            def generate(self, message):
+                return "synthesized"
+        ai = YukiAI(FakeProvider(), multi_brain=Coordinator())
+        self.assertEqual(ai.consult_specialists("Compare these approaches"), "synthesized")
+        self.assertTrue(ai.status()["multi_brain_configured"])
+
+    def test_multi_brain_is_disabled_by_default(self):
+        ai = YukiAI(FakeProvider())
+        self.assertFalse(ai.status()["multi_brain_configured"])
+        with self.assertRaisesRegex(RuntimeError, "not configured"):
+            ai.consult_specialists("Do research")
+
     def test_status_is_truthful(self):
         status=YukiAI(FakeProvider()).status()
         self.assertEqual(status["service"],"yuki-ai")
