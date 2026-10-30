@@ -22,7 +22,7 @@ from automation.workflow_store import WorkflowRunStore
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
 
-_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve"})
+_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel"})
 _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 
 
@@ -80,7 +80,7 @@ def build_local_worker_runtime(
         ],
         authorize=lambda actor_id, action, _resource: (
             actor_id == LOCAL_OPERATOR_ACTOR
-            and action in {"agent:plan", "agent:dispatch", "agent:read"}
+            and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
     )
     handlers = build_provider_specialist_handlers(provider)
