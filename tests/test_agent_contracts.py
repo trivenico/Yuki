@@ -34,14 +34,16 @@ class AgentSpecTests(unittest.TestCase):
 class DelegationTests(unittest.TestCase):
     def setUp(self):
         self.registry = AgentRegistry(max_agents=100)
+        # Register the target first; delegation allow-lists may only reference
+        # agents already present in the registry.
+        self.registry.register(AgentSpec(
+            "tester", "testing", "Creates test plans",
+            capabilities={"test:design"},
+        ))
         self.registry.register(AgentSpec(
             "coder", "coding", "Writes proposed code",
             capabilities={"agent:delegate", "code:review"},
             delegation_targets={"tester"},
-        ))
-        self.registry.register(AgentSpec(
-            "tester", "testing", "Creates test plans",
-            capabilities={"test:design"},
         ))
 
     def test_authorizes_only_allowlisted_target_with_required_capabilities(self):
