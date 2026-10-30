@@ -14,7 +14,9 @@ from pathlib import Path
 import re
 import sqlite3
 from threading import RLock
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
+
+from automation.agent_tool_gateway import SpecialistToolGateway
 
 from automation.agent_messaging import AgentMailbox, AgentMessage
 from automation.task_runtime import TaskRecord, TaskRuntime
@@ -85,6 +87,7 @@ class SpecialistAgentCoordinator:
         max_subtasks: int = _MAX_SUBTASKS,
         memory_context_builder: Callable[..., str] | None = None,
         memory_context_max_chars: int = 3000,
+        tool_gateway: SpecialistToolGateway | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -104,6 +107,9 @@ class SpecialistAgentCoordinator:
             raise ValueError("memory_context_max_chars must be between 256 and 12000.")
         self.memory_context_builder = memory_context_builder
         self.memory_context_max_chars = memory_context_max_chars
+        if tool_gateway is not None and not isinstance(tool_gateway, SpecialistToolGateway):
+            raise TypeError("tool_gateway must be a SpecialistToolGateway.")
+        self.tool_gateway = tool_gateway
         self.mailbox = AgentMailbox(self.database_path, authorize=authorize)
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
@@ -368,6 +374,40 @@ class SpecialistAgentCoordinator:
                 )
             self.agents[agent_id] = updated
             return updated
+
+    def list_agent_tools(self, *, actor_id: str, agent_id: str) -> tuple[dict[str, str], ...]:
+        """List only tools allowed by the enabled agent's persisted permission manifest."""
+        if self.tool_gateway is None:
+            return ()
+        if not self._allowed(actor_id, "agent:tool:list", agent_id):
+            raise PermissionError("agent tool listing is not authorized.")
+        self._refresh_agent_registry()
+        with self._agent_lock:
+            agent = self.agents.get(agent_id)
+        if agent is None or not agent.enabled:
+            raise KeyError(agent_id)
+        return self.tool_gateway.list_tools(
+            actor_id=actor_id, agent_id=agent_id, permissions=agent.permissions,
+        )
+
+    def invoke_agent_tool(
+        self, *, actor_id: str, agent_id: str, tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> Any:
+        """Invoke a registered tool only through both actor and agent permission gates."""
+        if self.tool_gateway is None:
+            raise AgentPlanError("specialist tool gateway is not configured.")
+        if not self._allowed(actor_id, "agent:tool:invoke", agent_id):
+            raise PermissionError("agent tool invocation is not authorized.")
+        self._refresh_agent_registry()
+        with self._agent_lock:
+            agent = self.agents.get(agent_id)
+        if agent is None or not agent.enabled:
+            raise KeyError(agent_id)
+        return self.tool_gateway.invoke(
+            actor_id=actor_id, agent_id=agent_id,
+            permissions=agent.permissions, tool_name=tool_name, arguments=arguments,
+        )
 
     def list_agents(self, *, actor_id: str) -> tuple[dict, ...]:
         """Return sanitized registry metadata; permissions are not disclosed."""
