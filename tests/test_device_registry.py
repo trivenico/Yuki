@@ -1,3 +1,4 @@
+import contextlib
 import json
 import sqlite3
 import tempfile
@@ -17,7 +18,7 @@ class DeviceCredentialStoreTests(unittest.TestCase):
     def test_issue_returns_one_time_secret_and_database_stores_only_digest(self):
         issued = self.store.issue(user_id="user-1", device_name="Yuki Desktop")
         self.assertTrue(issued.token.startswith("yuki_dev_"))
-        with sqlite3.connect(self.path) as db:
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
             stored = db.execute("SELECT token_hash FROM gateway_devices").fetchone()[0]
         self.assertNotEqual(stored, issued.token)
         self.assertEqual(len(stored), 64)
