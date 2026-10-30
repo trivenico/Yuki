@@ -163,7 +163,7 @@ class ConversationMemoryStore:
         with self._connect() as db:
             rows = db.execute("""
                 SELECT * FROM conversation_memories
-                WHERE owner_id=? AND content LIKE ? ESCAPE '\\'
+                WHERE owner_id=? AND content LIKE ? ESCAPE '\'
                 ORDER BY memory_id DESC LIMIT ?
             """, (owner_id, f"%{term}%", limit)).fetchall()
         return [self._row(row) for row in rows]
