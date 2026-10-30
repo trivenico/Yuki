@@ -20,6 +20,7 @@ class GatewayHttpTests(unittest.TestCase):
             admin_token=self.admin,
             host="127.0.0.1",
             port=0,
+            bootstrap_enabled=True,
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -108,6 +109,39 @@ class GatewayHttpTests(unittest.TestCase):
         self.assertTrue(data["revoked"])
         status, _, _ = self.request("GET", "/v1/me", token=issued["token"])
         self.assertEqual(status, 401)
+
+    def test_bootstrap_is_disabled_by_default(self):
+        disabled = create_server(
+            database_path=str(Path(self.tmp.name) / "disabled.sqlite3"),
+            admin_token=self.admin,
+            host="127.0.0.1",
+            port=0,
+        )
+        thread = threading.Thread(target=disabled.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = disabled.server_address
+            connection = HTTPConnection(host, port, timeout=2)
+            connection.request(
+                "POST", "/v1/admin/devices",
+                body=json.dumps({"user_id": "user-1", "device_name": "Laptop"}),
+                headers={"Authorization": "Bearer " + self.admin, "Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            self.assertEqual(response.status, 404)
+            connection.close()
+        finally:
+            disabled.shutdown()
+            disabled.server_close()
+            thread.join(timeout=2)
+
+    def test_server_rejects_unbounded_worker_configuration(self):
+        with self.assertRaises(ValueError):
+            create_server(
+                database_path=str(Path(self.tmp.name) / "invalid.sqlite3"),
+                admin_token=self.admin,
+                max_workers=0,
+            )
 
     def test_invalid_admin_secret_is_rejected(self):
         status, _, _ = self.request(
