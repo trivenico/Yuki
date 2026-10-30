@@ -56,6 +56,10 @@ class ConversationImporterTests(unittest.TestCase):
         oversized = {"id":"x","role":"user","content":"a" * 12_001}
         self.assertEqual(parse_normalized_jsonl(json.dumps(oversized)), [])
 
+    def test_ignores_malformed_unhashable_roles(self):
+        payload = '{"role":["user"],"content":"not a valid role"}'
+        self.assertEqual(parse_normalized_jsonl(payload), [])
+
     def test_ignores_non_text_multimodal_payloads(self):
         payload = [{"mapping":{"x":{"message":{
             "id":"m1","author":{"role":"user"},
