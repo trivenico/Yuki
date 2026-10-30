@@ -8,6 +8,7 @@ from core.model_manager import get_hardware_report, get_model_catalog
 from core.yuki_ai import YukiAI
 from core.vector_memory import VectorMemory
 from providers.factory import create_provider
+from automation.conversation_importers import parse_chatgpt_export, parse_normalized_jsonl
 
 def build_parser():
     parser=argparse.ArgumentParser(prog="yuki",description="Yuki AI assistant")
@@ -21,6 +22,9 @@ def build_parser():
     models.add_argument("--task",choices=("general","coding","reasoning","multilingual","research","tool_use","multimodal","on_device"),default="general")
     ask=sub.add_parser("ask",help="Send one prompt to configured provider"); ask.add_argument("prompt")
     sub.add_parser("chat",help="Start interactive chat without tool execution")
+    preview=sub.add_parser("conversation-preview",help="Preview a conversation export without importing or storing it")
+    preview.add_argument("path",help="Path to a user-provided UTF-8 export file")
+    preview.add_argument("--format",choices=("chatgpt","jsonl"),required=True,help="Export format")
     memory=sub.add_parser("memory",help="Manage local Yuki memory explicitly")
     memory_sub=memory.add_subparsers(dest="memory_action",required=True)
     memory_add=memory_sub.add_parser("add",help="Save a memory note"); memory_add.add_argument("text"); memory_add.add_argument("--category",choices=("note","preference","lesson"),default="note")
@@ -43,6 +47,22 @@ def _safe_ask(provider,prompt):
 
 def run_cli(argv:Sequence[str]|None=None,*,config_loader:Callable=load_config,provider_factory:Callable=create_provider,readiness_builder:Callable=build_readiness_report,hardware_reporter:Callable=get_hardware_report,model_catalog:Callable=get_model_catalog,input_fn:Callable[[str],str]=input,output_fn:Callable[[str],object]=print):
     args=build_parser().parse_args(argv)
+    if args.command=="conversation-preview":
+        try:
+            from pathlib import Path
+            path=Path(args.path).expanduser()
+            if not path.is_file(): output_fn("Conversation export file was not found."); return 2
+            if path.stat().st_size > 25 * 1024 * 1024: output_fn("Conversation export exceeds the 25 MiB limit."); return 2
+            payload=path.read_bytes()
+            records=parse_chatgpt_export(payload) if args.format=="chatgpt" else parse_normalized_jsonl(payload)
+            roles={}
+            for record in records: roles[record["role"]]=roles.get(record["role"],0)+1
+            preview={"format":args.format,"records_found":len(records),"roles":roles,
+                     "sample":[{"role":r["role"],"content":r["content"][:240],"created_at":r["created_at"]} for r in records[:3]],
+                     "stored":False,"consent_required_for_import":True}
+            _write_json(preview,output_fn); return 0
+        except Exception as exc:
+            output_fn(f"Conversation preview failed ({type(exc).__name__})."); return 4
     if args.command=="doctor": _write_json(readiness_builder().to_dict(),output_fn); return 0
     if args.command=="hardware":
         try: _write_json(hardware_reporter(),output_fn); return 0
