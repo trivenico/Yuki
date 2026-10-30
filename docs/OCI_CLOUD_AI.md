@@ -171,3 +171,17 @@ For API-key based initial testing, Frankfurt and Chicago are useful candidates b
 ## Deployment status
 
 The repository contains the OCI provider adapter and configuration tests. No OCI tenancy has been provisioned or connected from this development session. The gateway, cloud-hosted model servers, Vault/IAM policies, network, billing alerts, device authentication, and desktop/CLI connection are still to be implemented and deployed. Do not put OCI secrets in source control or send them in chat.
+
+## Per-device identity and revocation foundation
+
+The gateway's device identity primitive is implemented in `cloud/device_registry.py` as `DeviceCredentialStore`.
+
+- Each installation receives a separate high-entropy opaque token with a `yuki_dev_` prefix.
+- Only the SHA-256 token digest is persisted in SQLite; the raw token is returned once at issuance.
+- Each token is associated with an authenticated Yuki user, a device name, and a least-privilege scope set.
+- The registry supports per-user device listing and owner-scoped revocation. Revoked credentials fail authentication immediately.
+- Default scopes are limited to profile read, chat write, and task read/write. There are no wildcard/admin scopes.
+- The module deliberately does not expose public self-registration or an HTTP endpoint. A future gateway route must first authenticate the owning user/admin, verify CSRF/origin protections for browser sessions, rate-limit issuance, return the raw token only once over TLS, and audit issue/revoke operations.
+- Desktop and CLI clients must store their device token in the operating system's credential store (Keychain, Credential Manager, or Secret Service), never in project YAML or source control.
+
+This is the credential storage/authentication foundation, not yet a deployed gateway. HTTPS termination, authenticated enrollment endpoints, device management UI/CLI commands, refresh/rotation workflow, per-route scope enforcement, and production rate limiting remain outstanding. Until those layers are complete, do not expose the registry directly to an untrusted network.
