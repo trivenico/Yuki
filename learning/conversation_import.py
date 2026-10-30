@@ -46,8 +46,18 @@ def _content_text(value: Any, depth: int = 0) -> str:
 
 
 def _extract_messages(payload: Any) -> list[dict]:
+    # ChatGPT's conversations.json is a root-level array of conversation
+    # objects, while normalized exports may be a root-level message array.
     if isinstance(payload, list):
-        candidates = payload
+        if payload and all(
+            isinstance(item, dict) and isinstance(item.get("mapping"), dict)
+            for item in payload
+        ):
+            candidates = []
+            for conversation in payload:
+                candidates.extend(_extract_messages(conversation))
+        else:
+            candidates = payload
     elif isinstance(payload, dict) and isinstance(payload.get("messages"), list):
         candidates = payload["messages"]
     elif isinstance(payload, dict) and isinstance(payload.get("mapping"), dict):
