@@ -89,7 +89,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             try:
                 parsed = urlsplit(str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")).strip())
                 host = (parsed.hostname or "").rstrip(".").lower()
-                parsed.port  # Reject malformed ports before assigning a privacy class.
+                _ = parsed.port  # Reject malformed ports before assigning a privacy class.
                 valid_endpoint = (
                     parsed.scheme.lower() in {"http", "https"}
                     and bool(host)
