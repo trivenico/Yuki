@@ -1,6 +1,7 @@
 """Provider registry backed by the same factory used by the application runtime."""
 from __future__ import annotations
 import os
+from itertools import islice
 from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, create_provider
@@ -123,9 +124,17 @@ class ProviderManager:
         metadata-only; this method performs the selected adapter's availability
         check before returning it. A failed check is terminal for this route.
         """
+        if isinstance(preference, (str, bytes)):
+            raise TypeError("preference must be an iterable of provider names, not text.")
+        try:
+            preferences = tuple(islice(iter(preference), 33))
+        except TypeError as exc:
+            raise TypeError("preference must be iterable.") from exc
+        if len(preferences) > 32:
+            raise ValueError("at most 32 provider preferences are allowed.")
         selected = self.routing_registry().route(
-            required=required, preference=preference, allow_cloud=allow_cloud,
-            strict_preference=bool(tuple(preference)),
+            required=required, preference=preferences, allow_cloud=allow_cloud,
+            strict_preference=bool(preferences),
         )
         adapter = self._build_adapter(selected.provider)
         try:
