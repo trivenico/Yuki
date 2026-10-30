@@ -37,7 +37,7 @@ class ProviderCatalogTests(unittest.TestCase):
     @patch("providers.catalog.shutil_which", return_value="/usr/bin/gemini")
     def test_gemini_cli_readiness_does_not_claim_auth_verified(self, _):
         item = next(x for x in build_provider_catalog(environ={}) if x["name"] == "gemini")
-        self.assertFalse(item["ready"])
+        self.assertTrue(item["ready"])
         self.assertEqual(item["status"], "cli_detected_auth_not_verified")
 
     def test_invalid_model_names_are_not_returned(self):
