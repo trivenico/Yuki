@@ -3,6 +3,12 @@ name: Yuki
 workspace: ./yuki_workspace
 provider: openai
 openai_model: gpt-4.1-mini
+# To use OCI Generative AI, set provider: oci and configure these secrets/settings
+# in the Yuki server environment (never commit credentials):
+# YUKI_OCI_REGION=us-chicago-1
+# YUKI_OCI_MODEL=<model-id-enabled-for-your-project-and-region>
+# YUKI_OCI_PROJECT_OCID=ocid1.generativeaiproject...
+# OCI_GENAI_API_KEY=<OCI-Generative-AI-API-key-secret>
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
 max_agent_steps: 3
