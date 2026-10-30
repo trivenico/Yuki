@@ -3,6 +3,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 YUKI_GATEWAY_HOST=0.0.0.0 YUKI_
 WORKDIR /app
 RUN groupadd --system --gid 10001 yuki && useradd --system --uid 10001 --gid yuki --home-dir /nonexistent yuki && install -d -o yuki -g yuki -m 0750 /var/lib/yuki
 COPY --chown=root:root cloud/ /app/cloud/
+COPY --chown=root:root automation/ /app/automation/
+COPY --chown=root:root core/ /app/core/
+COPY --chown=root:root providers/ /app/providers/
+COPY --chown=root:root yuki_providers.py /app/yuki_providers.py
+COPY --chown=root:root config.yaml /app/config.yaml
 USER 10001:10001
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/healthz', timeout=2).read()" || exit 1
