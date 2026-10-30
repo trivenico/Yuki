@@ -3,6 +3,7 @@
 Queue metadata only: this module never downloads datasets, executes code, or trains weights.
 """
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import secrets
