@@ -78,6 +78,45 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(winners[0].state, "running")
         self.assertEqual(winners[0].attempts, 1)
 
+
+    def test_claim_next_enforces_prefix_budget_across_store_instances(self):
+        definition = [
+            {"name": "work", "action": "emit", "argument": "review", "requires_approval": False}
+        ]
+        first = self.store.create(
+            idempotency_key="agent-budget-1", workflow_name="agent-reviewer-first",
+            definition=definition,
+        )
+        second = self.store.create(
+            idempotency_key="agent-budget-2", workflow_name="agent-reviewer-second",
+            definition=definition,
+        )
+        unrelated = self.store.create(
+            idempotency_key="agent-budget-3", workflow_name="agent-writer-first",
+            definition=definition,
+        )
+
+        first_claim = self.store.claim_next(
+            worker_id="worker-a", workflow_prefix_limits={"agent-reviewer-": 1},
+        )
+        self.assertEqual(first_claim.run_id, first.run_id)
+
+        other_store = WorkflowRunStore(self.store.database_path)
+        self.assertIsNone(other_store.claim_next(
+            worker_id="worker-b", workflow_prefix_limits={"agent-reviewer-": 1},
+        ))
+        unrelated_claim = other_store.claim_next(
+            worker_id="worker-c",
+            workflow_prefix_limits={"agent-reviewer-": 1, "agent-writer-": 1},
+        )
+        self.assertEqual(unrelated_claim.run_id, second.run_id if False else unrelated.run_id)
+
+    def test_claim_next_validates_prefix_budgets(self):
+        with self.assertRaises(ValueError):
+            self.store.claim_next(worker_id="worker", workflow_prefix_limits={"bad-prefix": 1})
+        with self.assertRaises(ValueError):
+            self.store.claim_next(worker_id="worker", workflow_prefix_limits={"agent-review-": 0})
+
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
