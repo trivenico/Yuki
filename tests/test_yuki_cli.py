@@ -24,6 +24,34 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_conversation_preview_is_read_only_and_does_not_initialize_provider(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            export=Path(directory)/"history.jsonl"
+            export.write_text('{"id":"m1","role":"user","content":"Hello Yuki"}\n',encoding="utf-8")
+            output=[]
+            def forbidden_provider_factory(config):
+                raise AssertionError("preview must not initialize a provider")
+            code=run_cli(
+                ["conversation-preview",str(export),"--format","jsonl"],
+                provider_factory=forbidden_provider_factory,
+                output_fn=output.append,
+            )
+            self.assertEqual(code,0)
+            result=json.loads(output[0])
+            self.assertEqual(result["records_found"],1)
+            self.assertFalse(result["stored"])
+            self.assertTrue(result["consent_required_for_import"])
+
+    def test_conversation_preview_rejects_missing_file(self):
+        output=[]
+        code=run_cli(
+            ["conversation-preview","/path/that/does/not/exist.json","--format","chatgpt"],
+            output_fn=output.append,
+        )
+        self.assertEqual(code,2)
+        self.assertIn("not found",output[0].lower())
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
