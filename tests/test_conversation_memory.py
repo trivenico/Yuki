@@ -92,8 +92,44 @@ class ConversationMemoryStoreTests(unittest.TestCase):
         second = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
         self.assertEqual(first[0].source_record_id, "car")
         self.assertEqual(second[0].source_record_id, "car")
-        self.assertEqual(calls.count("car"), 2)
-        self.assertEqual(calls.count("food"), 2)
+        self.assertEqual(calls.count("car"), 1)
+        self.assertEqual(calls.count("food"), 1)
+
+    def test_embeddings_are_cached_across_searches_and_store_reopen(self):
+        calls = []
+        def embed(text):
+            calls.append(text)
+            return [1.0, 0.0] if text in {"vehicle", "car memory"} else [0.0, 1.0]
+        database = str(Path(self.tmp.name) / "persistent.sqlite3")
+        store = ConversationMemoryStore(
+            database, authorize=lambda actor, action, owner: actor == owner and action in {"memory:import", "memory:read"},
+            embedding_fn=embed, embedding_model_id="embed-v1",
+        )
+        store.import_records(actor_id="alice", owner_id="alice", source="chatgpt",
+            records=[{"id": "car", "role": "user", "content": "car memory"}], consent=True)
+        self.assertEqual(store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")[0].source_record_id, "car")
+        self.assertEqual(calls.count("car memory"), 1)
+        reopened = ConversationMemoryStore(
+            database, authorize=lambda actor, action, owner: actor == owner and action in {"memory:import", "memory:read"},
+            embedding_fn=embed, embedding_model_id="embed-v1",
+        )
+        reopened.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
+        self.assertEqual(calls.count("car memory"), 1)
+
+    def test_embedding_model_id_versions_cached_vectors(self):
+        calls = []
+        def embed(text):
+            calls.append(text)
+            return [1.0, 0.0]
+        database = str(Path(self.tmp.name) / "versions.sqlite3")
+        auth = lambda actor, action, owner: actor == owner and action in {"memory:import", "memory:read"}
+        store = ConversationMemoryStore(database, authorize=auth, embedding_fn=embed, embedding_model_id="v1")
+        store.import_records(actor_id="alice", owner_id="alice", source="chatgpt",
+            records=[{"id": "one", "role": "user", "content": "remember this"}], consent=True)
+        store.semantic_search(actor_id="alice", owner_id="alice", query="query")
+        store_v2 = ConversationMemoryStore(database, authorize=auth, embedding_fn=embed, embedding_model_id="v2")
+        store_v2.semantic_search(actor_id="alice", owner_id="alice", query="query")
+        self.assertEqual(calls.count("remember this"), 2)
 
     def test_import_rejects_unhashable_role_without_type_error(self):
         with self.assertRaises(ValueError):
