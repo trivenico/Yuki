@@ -10,7 +10,7 @@
 - License: Apache License 2.0.
 - Changes: The upstream statistics helper is copied with its implementation preserved and an attribution header added. Yuki wires it into `providers/model_evaluation.py` to expose latency distribution metrics. The full license text is in `licenses/Apache-2.0-OpenJarvis.txt`.
 
-OpenClaw and Hermes Agent were reviewed as upstream format and architecture references for the Agent Skills Markdown importer. No executable source files or bundled skill text from those projects are copied in this change. Their repository licenses remain MIT; any future copied files will receive file-level attribution and retained license notices.
+OpenClaw is used as a format and architecture reference for the Agent Skills Markdown importer; no OpenClaw executable source files are copied. Hermes Agent contributes the adapted systematic-debugging skill documented below. Its MIT license and source attribution are retained.
 
 ## Hermes Agent systematic-debugging skill
 
