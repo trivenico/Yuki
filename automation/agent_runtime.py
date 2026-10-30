@@ -14,6 +14,7 @@ def build_registered_agent_worker(
     *,
     worker_id: str,
     service_actor_id: str,
+    cloud_consent_agent_ids=(),
 ) -> SpecialistTaskWorker:
     """Build a worker whose handler set is derived from the durable agent registry.
 
@@ -26,7 +27,10 @@ def build_registered_agent_worker(
         raise TypeError("registry must be a SQLiteAgentRegistry.")
     if runtime.store.database_path != registry.database_path:
         raise ValueError("agent registry and task runtime must share the same SQLite database.")
-    handlers = build_agent_handlers(provider_manager, registry)
+    handlers = build_agent_handlers(
+        provider_manager, registry,
+        cloud_consent_agent_ids=cloud_consent_agent_ids,
+    )
     if not handlers:
         raise ValueError("no registered specialist agents are available.")
     return SpecialistTaskWorker(
