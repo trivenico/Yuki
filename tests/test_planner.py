@@ -1,6 +1,6 @@
 import unittest
 
-from core.planner import Planner
+from core.planner import Planner, PlanTask
 
 
 class PlannerTests(unittest.TestCase):
