@@ -154,6 +154,7 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        agent_concurrency: Mapping[str, int] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -173,6 +174,18 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if agent_concurrency is None:
+            agent_concurrency = {}
+        if not isinstance(agent_concurrency, Mapping) or len(agent_concurrency) > 32:
+            raise ValueError("agent_concurrency must be a bounded mapping.")
+        limits = {}
+        for agent_id, limit in agent_concurrency.items():
+            if agent_id not in validated:
+                raise ValueError("concurrency limit references an unregistered worker handler.")
+            if type(limit) is not int or not 1 <= limit <= 32:
+                raise ValueError("agent concurrency limits must be integers from 1 to 32.")
+            limits["agent-" + agent_id + "-"] = limit
+        self.workflow_prefix_limits = limits
         self.handlers = validated
 
     def run_concurrently(
@@ -219,7 +232,10 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id,
+            workflow_prefix_limits=self.workflow_prefix_limits,
+        )
         if claimed is None:
             return None
 
