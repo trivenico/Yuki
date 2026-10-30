@@ -17,17 +17,17 @@ class StarterAgentFleetTests(unittest.TestCase):
 
     def test_defines_twenty_unique_profiles_on_supported_roles(self):
         specs = starter_agent_specs()
-        self.assertEqual(len(specs), 21)
-        self.assertEqual(len({spec.agent_id for spec in specs}), 21)
+        self.assertEqual(len(specs), 100)
+        self.assertEqual(len({spec.agent_id for spec in specs}), 100)
         self.assertTrue(all(spec.role in {"research", "coding", "testing", "reporting"} for spec in specs))
         self.assertTrue(all(spec.allow_cloud is False for spec in specs))
         self.assertEqual(specs[-1].agent_id, "yuki-coordinator")
-        self.assertEqual(len(specs[-1].delegation_targets), 20)
+        self.assertEqual(len(specs[-1].delegation_targets), 99)
 
     def test_seeds_persistently_and_is_idempotent(self):
         inserted = seed_starter_agents(self.registry)
-        self.assertEqual(len(inserted), 21)
-        self.assertEqual(len(self.registry.list_agents()), 21)
+        self.assertEqual(len(inserted), 100)
+        self.assertEqual(len(self.registry.list_agents()), 100)
         self.assertEqual(seed_starter_agents(self.registry), ())
 
     def test_rejects_conflicting_existing_profile(self):
