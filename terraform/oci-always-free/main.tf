@@ -44,7 +44,10 @@ resource "oci_core_security_list" "gateway" {
     protocol     = "6"
     source       = "0.0.0.0/0"
     description  = "HTTPS gateway only"
-    tcp_options { min = 443 max = 443 }
+    tcp_options {
+      min = 443
+      max = 443
+    }
   }
   dynamic "ingress_security_rules" {
     for_each = var.ssh_cidr == "" ? [] : [var.ssh_cidr]
@@ -52,7 +55,10 @@ resource "oci_core_security_list" "gateway" {
       protocol    = "6"
       source      = ingress_security_rules.value
       description = "SSH from explicitly trusted administrator CIDR"
-      tcp_options { min = 22 max = 22 }
+      tcp_options {
+        min = 22
+        max = 22
+      }
     }
   }
   egress_security_rules {
