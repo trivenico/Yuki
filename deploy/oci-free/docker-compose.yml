@@ -1,0 +1,35 @@
+services:
+  yuki-gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/oci-free/Dockerfile
+    image: yuki-gateway:local
+    restart: unless-stopped
+    init: true
+    environment:
+      YUKI_GATEWAY_HOST: 0.0.0.0
+      YUKI_GATEWAY_PORT: "8765"
+      YUKI_GATEWAY_DATABASE: /var/lib/yuki/gateway.sqlite3
+      YUKI_GATEWAY_ADMIN_TOKEN: ${YUKI_GATEWAY_ADMIN_TOKEN:?Set YUKI_GATEWAY_ADMIN_TOKEN}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - yuki-gateway-data:/var/lib/yuki
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 384m
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/healthz', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  yuki-gateway-data:
