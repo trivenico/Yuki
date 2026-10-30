@@ -35,7 +35,9 @@ class YukiCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(output, ["real answer"])
-        self.assertEqual(provider.prompts, ["hello"])
+        self.assertEqual(len(provider.prompts), 1)
+        self.assertIn("User message: hello", provider.prompts[0])
+        self.assertIn("You are Yuki", provider.prompts[0])
 
     def test_provider_status_reports_unavailable_with_nonzero_exit(self):
         provider = FakeProvider(available=False)
