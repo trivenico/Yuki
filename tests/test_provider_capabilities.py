@@ -112,12 +112,36 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertEqual([item["provider"] for item in items], ["mock", "ollama"])
         self.assertNotIn("secret", repr(items))
 
-    def test_provider_manager_exposes_registry_from_real_catalog(self):
+    def test_provider_manager_exposes_only_real_ready_runtime_providers(self):
         manager = ProviderManager(environ={})
         registry = manager.routing_registry()
-        self.assertEqual(registry.route(required=("text",)).provider, "mock")
-        self.assertIsNone(registry.get("openai").configured_model)
-        self.assertFalse(registry.get("openai").implemented)
+        self.assertIsNone(registry.get("mock"))
+        self.assertTrue(registry.get("openai").implemented)
+        self.assertFalse(registry.get("openai").ready)
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+
+    def test_openai_requires_explicit_cloud_opt_in_for_routing(self):
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-only-key",
+            "YUKI_OPENAI_MODEL": "gpt-test",
+        })
+        registry = manager.routing_registry()
+        with self.assertRaises(LookupError):
+            registry.route(required=("text",))
+        self.assertEqual(
+            registry.route(required=("text",), allow_cloud=True, preference=("openai",)).provider,
+            "openai",
+        )
+
+    def test_ollama_local_endpoint_is_routable_but_custom_endpoint_is_not(self):
+        local = ProviderManager(config={"ollama_model": "qwen3"}, environ={})
+        self.assertEqual(local.routing_registry().route().provider, "ollama")
+        remote = ProviderManager(config={
+            "ollama_model": "qwen3", "ollama_base_url": "https://models.example.com",
+        }, environ={})
+        with self.assertRaises(LookupError):
+            remote.routing_registry().route()
 
 
 if __name__ == "__main__":
