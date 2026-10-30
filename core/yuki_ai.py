@@ -17,6 +17,7 @@ class YukiAI:
     def __init__(self, provider, *, planner=None, task_agent=None,
                  memory_search: Callable[[str], Iterable[str]] | None = None,
                  memory_store: Callable[[str, str], object] | None = None,
+                 multi_brain=None,
                  max_context_items=8, max_context_chars=500):
         if not callable(getattr(provider, "generate", None)):
             raise TypeError("provider must implement generate()")
@@ -31,6 +32,9 @@ class YukiAI:
         self.provider = provider
         self.planner = planner or Planner()
         self.task_agent = task_agent
+        if multi_brain is not None and not callable(getattr(multi_brain, "generate", None)):
+            raise TypeError("multi_brain must implement generate()")
+        self.multi_brain = multi_brain
         self.memory_search = memory_search
         self.memory_store = memory_store
         self.max_context_items = max_context_items
@@ -83,6 +87,11 @@ class YukiAI:
                 pass
         return response.strip()
 
+    def consult_specialists(self, message):
+        if self.multi_brain is None:
+            raise RuntimeError("multi-brain coordination is not configured")
+        return self.multi_brain.generate(message)
+
     def run_task(self, goal):
         if self.task_agent is None:
             raise RuntimeError("approval-gated task execution is not configured")
@@ -99,6 +108,7 @@ class YukiAI:
             "provider": type(self.provider).__name__,
             "provider_available": available,
             "planner": type(self.planner).__name__,
+            "multi_brain_configured": self.multi_brain is not None,
             "task_execution_configured": self.task_agent is not None,
             "memory_retrieval_configured": self.memory_search is not None,
             "memory_storage_configured": self.memory_store is not None,
