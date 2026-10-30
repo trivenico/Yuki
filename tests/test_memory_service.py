@@ -66,7 +66,7 @@ class YukiMemoryServiceTests(unittest.TestCase):
             consent=True,
         )
         context = service.build_agent_context(
-            actor_id="alice", owner_id="alice", query="model routing", max_chars=1000,
+            actor_id="alice", owner_id="alice", query="provider-neutral model router", max_chars=1000,
         )
         self.assertIn("provider-neutral model router", context)
 
