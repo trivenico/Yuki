@@ -7,7 +7,8 @@ from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
 from automation.specialist_worker import (
-    SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
+    AlwaysOnWorkerSupervisor, SpecialistTaskWorker,
+    build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -329,6 +330,34 @@ class SpecialistWorkerTests(unittest.TestCase):
         results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently()
         self.assertEqual(len(results), 25)
         self.assertTrue(all(result.state == "succeeded" for result in results))
+
+
+    def test_always_on_supervisor_recovers_and_stops_gracefully(self):
+        recovered = Event()
+
+        class RecoveringWorker:
+            def __init__(self):
+                self.calls = 0
+
+            def run_once(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("temporary provider outage")
+                recovered.set()
+                return None
+
+        supervisor = AlwaysOnWorkerSupervisor(
+            RecoveringWorker(), idle_poll_seconds=0.05,
+            error_backoff_seconds=0.01,
+        )
+        supervisor.start()
+        self.assertTrue(recovered.wait(timeout=2))
+        self.assertTrue(supervisor.stop(timeout=2))
+        snapshot = supervisor.snapshot()
+        self.assertEqual(snapshot["total_errors"], 1)
+        self.assertEqual(snapshot["consecutive_errors"], 0)
+        self.assertEqual(snapshot["idle_cycles"], 1)
+        self.assertFalse(snapshot["running"])
 
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
