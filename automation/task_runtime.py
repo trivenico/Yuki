@@ -28,6 +28,20 @@ class TaskEvent:
 
 
 @dataclass(frozen=True)
+class TaskSummary:
+    """Redacted task metadata for authorized dashboard listings."""
+    task_id: str
+    name: str
+    state: str
+    version: int
+    attempts: int
+    created_at: str
+    updated_at: str
+    lease_owner: str | None
+    lease_expires_at: str | None
+
+
+@dataclass(frozen=True)
 class TaskRecord:
     task_id: str
     name: str
@@ -99,6 +113,33 @@ class TaskRuntime:
         if not self._allowed(actor, "task:list", ""):
             raise PermissionError("task listing is not authorized.")
         return [self._record(run) for run in self.store.list_runs(state=state, limit=limit)]
+
+    def list_task_summaries(
+        self, *, actor_id: str, state: str | None = None, limit: int = 50,
+    ) -> list[TaskSummary]:
+        """List redacted task metadata without exposing definitions or results.
+
+        Requires the dedicated task:list capability. A caller must separately
+        hold task:read for any task detail or event stream it subsequently opens.
+        """
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:list", ""):
+            raise PermissionError("task listing is not authorized.")
+        runs = self.store.list_runs(state=state, limit=limit)
+        return [
+            TaskSummary(
+                task_id=run.run_id,
+                name=run.workflow_name,
+                state=run.state,
+                version=run.version,
+                attempts=run.attempts,
+                created_at=run.created_at,
+                updated_at=run.updated_at,
+                lease_owner=run.lease_owner,
+                lease_expires_at=run.lease_expires_at,
+            )
+            for run in runs
+        ]
 
     def get(self, *, actor_id: str, task_id: str) -> TaskRecord:
         actor = self._actor(actor_id)
