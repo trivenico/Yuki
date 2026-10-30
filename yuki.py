@@ -181,12 +181,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             for item in errors[:10]:
                 if not isinstance(item, dict):
                     continue
-                filename = sanitize_text(str(item.get("file", "unknown")), 120).replace("\\n", " ")
-                reason = sanitize_text(str(item.get("error", "unspecified error")), 240).replace("\\n", " ")
+                filename = sanitize_text(str(item.get("file", "unknown")), 120).replace("\n", " ")
+                reason = sanitize_text(str(item.get("error", "unspecified error")), 240).replace("\n", " ")
                 lines.append(f"- {filename}: {reason}")
             if len(errors) > 10:
                 lines.append(f"- {len(errors) - 10} additional error(s) omitted.")
-            return "\\n".join(lines)
+            return "\n".join(lines)
         if parts[1] == "inspect":
             if len(parts) < 3:
                 return "Usage: /skill inspect NAME"
