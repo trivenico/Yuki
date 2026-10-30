@@ -12,7 +12,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -34,6 +34,19 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=first.task_id)
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
+
+    def test_task_listing_requires_separate_capability_and_is_bounded(self):
+        first = self.create("list-first")
+        second = self.create("list-second")
+        listed = self.runtime.list_tasks(actor_id="alice", limit=1)
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0].task_id, second.task_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.list_tasks(actor_id="supervisor")
+        with self.assertRaises(ValueError):
+            self.runtime.list_tasks(actor_id="alice", limit=101)
+        with self.assertRaises(ValueError):
+            self.runtime.list_tasks(actor_id="alice", state="unknown")
 
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
