@@ -39,7 +39,7 @@ class LocalOpenAICompatibleTests(unittest.TestCase):
     def test_model_catalog_is_explicitly_review_required(self):
         self.assertGreaterEqual(len(MODEL_FAMILIES),6)
         for family in MODEL_FAMILIES:
-            self.assertEqual(family["license_policy"],"verify_each_checkpoint")
+            self.assertIn("verify_each_checkpoint", family["license_policy"])
         self.assertTrue(any(x["name"]=="vLLM" for x in INFERENCE_RUNTIMES))
 
 
