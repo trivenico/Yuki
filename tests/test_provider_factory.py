@@ -7,6 +7,9 @@ from providers.mock import MockProvider
 from providers.multi import MultiProviderRouter
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
+from providers.oci_iam import OciIamProvider
+from unittest.mock import Mock, patch
+import json
 
 
 class ProviderFactoryTests(unittest.TestCase):
@@ -38,6 +41,72 @@ class ProviderFactoryTests(unittest.TestCase):
             "ocid1.generativeaiproject.oc1.us-chicago-1.example",
         )
         self.assertTrue(provider.is_available())
+
+    def test_oci_iam_provider_factory_uses_configured_principal_mode(self):
+        with patch("providers.factory.create_oci_iam_auth", return_value=object()) as auth_factory, \\
+             patch("providers.factory.OciIamProvider") as provider_factory:
+            create_provider(
+                {"provider": "oci_iam"},
+                environ={
+                    "YUKI_OCI_REGION": "eu-frankfurt-1",
+                    "YUKI_OCI_MODEL": "meta.llama",
+                    "YUKI_OCI_PROJECT_OCID": "ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
+                    "YUKI_OCI_AUTH_MODE": "instance_principal",
+                },
+            )
+        auth_factory.assert_called_once_with(
+            "instance_principal", config_file=None, profile_name="DEFAULT"
+        )
+        provider_factory.assert_called_once()
+
+    def test_oci_iam_provider_sends_project_and_parses_chat_completion(self):
+        response = Mock()
+        response.status_code = 200
+        response.content = json.dumps({
+            "choices": [{"message": {"content": "  OCI says hello  "}}]
+        }).encode()
+        response.raise_for_status.return_value = None
+        client = Mock()
+        client.post.return_value = response
+        provider = OciIamProvider(
+            "meta.llama",
+            region="eu-frankfurt-1",
+            project_ocid="ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
+            auth=object(),
+            http_client=client,
+        )
+        self.assertEqual(provider.generate("hello"), "OCI says hello")
+        args, kwargs = client.post.call_args
+        self.assertTrue(args[0].startswith(provider.base_url))
+        self.assertEqual(kwargs["headers"]["openai-project"], provider.project_ocid)
+        self.assertFalse(kwargs["json"]["stream"])
+
+    def test_oci_iam_provider_rejects_redirects(self):
+        response = Mock()
+        response.status_code = 302
+        client = Mock()
+        client.post.return_value = response
+        provider = OciIamProvider(
+            "meta.llama",
+            region="eu-frankfurt-1",
+            project_ocid="ocid1.generativeaiproject.oc1.eu-frankfurt-1.example",
+            auth=object(),
+            http_client=client,
+        )
+        with self.assertRaisesRegex(RuntimeError, "redirect"):
+            provider.generate("hello")
+
+    def test_oci_iam_provider_requires_valid_project_and_region(self):
+        with self.assertRaisesRegex(ValueError, "YUKI_OCI_REGION"):
+            OciIamProvider(
+                "meta.llama", region="", project_ocid="ocid1.generativeaiproject.x",
+                auth=object(), http_client=Mock()
+            )
+        with self.assertRaisesRegex(ValueError, "YUKI_OCI_PROJECT_OCID"):
+            OciIamProvider(
+                "meta.llama", region="eu-frankfurt-1", project_ocid="bad",
+                auth=object(), http_client=Mock()
+            )
 
     def test_oci_provider_requires_region_model_and_project(self):
         with self.assertRaisesRegex(ValueError, "YUKI_OCI_REGION"):
