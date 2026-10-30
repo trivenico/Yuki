@@ -1,4 +1,4 @@
-"""Curated starter fleet of 20 bounded specialist-agent profiles.
+"""Curated starter fleet of 21 bounded specialist-agent profiles.
 
 These profiles share Yuki's existing four text-only worker roles. They are
 metadata/configuration, not 20 independent runtimes or grants of tool access.
@@ -34,7 +34,7 @@ _STARTER_PROFILES = (
 
 
 def starter_agent_specs() -> tuple[AgentSpec, ...]:
-    """Return 19 specialists followed by a coordinator allowed to delegate to them."""
+    """Return 20 specialists followed by a coordinator allowed to delegate to them."""
     specialists = tuple(
         AgentSpec(
             agent_id=agent_id,
@@ -61,7 +61,7 @@ def starter_agent_specs() -> tuple[AgentSpec, ...]:
 
 
 def seed_starter_agents(registry: SQLiteAgentRegistry) -> tuple[AgentSpec, ...]:
-    """Idempotently seed the 20 profiles; reject conflicting existing definitions."""
+    """Idempotently seed the 21 profiles; reject conflicting existing definitions."""
     if not isinstance(registry, SQLiteAgentRegistry):
         raise TypeError("registry must be a SQLiteAgentRegistry.")
     seeded = []
