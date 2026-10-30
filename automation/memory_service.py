@@ -55,9 +55,9 @@ class YukiMemoryService:
         output = preamble
         for memory in memories:
             content = memory.content.replace("</memory>", "&lt;/memory&gt;")
-            header = f"\\n<memory source={memory.source!r} record={memory.source_record_id!r}>\\n"
-            footer = "\\n</memory>"
-            separator = "\\n"
+            header = f"\n<memory source={memory.source!r} record={memory.source_record_id!r}>\n"
+            footer = "\n</memory>"
+            separator = "\n"
             remaining = max_chars - len(output) - len(separator) - len(header) - len(footer)
             if remaining <= 0:
                 break
