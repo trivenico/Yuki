@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from secrets import token_urlsafe
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.specialist_worker import (
@@ -21,7 +22,7 @@ from automation.workflow_store import WorkflowRunStore
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
 
-_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read"})
+_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve"})
 _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 
 
@@ -31,6 +32,7 @@ class LocalWorkerRuntime:
     supervisor: WorkerSupervisor
     coordinator: SpecialistAgentCoordinator
     operator_actor_id: str
+    approval_session_id: str
 
 
 def build_local_worker_runtime(
@@ -96,4 +98,5 @@ def build_local_worker_runtime(
         supervisor=supervisor,
         coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
+        approval_session_id=token_urlsafe(32),
     )
