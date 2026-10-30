@@ -10,5 +10,13 @@ class ProviderManagerCatalogTests(unittest.TestCase):
         self.assertTrue(any(item["name"] == "ollama" and item["selected"] for item in catalog))
         self.assertNotIn(secret, repr(catalog))
 
+    def test_oci_catalog_reports_configured_iam_without_secret_values(self):
+        manager = ProviderManager(config={"provider":"oci_iam", "oci_region":"eu-frankfurt-1",
+            "oci_model":"model-x", "oci_project_ocid":"ocid1.generativeaiproject.oc1..example"}, environ={})
+        catalog = {item["name"]: item for item in manager.catalog()}
+        self.assertTrue(catalog["oci_iam"]["implemented"])
+        self.assertTrue(catalog["oci_iam"]["ready"])
+        self.assertNotIn("ocid1.generativeaiproject", repr(catalog))
+
 if __name__ == "__main__":
     unittest.main()
