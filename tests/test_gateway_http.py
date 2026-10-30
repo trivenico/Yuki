@@ -33,7 +33,7 @@ class GatewayHttpTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def request(self, method, path, body=None, token=None):
+    def request(self, method, path, body=None, token=None, extra_headers=None):
         connection = HTTPConnection(self.host, self.port, timeout=2)
         headers = {}
         payload = None
@@ -42,6 +42,8 @@ class GatewayHttpTests(unittest.TestCase):
             headers["Content-Type"] = "application/json"
         if token:
             headers["Authorization"] = "Bearer " + token
+        if extra_headers:
+            headers.update(extra_headers)
         connection.request(method, path, body=payload, headers=headers)
         response = connection.getresponse()
         data = json.loads(response.read().decode("utf-8"))
@@ -182,7 +184,7 @@ class GatewayHttpTests(unittest.TestCase):
         status, created, _ = self.request(
             "POST", "/v1/tasks",
             {"agent_id": "research-analyst", "objective": "Summarize the supplied evidence."},
-            token=issued.token,
+            token=issued.token, extra_headers={"Idempotency-Key": "test-owner-task-001"},
         )
         self.assertEqual(status, 202)
         task_id = created["task"]["task_id"]
@@ -208,7 +210,7 @@ class GatewayHttpTests(unittest.TestCase):
         status, data, _ = self.request(
             "POST", "/v1/tasks",
             {"agent_id": "research-analyst", "objective": "Try cross-owner write."},
-            token=other.token,
+            token=other.token, extra_headers={"Idempotency-Key": "test-cross-owner-001"},
         )
         self.assertEqual(status, 403)
         self.assertEqual(data["error"], "owner_only")
@@ -221,7 +223,7 @@ class GatewayHttpTests(unittest.TestCase):
         status, data, _ = self.request(
             "POST", "/v1/tasks",
             {"agent_id": "research-analyst", "objective": "Should be denied."},
-            token=limited.token,
+            token=limited.token, extra_headers={"Idempotency-Key": "test-read-only-001"},
         )
         self.assertEqual(status, 403)
         self.assertEqual(data["error"], "insufficient_scope")
