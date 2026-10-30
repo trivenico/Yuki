@@ -11,3 +11,7 @@ Yuki's specialist workforce can exchange bounded, durable text messages through 
 - Use the same durable SQLite database path as the task runtime and agent coordinator when integrating the mailbox.
 
 This is the persistence/API foundation; automatic coordinator delivery, event streaming, and UI integration remain follow-up work.
+
+## Coordinator integration
+
+`SpecialistAgentCoordinator` exposes `send_agent_message`, `read_agent_inbox`, and `acknowledge_agent_message`. These methods verify registered sender/recipient IDs, use the coordinator's trusted authorization callback for each mailbox action, and persist to the same coordinator SQLite database. The coordinator does not auto-execute inbox contents; a receiving worker must explicitly read and handle the message under its own task and tool policies.
