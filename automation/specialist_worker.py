@@ -5,6 +5,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 """
 from __future__ import annotations
 
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
@@ -191,24 +192,27 @@ class SpecialistTaskWorker:
         self.handlers = validated
 
     def run_concurrently(
-        self, *, max_workers: int = 4, max_tasks: int = 20,
+        self, *, max_workers: int | None = None, max_tasks: int | None = None,
     ) -> tuple[TaskRecord, ...]:
-        """Execute a bounded batch using independent leased worker identities.
+        """Drain available work with resource-aware workers and no product task cap.
 
-        SQLite's atomic claim operation arbitrates across workers. A shared permit
-        budget caps total claims, while each worker gets its own lease owner so
-        completion and failure checks remain tied to the actual claimant.
+        When omitted, worker count follows the host's available CPU count and the
+        pool drains until no eligible task remains. Explicit positive values are
+        operator tuning knobs, not fixed product ceilings. SQLite arbitrates claims
+        across processes and enforces any explicitly configured per-agent budgets.
         """
-        if type(max_workers) is not int or not 1 <= max_workers <= 16:
-            raise ValueError("max_workers must be an integer from 1 to 16.")
-        if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
-            raise ValueError("max_tasks must be an integer from 1 to 100.")
+        if max_workers is None:
+            max_workers = max(1, os.cpu_count() or 1)
+        if type(max_workers) is not int or max_workers < 1:
+            raise ValueError("max_workers must be None or a positive integer.")
+        if max_tasks is not None and (type(max_tasks) is not int or max_tasks < 1):
+            raise ValueError("max_tasks must be None or a positive integer.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
             raise ValueError("worker_id is too long for parallel worker identities.")
 
-        permits = BoundedSemaphore(max_tasks)
+        permits = BoundedSemaphore(max_tasks) if max_tasks is not None else None
         results: list[TaskRecord] = []
         results_lock = Lock()
 
@@ -222,10 +226,11 @@ class SpecialistTaskWorker:
                     for prefix, limit in self.workflow_prefix_limits.items()
                 },
             )
-            while permits.acquire(blocking=False):
+            while permits is None or permits.acquire(blocking=False):
                 result = worker.run_once()
                 if result is None:
-                    permits.release()
+                    if permits is not None:
+                        permits.release()
                     return
                 with results_lock:
                     results.append(result)
