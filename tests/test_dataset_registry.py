@@ -1,4 +1,5 @@
 import unittest
+from contextlib import closing
 
 from learning.dataset_registry import DatasetApproval, DatasetRegistry
 
@@ -73,9 +74,10 @@ class DatasetRegistryTests(unittest.TestCase):
             key = b"test-only-signing-key-at-least-32-bytes"
             first = DatasetRegistry(database_path=path, signing_key=key)
             first.approve(self.approval)
-            with sqlite3.connect(path) as db:
-                db.execute("UPDATE dataset_approvals SET approval_json=?",
-                           ('{"repo_id":"someone/else"}',))
+            with closing(sqlite3.connect(path)) as db:
+                with db:
+                    db.execute("UPDATE dataset_approvals SET approval_json=?",
+                               ('{"repo_id":"someone/else"}',))
             with self.assertRaises(RuntimeError):
                 DatasetRegistry(database_path=path, signing_key=key)
 
