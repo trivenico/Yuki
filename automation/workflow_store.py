@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
-from typing import Any
+from typing import Any, Mapping
 
 
 class WorkflowStoreError(RuntimeError):
@@ -278,8 +278,30 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
-        """Atomically claim the oldest queued run; never steals or replays running work."""
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        workflow_prefix_limits: Mapping[str, int] | None = None,
+    ) -> WorkflowRun | None:
+        """Atomically claim queued work while enforcing optional cross-process name budgets.
+
+        Prefix budgets are checked inside the same BEGIN IMMEDIATE transaction as
+        the claim. A limit therefore applies across all workers sharing this SQLite
+        database, not merely within one Python worker pool.
+        """
+        if workflow_prefix_limits is None:
+            workflow_prefix_limits = {}
+        if not isinstance(workflow_prefix_limits, Mapping) or len(workflow_prefix_limits) > 32:
+            raise ValueError("workflow_prefix_limits must be a bounded mapping.")
+        normalized_limits = {}
+        for prefix, limit in workflow_prefix_limits.items():
+            if (
+                not isinstance(prefix, str) or not prefix.startswith("agent-")
+                or not prefix.endswith("-") or len(prefix) > 90 or "\\x00" in prefix
+            ):
+                raise ValueError("workflow prefixes must be bounded agent-name prefixes.")
+            if type(limit) is not int or not 1 <= limit <= 32:
+                raise ValueError("workflow prefix limits must be integers from 1 to 32.")
+            normalized_limits[prefix] = limit
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
@@ -295,15 +317,29 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE state='queued' "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
-            row = next((
-                candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
-                or (
+            row = None
+            for candidate in rows:
+                if self._requires_approval(json.loads(candidate["definition_json"])) and not (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
                     and candidate["approval_digest"] == candidate["request_digest"]
+                ):
+                    continue
+                matching_prefix = next(
+                    (prefix for prefix in sorted(normalized_limits, key=len, reverse=True)
+                     if candidate["workflow_name"].startswith(prefix)),
+                    None,
                 )
-            ), None)
+                if matching_prefix is not None:
+                    active = db.execute(
+                        "SELECT COUNT(*) FROM workflow_runs WHERE state='running' "
+                        "AND substr(workflow_name, 1, ?) = ?",
+                        (len(matching_prefix), matching_prefix),
+                    ).fetchone()[0]
+                    if active >= normalized_limits[matching_prefix]:
+                        continue
+                row = candidate
+                break
             if row is None:
                 return None
             updated = db.execute("""
