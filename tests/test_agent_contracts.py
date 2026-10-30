@@ -81,6 +81,18 @@ class DelegationTests(unittest.TestCase):
             registry.register(AgentSpec(f"agent-{index}", "research", "Research"))
         self.assertEqual(len(registry.list_agents()), 150)
 
+    def test_coordinator_can_delegate_to_more_than_one_hundred_agents(self):
+        registry = AgentRegistry()
+        for index in range(150):
+            registry.register(AgentSpec(f"target-{index}", "research", "Research"))
+        coordinator = AgentSpec(
+            "coordinator", "planning", "Coordinates all specialists",
+            capabilities={"agent:delegate"},
+            delegation_targets=frozenset(f"target-{index}" for index in range(150)),
+        )
+        registry.register(coordinator)
+        self.assertEqual(len(registry.get("coordinator").delegation_targets), 150)
+
     def test_unlimited_agent_concurrency_and_timeout_are_valid(self):
         spec = AgentSpec(
             "always-on", "research", "Continuous personal agent",
