@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 import threading
+from contextlib import closing
+import uuid
 from typing import Any
 
 from core.sync_contract import SyncEvent, validate_sync_event
@@ -43,24 +45,42 @@ class SyncEventStore:
     """Append-only SQLite event log with idempotency and per-device cursors."""
 
     def __init__(self, path: str | Path):
-        self.path = str(path)
+        requested_path = str(path)
+        self._memory = requested_path == ":memory:"
+        self.path = (
+            f"file:yuki_sync_{uuid.uuid4().hex}?mode=memory&cache=shared"
+            if self._memory else requested_path
+        )
         self._lock = threading.RLock()
-        if self.path != ":memory:":
+        self._anchor = None
+        if self._memory:
+            # Keep one connection alive so per-operation connections share
+            # the same in-memory database.
+            self._anchor = self._connect()
+        else:
             Path(self.path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        conn = sqlite3.connect(
+            self.path, timeout=10, isolation_level=None, uri=self._memory
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=10000")
-        if self.path != ":memory:":
+        if not self._memory:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
         return conn
 
+    def close(self) -> None:
+        """Release the anchor connection used by a shared in-memory database."""
+        if self._anchor is not None:
+            self._anchor.close()
+            self._anchor = None
+
     def _initialize(self):
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sync_devices (
                     device_id TEXT PRIMARY KEY,
@@ -114,7 +134,7 @@ class SyncEventStore:
             raise ValueError("Invalid device identifier.")
         if not isinstance(user_id, str) or not user_id or len(user_id) > 128:
             raise ValueError("Invalid user identifier.")
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             row = conn.execute("SELECT user_id, active FROM sync_devices WHERE device_id=?", (device_id,)).fetchone()
             if row:
                 if row["user_id"] != user_id:
@@ -126,7 +146,7 @@ class SyncEventStore:
             conn.execute("INSERT INTO sync_cursors(device_id,last_sequence) VALUES(?,0)", (device_id,))
 
     def revoke_device(self, device_id: str, user_id: str) -> None:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             cur = conn.execute(
                 "UPDATE sync_devices SET active=0, revoked_at=CURRENT_TIMESTAMP WHERE device_id=? AND user_id=? AND active=1",
                 (device_id, user_id),
@@ -147,7 +167,7 @@ class SyncEventStore:
         if event.device_id != authenticated_device_id:
             raise SyncStoreError("Event device does not match authenticated device.")
         import json
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 user_id = self._active_device(conn, authenticated_device_id)
@@ -207,7 +227,7 @@ class SyncEventStore:
             raise ValueError("after_sequence must be a non-negative integer.")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500.")
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             user_id = self._active_device(conn, authenticated_device_id)
             rows = conn.execute(
                 """SELECT * FROM sync_events WHERE user_id=? AND sequence>?
@@ -219,7 +239,7 @@ class SyncEventStore:
     def acknowledge(self, authenticated_device_id: str, sequence: int) -> int:
         if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
             raise ValueError("sequence must be a non-negative integer.")
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             user_id = self._active_device(conn, authenticated_device_id)
             maximum = conn.execute(
                 "SELECT COALESCE(MAX(sequence),0) AS maximum FROM sync_events WHERE user_id=?",
@@ -242,13 +262,13 @@ class SyncEventStore:
             return sequence
 
     def get_cursor(self, authenticated_device_id: str) -> int:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             self._active_device(conn, authenticated_device_id)
             row = conn.execute("SELECT last_sequence FROM sync_cursors WHERE device_id=?", (authenticated_device_id,)).fetchone()
             return row["last_sequence"]
 
     def health(self) -> dict[str, Any]:
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
             events = conn.execute("SELECT COUNT(*) AS count FROM sync_events").fetchone()["count"]
             devices = conn.execute("SELECT COUNT(*) AS count FROM sync_devices WHERE active=1").fetchone()["count"]
