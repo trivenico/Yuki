@@ -6,7 +6,7 @@ from core.independent_code_review import review_python_changes
 class IndependentCodeReviewTests(unittest.TestCase):
     def test_clean_python_change_is_non_blocking(self):
         report = review_python_changes({"src/clean.py": "def add(a, b):\n    return a + b\n"})
-        self.assertTrue(report.approved_for_merge)
+        self.assertTrue(report.eligible_for_human_review)
         self.assertEqual(report.blocking_count, 0)
         self.assertEqual(report.files_scanned, 1)
 
@@ -21,7 +21,7 @@ class IndependentCodeReviewTests(unittest.TestCase):
         rules = {item.rule_id for item in report.findings}
         self.assertIn("PY001", rules)
         self.assertIn("PY003", rules)
-        self.assertFalse(report.approved_for_merge)
+        self.assertFalse(report.eligible_for_human_review)
         self.assertGreaterEqual(report.blocking_count, 2)
 
     def test_unsafe_deserialization_and_tls_disable_are_blocking(self):
@@ -34,14 +34,14 @@ class IndependentCodeReviewTests(unittest.TestCase):
         rules = {item.rule_id for item in report.findings}
         self.assertIn("PY004", rules)
         self.assertIn("PY006", rules)
-        self.assertFalse(report.approved_for_merge)
+        self.assertFalse(report.eligible_for_human_review)
 
     def test_credentials_are_detected_but_values_never_echoed(self):
         secret = "super-secret-value-12345"
         report = review_python_changes({
             "src/config.py": 'API_KEY = "' + secret + '"\n'
         })
-        self.assertFalse(report.approved_for_merge)
+        self.assertFalse(report.eligible_for_human_review)
         self.assertTrue(any(item.rule_id == "SEC001" for item in report.findings))
         rendered = repr(report)
         self.assertNotIn(secret, rendered)
@@ -49,13 +49,13 @@ class IndependentCodeReviewTests(unittest.TestCase):
 
     def test_syntax_error_blocks_review(self):
         report = review_python_changes({"src/broken.py": "def broken(:\n pass\n"})
-        self.assertFalse(report.approved_for_merge)
+        self.assertFalse(report.eligible_for_human_review)
         self.assertIn("PY000", {item.rule_id for item in report.findings})
 
     def test_non_python_changes_are_explicitly_incomplete(self):
         report = review_python_changes({"README.md": "# Docs\n"})
         self.assertEqual(report.files_skipped, 1)
-        self.assertFalse(report.approved_for_merge)
+        self.assertFalse(report.eligible_for_human_review)
 
     def test_unsafe_paths_and_oversized_inputs_are_rejected(self):
         for path in ("../outside.py", "/absolute.py", "src\\escape.py"):
