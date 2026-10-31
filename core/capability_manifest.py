@@ -127,6 +127,18 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "durable-task-event-stream", "Authorized replayable task events with SSE framing", "experimental",
+        "Exposes bounded cursor-based reads over the durable workflow task-event journal and encodes those events "
+        "as Server-Sent Events frames for transport adapters.",
+        ("automation/task_event_stream.py", "automation/task_runtime.py", "automation/workflow_store.py"),
+        ("SQLite task event journal",), ("task:read",),
+        ("durable event reads and outbound event frames",), ("local", "hosted"), "high",
+        ("tests/test_task_event_stream.py", "tests/test_task_runtime.py", "tests/test_workflow_store.py"),
+        ("Transport-neutral framing only; no HTTP server, SSE connection lifecycle, WebSocket server, or push daemon.",
+         "Clients must reconnect with the last sequence cursor; event authorization is checked on every batch.",
+         "Events are task-scoped; there is no cross-task global event cursor or retention/compaction policy."),
+    ),
+    CapabilityContract(
         "conversation-agent-bridge", "Persistent conversation to approval-gated specialist planning", "experimental",
         "Connects workspace-scoped durable conversation turns to the guarded agent execution service, preserving request "
         "idempotency and reporting plan state without executing specialist work inside the conversation request.",
