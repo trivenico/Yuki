@@ -129,7 +129,7 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 def validate_skill_manifest(value: dict) -> dict:
     required = {"type", "id", "version", "name", "description", "instructions"}
-    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk"}
+    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk", "skill_version", "dependencies"}
     if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
         raise ValueError("Skill manifest contains missing or unsupported fields.")
     if "source" in value and (
@@ -170,7 +170,16 @@ def validate_skill_manifest(value: dict) -> dict:
     risk = value.get("risk", "medium")
     if not isinstance(risk, str) or risk not in _ALLOWED_SKILL_RISKS:
         raise ValueError("Skill risk must be low, medium, or high.")
-    return {**value, "risk": risk}
+    from core.skill_dependency_manager import (
+        DependencyDeclarationError, validate_skill_dependencies, _version_tuple,
+    )
+    skill_version = value.get("skill_version", "1.0.0")
+    try:
+        _version_tuple(skill_version)
+        dependencies = validate_skill_dependencies(value.get("dependencies"))
+    except (DependencyDeclarationError, TypeError) as exc:
+        raise ValueError(f"Skill dependency metadata is invalid: {exc}") from exc
+    return {**value, "risk": risk, "skill_version": skill_version, "dependencies": dependencies}
 
 
 def classify_imported_skill_risk(name: str, description: str, instructions: str) -> str:
@@ -337,6 +346,8 @@ def install_skill_file(
         "description": description.strip(),
         "instructions": instructions,
         "risk": selected_risk,
+        "skill_version": "1.0.0",
+        "dependencies": {"skills": [], "python": []},
     }
     if source_metadata is not None:
         if not isinstance(source_metadata, dict) or not {"source", "source_commit", "source_path"}.issubset(source_metadata) or set(source_metadata) - {"source", "source_commit", "source_path", "source_license", "source_license_path"}:
