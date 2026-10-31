@@ -77,6 +77,13 @@ class SyncRuntime:
             raise SyncClientError("Event device_id does not match this paired device.")
         return self.outbox.enqueue(event)
 
+    def upload_pending(self, push_limit: int = 50):
+        """Upload queued local events only; does not download or apply remote records."""
+        from core.sync_client import SyncAgent
+        agent = SyncAgent(self._require_transport(), self.outbox, self.vault,
+                          apply_remote=lambda _event: None)
+        return agent.push_pending(push_limit)
+
     def sync_once(self, apply_remote):
         from core.sync_client import SyncAgent
         transport = self._require_transport()
