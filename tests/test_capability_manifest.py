@@ -32,6 +32,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_specialist_worker.py", item.test_evidence)
         self.assertTrue(item.limitations)
 
+    def test_isolated_coding_execution_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "isolated-coding-execution"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/coding_task_runner.py", item.entrypoints)
+        self.assertIn("tests/test_coding_task_runner.py", item.test_evidence)
+        self.assertTrue(any("trusted Docker daemon" in limitation for limitation in item.limitations))
+
     def test_typed_tool_execution_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
