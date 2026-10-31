@@ -97,6 +97,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             next(item.task_id for item in second.subtasks if item.subtask_id == "b"),
         )
 
+    def test_dispatch_reservation_is_atomic_and_recoverable(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.coordinator.database_path, self.agents,
+            authorize=self.agent_auth, max_active_tasks=1,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="reservation-recovery-1", subtasks=[
+            SubtaskSpec("a", "First independent task", ("research",), requires_approval=False),
+            SubtaskSpec("b", "Second independent task", ("write",), requires_approval=False),
+        ])
+        self.assertTrue(coordinator._reserve_dispatch_slot(plan.plan_id, "a"))
+        self.assertFalse(coordinator._reserve_dispatch_slot(plan.plan_id, "b"))
+        self.assertTrue(coordinator._reserve_dispatch_slot(plan.plan_id, "a"))
+        reserved = coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(reserved.status, "queued")
+        self.assertEqual({item.status for item in reserved.subtasks}, {"dispatching", "pending"})
+
     def test_active_task_limit_rejects_invalid_values(self):
         for value in (0, -1, 21, True, 1.5):
             with self.subTest(value=value):
