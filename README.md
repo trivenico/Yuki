@@ -10,7 +10,7 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 The CLI now composes its provider manager, AI agent and durable conversation store through `core/application_runtime.py`. This is the first shared service boundary intended for both the Windows desktop interface and the Oracle Linux service. Interfaces should call `YukiApplicationRuntime.create()`, `send_message()`, `new_conversation()`, `switch_conversation()` and `close()` rather than constructing their own provider or conversation services.
 
-This is an incremental foundation, not a completed desktop/cloud client-server architecture. The runtime currently executes in-process and has a bounded authenticated loopback WSGI API for desktop-client integration, but no desktop UI, background worker, remote RPC protocol or production server launcher. Those are subsequent milestones.
+This is an incremental foundation, not a completed desktop/cloud client-server architecture. The runtime currently executes in-process and has a bounded authenticated loopback WSGI API for desktop-client integration. A native Tkinter desktop UI and thread-confined runtime worker are now present as an early source-run preview; remote RPC and a production server launcher remain subsequent milestones.
 
 ## Native desktop shell (early preview)
 
