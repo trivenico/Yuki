@@ -74,6 +74,24 @@ class SyncEventStoreTests(unittest.TestCase):
         with self.assertRaises(RevokedDeviceError):
             self.store.pull_events("device_0000001")
 
+    def test_shared_in_memory_database_survives_per_operation_connections(self):
+        memory = SyncEventStore(":memory:")
+        try:
+            memory.register_device("device_0000009", "user_0000009")
+            stored = memory.append_event(
+                "device_0000009",
+                event("event_00000009", "device_0000009"),
+            )
+            self.assertEqual(stored.sequence, 1)
+            self.assertEqual(len(memory.pull_events("device_0000009")), 1)
+            self.assertTrue(memory.health()["ok"])
+        finally:
+            memory.close()
+
+    def test_close_is_safe_for_file_backed_store(self):
+        self.store.close()
+        self.assertTrue(self.store.health()["ok"])
+
     def test_health_reports_sqlite_integrity(self):
         self.assertTrue(self.store.health()["ok"])
 
