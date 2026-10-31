@@ -37,6 +37,37 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_plan_status_aggregates_success_and_failure(self):
+        successful = self.coordinator.submit(actor_id="alice", idempotency_key="status-success", subtasks=[
+            SubtaskSpec("collect", "Collect", ("research",), requires_approval=False),
+        ])
+        self.assertEqual(successful.status, "queued")
+        self.coordinator.advance(actor_id="alice", plan_id=successful.plan_id)
+        claimed = self.store.claim_next(worker_id="status-worker")
+        completed = self.store.transition(
+            claimed.run_id, expected_version=claimed.version, to_state="succeeded", result={"ok": True},
+        )
+        self.store.append_task_event(
+            completed.run_id, kind="task.completed", actor_id="alice",
+            payload={"state_version": completed.version}, expected_version=completed.version,
+        )
+        self.assertEqual(self.coordinator.advance(actor_id="alice", plan_id=successful.plan_id).status, "succeeded")
+
+        failed_plan = self.coordinator.submit(actor_id="alice", idempotency_key="status-failed", subtasks=[
+            SubtaskSpec("collect", "Collect", ("research",), requires_approval=False),
+            SubtaskSpec("write", "Write", ("write",), depends_on=("collect",), requires_approval=False),
+        ])
+        self.coordinator.advance(actor_id="alice", plan_id=failed_plan.plan_id)
+        failed_task = self.store.claim_next(worker_id="status-worker")
+        failed = self.store.transition(
+            failed_task.run_id, expected_version=failed_task.version, to_state="failed",
+            error_code="specialist_handler_failed",
+        )
+        self.store.append_task_event(
+            failed.run_id, kind="task.failed", actor_id="alice",
+            payload={"state_version": failed.version}, expected_version=failed.version,
+        )
+        self.assertEqual(self.coordinator.advance(actor_id="alice", plan_id=failed_plan.plan_id).status, "failed")
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
             SubtaskSpec("collect", "Collect public sources", ("research",), required_permissions=("web:read",)),
