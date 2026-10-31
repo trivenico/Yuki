@@ -97,7 +97,21 @@ class ConversationRuntime:
             self.store.get_session(workspace_id, session_id)
         history = self.store.list_messages(workspace_id, session_id)
         prompt = self._prompt(history, user_message)
-        self.store.begin_turn(workspace_id, session_id, request_id, user_message)
+        turn = self.store.begin_turn(workspace_id, session_id, request_id, user_message)
+        if not turn.get("created", False):
+            if turn["status"] == "completed" and turn.get("assistant_message_id"):
+                saved = self.store.list_messages(workspace_id, session_id)
+                answer = next((item["content"] for item in saved
+                               if item["id"] == turn["assistant_message_id"]), None)
+                if answer is not None:
+                    return TurnResult(True, session_id, request_id, answer, 0)
+            code = "turn_already_running" if turn["status"] == "running" else "turn_already_failed"
+            message = (
+                "This request is already running; it was not executed again."
+                if turn["status"] == "running"
+                else "This request previously failed; use a new request ID to retry."
+            )
+            return TurnResult(False, session_id, request_id, message, 5, code)
         try:
             if not self.provider.is_available():
                 self.store.fail_turn(workspace_id, request_id, error_code="provider_unavailable")
