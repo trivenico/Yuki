@@ -22,7 +22,7 @@ Yuki stores its data under the current user's platform data directory by default
 
 The desktop settings row lists registered AI providers, distinguishes implemented adapters from planned integrations, and lets you switch between available adapters. It also displays the selected provider's configured model, privacy classification, readiness reason and whether a credential is configured (never its value). This is metadata-only; it does not probe remote providers or enumerate their model catalogues. Provider changes and catalog reads are handled by the shared runtime worker.
 
-This is an early source-run preview, not a signed installer or production release. The shell does not yet include streaming, cancellation, voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, or a packaged desktop installer. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
+The desktop now renders provider output incrementally and includes a Stop control. Ollama and OpenAI-compatible adapters use native bounded streaming; adapters without a native streaming implementation use the backward-compatible complete-response fallback. Stopping closes the active stream and deliberately leaves the user message in history without recording partial assistant output as a completed answer. This is still an early source-run preview, not a signed installer or production release. Voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, and a packaged desktop installer remain outstanding. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
 
 ## Minimal project structure and navigation
 
