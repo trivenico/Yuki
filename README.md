@@ -68,6 +68,10 @@ This is the target layout, not a claim that the migration is already complete.
 
 A feature-branch foundation is being built for connecting a Windows laptop to a Yuki Sync Hub on Oracle Cloud Linux. It includes an allow-listed event contract, SQLite event store, authenticated API primitives, one-time pairing, rotating credentials, and a shared cross-platform client/outbox. It is **not yet an install-and-sync release**: the CLI/desktop still need to enqueue and apply real application records, the background worker and Windows credential-vault integration need end-to-end validation, and the Linux service still needs hardened deployment. See [Windows + Oracle Cloud sync status and setup](docs/WINDOWS_OCI_SYNC.md). The optional Windows OS credential-vault dependency is listed in `requirements-sync.txt`.
 
+### Sync CLI commands (feature branch)
+
+The terminal frontend exposes `/sync status` and `/sync pair`. Configure `YUKI_SYNC_URL` with the HTTPS hub URL and install the optional OS credential vault dependency from `requirements-sync.txt`. Pairing prompts for the one-time code without echoing it. `/sync run` is deliberately disabled until reviewed domain adapters can safely apply conversations, tasks and skills; no application data is uploaded by the current CLI commands. See `docs/WINDOWS_OCI_SYNC.md`.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
