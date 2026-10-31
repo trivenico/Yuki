@@ -22,7 +22,13 @@ class SyncRuntime:
         self.root.mkdir(parents=True, exist_ok=True)
         configured = endpoint if endpoint is not None else os.environ.get("YUKI_SYNC_URL", "")
         self.endpoint = configured.strip().rstrip("/")
-        self.vault = vault if vault is not None else KeyringCredentialVault()
+        if vault is not None:
+            self.vault = vault
+        else:
+            try:
+                self.vault = KeyringCredentialVault()
+            except SyncClientError:
+                self.vault = None
         self.transport = transport if transport is not None else (
             SyncHTTPTransport(self.endpoint) if self.endpoint else None
         )
@@ -45,11 +51,13 @@ class SyncRuntime:
         refresh = result.get("refresh_token")
         if not all(isinstance(value, str) and value for value in (device_id, access, refresh)):
             raise SyncClientError("The sync hub returned an invalid pairing response.")
+        if self.vault is None:
+            raise SyncClientError("Install the optional keyring dependency before pairing.")
         self.vault.save(device_id, access, refresh)
         return "This device is paired with the Yuki Sync Hub. Credentials were saved to the OS credential vault."
 
     def status(self) -> str:
-        paired = self.vault.load()
+        paired = self.vault.load() if self.vault is not None else None
         counts = self.outbox.counts()
         endpoint = self.endpoint or "not configured"
         device = paired[0] if paired else "not paired"
@@ -62,7 +70,7 @@ class SyncRuntime:
         )
 
     def enqueue_event(self, event: dict[str, Any]) -> bool:
-        paired = self.vault.load()
+        paired = self.vault.load() if self.vault is not None else None
         if not paired:
             raise SyncClientError("Pair this device before queuing sync events.")
         if event.get("device_id") != paired[0]:
@@ -72,5 +80,7 @@ class SyncRuntime:
     def sync_once(self, apply_remote):
         from core.sync_client import SyncAgent
         transport = self._require_transport()
+        if self.vault is None:
+            raise SyncClientError("Install the optional keyring dependency before syncing.")
         agent = SyncAgent(transport, self.outbox, self.vault, apply_remote)
         return agent.sync_once()
