@@ -16,7 +16,10 @@ class FakeVault:
 
 
 class FakeTransport:
+    def __init__(self):
+        self.pair_calls = 0
     def pair(self, code, device_label):
+        self.pair_calls += 1
         return {
             "device_id": "device_0000001",
             "access_token": "a" * 40,
@@ -45,6 +48,19 @@ class SyncRuntimeTests(unittest.TestCase):
                 self.assertEqual(vault.value[0], "device_0000001")
                 self.assertNotIn("a" * 40, message)
                 self.assertNotIn("r" * 40, message)
+            finally:
+                runtime.close()
+
+    def test_pair_does_not_consume_code_without_credential_vault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = FakeTransport()
+            runtime = SyncRuntime(endpoint="https://sync.example.test", root=tmp,
+                                  vault=None, transport=transport)
+            runtime.vault = None
+            try:
+                with self.assertRaises(SyncClientError):
+                    runtime.pair("one-time-code")
+                self.assertEqual(transport.pair_calls, 0)
             finally:
                 runtime.close()
 
