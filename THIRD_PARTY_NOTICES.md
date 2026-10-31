@@ -22,3 +22,16 @@ OpenClaw is used as a format and architecture reference for the Agent Skills Mar
 - License: MIT License; full text in `licenses/MIT-Hermes-Agent.txt`.
 - Changes: Adapted the root-cause debugging workflow for Yuki, removed Hermes-specific tool calls and unsupported delegation examples, added Yuki's actual verification and permission boundaries. The bundled skill is opt-in and imported through the data-only SKILL.md installer.
 - The upstream skill itself credits obra/superpowers; that attribution is retained in the Yuki skill's frontmatter.
+
+
+## REA
+
+- Project: REA — https://github.com/morluto/rea
+- Integration: Yuki-authored workflow guide only; no REA source files copied.
+- License: upstream repository license applies to REA code; third-party tools/assets retain their own terms. Verify current upstream LICENSE before redistributing REA itself.
+
+## Colibri
+
+- Project: Colibri — https://github.com/JustVugg/colibri
+- Integration: Yuki-authored OpenAI-compatible local API adapter; no Colibri source files copied.
+- License: Apache License 2.0 for Colibri-authored source; model weights and dependencies have separate terms.

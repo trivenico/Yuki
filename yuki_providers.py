@@ -22,6 +22,7 @@ class ProviderManager:
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            "colibri": lambda: create_provider({**self._config, "provider": "colibri"}, environ=self._environ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
@@ -30,6 +31,7 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
+            ProviderInfo("colibri", ("local_colibri_runtime",), True),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
@@ -51,7 +53,7 @@ class ProviderManager:
             self._factories[key] = factory
         elif not provider.implemented:
             self._factories.pop(key, None)
-        elif key not in self._factories and key not in {"ollama", "hybrid"}:
+        elif key not in self._factories and key not in {"ollama", "hybrid", "colibri"}:
             raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
         if key == self._selected:
@@ -60,7 +62,7 @@ class ProviderManager:
     def list_providers(self):
         return [{
             "name": p.name, "auth_methods": list(p.auth_methods),
-            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid"}),
+            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid", "colibri"}),
             "selected": name == self._selected,
         } for name, p in sorted(self._providers.items())]
 
@@ -83,7 +85,7 @@ class ProviderManager:
         info = self._providers.get(key)
         if info is None:
             return f"Unknown provider: {key}"
-        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
+        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid", "colibri"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
             adapter = self._build_adapter(key)
