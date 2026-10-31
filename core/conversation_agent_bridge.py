@@ -90,6 +90,12 @@ class ConversationAgentBridge:
         if len(user_message) > self.max_goal_chars:
             raise ValueError(f"user_message exceeds {self.max_goal_chars} characters")
         request_id = request_id or uuid4().hex
+        if not self.agents.can_submit_goal(actor_id):
+            return AgentTurnResult(
+                False, session_id or "", request_id,
+                "This account is not authorized to submit agent tasks.",
+                3, error_code="agent_plan_unauthorized",
+            )
         if session_id is None:
             session = self.conversations.store.create_session(
                 workspace_id,
