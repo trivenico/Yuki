@@ -76,6 +76,8 @@ def delete_task(tasks, task_id):
     index = next((i for i, x in enumerate(tasks) if x["id"] == task_id), None)
     if index is None:
         return "Task ID not found."
+    if isinstance(tasks[index].get("_yuki_sync"), dict):
+        return "This task is synchronized. Deletion is disabled until sync tombstones are supported."
     removed = tasks.pop(index)
     if save_tasks(tasks):
         return "Task deleted."
