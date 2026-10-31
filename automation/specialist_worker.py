@@ -162,6 +162,7 @@ class SpecialistTaskWorker:
         handlers: Mapping[str, Callable[[str], str]],
         lease_seconds: int = 60,
         heartbeat_interval: float = 20.0,
+        recovery_limit: int = 20,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -185,13 +186,19 @@ class SpecialistTaskWorker:
             raise ValueError("lease_seconds must be between 10 and 3600.")
         if isinstance(heartbeat_interval, bool) or not isinstance(heartbeat_interval, (int, float)) or not 0 < heartbeat_interval < lease_seconds:
             raise ValueError("heartbeat_interval must be positive and shorter than the lease.")
+        if type(recovery_limit) is not int or not 1 <= recovery_limit <= 100:
+            raise ValueError("recovery_limit must be between 1 and 100.")
         self.handlers = validated
         self.lease_seconds = lease_seconds
         self.heartbeat_interval = float(heartbeat_interval)
+        self.recovery_limit = recovery_limit
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        # Reconcile expired leases before claiming more work. Recovery only marks
+        # abandoned tasks interrupted; it never replays them automatically.
+        self.runtime.recover_expired(actor_id=self.service_actor_id, limit=self.recovery_limit)
+        claimed = self.runtime.store.claim_next(worker_id=self.worker_id, lease_seconds=self.lease_seconds)
         if claimed is None:
             return None
 
