@@ -127,6 +127,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "shared-conversation-runtime", "Shared persistent provider-backed conversation runtime", "experimental",
+        "Provides shared session loading, bounded context assembly, atomic turn persistence, provider invocation, "
+        "idempotent replay of completed requests, and fail-closed handling of duplicate running requests.",
+        ("core/conversation_runtime.py", "core/conversation_store.py", "yuki_cli.py"),
+        ("configured BaseProvider", "SQLite conversation store"),
+        ("conversation:read", "conversation:write", "provider:invoke"),
+        ("outbound configured model-provider request", "local conversation database writes"),
+        ("local", "desktop-adapter-ready"), "high",
+        ("tests/test_conversation_runtime.py", "tests/test_conversation_store.py", "tests/test_yuki_cli.py"),
+        ("Workspace identity is caller-supplied in local mode; hosted adapters must derive it from trusted authentication.",
+         "Synchronous provider generate API; no token streaming or tokenizer-aware context budget.",
+         "No tool execution, specialist delegation, approval UI, desktop adapter, hosted auth, encryption, or retention policy.",
+         "Running turns fail closed on replay; no automatic stale-turn recovery worker."),
+    ),
+    CapabilityContract(
         "persistent-conversation-sessions", "Workspace-scoped persistent conversations", "experimental",
         "Persists conversation sessions and ordered messages in SQLite, with workspace-scoped access, "
         "idempotent message appends, atomic single-active-turn lifecycle, bounded turn history, read-only archival, and persistent CLI run/resume.",
