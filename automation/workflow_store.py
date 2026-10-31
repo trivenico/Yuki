@@ -383,7 +383,7 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if not isinstance(payload, dict) or "task.lease_renewed" not in _EVENT_KINDS:
             raise ValueError("invalid lease renewal event.")
