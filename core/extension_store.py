@@ -129,7 +129,7 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 def validate_skill_manifest(value: dict) -> dict:
     required = {"type", "id", "version", "name", "description", "instructions"}
-    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk", "skill_version", "dependencies"}
+    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk", "skill_version", "dependencies", "python_compatibility"}
     if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
         raise ValueError("Skill manifest contains missing or unsupported fields.")
     if "source" in value and (
@@ -174,12 +174,19 @@ def validate_skill_manifest(value: dict) -> dict:
         DependencyDeclarationError, validate_skill_dependencies, _version_tuple,
     )
     skill_version = value.get("skill_version", "1.0.0")
+    python_compatibility = value.get("python_compatibility")
     try:
         _version_tuple(skill_version)
         dependencies = validate_skill_dependencies(value.get("dependencies"))
+        if python_compatibility is not None:
+            from core.skill_dependency_manager import validate_version_specifier
+            python_compatibility = validate_version_specifier(python_compatibility)
     except (DependencyDeclarationError, TypeError) as exc:
         raise ValueError(f"Skill dependency metadata is invalid: {exc}") from exc
-    return {**value, "risk": risk, "skill_version": skill_version, "dependencies": dependencies}
+    normalized = {**value, "risk": risk, "skill_version": skill_version, "dependencies": dependencies}
+    if python_compatibility is not None:
+        normalized["python_compatibility"] = python_compatibility
+    return normalized
 
 
 def classify_imported_skill_risk(name: str, description: str, instructions: str) -> str:
