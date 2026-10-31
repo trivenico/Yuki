@@ -96,6 +96,66 @@ class SyncUploadOnlyTests(unittest.TestCase):
 
 
 
+class FakePageTransport(FakeUploadTransport):
+    def __init__(self, events):
+        super().__init__()
+        self.events = events
+        self.pull_calls = []
+        self.ack_calls = []
+
+    def pull(self, after, token, limit=100):
+        self.pull_calls.append((after, token, limit))
+        return {"events": self.events, "next_after": self.events[-1]["sequence"] if self.events else after}
+
+    def acknowledge(self, sequence, token):
+        self.ack_calls.append((sequence, token))
+        return {}
+
+
+class SyncReplaySafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.outbox = SyncOutbox(Path(self.tmp.name) / "outbox.sqlite3")
+
+    def tearDown(self):
+        self.outbox.close()
+        self.tmp.cleanup()
+
+    def test_failed_remote_apply_does_not_ack_or_advance_cursor(self):
+        event = make_event(event_id="event_remote_0001")
+        transport = FakePageTransport([{"sequence": 7, **event}])
+        attempts = []
+        def fail_first(payload):
+            attempts.append(payload)
+            raise SyncClientError("simulated local persistence failure")
+        agent = SyncAgent(transport, self.outbox, FakeSyncVault(), fail_first)
+
+        with self.assertRaisesRegex(SyncClientError, "simulated local persistence failure"):
+            agent.sync_once()
+        self.assertEqual(self.outbox.cursor(), 0)
+        self.assertEqual(transport.ack_calls, [])
+        self.assertEqual(len(attempts), 1)
+
+        applied = []
+        agent.apply_remote = applied.append
+        result = agent.sync_once()
+        self.assertEqual(result["pulled"], 1)
+        self.assertEqual(applied, [event])
+        self.assertEqual(self.outbox.cursor(), 7)
+        self.assertEqual(transport.ack_calls, [(7, "access-token")])
+
+    def test_pull_limit_is_bounded_before_any_network_call(self):
+        transport = FakePageTransport([])
+        agent = SyncAgent(transport, self.outbox, FakeSyncVault(), lambda _event: None)
+        for invalid in (0, 201, True, 1.5, "10"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    agent.sync_once(pull_limit=invalid)
+        self.assertEqual(transport.pull_calls, [])
+        self.assertEqual(transport.push_calls, [])
+
+
+
 class SyncOutboxTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
