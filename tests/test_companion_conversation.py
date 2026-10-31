@@ -33,6 +33,16 @@ class ConversationSessionTests(unittest.TestCase):
         self.assertIn("Hi Yuki", provider.prompts[1])
         self.assertIn("Hello there!", provider.prompts[1])
 
+    def test_role_switch_changes_guidance_but_not_permissions(self):
+        provider = FakeProvider()
+        session = ConversationSession(provider)
+        role = session.set_role("developer")
+        self.assertEqual(role["name"], "developer")
+        session.respond("Review this design")
+        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("grants no tools or permissions", provider.prompts[0])
+        self.assertEqual(session.current_role()["name"], "developer")
+
     def test_history_is_session_only_and_resettable(self):
         provider = FakeProvider()
         session = ConversationSession(provider)
