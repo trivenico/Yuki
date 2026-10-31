@@ -67,10 +67,28 @@ def _thaw_json(value: Any) -> Any:
     return value
 
 
+def _require_string_object_keys(value: Any, label: str) -> None:
+    """Reject Python-only mapping keys before canonical JSON encoding.
+
+    json.dumps silently coerces integer and boolean dictionary keys to strings.
+    That can create duplicate/colliding wire keys and make the approved
+    fingerprint differ from how a downstream JSON consumer interprets arguments.
+    """
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{label} object keys must be strings.")
+            _require_string_object_keys(child, label)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _require_string_object_keys(child, label)
+
+
 def _validate_json_object(value: Mapping[str, Any], label: str, maximum: int) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{label} must be an object.")
     copied = dict(value)
+    _require_string_object_keys(copied, label)
     try:
         encoded = json.dumps(copied, ensure_ascii=True, allow_nan=False, sort_keys=True)
     except (TypeError, ValueError) as exc:
