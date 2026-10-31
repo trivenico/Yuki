@@ -43,7 +43,7 @@ class DesktopRuntimeWorker:
             if self._active_request_id is not None:
                 self._cancel_event.set()
             return uuid.uuid4().hex
-        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "close"}:
+        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "sync_upload", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -132,6 +132,12 @@ class DesktopRuntimeWorker:
                         sync_runtime = self._sync_runtime_factory()
                     result = sync_runtime.pair(payload.get("code", ""),
                                                payload.get("device_label", "Yuki Desktop"))
+                    self._emit(request_id, action, ok=True, result=result,
+                               status=sync_runtime.status())
+                elif action == "sync_upload":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    result = sync_runtime.upload_pending()
                     self._emit(request_id, action, ok=True, result=result,
                                status=sync_runtime.status())
                 elif action == "select_provider":
