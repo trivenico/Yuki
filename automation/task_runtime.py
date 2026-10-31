@@ -6,7 +6,7 @@ code or automatically replay work after an expired worker lease.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Callable
 
@@ -154,9 +154,6 @@ class TaskRuntime:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        current = self.store.get(task_id)
-        if current is None:
-            raise KeyError("task not found.")
         # The lease update and audit event must be one atomic version transition.
         renewed = self.store.renew_lease_with_event(
             task_id, worker_id=worker_id.strip(), expected_version=expected_version,
