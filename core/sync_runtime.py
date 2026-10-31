@@ -89,6 +89,19 @@ class SyncRuntime:
             "skills": SkillPackSyncAdapter().preview(),
         }
 
+    def task_conflicts(self):
+        """Return summaries of unresolved task conflicts."""
+        from core.task_sync_adapter import TaskSyncAdapter
+        from yuki_tasks import load_tasks
+        return TaskSyncAdapter.list_conflicts(load_tasks())
+
+    def resolve_task_conflict(self, task_id: int, choice: str):
+        """Persist an explicit local/remote resolution for one task."""
+        from core.task_sync_adapter import TaskSyncAdapter
+        from yuki_tasks import load_tasks, save_tasks
+        tasks = load_tasks()
+        return TaskSyncAdapter.resolve_conflict(tasks, task_id, choice, save_tasks)
+
     def queue_application(self, collection: str, application):
         """Explicitly queue one allow-listed collection for this paired device."""
         from core.conversation_store import ConversationStore
