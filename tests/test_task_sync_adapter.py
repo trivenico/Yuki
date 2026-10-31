@@ -68,5 +68,77 @@ class TaskSyncAdapterTests(unittest.TestCase):
         self.assertEqual(events[0]["revision"], 1)
 
 
+    def test_same_revision_conflict_is_preserved_without_overwriting_local(self):
+        import hashlib
+        import json
+        local_payload = {"description": "Local edit", "completed": False,
+                         "created_at": "2026-10-31T10:00:00+00:00"}
+        fingerprint = hashlib.sha256(json.dumps(
+            local_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        tasks = [{"id": 12, **local_payload, "_yuki_sync": {
+            "object_id": "task_shared0001", "revision": 2, "fingerprint": fingerprint
+        }}]
+        remote = {
+            "event_id": "event_remote0001", "device_id": "device_remote0001",
+            "collection": "task_records", "object_id": "task_shared0001",
+            "revision": 2, "occurred_at": "2026-10-31T11:00:00+00:00",
+            "operation": "upsert",
+            "payload": {"description": "Remote edit", "completed": True,
+                        "created_at": "2026-10-31T10:00:00+00:00"},
+        }
+        saved = []
+        result = TaskSyncAdapter.apply_remote(remote, tasks, lambda value: saved.append(deepcopy(value)) or True)
+        self.assertEqual(result, "conflict")
+        self.assertEqual(tasks[0]["description"], "Local edit")
+        self.assertEqual(tasks[0]["_yuki_sync_conflict"]["payload"]["description"], "Remote edit")
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(TaskSyncAdapter.list_conflicts(tasks)[0]["remote_revision"], 2)
+
+    def test_resolve_remote_conflict_accepts_candidate(self):
+        tasks = [{"id": 12, "description": "Local edit", "completed": False,
+                  "created_at": "2026-10-31T10:00:00+00:00",
+                  "_yuki_sync": {"object_id": "task_shared0001", "revision": 2, "fingerprint": "local"},
+                  "_yuki_sync_conflict": {"revision": 3, "payload": {
+                      "description": "Remote edit", "completed": True,
+                      "created_at": "2026-10-31T11:00:00+00:00"}}}]
+        self.assertEqual(TaskSyncAdapter.resolve_conflict(tasks, 12, "remote", lambda value: True), "remote")
+        self.assertEqual(tasks[0]["description"], "Remote edit")
+        self.assertEqual(tasks[0]["_yuki_sync"]["revision"], 3)
+        self.assertNotIn("_yuki_sync_conflict", tasks[0])
+
+    def test_resolve_local_conflict_marks_local_edit_for_next_revision(self):
+        tasks = [{"id": 12, "description": "Local edit", "completed": False,
+                  "created_at": "2026-10-31T10:00:00+00:00",
+                  "_yuki_sync": {"object_id": "task_shared0001", "revision": 2, "fingerprint": "old"},
+                  "_yuki_sync_conflict": {"revision": 3, "payload": {
+                      "description": "Remote edit", "completed": True,
+                      "created_at": "2026-10-31T11:00:00+00:00"}}}]
+        self.assertEqual(TaskSyncAdapter.resolve_conflict(tasks, 12, "local", lambda value: True), "local")
+        self.assertEqual(tasks[0]["description"], "Local edit")
+        self.assertNotIn("_yuki_sync_conflict", tasks[0])
+        events = []
+        TaskSyncAdapter.queue(tasks, "device_local0001", lambda event: events.append(event) or True)
+        self.assertEqual(events[0]["revision"], 3)
+        self.assertEqual(events[0]["payload"]["description"], "Local edit")
+
+    def test_failed_conflict_persistence_rolls_back_candidate(self):
+        tasks = [{"id": 12, "description": "Local edit", "completed": False,
+                  "created_at": "2026-10-31T10:00:00+00:00",
+                  "_yuki_sync": {"object_id": "task_shared0001", "revision": 2, "fingerprint": "local"}}]
+        before = deepcopy(tasks)
+        remote = {
+            "event_id": "event_remote0001", "device_id": "device_remote0001",
+            "collection": "task_records", "object_id": "task_shared0001",
+            "revision": 2, "occurred_at": "2026-10-31T11:00:00+00:00",
+            "operation": "upsert",
+            "payload": {"description": "Remote edit", "completed": True,
+                        "created_at": "2026-10-31T10:00:00+00:00"},
+        }
+        with self.assertRaises(Exception):
+            TaskSyncAdapter.apply_remote(remote, tasks, lambda _value: False)
+        self.assertEqual(tasks, before)
+
+
 if __name__ == "__main__":
     unittest.main()
