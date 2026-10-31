@@ -111,6 +111,10 @@ class ModelAgentPlanner:
         # Coordinator owns the authoritative ID, graph, capability and permission validation.
         return tuple(specs)
 
+    def can_submit(self, actor_id: str) -> bool:
+        """Authorize a caller before incurring model-provider work."""
+        return self.coordinator.can_submit_plan(actor_id)
+
     def plan(
         self,
         *,
