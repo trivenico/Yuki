@@ -439,6 +439,30 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
             write_audit_event("task:" + parts[1], "completed" if result in ("Task completed.", "Task deleted.") else "failed")
             return result
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
+    if command == "/conversation" or command.startswith("/conversation "):
+        if conversation_context is None or conversation_context.get("store") is None:
+            return "Conversation storage is unavailable."
+        parts = command.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "list"
+        store = conversation_context["store"]
+        if action == "list":
+            items = store.list_conversations()
+            return "\n".join(
+                f"{item['conversation_id']} — {item['title']} ({item['message_count']} messages)"
+                for item in items[:20]
+            ) or "No saved conversations."
+        if action == "new":
+            now = datetime.now(timezone.utc).isoformat()
+            conversation_id = store.create("New conversation", now)
+            conversation_context["active_id"] = conversation_id
+            return f"Started conversation {conversation_id}."
+        if action == "show":
+            if len(parts) < 3:
+                return "Usage: /conversation show ID"
+            messages = store.messages(parts[2])
+            return "\n".join(f"{item['role']}: {item['content']}" for item in messages) or "No messages found."
+        return "Usage: /conversation list | new | show ID"
+
     if command == "/memory":
         return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
     if command.startswith("/memory add "):
