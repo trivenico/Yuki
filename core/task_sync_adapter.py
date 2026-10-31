@@ -39,6 +39,8 @@ class TaskSyncAdapter:
             }
             fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
             old_meta = item.get("_yuki_sync") if isinstance(item.get("_yuki_sync"), dict) else {}
+            if isinstance(item.get("_yuki_sync_conflict"), dict):
+                raise SyncClientError("Resolve this task conflict before queueing another revision.")
             if fingerprint == old_meta.get("fingerprint"):
                 continue
             # Deterministic per-device identity makes a crash before metadata
@@ -111,9 +113,9 @@ class TaskSyncAdapter:
             if revision == current_revision:
                 if metadata.get("fingerprint") == fingerprint:
                     return "duplicate"
-                raise SyncClientError("Remote task revision conflicts with local task content.")
+                return TaskSyncAdapter._record_conflict(current, normalized, save, tasks)
             if revision != current_revision + 1:
-                raise SyncClientError("Remote task revision gap; refusing to overwrite local data.")
+                return TaskSyncAdapter._record_conflict(current, normalized, save, tasks)
             before = deepcopy(current)
             current.update({
                 "description": payload["description"],
@@ -152,3 +154,79 @@ class TaskSyncAdapter:
             tasks.pop()
             raise SyncClientError("Unable to persist the remote task.")
         return "created"
+
+
+    @staticmethod
+    def _record_conflict(current: dict[str, Any], event: dict[str, Any],
+                         save: Callable[[list[dict[str, Any]]], bool],
+                         tasks: list[dict[str, Any]]) -> str:
+        """Persist the remote candidate without overwriting the local task."""
+        from copy import deepcopy
+        before = deepcopy(current)
+        current["_yuki_sync_conflict"] = {
+            "event_id": event["event_id"],
+            "device_id": event["device_id"],
+            "revision": event["revision"],
+            "occurred_at": event["occurred_at"],
+            "payload": dict(event["payload"]),
+        }
+        if not save(tasks):
+            current.clear()
+            current.update(before)
+            raise SyncClientError("Unable to persist the task conflict; remote event remains unacknowledged.")
+        return "conflict"
+
+    @staticmethod
+    def list_conflicts(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return local/remote conflict summaries without mutating task data."""
+        result = []
+        for item in tasks:
+            conflict = item.get("_yuki_sync_conflict") if isinstance(item, dict) else None
+            if isinstance(conflict, dict):
+                result.append({
+                    "task_id": item.get("id"),
+                    "description": item.get("description", ""),
+                    "local_revision": item.get("_yuki_sync", {}).get("revision", 0),
+                    "remote_revision": conflict.get("revision", 0),
+                    "remote_description": conflict.get("payload", {}).get("description", ""),
+                })
+        return result
+
+    @staticmethod
+    def resolve_conflict(tasks: list[dict[str, Any]], task_id: int, choice: str,
+                         save: Callable[[list[dict[str, Any]]], bool]) -> str:
+        """Resolve one task conflict by keeping local or accepting the remote candidate."""
+        from copy import deepcopy
+        if choice not in {"local", "remote"}:
+            raise ValueError("Choose local or remote.")
+        index = next((i for i, item in enumerate(tasks)
+                      if isinstance(item, dict) and item.get("id") == task_id), None)
+        if index is None or not isinstance(tasks[index].get("_yuki_sync_conflict"), dict):
+            raise SyncClientError("No unresolved conflict exists for that task.")
+        task = tasks[index]
+        before = deepcopy(task)
+        conflict = task["_yuki_sync_conflict"]
+        if choice == "remote":
+            payload = conflict.get("payload", {})
+            task.update({
+                "description": payload["description"],
+                "completed": payload["completed"],
+                "created_at": payload["created_at"],
+                "_yuki_sync": {
+                    "object_id": task["_yuki_sync"]["object_id"],
+                    "revision": conflict["revision"],
+                    "fingerprint": hashlib.sha256(json.dumps(
+                        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                    ).encode("utf-8")).hexdigest(),
+                },
+            })
+        else:
+            metadata = dict(task.get("_yuki_sync", {}))
+            metadata["fingerprint"] = "local-conflict-resolution-required-upload"
+            task["_yuki_sync"] = metadata
+        task.pop("_yuki_sync_conflict", None)
+        if not save(tasks):
+            task.clear()
+            task.update(before)
+            raise SyncClientError("Unable to persist the task conflict resolution.")
+        return choice
