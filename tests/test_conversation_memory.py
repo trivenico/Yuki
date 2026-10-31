@@ -60,18 +60,23 @@ class ConversationMemoryStoreTests(unittest.TestCase):
         ], consent=True)
         found = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="vehicle")
         self.assertEqual(found[0].source_record_id, "car")
-        self.assertEqual(len(found), 2)
+        self.assertEqual(len(found), 1)
         with self.assertRaises(PermissionError):
             semantic_store.semantic_search(actor_id="mallory", owner_id="alice", query="vehicle")
 
     def test_semantic_search_falls_back_when_embedder_fails(self):
         semantic_store = ConversationMemoryStore(
             str(Path(self.tmp.name) / "fallback.sqlite3"),
-            authorize=lambda actor, action, owner: actor == owner and action == "memory:read",
+            authorize=lambda actor, action, owner: actor == owner and action in {"memory:read", "memory:import"},
             embedding_fn=lambda _: (_ for _ in ()).throw(RuntimeError("offline")),
         )
-        with self.assertRaises(PermissionError):
-            semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="Yuki")
+        semantic_store.import_records(
+            actor_id="alice", owner_id="alice", source="local",
+            records=[{"id": "offline-note", "role": "user", "content": "Yuki memory works offline"}],
+            consent=True,
+        )
+        found = semantic_store.semantic_search(actor_id="alice", owner_id="alice", query="Yuki")
+        self.assertEqual([item.source_record_id for item in found], ["offline-note"])
 
     def test_semantic_search_reuses_cached_owner_embeddings_and_ranks_query(self):
         vectors = {"car": [1.0, 0.0], "food": [0.0, 1.0], "vehicle": [1.0, 0.0]}
