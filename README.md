@@ -305,7 +305,7 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 
 ### Explicit task synchronization
 
-The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. Network sync remains disabled until conflict-safe remote application is implemented. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
+The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. The CLI `/sync run` performs the reviewed HTTPS sync cycle for supported task upserts, conversation history and data-only skill packs. The desktop currently exposes upload-only sync and does not apply incoming records. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
 
 
 ### Desktop explicit upload
