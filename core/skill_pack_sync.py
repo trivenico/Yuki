@@ -84,8 +84,8 @@ class SkillPackSyncAdapter:
                 with sqlite3.connect(self.state_path, timeout=10) as db:
                     db.execute("BEGIN IMMEDIATE")
                     prior = db.execute(
-                        "SELECT manifest_hash,event_json FROM queued_packs WHERE name=?",
-                        (payload["name"],),
+                        "SELECT manifest_hash,event_json FROM queued_packs WHERE device_id=? AND name=?",
+                        (device_id, payload["name"]),
                     ).fetchone()
                     if prior and prior[0] != manifest_hash:
                         raise SyncClientError(
@@ -106,8 +106,8 @@ class SkillPackSyncAdapter:
                         }
                         validate_sync_event(event)
                         db.execute(
-                            "INSERT INTO queued_packs(name,manifest_hash,event_json) VALUES(?,?,?)",
-                            (payload["name"], manifest_hash,
+                            "INSERT INTO queued_packs(device_id,name,manifest_hash,event_json) VALUES(?,?,?,?)",
+                            (device_id, payload["name"], manifest_hash,
                              json.dumps(event, ensure_ascii=False, sort_keys=True)),
                         )
                     db.commit()
