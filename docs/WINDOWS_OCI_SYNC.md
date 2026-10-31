@@ -160,3 +160,20 @@ Run:
 `python -m unittest tests.test_sync_runtime tests.test_sync_client tests.test_sync_agent tests.test_sync_auth_api -v`
 
 These tests are authored but have not been executed as part of this implementation session.
+
+## First domain adapter: explicit task export
+
+The CLI now supports `/sync tasks preview` and `/sync tasks queue`.
+
+- Preview is read-only and reports eligible local tasks without queueing or uploading anything.
+- Queue requires a paired device and explicit user action.
+- Only task description (max 500 characters), completion state and creation timestamp are exported. Local numeric IDs and all other task fields are excluded.
+- Events are revisioned and placed in the durable local outbox. Queueing does not make a network request.
+- `/sync run` remains disabled until remote task application has a conflict policy and idempotent local handler.
+
+Task events use a deterministic per-device object identity and event ID so a retry after a process interruption can reproduce the same event. The local `_yuki_sync` metadata is stored with the task JSON. If the metadata file cannot be saved after queueing, the CLI warns and asks the user to retry before editing the affected task; a full transactional bridge between task storage and outbox remains future work.
+
+Run the new tests with:
+`python -m unittest tests.test_task_sync_adapter tests.test_task_sync_outbox_integration -v`
+
+These tests have been added but have not yet been executed in this environment.
