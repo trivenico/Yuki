@@ -15,7 +15,7 @@ def validate_chat_messages(system: str, messages: list[dict], *, max_chars: int 
     for item in messages:
         if not isinstance(item, dict) or set(item) != {"role", "content"}:
             raise ValueError("Each chat message must contain only role and content.")
-        if item["role"] not in {"user", "assistant"}:
+        if not isinstance(item["role"], str) or item["role"] not in {"user", "assistant"}:
             raise ValueError("Only user and assistant history messages are accepted.")
         if item["role"] != expected_role:
             raise ValueError("Chat history must alternate user and assistant messages.")
