@@ -28,7 +28,7 @@ A skill is model guidance, not an authorization grant. The imported prompt is un
 
 Risk classification is heuristic and intentionally conservative. It is not a complete semantic security review. The operator must inspect the exact pinned source and license before installation. The explicit CLI --yes option remains an operator-controlled approval mechanism.
 
-The MIT license permits reuse subject to retaining the copyright and license notice in copies or substantial portions. Yuki imports only selected skill instructions and does not vendor the entire Claude-Red repository. If Yuki later copies substantial upstream content, preserve the upstream license and copyright notices and track source attribution.
+The MIT license permits reuse subject to retaining the copyright and license notice in copies or substantial portions. This phase records the upstream SPDX identifier and license-file path, but does not yet copy the full license text into the installed extension. Therefore this is provenance tracking, not a complete redistribution-ready license bundle. Before redistributing imported skill content or bulk-vendoring upstream material, Yuki must preserve the applicable copyright and license notice alongside the copied content.
 
 ## Commands
 
@@ -43,7 +43,8 @@ The repository contains multiple skills; --path selects one skill directory. Rev
 - No automatic bulk import of all upstream skills.
 - No importing or executing upstream scripts, templates, binaries, or reference files.
 - Heuristic risk classification can miss risky instructions or over-classify benign content.
-- The current preview reports upstream repository license metadata; it does not independently resolve every nested license or establish legal compatibility.
+- The current preview reports upstream repository license metadata and persists the license-file path, but does not copy the full license text into the installed extension; this is not yet a complete redistribution-ready license bundle.
+- The importer does not independently resolve every nested license or establish legal compatibility.
 - A successful import does not mean a skill is safe, accurate, or production-approved.
 - Future work: enrich manifest provenance with immutable source URL, license evidence, content digest, review status, and approval actor; add policy tests for prompt-injection and tool-exfiltration instructions; make Desktop and CLI share the same extension data root.
 
