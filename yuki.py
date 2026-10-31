@@ -1,6 +1,7 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from yuki_agent import YukiAgent
@@ -18,6 +19,7 @@ from core.durable_skill_worker import DurableSkillWorker
 from core.sync_runtime import SyncRuntime
 from core.sync_client import SyncClientError
 from core.task_sync_adapter import TaskSyncAdapter
+from core.conversation_store import ConversationStore
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -121,7 +123,7 @@ The runtime defaults to the real OpenAI API. The mock adapter is reserved for au
 """)
 
 
-def handle_command(message, memory, tasks, agent, providers, policy=None):
+def handle_command(message, memory, tasks, agent, providers, policy=None, conversation_context=None):
     command = message.strip()
     if not command:
         return ""
