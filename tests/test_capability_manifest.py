@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_persistent_conversation_sessions_are_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "persistent-conversation-sessions"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/conversation_store.py", item.entrypoints)
+        self.assertIn("tests/test_conversation_store.py", item.test_evidence)
+        self.assertTrue(any("hosted identity middleware" in limitation for limitation in item.limitations))
+
     def test_agent_cli_ndjson_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
