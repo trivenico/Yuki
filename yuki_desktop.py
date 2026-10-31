@@ -191,7 +191,11 @@ class YukiDesktop:
                     self._submit("providers")
                     self._submit("catalog")
                 elif action == "catalog" and event.get("ok"):
-                    selected = next((item for item in event.get("catalog", []) if item.get("selected")), None)
+                    selected_name = self.provider_names.get(self.provider_var.get())
+                    selected = next(
+                        (item for item in event.get("catalog", []) if item.get("name") == selected_name),
+                        None,
+                    )
                     if selected:
                         model = selected.get("configured_model") or "model not configured"
                         self.provider_details.set(
