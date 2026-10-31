@@ -88,8 +88,11 @@ class DesktopRuntimeWorker:
                     self._emit(request_id, action, ok=True,
                                conversation_id=runtime.active_conversation_id)
                 elif action == "close":
-                    runtime.close()
-                    self._emit(request_id, action, ok=True)
+                    try:
+                        runtime.close()
+                        self._emit(request_id, action, ok=True)
+                    except Exception as exc:
+                        self._emit(request_id, action, ok=False, error=type(exc).__name__)
                     return
             except Exception as exc:
                 self._emit(request_id, action, ok=False, error=type(exc).__name__)
