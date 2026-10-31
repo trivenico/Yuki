@@ -168,9 +168,14 @@ class SkillPackSyncAdapter:
                         handle.write(encoded)
                         handle.flush()
                         os.fsync(handle.fileno())
-                    if target.exists():
-                        raise SyncClientError("Skill pack appeared during synchronization; retry safely.")
-                    os.replace(temporary, target)
+                    try:
+                        # Same-directory hard-link publication is atomic and never
+                        # overwrites a concurrently-created local skill pack.
+                        os.link(temporary, target)
+                    except FileExistsError as exc:
+                        raise SyncClientError(
+                            "Skill pack appeared during synchronization; refusing overwrite."
+                        ) from exc
                 finally:
                     try:
                         os.unlink(temporary)
