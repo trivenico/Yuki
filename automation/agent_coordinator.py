@@ -99,6 +99,7 @@ class SpecialistAgentCoordinator:
         *,
         authorize: Callable[[str, str, str], bool],
         max_subtasks: int = _MAX_SUBTASKS,
+        max_active_tasks: int = 4,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -113,6 +114,9 @@ class SpecialistAgentCoordinator:
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
         self.max_subtasks = max_subtasks
+        if type(max_active_tasks) is not int or not 1 <= max_active_tasks <= _MAX_SUBTASKS:
+            raise ValueError("max_active_tasks must be between 1 and 20.")
+        self.max_active_tasks = max_active_tasks
         agent_map: dict[str, SpecialistAgent] = {}
         for agent in agents:
             self._validate_agent(agent)
@@ -365,9 +369,32 @@ class SpecialistAgentCoordinator:
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
+        # Refresh existing task states before applying the per-plan concurrency limit.
+        # This prevents completed work from occupying a slot indefinitely when a caller
+        # resumes a plan after workers have finished.
+        for row in rows:
+            if row["task_id"] is None:
+                continue
+            task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
+            if task.state == "succeeded":
+                state = "succeeded"
+            elif task.state in {"failed", "cancelled", "interrupted"}:
+                state = "cancelled" if task.state == "cancelled" else "failed"
+            else:
+                state = task.state
+            if state != row["status"]:
+                self._set_subtask(plan_id, row["subtask_id"], status=state)
+                row["status"] = state
+
+        active_count = sum(
+            1 for row in rows
+            if row["task_id"] is not None and row["status"] in {"queued", "running", "waiting_approval"}
+        )
         by_id = {row["subtask_id"]: row for row in rows}
 
         for row in rows:
+            if active_count >= self.max_active_tasks:
+                break
             if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
             dependencies = json.loads(row["dependencies_json"])
@@ -416,6 +443,8 @@ class SpecialistAgentCoordinator:
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
             row["status"] = task.state
+            if task.state in {"queued", "running", "waiting_approval"}:
+                active_count += 1
 
         # Refresh runtime states outside coordinator DB transactions.
         with self._connect() as db:
