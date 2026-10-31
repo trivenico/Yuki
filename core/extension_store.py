@@ -56,6 +56,13 @@ from skills.base import Skill, SkillResult
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_SKILL_INSTRUCTIONS_CHARS = 40_000
 MAX_GITHUB_API_BYTES = 5 * 1024 * 1024
+_ALLOWED_SKILL_RISKS = {"low", "medium", "high"}
+_HIGH_RISK_SKILL_TERMS = re.compile(
+    r"\b(?:offensive|exploit(?:ation| development)?|red[ -]?team|"
+    r"privilege escalation|credential (?:theft|harvesting)|"
+    r"persistence|evasion|exfiltration|keylogger|shellcode|phishing)\b",
+    re.IGNORECASE,
+)
 _GITHUB_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 _SLUG = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 _SKILL_NAME = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
@@ -122,7 +129,7 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 def validate_skill_manifest(value: dict) -> dict:
     required = {"type", "id", "version", "name", "description", "instructions"}
-    optional = {"source", "source_commit", "source_path"}
+    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk"}
     if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
         raise ValueError("Skill manifest contains missing or unsupported fields.")
     if "source" in value and (
@@ -150,7 +157,26 @@ def validate_skill_manifest(value: dict) -> dict:
         item = value[key]
         if not isinstance(item, str) or not item.strip() or len(item) > limit:
             raise ValueError(f"{key} must be non-empty and at most {limit} characters.")
-    return dict(value)
+    if "source_license" in value and (
+        not isinstance(value["source_license"], str) or len(value["source_license"]) > 100
+    ):
+        raise ValueError("Skill source license identifier is invalid.")
+    if "source_license_path" in value and (
+        not isinstance(value["source_license_path"], str) or len(value["source_license_path"]) > 500
+        or value["source_license_path"].startswith("/") or "\\" in value["source_license_path"]
+        or any(part in {"", ".", ".."} for part in value["source_license_path"].split("/"))
+    ):
+        raise ValueError("Skill source license path is invalid.")
+    risk = value.get("risk", "medium")
+    if not isinstance(risk, str) or risk not in _ALLOWED_SKILL_RISKS:
+        raise ValueError("Skill risk must be low, medium, or high.")
+    return {**value, "risk": risk}
+
+
+def classify_imported_skill_risk(name: str, description: str, instructions: str) -> str:
+    """Classify imported prompt skills conservatively; never infer low risk."""
+    combined = " ".join((name, description, instructions[:12000]))
+    return "high" if _HIGH_RISK_SKILL_TERMS.search(combined) else "medium"
 
 
 def validate_plugin_manifest(value: dict) -> dict:
@@ -244,6 +270,7 @@ def install_skill_file(
     *,
     root: Path | None = None,
     source_metadata: dict | None = None,
+    risk: str | None = None,
 ) -> dict:
     """Import an Agent Skills-style document or directory as a declarative prompt skill.
 
@@ -299,6 +326,9 @@ def install_skill_file(
         )
 
     normalized_name = name.replace("-", "_")
+    selected_risk = risk or classify_imported_skill_risk(name, description, instructions)
+    if selected_risk not in {"medium", "high"}:
+        raise ValueError("Imported skills must be classified as medium or high risk.")
     manifest_value = {
         "type": "yuki_skill",
         "id": normalized_name,
@@ -306,9 +336,10 @@ def install_skill_file(
         "name": normalized_name,
         "description": description.strip(),
         "instructions": instructions,
+        "risk": selected_risk,
     }
     if source_metadata is not None:
-        if not isinstance(source_metadata, dict) or set(source_metadata) != {"source", "source_commit", "source_path"}:
+        if not isinstance(source_metadata, dict) or not {"source", "source_commit", "source_path"}.issubset(source_metadata) or set(source_metadata) - {"source", "source_commit", "source_path", "source_license", "source_license_path"}:
             raise ValueError("Skill source metadata is invalid.")
         manifest_value.update(source_metadata)
     manifest = validate_skill_manifest(manifest_value)
@@ -325,7 +356,11 @@ def install_skill_file(
             if existing.get("name") == manifest["name"]:
                 raise ValueError(f"An extension named '{manifest['name']}' is already installed.")
     _atomic_json(destination, manifest)
-    return {"id": manifest["id"], "name": manifest["name"], "path": str(destination), "source_format": "agentskills_md"}
+    return {
+        "id": manifest["id"], "name": manifest["name"], "path": str(destination),
+        "source_format": "agentskills_md", "risk": manifest["risk"],
+        "requires_invocation_approval": manifest["risk"] != "low",
+    }
 
 
 
@@ -441,18 +476,6 @@ def install_github_skill(
         if (item["path"].startswith(skill_dir + "/") if skill_dir else "/" not in item["path"])
     )
     scripts = [p for p in contained_files if p.lower().endswith((".py", ".js", ".mjs", ".sh", ".ps1", ".bat", ".cmd"))]
-    preview = {
-        "repository": repository,
-        "commit": commit,
-        "skill_path": skill_dir or ".",
-        "skill_document": document_path,
-        "files_in_skill_directory": contained_files[:200],
-        "file_count": len(contained_files),
-        "executable_script_candidates": scripts[:50],
-        "install_scope": "SKILL.md instructions only; supporting files are previewed but not copied or executed",
-    }
-    if approve is None or not approve(preview):
-        return {"installed": False, "cancelled": True, "preview": preview}
     content_url = f"{base}/contents/{urllib.parse.quote(document_path, safe='/')}?ref={commit}"
     content = _github_api_json(content_url, max_bytes=1024 * 1024)
     if content.get("type") != "file" or content.get("encoding") != "base64" or not isinstance(content.get("content"), str):
@@ -463,6 +486,36 @@ def install_github_skill(
         raise ValueError("Remote SKILL.md is not valid base64-encoded UTF-8.") from exc
     if len(document.encode("utf-8")) > MAX_MANIFEST_BYTES:
         raise ValueError("Remote SKILL.md exceeds the 64 KiB import limit.")
+    from core.skill_linter import findings_as_json, lint_content
+    lint_report = findings_as_json(lint_content(document))
+    frontmatter, separator, instructions = document[4:].partition("\n---\n") if document.startswith("---\n") else ({}, "", "")
+    try:
+        parsed_frontmatter = yaml.load(frontmatter, Loader=_UniqueKeyLoader) if separator else {}
+    except (yaml.YAMLError, RecursionError):
+        parsed_frontmatter = {}
+    skill_name = parsed_frontmatter.get("name", "") if isinstance(parsed_frontmatter, dict) else ""
+    skill_description = parsed_frontmatter.get("description", "") if isinstance(parsed_frontmatter, dict) else ""
+    risk = classify_imported_skill_risk(str(skill_name), str(skill_description), instructions)
+    license_entry = next((item["path"] for item in safe_entries if item["path"].lower() in {"license", "license.md", "copying", "copying.md"}), None)
+    license_spdx = (repo_info.get("license") or {}).get("spdx_id") if isinstance(repo_info.get("license"), dict) else None
+    preview = {
+        "repository": repository,
+        "commit": commit,
+        "skill_path": skill_dir or ".",
+        "skill_document": document_path,
+        "files_in_skill_directory": contained_files[:200],
+        "file_count": len(contained_files),
+        "executable_script_candidates": scripts[:50],
+        "install_scope": "SKILL.md instructions only; supporting files are previewed but not copied or executed",
+        "risk": risk,
+        "requires_invocation_approval": risk in {"medium", "high"},
+        "lint_report": lint_report,
+        "license": license_spdx,
+        "license_file": license_entry,
+        "content_sha256": __import__("hashlib").sha256(document.encode("utf-8")).hexdigest(),
+    }
+    if approve is None or not approve(preview):
+        return {"installed": False, "cancelled": True, "preview": preview}
     import tempfile as _tempfile
     with _tempfile.TemporaryDirectory(prefix="yuki-skill-import-") as temporary:
         local_skill = Path(temporary) / "SKILL.md"
@@ -474,12 +527,16 @@ def install_github_skill(
                 "source": repository,
                 "source_commit": commit,
                 "source_path": document_path,
+                **({"source_license": license_spdx} if license_spdx else {}),
+                **({"source_license_path": license_entry} if license_entry else {}),
             },
+            risk=risk,
         )
     result["source"] = repository
     result["source_commit"] = commit
     result["source_path"] = document_path
     result["compatibility"] = "instructions-only"
+    result["risk"] = risk
     result["preview"] = preview
     return result
 
@@ -492,7 +549,11 @@ def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
         try:
             value = _read_json(path)
             checked = validate_skill_manifest(value) if kind == "skill" else validate_plugin_manifest(value)
-            results.append({"id": checked["id"], "name": checked["name"], "valid": True})
+            entry = {"id": checked["id"], "name": checked["name"], "valid": True}
+            if kind == "skill":
+                entry["risk"] = checked["risk"]
+                entry["requires_invocation_approval"] = checked["risk"] != "low"
+            results.append(entry)
         except ValueError as exc:
             results.append({"id": path.stem, "name": path.stem, "valid": False, "error": str(exc)})
     return results
@@ -512,14 +573,14 @@ def remove_extension(extension_id: str, kind: str, *, root: Path | None = None) 
 class InstalledPromptSkill(Skill):
     """A non-executable skill pack that supplies instructions to Yuki's model."""
 
-    risk = "low"
-    requires_approval = False
     max_argument_length = 4000
 
     def __init__(self, manifest: dict):
         self.manifest = validate_skill_manifest(manifest)
         self.name = "custom_" + self.manifest["name"]
         self.description = self.manifest["description"]
+        self.risk = self.manifest["risk"]
+        self.requires_approval = self.risk != "low"
 
     def run(self, argument: str = "") -> SkillResult:
         return SkillResult(

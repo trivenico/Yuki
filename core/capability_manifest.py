@@ -175,6 +175,24 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
          "A clean report is not merge authorization; trusted human and CI approval remain mandatory."),
     ),
     CapabilityContract(
+        "third-party-skill-import", "Pinned third-party declarative skill import", "experimental",
+        "Imports selected SKILL.md instructions from pinned GitHub revisions or local files, "
+        "shows lint and provenance metadata, classifies imported skills as medium or high risk, "
+        "and preserves guarded invocation approval.",
+        ("core/extension_store.py", "core/skill_linter.py", "yuki_cli.py"),
+        ("PyYAML", "GitHub REST API for remote imports"),
+        ("skills:import", "skills:invoke", "skills:approve"),
+        ("local extension manifest writes", "bounded outbound GitHub API reads"),
+        ("local",), "high",
+        ("tests/test_extension_store.py", "tests/test_skill_linter.py",
+         "tests/test_approved_skill_runtime.py"),
+        ("Risk classification is heuristic and cannot establish that a skill is safe.",
+         "Only SKILL.md is imported; companion scripts and reference assets are not installed.",
+         "Operator must review exact pinned source and license before approval.",
+         "License identifier/path are recorded, but full license text is not bundled for redistribution.",
+         "Not a bulk marketplace, signature verification service, or universal skill runtime."),
+    ),
+    CapabilityContract(
         "typed-tool-execution", "Typed fail-closed agent tool execution", "experimental",
         "Validates structured tool calls against registered schemas, checks policy on every call, "
         "requires exact-call approval for side-effecting or high-risk tools, and bounds results.",
