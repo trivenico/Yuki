@@ -106,6 +106,17 @@ class FakeSyncRuntime:
     def upload_pending(self):
         return {"pushed": 2, "conflicts": 0, "pending": 0}
 
+    def preview_application(self, application):
+        return {"tasks": {"total": 2, "tracked": 1},
+                "conversations": {"conversations": 1, "messages": 3},
+                "skills": {"installed_data_only_packs": 1}}
+
+    def queue_application(self, collection, application):
+        return {"collection": collection, "queued": 2}
+
+    def sync_application(self, application):
+        return {"pushed": 2, "pulled": 1, "conflicts": 0}
+
     def close(self):
         self.closed = True
 
@@ -228,6 +239,30 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["result"]["pushed"], 2)
         self.assertEqual(result["result"]["pending"], 0)
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
+        self.assertTrue(sync_instances[0].closed)
+
+    def test_sync_preview_queue_and_bidirectional_run_are_worker_actions(self):
+        sync_instances = []
+        def sync_factory():
+            instance = FakeSyncRuntime()
+            sync_instances.append(instance)
+            return instance
+        worker = DesktopRuntimeWorker(FakeRuntime, sync_factory)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("sync_preview")
+        preview = self._next(worker, "sync_preview")
+        self.assertTrue(preview["ok"])
+        self.assertEqual(preview["result"]["conversations"]["messages"], 3)
+        worker.submit("sync_queue", collection="conversations")
+        queued = self._next(worker, "sync_queue")
+        self.assertEqual(queued["result"]["collection"], "conversations")
+        worker.submit("sync_run")
+        synced = self._next(worker, "sync_run")
+        self.assertEqual(synced["result"], {"pushed": 2, "pulled": 1, "conflicts": 0})
         worker.submit("close")
         self._next(worker, "close")
         worker.join(2)
