@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from uuid import uuid4
 from typing import Any, Callable
 
 from core.sync_client import SyncClientError
@@ -12,9 +11,8 @@ from core.sync_client import SyncClientError
 class TaskSyncAdapter:
     """Build stable revisioned events; never performs network I/O.
 
-    The caller must explicitly request queueing. Only the task description,
-    completion state and creation timestamp are exported. Local integer IDs,
-    arbitrary task fields and filesystem paths are never synchronized.
+    Only description, completion state and creation timestamp are exported.
+    Local integer IDs and arbitrary task fields are never synchronized.
     """
 
     @staticmethod
@@ -29,34 +27,36 @@ class TaskSyncAdapter:
         if not isinstance(device_id, str) or not device_id:
             raise SyncClientError("A paired device is required before queueing tasks.")
         queued = 0
-        now = datetime.now(timezone.utc).isoformat()
         for item in tasks:
-            if not isinstance(item, dict) or not isinstance(item.get("description"), str) or not isinstance(item.get("completed"), bool):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), int) or isinstance(item.get("id"), bool):
                 continue
-            sync_meta = item.get("_yuki_sync")
-            if not isinstance(sync_meta, dict):
-                sync_meta = {"object_id": "task_" + uuid4().hex, "revision": 0, "fingerprint": ""}
-            object_id = sync_meta.get("object_id")
-            if not isinstance(object_id, str) or not object_id.startswith("task_"):
-                object_id = "task_" + uuid4().hex
-                sync_meta = {"object_id": object_id, "revision": 0, "fingerprint": ""}
+            if not isinstance(item.get("description"), str) or not isinstance(item.get("completed"), bool):
+                continue
             payload = {
                 "description": item["description"][:500],
                 "completed": item["completed"],
                 "created_at": str(item.get("created_at", ""))[:40],
             }
             fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
-            if fingerprint == sync_meta.get("fingerprint"):
-                item["_yuki_sync"] = sync_meta
+            old_meta = item.get("_yuki_sync") if isinstance(item.get("_yuki_sync"), dict) else {}
+            if fingerprint == old_meta.get("fingerprint"):
                 continue
-            revision = int(sync_meta.get("revision", 0)) + 1
+            # Deterministic per-device identity makes a crash before metadata
+            # persistence safe: retrying produces the same object/event IDs.
+            object_id = "task_" + hashlib.sha256((device_id + ":" + str(item["id"])).encode("utf-8")).hexdigest()[:32]
+            old_revision = old_meta.get("revision", 0)
+            if isinstance(old_revision, bool) or not isinstance(old_revision, int) or old_revision < 0:
+                old_revision = 0
+            revision = old_revision + 1
+            occurred_at = payload["created_at"] or "1970-01-01T00:00:00+00:00"
             event_id = "event_" + hashlib.sha256((object_id + ":" + str(revision)).encode("utf-8")).hexdigest()[:32]
             event = {
                 "event_id": event_id, "device_id": device_id, "collection": "task_records",
-                "object_id": object_id, "revision": revision, "occurred_at": now,
+                "object_id": object_id, "revision": revision, "occurred_at": occurred_at,
                 "operation": "upsert", "payload": payload,
             }
-            if enqueue(event):
-                queued += 1
+            # Persist metadata only after the outbox accepted this exact event.
+            enqueue(event)
             item["_yuki_sync"] = {"object_id": object_id, "revision": revision, "fingerprint": fingerprint}
+            queued += 1
         return queued
