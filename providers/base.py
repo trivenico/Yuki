@@ -11,14 +11,18 @@ def validate_chat_messages(system: str, messages: list[dict], *, max_chars: int 
     if not isinstance(messages, list) or not messages or len(messages) > 50:
         raise ValueError("Chat messages must be a non-empty list of at most 50 items.")
     total = len(system)
+    expected_role = "user"
     for item in messages:
         if not isinstance(item, dict) or set(item) != {"role", "content"}:
             raise ValueError("Each chat message must contain only role and content.")
         if item["role"] not in {"user", "assistant"}:
             raise ValueError("Only user and assistant history messages are accepted.")
+        if item["role"] != expected_role:
+            raise ValueError("Chat history must alternate user and assistant messages.")
         if not isinstance(item["content"], str) or not item["content"].strip():
             raise ValueError("Chat message content must be non-empty text.")
         total += len(item["content"])
+        expected_role = "assistant" if expected_role == "user" else "user"
     if messages[-1]["role"] != "user":
         raise ValueError("The final chat message must be from the user.")
     if total > max_chars:
