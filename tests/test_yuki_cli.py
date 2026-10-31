@@ -157,7 +157,7 @@ class YukiCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("Interaction style changed to developer", " ".join(output))
-        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("Current interaction role: developer", provider.prompts[0])
         self.assertIn("Permissions are unchanged", " ".join(output))
 
     def test_provider_initialization_failure_is_sanitized(self):
