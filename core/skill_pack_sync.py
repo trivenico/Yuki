@@ -43,9 +43,11 @@ class SkillPackSyncAdapter:
             """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS queued_packs (
-                    name TEXT PRIMARY KEY,
+                    device_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
                     manifest_hash TEXT NOT NULL,
-                    event_json TEXT NOT NULL
+                    event_json TEXT NOT NULL,
+                    PRIMARY KEY(device_id, name)
                 )
             """)
 
