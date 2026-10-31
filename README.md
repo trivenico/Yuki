@@ -24,6 +24,18 @@ The desktop settings row lists registered AI providers, distinguishes implemente
 
 The desktop now renders provider output incrementally and includes a Stop control. Ollama and OpenAI-compatible adapters use native bounded streaming; adapters without a native streaming implementation use the backward-compatible complete-response fallback. Stopping closes the active stream and deliberately leaves the user message in history without recording partial assistant output as a completed answer. This is still an early source-run preview, not a signed installer or production release. Voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, and a packaged desktop installer remain outstanding. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
 
+## Windows + Oracle Linux sync foundation
+
+Yuki has an opt-in HTTPS sync protocol, durable local outbox, rotating device credentials, one-time pairing codes, and CLI commands for status, pairing, previewing/queueing approved data, and explicit sync. The Windows and Linux clients use the same protocol. No background sync starts automatically; preview and queue are separate from upload, and only explicitly queued allow-listed task, conversation, and data-only skill metadata are eligible. Credentials, executable plugins, approval grants and arbitrary files are excluded.
+
+For a personal Oracle Linux hub, configure the hub service and TLS reverse proxy first. On the trusted Linux host, issue a short-lived pairing code locally:
+
+```bash
+python yuki_sync_admin.py --user YOUR_USER_ID --ttl 300
+```
+
+Deliver that code privately to the Windows laptop. Configure `YUKI_SYNC_URL` to the hub's HTTPS URL, install the optional OS vault dependency with `python -m pip install -r requirements-sync.txt`, then run `python yuki.py` and use `/sync pair`. Verify Windows Credential Manager is the active keyring backend before pairing. Use `/sync status`, `/sync tasks preview`, `/sync tasks queue`, `/sync chat preview`, `/sync chat queue`, `/sync skills preview`, `/sync skills queue`, and `/sync run` for explicit operations. Pairing and transport are implemented foundations; desktop pairing controls, unattended background sync, end-to-end payload encryption, production deployment hardening and Windows/Linux acceptance testing are still outstanding. Do not expose the WSGI development app directly to the public internet.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
