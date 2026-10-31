@@ -39,7 +39,7 @@ class IndependentCodeReviewTests(unittest.TestCase):
     def test_credentials_are_detected_but_values_never_echoed(self):
         secret = "super-secret-value-12345"
         report = review_python_changes({
-            "src/config.py": 'API_KEY = "' + secret + '"\n'
+            "src/config.py": 'eval(user_input); API_KEY = "' + secret + '"\n'
         })
         self.assertFalse(report.eligible_for_human_review)
         self.assertTrue(any(item.rule_id == "SEC001" for item in report.findings))
