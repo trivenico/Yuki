@@ -16,7 +16,7 @@ Upstream: https://github.com/SnailSploit/Claude-Red
 - Security-sensitive vocabulary (offensive operations, exploit development, credential harvesting, privilege escalation, persistence, evasion, exfiltration, keylogging, shellcode, phishing) triggers high risk.
 - Imported InstalledPromptSkill now propagates manifest risk and requires invocation approval for medium/high.
 - GitHub import resolves a commit SHA and fetches the exact SKILL.md before displaying approval preview.
-- Preview includes risk, invocation approval requirement, lint findings, upstream SPDX license when available, content SHA-256, pinned commit, and companion script candidates.
+- Preview includes risk, invocation approval requirement, lint findings, upstream SPDX license and license-file path when available, content SHA-256, pinned commit, and companion script candidates. License identifiers and paths are persisted in installed provenance metadata.
 - Only the selected SKILL.md is installed. Companion scripts and reference assets are not copied or executed.
 - CLI skill inventory exposes risk and approval requirements.
 - Local SKILL.md imports receive the same conservative risk classification.
