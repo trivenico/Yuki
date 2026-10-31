@@ -39,7 +39,7 @@ This is validation only. It is not a transport, identity provider, encryption im
 ## Required service design
 
 1. Device enrollment: one-time high-entropy pairing code with a short TTL and single-use consumption is implemented in `core/sync_auth.py`; the administrative code-creation workflow and user-facing pairing UI remain to be built.
-2. Authentication: short-lived access tokens and rotating refresh credentials are implemented as hashed SQLite records; Windows Credential Manager and protected Linux secret storage are not yet wired. Refresh-token replay revokes the device.
+2. Authentication: short-lived access tokens and rotating refresh credentials are implemented as hashed SQLite records; The optional client adapter accepts native Windows Vault, macOS Keychain, and Linux Secret Service/KWallet backends only; it rejects unknown/insecure fallback backends. The Windows backend still requires validation on the target laptop. Refresh-token replay revokes the device.
 3. Transport: `core/sync_api.py` provides authenticated push/pull/ack routes plus pairing and refresh routes, with request-size bounds. TLS termination, rate limits, trusted proxy configuration and a production WSGI server are still required.
 4. Storage: server-side SQLite for a single-user starter deployment, with append-only event log, idempotency key on event_id, per-device cursor and transactional acknowledgements. Keep DB on local Linux disk; never expose SQLite over the network.
 5. Conflict handling: server sequence is authoritative; per-object revisions detect stale writes. Concurrent edits return a conflict to clients instead of silently overwriting. Tombstones are retained until all active devices acknowledge past their sequence or expire under a documented retention policy.
@@ -150,7 +150,7 @@ The terminal frontend now uses the shared application-facing `core/sync_runtime.
 - `/sync pair`: prompts for a one-time pairing code without echoing it and saves returned credentials through the optional OS keyring adapter.
 - `/sync run`: intentionally reports that data synchronization is disabled until real domain adapters are wired. It does not upload or acknowledge application data.
 
-Configure the hub URL in the process environment as `YUKI_SYNC_URL=https://your-hostname`. Install the optional credential-store dependency with `python -m pip install -r requirements-sync.txt`. Verify the active keyring backend on Windows before pairing. The current branch does not yet provide a user-facing pairing-code minting command on the Linux hub; codes are created by the local administrative `SyncCredentialStore.create_pairing_code` API and must be delivered securely.
+Configure the hub URL in the process environment as `YUKI_SYNC_URL=https://your-hostname`. Install the optional credential-store dependency with `python -m pip install -r requirements-sync.txt`. The client now fails closed unless the active backend is a native Windows Vault, macOS Keychain, or Linux Secret Service/KWallet backend; insecure fallback backends are rejected. The current branch does not yet provide a user-facing pairing-code minting command on the Linux hub; codes are created by the local administrative `SyncCredentialStore.create_pairing_code` API and must be delivered securely.
 
 The desktop app should import and use `SyncRuntime` rather than implementing its own credential, transport or outbox logic. Do not enable automatic sync until approved task/conversation/skill adapters and idempotent apply handlers are implemented.
 
