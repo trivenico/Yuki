@@ -25,7 +25,7 @@ class GeminiAPIProviderTests(unittest.TestCase):
         self.assertEqual(payload["systemInstruction"]["parts"][0]["text"], "trusted policy")
         self.assertEqual([item["role"] for item in payload["contents"]], ["user", "model", "user"])
         self.assertNotIn("trusted policy", payload["contents"][0]["parts"][0]["text"])
-        self.assertEqual(request.get_header("x-goog-api-key"), "secret")
+        self.assertEqual(request.get_header("X-goog-api-key"), "secret")
 
     def test_rejects_invalid_or_non_alternating_history_before_network(self):
         provider = GeminiAPIProvider("gemini-2.5-flash", environ={"GEMINI_API_KEY": "secret"})
