@@ -1,8 +1,11 @@
 import tempfile
 import unittest
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
-from core.sync_client import SyncClientError, SyncOutbox, SyncHTTPTransport
+from core.sync_client import SyncClientError, SyncOutbox, SyncHTTPTransport, KeyringCredentialVault
 
 
 def make_event(event_id="event_00000001", revision=1):
@@ -59,6 +62,20 @@ class SyncOutboxTests(unittest.TestCase):
             self.assertEqual(memory.ready(), [make_event()])
         finally:
             memory.close()
+
+    def test_keyring_rejects_non_os_backends(self):
+        fake = SimpleNamespace(get_keyring=lambda: object())
+        with patch.dict(sys.modules, {"keyring": fake}), patch("platform.system", return_value="Windows"):
+            with self.assertRaises(SyncClientError):
+                KeyringCredentialVault()
+
+    def test_keyring_accepts_windows_vault_backend(self):
+        class WinVaultKeyring:
+            __module__ = "keyring.backends.Windows"
+        fake = SimpleNamespace(get_keyring=lambda: WinVaultKeyring())
+        with patch.dict(sys.modules, {"keyring": fake}), patch("platform.system", return_value="Windows"):
+            vault = KeyringCredentialVault()
+            self.assertIs(vault._keyring, fake)
 
     def test_transport_rejects_non_https_endpoints(self):
         with self.assertRaises(ValueError):
