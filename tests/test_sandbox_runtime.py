@@ -19,6 +19,8 @@ class DockerSandboxArgvTests(unittest.TestCase):
             workspace=self.tmp.name, command=command)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
         self.assertIn("--read-only", argv)
+        self.assertIn("--init", argv)
+        self.assertIn("--ipc=private", argv)
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--pids-limit", argv)
