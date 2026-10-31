@@ -30,6 +30,14 @@ class SyncOutboxTests(unittest.TestCase):
         self.assertFalse(self.outbox.enqueue(make_event()))
         self.assertEqual(self.outbox.ready(), [make_event()])
 
+    def test_ready_preserves_enqueue_order_when_timestamps_match(self):
+        first = make_event("event_zzzzzz01")
+        second = make_event("event_aaaaaaaa")
+        second["object_id"] = "task_00000002"
+        self.outbox.enqueue(first)
+        self.outbox.enqueue(second)
+        self.assertEqual(self.outbox.ready(), [first, second])
+
     def test_event_id_reuse_with_different_payload_is_rejected(self):
         self.outbox.enqueue(make_event())
         changed = make_event()
