@@ -354,6 +354,39 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("combined specialist context exceeds the task argument limit.")
         return argument
 
+    def _reserve_dispatch_slot(self, plan_id: str, subtask_id: str) -> bool:
+        """Atomically reserve one per-plan slot before creating a durable task.
+
+        A dispatching row is a recoverable reservation: enqueue uses a stable
+        idempotency key, so a later process can safely finish an interrupted
+        reservation without creating duplicate tasks.
+        """
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status, task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None or row["task_id"] is not None:
+                return False
+            if row["status"] == "dispatching":
+                return True
+            if row["status"] != "pending":
+                return False
+            active = db.execute(
+                "SELECT COUNT(*) FROM agent_plan_subtasks WHERE plan_id=? AND status IN "
+                "('dispatching','queued','running','waiting_approval')",
+                (plan_id,),
+            ).fetchone()[0]
+            if active >= self.max_active_tasks:
+                return False
+            changed = db.execute(
+                "UPDATE agent_plan_subtasks SET status='dispatching' "
+                "WHERE plan_id=? AND subtask_id=? AND task_id IS NULL AND status='pending'",
+                (plan_id, subtask_id),
+            ).rowcount
+            return changed == 1
+
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
@@ -423,25 +456,34 @@ class SpecialistAgentCoordinator:
                 continue
             if waiting:
                 continue
-            # The limit gates only new work; continue inspecting remaining rows so
-            # failed dependencies are marked blocked even while capacity is full.
-            if active_count >= self.max_active_tasks:
+            # Reserve atomically: a process-local count alone lets concurrent
+            # coordinator instances exceed the plan's configured capacity.
+            if not self._reserve_dispatch_slot(plan_id, row["subtask_id"]):
                 continue
             agent = self.agents.get(row["agent_id"])
             if agent is None or not agent.enabled:
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
                 continue
-            task = self.runtime.enqueue(
-                actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": self._build_dependency_argument(row["description"], dependency_results),
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
-            )
+            try:
+                task = self.runtime.enqueue(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                    steps=[{
+                        "name": row["subtask_id"], "action": agent.action,
+                        "argument": self._build_dependency_argument(row["description"], dependency_results),
+                        "requires_approval": bool(row["requires_approval"]),
+                    }],
+                )
+            except Exception:
+                with self._connect() as db:
+                    db.execute(
+                        "UPDATE agent_plan_subtasks SET status='pending' "
+                        "WHERE plan_id=? AND subtask_id=? AND task_id IS NULL AND status='dispatching'",
+                        (plan_id, row["subtask_id"]),
+                    )
+                raise
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
             row["status"] = task.state
