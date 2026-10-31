@@ -89,6 +89,24 @@ class FakeRuntime:
         self.closed = True
 
 
+class FakeSyncRuntime:
+    def __init__(self):
+        self.paired = False
+        self.closed = False
+
+    def status(self):
+        return "Hub: https://sync.example.test\\nDevice: " + ("paired" if self.paired else "not paired")
+
+    def pair(self, code, device_label):
+        if code != "one-time-code":
+            raise ValueError("invalid pairing code")
+        self.paired = True
+        return "This device is paired."
+
+    def close(self):
+        self.closed = True
+
+
 class DesktopWorkerTests(unittest.TestCase):
     def _next(self, worker, action, timeout=2):
         deadline = time.monotonic() + timeout
@@ -170,6 +188,28 @@ class DesktopWorkerTests(unittest.TestCase):
         worker.submit("close")
         self._next(worker, "close")
         worker.join(2)
+
+    def test_sync_status_and_pair_are_worker_actions(self):
+        sync_instances = []
+        def sync_factory():
+            instance = FakeSyncRuntime()
+            sync_instances.append(instance)
+            return instance
+
+        worker = DesktopRuntimeWorker(FakeRuntime, sync_factory)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("sync_status")
+        status = self._next(worker, "sync_status")
+        self.assertIn("not paired", status["status"])
+        worker.submit("sync_pair", code="one-time-code", device_label="Windows")
+        paired = self._next(worker, "sync_pair")
+        self.assertTrue(paired["ok"])
+        self.assertIn("paired", paired["status"])
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
+        self.assertTrue(sync_instances[0].closed)
 
     def test_list_and_switch_are_dispatched_on_runtime_owner_thread(self):
         worker = DesktopRuntimeWorker(FakeRuntime)
