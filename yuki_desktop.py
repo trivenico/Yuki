@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import queue
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from core.desktop_worker import DesktopRuntimeWorker
 
@@ -17,6 +17,7 @@ class YukiDesktop:
         self.root = root
         self.worker = worker or DesktopRuntimeWorker()
         self.pending: dict[str, str] = {}
+        self.conversation_ids: dict[str, str] = {}
         self.ready = False
         self.closing = False
 
@@ -31,6 +32,12 @@ class YukiDesktop:
         ttk.Label(header, text="Yuki", font=("Segoe UI", 20, "bold")).pack(side=tk.LEFT)
         self.status = tk.StringVar(value="Starting Yuki…")
         ttk.Label(header, textvariable=self.status).pack(side=tk.RIGHT)
+        self.conversation_var = tk.StringVar()
+        self.conversation_select = ttk.Combobox(
+            shell, textvariable=self.conversation_var, state="readonly"
+        )
+        self.conversation_select.pack(fill=tk.X, pady=(8, 0))
+        self.conversation_select.bind("<<ComboboxSelected>>", self._switch_conversation)
 
         self.transcript = tk.Text(shell, wrap=tk.WORD, state=tk.DISABLED,
                                   font=("Segoe UI", 10), padx=12, pady=12)
@@ -51,7 +58,7 @@ class YukiDesktop:
         actions = ttk.Frame(shell)
         actions.pack(fill=tk.X, pady=(8, 0))
         ttk.Button(actions, text="New chat", command=self._new_chat).pack(side=tk.LEFT)
-        ttk.Button(actions, text="Refresh history", command=self._history).pack(side=tk.LEFT, padx=8)
+        ttk.Button(actions, text="Refresh history", command=self._refresh).pack(side=tk.LEFT, padx=8)
 
         self.root.protocol("WM_DELETE_WINDOW", self._close)
         try:
@@ -95,6 +102,16 @@ class YukiDesktop:
         if self.ready and not self.closing:
             self._submit("history")
 
+    def _refresh(self):
+        if self.ready and not self.closing:
+            self._submit("list")
+
+    def _switch_conversation(self, _event=None):
+        label = self.conversation_var.get()
+        conversation_id = self.conversation_ids.get(label)
+        if conversation_id and self.ready and not self.closing:
+            self._submit("switch", conversation_id=conversation_id)
+
     def _poll(self):
         if self.closing:
             return
@@ -108,7 +125,7 @@ class YukiDesktop:
                         self.status.set("Ready")
                         self.send_button.configure(state=tk.NORMAL)
                         self.entry.focus_set()
-                        self._submit("history")
+                        self._submit("list")
                     else:
                         self.status.set("Unavailable")
                         self._append("Yuki could not start (" + event.get("error", "Error") + "). Check the CLI setup and provider configuration.", "error")
@@ -118,6 +135,22 @@ class YukiDesktop:
                         self._append("Yuki: " + event.get("response", ""), "assistant")
                     else:
                         self._append("Yuki request failed: " + event.get("error", "Error"), "error")
+                elif action == "list" and event.get("ok"):
+                    conversations = event.get("conversations", [])
+                    self.conversation_ids = {
+                        f'{item.get("title", "Yuki session")} · {item.get("conversation_id", "")[-8:]}':
+                        item.get("conversation_id", "")
+                        for item in conversations
+                    }
+                    labels = list(self.conversation_ids)
+                    self.conversation_select.configure(values=labels)
+                    active_id = event.get("active_conversation_id")
+                    active_label = next(
+                        (label for label, value in self.conversation_ids.items() if value == active_id),
+                        "",
+                    )
+                    self.conversation_var.set(active_label)
+                    self._submit("history")
                 elif action == "history" and event.get("ok"):
                     messages = event.get("messages", [])
                     if messages:
@@ -126,11 +159,17 @@ class YukiDesktop:
                             role = item.get("role", "assistant")
                             self._append(("You: " if role == "user" else "Yuki: ") + item.get("content", ""),
                                          "user" if role == "user" else "assistant")
+                elif action == "switch" and event.get("ok"):
+                    self.transcript.configure(state=tk.NORMAL)
+                    self.transcript.delete("1.0", tk.END)
+                    self.transcript.configure(state=tk.DISABLED)
+                    self._submit("list")
                 elif action == "new" and event.get("ok"):
                     self.transcript.configure(state=tk.NORMAL)
                     self.transcript.delete("1.0", tk.END)
                     self.transcript.configure(state=tk.DISABLED)
                     self.status.set("New conversation")
+                    self._submit("list")
                 elif action == "switch" and not event.get("ok"):
                     self._append("Could not switch conversation.", "error")
                 if event.get("request_id"):
