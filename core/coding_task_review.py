@@ -68,7 +68,13 @@ def review_coding_task_changes(
         raise CodingTaskReviewError("review evidence exceeds the bounded task review storage limit")
 
     if not report.eligible_for_human_review:
-        return report, task
+        try:
+            updated = store.attach_review_evidence(
+                task_id, expected_version=expected_version, review=serialized,
+            )
+        except (CodingTaskConflict, CodingTaskTransitionError) as exc:
+            raise CodingTaskReviewError("task changed before blocking review evidence could be attached") from exc
+        return report, updated
 
     try:
         updated = store.transition(
