@@ -145,6 +145,17 @@ class SyncReplaySafetyTests(unittest.TestCase):
         self.assertEqual(self.outbox.cursor(), 7)
         self.assertEqual(transport.ack_calls, [(7, "access-token")])
 
+    def test_durably_recorded_remote_conflict_is_counted_and_acknowledged(self):
+        event = make_event(event_id="event_remote_conflict")
+        transport = FakePageTransport([{"sequence": 9, **event}])
+        agent = SyncAgent(transport, self.outbox, FakeSyncVault(),
+                          lambda _event: "conflict")
+        result = agent.sync_once()
+        self.assertEqual(result["conflicts"], 1)
+        self.assertEqual(result["pulled"], 1)
+        self.assertEqual(self.outbox.cursor(), 9)
+        self.assertEqual(transport.ack_calls, [(9, "access-token")])
+
     def test_pull_limit_is_bounded_before_any_network_call(self):
         transport = FakePageTransport([])
         agent = SyncAgent(transport, self.outbox, FakeSyncVault(), lambda _event: None)
