@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hmac
 import json
+import threading
+from urllib.parse import urlsplit
 from typing import Iterable
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -20,9 +22,14 @@ class LocalAPI:
         if not isinstance(token, str) or len(token) < 32:
             raise ValueError("Local API token must contain at least 32 characters.")
         origins = tuple(allowed_origins)
-        if any(not isinstance(item, str) or not item.startswith(("http://", "https://")) for item in origins):
-            raise ValueError("Allowed origins must be explicit HTTP(S) origins.")
+        for item in origins:
+            if not isinstance(item, str):
+                raise ValueError("Allowed origins must be explicit HTTP(S) origins.")
+            parsed = urlsplit(item)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.path or parsed.query or parsed.fragment or parsed.username:
+                raise ValueError("Allowed origins must be exact HTTP(S) origins without paths or credentials.")
         self.runtime = runtime
+        self._runtime_lock = threading.RLock()
         self._token = token
         self.allowed_origins = frozenset(origins)
 
@@ -76,21 +83,26 @@ class LocalAPI:
             if method == "GET" and path == "/v1/health":
                 return self._respond(start_response, "200 OK", {"ok": True, "service": "yuki-local"})
             if method == "GET" and path == "/v1/history":
+                with self._runtime_lock:
+                    history = self.runtime.history()
+                    conversation_id = self.runtime.active_conversation_id
                 return self._respond(start_response, "200 OK", {
-                    "conversation_id": self.runtime.active_conversation_id,
-                    "messages": self.runtime.history(),
+                    "conversation_id": conversation_id,
+                    "messages": history,
                 })
             if method == "POST" and path == "/v1/chat":
                 payload = self._read_body(environ)
                 if set(payload) != {"message"} or not isinstance(payload["message"], str):
                     raise ValueError("Body must contain only a string message.")
-                response = self.runtime.send_message(payload["message"])
+                with self._runtime_lock:
+                    response = self.runtime.send_message(payload["message"])
                 return self._respond(start_response, "200 OK", {"response": response})
             if method == "POST" and path == "/v1/conversations":
                 payload = self._read_body(environ)
                 if set(payload) - {"title"} or ("title" in payload and not isinstance(payload["title"], str)):
                     raise ValueError("Body may contain only a string title.")
-                conversation_id = self.runtime.new_conversation(payload.get("title", "Yuki session"))
+                with self._runtime_lock:
+                    conversation_id = self.runtime.new_conversation(payload.get("title", "Yuki session"))
                 return self._respond(start_response, "201 Created", {"conversation_id": conversation_id})
             return self._respond(start_response, "404 Not Found", {"error": "not_found"})
         except ValueError as exc:
