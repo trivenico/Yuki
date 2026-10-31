@@ -25,7 +25,7 @@ For ordinary conversation, the path ends after the model response. Tool executio
 - Role profiles (companion, tutor, interviewer, developer, security, marketing) change response guidance only. They do not grant tools, permissions, or access.
 - Every action requiring approval must pass the existing PermissionGate/approval workflow. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
 - Local inference is the default privacy route in hybrid mode. Cloud routing is explicit and allow-listed; there is no implicit cloud fallback when local inference fails.
-- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature and requires explicit user controls.
+- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature: it is off by default, session-scoped consent is required before `/remember`, existing entries are never silently erased by disabling memory, and `/forget`, `/memory export`, and `/memory clear confirm` provide user controls. Saved entries are not automatically injected into model context. The current JSON store is local plaintext (filesystem permissions only); do not store secrets or sensitive personal data until encryption-at-rest and key-management are implemented. The data file is git-ignored.
 
 ## Client strategy
 
