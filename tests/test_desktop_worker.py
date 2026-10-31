@@ -30,6 +30,9 @@ class FakeProviders:
         self.selected = name
         return "Selected provider: openai"
 
+    def create_selected_adapter(self):
+        return object()
+
 
 class FakeAgent:
     def set_provider(self, adapter):
