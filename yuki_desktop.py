@@ -73,6 +73,7 @@ class YukiDesktop:
                                         state=tk.DISABLED)
         self.cancel_button.pack(side=tk.LEFT, padx=(6, 0))
         self.stream_active = False
+        self._stream_header_written = False
 
         actions = ttk.Frame(shell)
         actions.pack(fill=tk.X, pady=(8, 0))
@@ -176,8 +177,10 @@ class YukiDesktop:
                         self.status.set("Unavailable")
                         self._append("Yuki could not start (" + event.get("error", "Error") + "). Check the CLI setup and provider configuration.", "error")
                 elif action == "chunk":
-                    if not getattr(self, "_stream_header_written", False):
-                        self._append("Yuki: ")
+                    if not self._stream_header_written:
+                        self.transcript.configure(state=tk.NORMAL)
+                        self.transcript.insert(tk.END, "Yuki: ", "assistant")
+                        self.transcript.configure(state=tk.DISABLED)
                         self._stream_header_written = True
                     self._append_stream_chunk(event.get("chunk", ""))
                 elif action == "stream":
