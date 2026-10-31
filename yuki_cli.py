@@ -160,7 +160,7 @@ def run_cli(
                 except Exception:
                     output_fn("Yuki> I could not export the local memory store.")
                 continue
-            if command == "/memory clear CONFIRM":
+            if command == "/memory clear confirm":
                 try:
                     count = memory.clear()
                     output_fn("Yuki> Deleted " + str(count) + " saved memories.")
@@ -168,7 +168,7 @@ def run_cli(
                     output_fn("Yuki> I could not clear the local memory store.")
                 continue
             if command.startswith("/memory clear"):
-                output_fn("Yuki> To delete all saved memories, type exactly /memory clear CONFIRM.")
+                output_fn("Yuki> To delete all saved memories, type exactly /memory clear confirm.")
                 continue
             if command == "/reset":
                 session.reset()
