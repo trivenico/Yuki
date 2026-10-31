@@ -44,7 +44,9 @@ class YukiDesktop:
         ttk.Button(settings, text="Refresh providers", command=self._providers).pack(side=tk.LEFT)
         ttk.Button(settings, text="Sync status", command=self._sync_status).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(settings, text="Pair device", command=self._sync_pair).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(settings, text="Upload queued", command=self._sync_upload).pack(side=tk.LEFT, padx=(6, 0))
+        self.sync_upload_button = ttk.Button(settings, text="Upload queued", command=self._sync_upload)
+        self.sync_upload_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.sync_upload_active = False
         self.provider_details = tk.StringVar(value="Provider configuration will appear here.")
         ttk.Label(shell, textvariable=self.provider_details, wraplength=900).pack(fill=tk.X, pady=(4, 0))
         self.sync_details = tk.StringVar(value="Sync is local-only until you configure a hub and pair this device.")
@@ -165,7 +167,9 @@ class YukiDesktop:
             self.status.set("Pairing device…")
 
     def _sync_upload(self):
-        if self.ready and not self.closing:
+        if self.ready and not self.closing and not self.sync_upload_active:
+            self.sync_upload_active = True
+            self.sync_upload_button.configure(state=tk.DISABLED)
             self.status.set("Uploading queued events…")
             self._submit("sync_upload")
 
@@ -264,6 +268,8 @@ class YukiDesktop:
                         self.status.set("Pairing failed")
                         self._append("Device pairing failed (" + event.get("error", "Error") + "). Check hub URL and OS credential vault.", "error")
                 elif action == "sync_upload":
+                    self.sync_upload_active = False
+                    self.sync_upload_button.configure(state=tk.NORMAL)
                     if event.get("ok"):
                         result = event.get("result", {})
                         self.sync_details.set(event.get("status", "Sync status refreshed."))
