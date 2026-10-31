@@ -214,12 +214,19 @@ class ConversationStore:
             ).fetchone()
             if existing:
                 raise SyncClientError("Message ID already exists without matching sync event history.")
+            # Different devices can legitimately emit the same local ordinal.
+            # Assign a fresh local ordinal in server delivery order to avoid a
+            # UNIQUE(conversation_id, ordinal) collision while preserving order.
+            next_ordinal = self._db.execute(
+                "SELECT COALESCE(MAX(ordinal),0)+1 FROM messages WHERE conversation_id=?",
+                (payload["conversation_id"],),
+            ).fetchone()[0]
             with self._db:
                 self._db.execute(
                     """INSERT INTO messages(message_id,conversation_id,role,content,created_at,ordinal,sync_queued)
                        VALUES(?,?,?,?,?,?,1)""",
                     (object_id, payload["conversation_id"], payload["role"], payload["content"],
-                     payload["created_at"], payload["ordinal"]),
+                     payload["created_at"], next_ordinal),
                 )
                 self._db.execute("INSERT INTO applied_events(event_id,payload_hash) VALUES(?,?)",
                                  (normalized["event_id"], digest))
