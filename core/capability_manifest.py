@@ -193,6 +193,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
          "Not a bulk marketplace, signature verification service, or universal skill runtime."),
     ),
     CapabilityContract(
+        "skill-dependency-planning", "Read-only skill dependency and compatibility planning", "experimental",
+        "Validates bounded skill and Python package constraints, resolves installed skill dependency "
+        "closures, and reports missing, incompatible, or cyclic dependencies without installing packages.",
+        ("core/skill_dependency_manager.py", "core/extension_store.py"),
+        ("Python standard library", "installed extension manifests"),
+        ("skills:read", "dependencies:inspect"),
+        ("metadata-only dependency plan generation",),
+        ("local",), "medium",
+        ("tests/test_skill_dependency_manager.py", "tests/test_extension_store.py"),
+        ("No package installation, environment creation, lockfile generation, or CLI/desktop workflow is wired yet.",
+         "Version constraints support numeric versions and a deliberately limited operator subset, not full PEP 440.",
+         "The planner checks currently installed packages; it does not resolve a package index or prove transitive Python package compatibility.",
+         "Skill dependencies are resolved only against already installed declarative skill manifests."),
+    ),
+    CapabilityContract(
         "confidence-aware-skill-routing", "Confidence-aware on-demand skill discovery", "experimental",
         "Ranks registered skill metadata deterministically, exposes match evidence, and refuses weak "
         "or ambiguous task-to-skill selections before requesting invocation approval.",

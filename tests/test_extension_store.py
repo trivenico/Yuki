@@ -12,6 +12,7 @@ from core.extension_store import (
     install_github_skill,
     install_skill_file,
     list_extensions,
+    plan_installed_skill_dependencies,
     load_installed_mcp_servers,
     load_installed_skills,
     remove_extension,
@@ -96,6 +97,31 @@ class ExtensionStoreTests(unittest.TestCase):
         value = self.skill_manifest(instructions="x" * 40001)
         with self.assertRaisesRegex(ValueError, "instructions"):
             validate_skill_manifest(value)
+
+    def test_installed_skill_dependency_plan_reads_manifests_without_installing_packages(self):
+        first = self.write_manifest("first.json", self.skill_manifest(
+            dependencies={"skills": [], "python": [{"name": "PyYAML", "version": ">=6.0,<7.0"}]},
+            skill_version="1.2.0",
+        ))
+        install_extension(str(first), "skill", root=self.data)
+        plan = plan_installed_skill_dependencies(
+            "writing_helper", root=self.data, python_packages={"pyyaml": "6.0.2"}
+        )
+        self.assertTrue(plan.ready)
+        self.assertEqual(plan.installation_order, ("writing_helper",))
+        self.assertFalse(plan.as_dict()["package_installation_performed"])
+        listing = list_extensions("skill", root=self.data)
+        self.assertEqual(listing[0]["skill_version"], "1.2.0")
+        self.assertEqual(listing[0]["dependency_count"], 1)
+
+    def test_installed_skill_dependency_plan_reports_missing_packages(self):
+        source = self.write_manifest("first.json", self.skill_manifest(
+            dependencies={"skills": [], "python": [{"name": "requests", "version": ">=2.0"}]},
+        ))
+        install_extension(str(source), "skill", root=self.data)
+        plan = plan_installed_skill_dependencies("writing_helper", root=self.data, python_packages={})
+        self.assertFalse(plan.ready)
+        self.assertEqual(plan.missing_python, ("requests",))
 
     def test_imports_agent_skills_markdown_as_non_executable_prompt_skill(self):
         source = self.source / "SKILL.md"

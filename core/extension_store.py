@@ -129,7 +129,7 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 def validate_skill_manifest(value: dict) -> dict:
     required = {"type", "id", "version", "name", "description", "instructions"}
-    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk"}
+    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk", "skill_version", "dependencies", "python_compatibility"}
     if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
         raise ValueError("Skill manifest contains missing or unsupported fields.")
     if "source" in value and (
@@ -170,7 +170,23 @@ def validate_skill_manifest(value: dict) -> dict:
     risk = value.get("risk", "medium")
     if not isinstance(risk, str) or risk not in _ALLOWED_SKILL_RISKS:
         raise ValueError("Skill risk must be low, medium, or high.")
-    return {**value, "risk": risk}
+    from core.skill_dependency_manager import (
+        DependencyDeclarationError, validate_skill_dependencies, _version_tuple,
+    )
+    skill_version = value.get("skill_version", "1.0.0")
+    python_compatibility = value.get("python_compatibility")
+    try:
+        _version_tuple(skill_version)
+        dependencies = validate_skill_dependencies(value.get("dependencies"))
+        if python_compatibility is not None:
+            from core.skill_dependency_manager import validate_version_specifier
+            python_compatibility = validate_version_specifier(python_compatibility)
+    except (DependencyDeclarationError, TypeError) as exc:
+        raise ValueError(f"Skill dependency metadata is invalid: {exc}") from exc
+    normalized = {**value, "risk": risk, "skill_version": skill_version, "dependencies": dependencies}
+    if python_compatibility is not None:
+        normalized["python_compatibility"] = python_compatibility
+    return normalized
 
 
 def classify_imported_skill_risk(name: str, description: str, instructions: str) -> str:
@@ -337,6 +353,8 @@ def install_skill_file(
         "description": description.strip(),
         "instructions": instructions,
         "risk": selected_risk,
+        "skill_version": "1.0.0",
+        "dependencies": {"skills": [], "python": []},
     }
     if source_metadata is not None:
         if not isinstance(source_metadata, dict) or not {"source", "source_commit", "source_path"}.issubset(source_metadata) or set(source_metadata) - {"source", "source_commit", "source_path", "source_license", "source_license_path"}:
@@ -553,6 +571,8 @@ def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
             if kind == "skill":
                 entry["risk"] = checked["risk"]
                 entry["requires_invocation_approval"] = checked["risk"] != "low"
+                entry["skill_version"] = checked["skill_version"]
+                entry["dependency_count"] = len(checked["dependencies"]["skills"]) + len(checked["dependencies"]["python"])
             results.append(entry)
         except ValueError as exc:
             results.append({"id": path.stem, "name": path.stem, "valid": False, "error": str(exc)})
@@ -589,6 +609,26 @@ class InstalledPromptSkill(Skill):
             + self.manifest["instructions"] + "\n\nUser task: " + argument,
             {"skill_pack": self.manifest["id"]},
         )
+
+
+def plan_installed_skill_dependencies(
+    skill_id: str, *, root: Path | None = None, python_packages: dict[str, str] | None = None,
+    python_version: str | None = None,
+):
+    """Inspect installed skill manifests and return a read-only dependency plan."""
+    from core.skill_dependency_manager import plan_skill_dependencies
+
+    folder = _extension_root("skill", root)
+    manifests = []
+    if folder.exists():
+        for path in sorted(folder.glob("*.json")):
+            try:
+                manifests.append(validate_skill_manifest(_read_json(path)))
+            except (ValueError, TypeError):
+                continue
+    return plan_skill_dependencies(
+        manifests, skill_id, python_packages=python_packages, python_version=python_version
+    )
 
 
 def load_installed_skills(*, root: Path | None = None) -> list[InstalledPromptSkill]:
