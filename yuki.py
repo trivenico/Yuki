@@ -7,7 +7,7 @@ from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
-from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
+from yuki_tasks import load_tasks, save_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
 from skills.registry import SkillRegistry
 from core.guarded_skill_runtime import OneShotSkillApprovals
@@ -89,7 +89,7 @@ Yuki commands:
   /dashboard                      Show Yuki capability and local-state summary
   /sync status                    Show sync hub, device and outbox status
   /sync pair                      Pair this device using a one-time code
-  /sync run                       Run sync when application adapters are enabled
+  /sync run                       Synchronize supported task upserts
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
   /skill diagnostics              Show installed skill-pack load health
