@@ -34,7 +34,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:lease:renew", "task:fail", "task:cancel"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -56,10 +56,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
 
-    def worker(self, handlers):
+    def worker(self, handlers, **options):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
-            handlers=handlers,
+            handlers=handlers, **options,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -72,6 +72,52 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_long_running_handler_renews_lease_and_completes_with_latest_version(self):
+        import threading
+        import time
+
+        task_id = self.create_task()
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_handler(_):
+            started.set()
+            self.assertTrue(release.wait(2))
+            return "finished after heartbeat"
+
+        worker = self.worker(
+            {"code-review": slow_handler},
+            lease_seconds=10,
+            heartbeat_interval=0.02,
+        )
+        result_holder = []
+        thread = threading.Thread(target=lambda: result_holder.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(1))
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            events = self.runtime.events(actor_id="worker-service", task_id=task_id)
+            if any(event.kind == "task.lease_renewed" for event in events):
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("worker did not renew its lease while handler was running")
+        release.set()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result_holder[0].state, "succeeded")
+        self.assertEqual(result_holder[0].result["output"], "finished after heartbeat")
+
+    def test_worker_rejects_invalid_heartbeat_configuration(self):
+        for options in (
+            {"lease_seconds": 9},
+            {"lease_seconds": 10, "heartbeat_interval": 10},
+            {"lease_seconds": 10, "heartbeat_interval": 0},
+        ):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):
+                    self.worker({"code-review": lambda _: "ok"}, **options)
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
