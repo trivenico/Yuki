@@ -346,7 +346,11 @@ def install_skill_file(
             if existing.get("name") == manifest["name"]:
                 raise ValueError(f"An extension named '{manifest['name']}' is already installed.")
     _atomic_json(destination, manifest)
-    return {"id": manifest["id"], "name": manifest["name"], "path": str(destination), "source_format": "agentskills_md"}
+    return {
+        "id": manifest["id"], "name": manifest["name"], "path": str(destination),
+        "source_format": "agentskills_md", "risk": manifest["risk"],
+        "requires_invocation_approval": manifest["risk"] != "low",
+    }
 
 
 
