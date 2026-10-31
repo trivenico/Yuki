@@ -102,7 +102,11 @@ class TypedToolRuntime:
             else:
                 output = json.dumps(raw, ensure_ascii=True, allow_nan=False, sort_keys=True)
             if len(output) > self._max_output_chars:
-                output = output[:self._max_output_chars] + "… [truncated]"
+                marker = "… [truncated]"
+                if self._max_output_chars <= len(marker):
+                    output = marker[:self._max_output_chars]
+                else:
+                    output = output[:self._max_output_chars - len(marker)] + marker
         except Exception:
             self._record(call.tool_name, "failed")
             return ToolResult(call.call_id, False, error_code="tool_execution_failed")
