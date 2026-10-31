@@ -11,7 +11,7 @@ class SpecialistAgentCatalogTests(unittest.TestCase):
 
     def test_ten_families_are_present(self):
         self.assertEqual(len(list_families()), 10)
-        self.assertEqual({len(list_agents(family=family)) for family in list_families()}, {5, 10})
+        self.assertEqual({len(list_agents(family=family)) for family in list_families()}, {10})
 
     def test_each_family_has_expected_roles(self):
         for family in list_families():
