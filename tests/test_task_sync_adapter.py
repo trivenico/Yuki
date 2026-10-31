@@ -13,7 +13,7 @@ class TaskSyncAdapterTests(unittest.TestCase):
     def test_preview_does_not_mutate_tasks(self):
         tasks = [sample_task()]
         before = deepcopy(tasks)
-        self.assertEqual(TaskSyncAdapter.preview(tasks), {"total": 1, "already_queued": 0})
+        self.assertEqual(TaskSyncAdapter.preview(tasks), {"total": 1, "tracked": 0})
         self.assertEqual(tasks, before)
 
     def test_queue_exports_only_allowlisted_fields(self):
