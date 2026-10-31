@@ -413,7 +413,9 @@ class SyncAgent:
             event = {key: value for key, value in item.items() if key != "sequence"}
             from core.sync_contract import validate_sync_event
             normalized = validate_sync_event(event)
-            self.apply_remote(normalized.to_dict())
+            apply_result = self.apply_remote(normalized.to_dict())
+            if apply_result == "conflict":
+                conflicts += 1
             pulled += 1
         if (events and next_after != previous_sequence) or (not events and next_after != cursor):
             raise SyncClientError("The sync hub returned an inconsistent page cursor.")
