@@ -44,9 +44,13 @@ class ReadOnlyWorkspace:
             raise PermissionError("sensitive workspace paths are not available to agents.")
         return candidate
 
-    @staticmethod
-    def _is_sensitive(path: Path) -> bool:
-        parts = path.relative_to(path.anchor).parts
+    def _is_sensitive(self, path: Path) -> bool:
+        # Inspect only workspace-relative components. A hidden parent directory
+        # containing the project must not make every project file inaccessible.
+        try:
+            parts = path.relative_to(self.root).parts
+        except ValueError:
+            return True
         normalized_parts = tuple(part.casefold() for part in parts)
         if any(part in _IGNORED_DIRS or part.startswith(".") for part in normalized_parts):
             return True
