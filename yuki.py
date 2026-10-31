@@ -526,6 +526,11 @@ def main():
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
+    conversation_store = ConversationStore()
+    conversation_context = {
+        "store": conversation_store,
+        "active_id": conversation_store.create("Yuki session", datetime.now(timezone.utc).isoformat()),
+    }
     print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
     while True:
@@ -535,11 +540,24 @@ def main():
             print("\nGoodbye.")
             break
         try:
-            response = handle_command(message, memory, tasks, agent, providers, policy)
+            if message.strip() and not message.strip().startswith("/"):
+                conversation_store.append(
+                    conversation_context["active_id"], "user", message,
+                    datetime.now(timezone.utc).isoformat()
+                )
+            response = handle_command(
+                message, memory, tasks, agent, providers, policy, conversation_context
+            )
+            if message.strip() and not message.strip().startswith("/") and response and response != "__QUIT__":
+                conversation_store.append(
+                    conversation_context["active_id"], "assistant", response,
+                    datetime.now(timezone.utc).isoformat()
+                )
         except Exception as error:
             response = f"Yuki encountered a recoverable error: {type(error).__name__}."
         if response == "__QUIT__":
             print("Yuki > Goodbye.")
+            conversation_store.close()
             break
         if response:
             print(f"Yuki > {response}")
