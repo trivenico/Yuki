@@ -238,3 +238,108 @@ class SyncHTTPTransport:
 
     def acknowledge(self, sequence: int, access_token: str) -> dict[str, Any]:
         return self._request("POST", "/v1/ack", {"sequence": sequence}, access_token)
+
+
+class SyncAgent:
+    """One bounded sync cycle shared by CLI and desktop frontends.
+
+    apply_remote must be idempotent because a process may crash after applying
+    an event but before its acknowledgement/cursor is persisted.
+    """
+
+    def __init__(
+        self,
+        transport: SyncHTTPTransport,
+        outbox: SyncOutbox,
+        vault: KeyringCredentialVault,
+        apply_remote: Callable[[dict[str, Any]], None],
+    ):
+        if not callable(apply_remote):
+            raise TypeError("apply_remote must be callable.")
+        self.transport = transport
+        self.outbox = outbox
+        self.vault = vault
+        self.apply_remote = apply_remote
+
+    def _credentials(self) -> tuple[str, str, str]:
+        saved = self.vault.load()
+        if not saved:
+            raise SyncClientError("This device is not paired with a Yuki Sync Hub.")
+        return saved
+
+    def _refresh(self, device_id: str, refresh_token: str) -> tuple[str, str]:
+        rotated = self.transport.refresh(refresh_token)
+        if rotated.get("device_id") != device_id:
+            self.vault.delete()
+            raise SyncClientError("The sync hub returned credentials for a different device.")
+        access = rotated.get("access_token")
+        refresh = rotated.get("refresh_token")
+        if not isinstance(access, str) or not isinstance(refresh, str):
+            raise SyncClientError("The sync hub returned an invalid credential response.")
+        self.vault.save(device_id, access, refresh)
+        return access, refresh
+
+    def sync_once(self, push_limit: int = 50, pull_limit: int = 100) -> dict[str, int]:
+        device_id, access, refresh = self._credentials()
+        pushed = conflicts = pulled = 0
+
+        for event in self.outbox.ready(push_limit):
+            try:
+                self.transport.push(event, access)
+                self.outbox.mark_sent(event["event_id"])
+                pushed += 1
+            except SyncHTTPError as exc:
+                if exc.status == 401:
+                    access, refresh = self._refresh(device_id, refresh)
+                    try:
+                        self.transport.push(event, access)
+                        self.outbox.mark_sent(event["event_id"])
+                        pushed += 1
+                    except SyncHTTPError as retry_exc:
+                        if retry_exc.status == 409:
+                            self.outbox.mark_conflict(event["event_id"], "Server revision conflict.")
+                            conflicts += 1
+                        else:
+                            self.outbox.mark_retry(event["event_id"], "HTTP " + str(retry_exc.status))
+                            if retry_exc.status in (401, 403):
+                                raise SyncClientError("Sync authorization failed; re-pair this device.") from None
+                    continue
+                if exc.status == 409:
+                    self.outbox.mark_conflict(event["event_id"], "Server revision conflict.")
+                    conflicts += 1
+                elif exc.status in (401, 403):
+                    raise SyncClientError("Sync authorization failed; re-pair this device.") from None
+                else:
+                    self.outbox.mark_retry(event["event_id"], "HTTP " + str(exc.status))
+            except SyncClientError:
+                self.outbox.mark_retry(event["event_id"], "Network or transport failure.")
+
+        cursor = self.outbox.cursor()
+        try:
+            page = self.transport.pull(cursor, access, pull_limit)
+        except SyncHTTPError as exc:
+            if exc.status != 401:
+                raise
+            access, refresh = self._refresh(device_id, refresh)
+            page = self.transport.pull(cursor, access, pull_limit)
+
+        events = page.get("events")
+        next_after = page.get("next_after")
+        if not isinstance(events, list) or isinstance(next_after, bool) or not isinstance(next_after, int):
+            raise SyncClientError("The sync hub returned an invalid event page.")
+        if len(events) > pull_limit or next_after < cursor:
+            raise SyncClientError("The sync hub returned an invalid event cursor.")
+        for item in events:
+            if not isinstance(item, dict) or not isinstance(item.get("sequence"), int):
+                raise SyncClientError("The sync hub returned a malformed event.")
+            event = {key: value for key, value in item.items() if key != "sequence"}
+            from core.sync_contract import validate_sync_event
+            normalized = validate_sync_event(event)
+            self.apply_remote(normalized.to_dict())
+            pulled += 1
+
+        if next_after > cursor:
+            self.transport.acknowledge(next_after, access)
+            self.outbox.set_cursor(next_after)
+
+        return {"pushed": pushed, "pulled": pulled, "conflicts": conflicts}
