@@ -34,7 +34,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:lease:renew", "task:fail", "task:cancel"}
+                  "task:complete", "task:lease:renew", "task:recover", "task:fail", "task:cancel"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -118,6 +118,29 @@ class SpecialistWorkerTests(unittest.TestCase):
             with self.subTest(options=options):
                 with self.assertRaises(ValueError):
                     self.worker({"code-review": lambda _: "ok"}, **options)
+
+    def test_worker_recovers_expired_task_before_claiming_new_work(self):
+        task_id = self.create_task()
+        claimed = self.store.claim_next(worker_id="worker-a", lease_seconds=10)
+        self.assertEqual(claimed.run_id, task_id)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task_id,),
+            )
+        result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertIsNone(result)
+        recovered = self.runtime.get(actor_id="worker-service", task_id=task_id)
+        self.assertEqual(recovered.state, "interrupted")
+        events = self.runtime.events(actor_id="worker-service", task_id=task_id)
+        self.assertEqual(events[-1].kind, "task.interrupted")
+        self.assertFalse(events[-1].payload["automatic_replay"])
+
+    def test_worker_rejects_invalid_recovery_limit(self):
+        for value in (0, -1, 101, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.worker({"code-review": lambda _: "ok"}, recovery_limit=value)
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
