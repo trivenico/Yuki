@@ -50,6 +50,17 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
             "truncated": False,
         })
 
+    def test_oversized_provider_response_reports_truncation(self):
+        provider = FakeProvider("x" * 50_001)
+        handlers = create_provider_handlers(FakeManager(provider))
+        task = self.store.submit("model.generate", {"prompt": "hello"}, approval_required=False)
+        outcome = AgentWorker(self.store, worker_id="provider-worker", handlers=handlers).run_once()
+        self.assertEqual(outcome.status, "succeeded")
+        result = self.store.get(task["id"])["result"]
+        self.assertTrue(result["truncated"])
+        self.assertTrue(result["text"].endswith("[Response truncated by Yuki.]"))
+        self.assertEqual(len(result["text"]), 50_000 + len("\\n[Response truncated by Yuki.]"))
+
     def test_task_cannot_override_provider_or_endpoint(self):
         provider = FakeProvider()
         handlers = create_provider_handlers(FakeManager(provider))
