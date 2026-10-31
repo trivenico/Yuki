@@ -162,6 +162,8 @@ class TaskSyncAdapter:
                          tasks: list[dict[str, Any]]) -> str:
         """Persist the remote candidate without overwriting the local task."""
         from copy import deepcopy
+        if isinstance(current.get("_yuki_sync_conflict"), dict):
+            raise SyncClientError("Resolve the existing task conflict before applying another remote revision.")
         before = deepcopy(current)
         current["_yuki_sync_conflict"] = {
             "event_id": event["event_id"],
@@ -199,6 +201,8 @@ class TaskSyncAdapter:
         from copy import deepcopy
         if choice not in {"local", "remote"}:
             raise ValueError("Choose local or remote.")
+        if isinstance(task_id, bool) or not isinstance(task_id, int):
+            raise ValueError("task_id must be an integer.")
         index = next((i for i, item in enumerate(tasks)
                       if isinstance(item, dict) and item.get("id") == task_id), None)
         if index is None or not isinstance(tasks[index].get("_yuki_sync_conflict"), dict):
@@ -208,6 +212,17 @@ class TaskSyncAdapter:
         conflict = task["_yuki_sync_conflict"]
         if choice == "remote":
             payload = conflict.get("payload", {})
+            if (not isinstance(payload, dict)
+                    or set(payload) != {"description", "completed", "created_at"}
+                    or not isinstance(payload.get("description"), str)
+                    or len(payload["description"]) > 500
+                    or not isinstance(payload.get("completed"), bool)
+                    or not isinstance(payload.get("created_at"), str)
+                    or len(payload["created_at"]) > 40
+                    or isinstance(conflict.get("revision"), bool)
+                    or not isinstance(conflict.get("revision"), int)
+                    or conflict["revision"] < 1):
+                raise SyncClientError("Stored remote task candidate is invalid; refusing resolution.")
             task.update({
                 "description": payload["description"],
                 "completed": payload["completed"],
