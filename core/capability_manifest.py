@@ -127,6 +127,23 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "unified-agent-execution-service", "Unified guarded agent planning approval and worker execution", "experimental",
+        "Composes the model planner, specialist coordinator, authenticated workflow approval service, and bounded worker "
+        "supervisor into one application service while requiring shared task-store wiring.",
+        ("core/agent_execution_service.py", "core/model_agent_planner.py", "automation/agent_coordinator.py",
+         "automation/workflow_approval.py", "automation/worker_supervisor.py", "automation/specialist_worker.py"),
+        ("ModelAgentPlanner", "SpecialistAgentCoordinator", "WorkflowApprovalService", "WorkerSupervisor"),
+        ("agent:plan", "agent:dispatch", "agent:read", "workflow:approve", "task:create", "task:read"),
+        ("configured model-provider request", "durable plan/task/approval/event writes", "specialist handler execution"),
+        ("local",), "high",
+        ("tests/test_agent_execution_service.py", "tests/test_model_agent_planner.py",
+         "tests/test_specialist_worker.py", "tests/test_workflow_approval.py"),
+        ("Model plans cannot suppress approval; worker claims are blocked until trusted approval is persisted.",
+         "Caller must supply authenticated actor identity; approval principal resolution is adapter-provided.",
+         "Specialist handlers are limited to explicitly registered text-only handlers; no arbitrary shell/code execution.",
+         "Finite synchronous worker cycles; no always-on daemon, desktop approval UI, or hosted adapter."),
+    ),
+    CapabilityContract(
         "model-assisted-agent-planning", "Model-assisted specialist agent planning and guarded dispatch", "experimental",
         "Converts strict bounded model JSON into validated SubtaskSpec values, then delegates capability routing, "
         "authorization, dependency gating, durable task creation and approval state to SpecialistAgentCoordinator.",
