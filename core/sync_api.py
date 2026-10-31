@@ -1,8 +1,9 @@
 """Framework-neutral WSGI API for the Yuki Sync Hub.
 
-Deploy behind a TLS-terminating reverse proxy and inject an authenticator that
-validates short-lived credentials and returns the authenticated device ID.
-This module intentionally does not implement login or token issuance.
+Deploy behind a TLS-terminating reverse proxy. When configured with a
+SyncCredentialStore, the API handles one-time device pairing, credential
+refresh/rotation and authenticated event operations. Administrative pairing
+code issuance remains a local trusted operation.
 """
 from __future__ import annotations
 
