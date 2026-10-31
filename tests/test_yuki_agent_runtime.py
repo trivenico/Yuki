@@ -94,6 +94,18 @@ class TaskStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "budget_tokens"):
             self.store.submit("test", {}, budget_tokens=-1)
 
+    def test_rejects_non_string_nested_payload_keys(self):
+        with self.assertRaisesRegex(ValueError, "string object keys"):
+            self.store.submit("test", {"nested": {1: "ambiguous"}})
+        self.assertEqual(self.store.list_tasks(), [])
+
+    def test_rejects_payloads_over_size_limit_before_persisting(self):
+        from yuki_agent_runtime import MAX_TASK_PAYLOAD_BYTES
+        oversized = {"data": "x" * MAX_TASK_PAYLOAD_BYTES}
+        with self.assertRaisesRegex(ValueError, "task limit"):
+            self.store.submit("test", oversized)
+        self.assertEqual(self.store.list_tasks(), [])
+
     def test_rejects_non_persistent_memory_database(self):
         with self.assertRaisesRegex(ValueError, "persistent database path"):
             TaskStore(":memory:")
