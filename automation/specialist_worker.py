@@ -6,6 +6,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+import threading
 from typing import Callable, Mapping
 
 from automation.task_runtime import TaskRuntime, TaskRecord
@@ -159,6 +160,8 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        lease_seconds: int = 60,
+        heartbeat_interval: float = 20.0,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -178,7 +181,13 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if type(lease_seconds) is not int or not 10 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be between 10 and 3600.")
+        if isinstance(heartbeat_interval, bool) or not isinstance(heartbeat_interval, (int, float)) or not 0 < heartbeat_interval < lease_seconds:
+            raise ValueError("heartbeat_interval must be positive and shorter than the lease.")
         self.handlers = validated
+        self.lease_seconds = lease_seconds
+        self.heartbeat_interval = float(heartbeat_interval)
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
@@ -199,13 +208,48 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
+            heartbeat_stop = threading.Event()
+            heartbeat_lock = threading.Lock()
+            heartbeat_version = [claimed.version]
+            heartbeat_error = []
+
+            def renew_while_running():
+                while not heartbeat_stop.wait(self.heartbeat_interval):
+                    try:
+                        with heartbeat_lock:
+                            renewed = self.runtime.renew_lease(
+                                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                                expected_version=heartbeat_version[0], worker_id=self.worker_id,
+                                lease_seconds=self.lease_seconds,
+                            )
+                            heartbeat_version[0] = renewed.version
+                    except Exception as exc:
+                        heartbeat_error.append(exc)
+                        heartbeat_stop.set()
+                        return
+
+            heartbeat = threading.Thread(
+                target=renew_while_running,
+                name=f"yuki-heartbeat-{self.worker_id}",
+                daemon=True,
+            )
+            heartbeat.start()
+            try:
+                output = handler(argument)
+            finally:
+                heartbeat_stop.set()
+                heartbeat.join()
+            if heartbeat_error:
+                raise RuntimeError("specialist worker lease renewal failed.") from heartbeat_error[0]
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
+            current = self.runtime.get(actor_id=self.service_actor_id, task_id=claimed.run_id)
+            if current.state != "running" or current.lease_owner != self.worker_id:
+                raise RuntimeError("specialist worker lost task ownership.")
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=claimed.version, worker_id=self.worker_id,
+                expected_version=current.version, worker_id=self.worker_id,
                 result={"specialist": agent_id, "output": output, "execution": "text-only"},
             )
         except Exception:
