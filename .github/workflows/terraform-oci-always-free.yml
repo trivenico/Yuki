@@ -1,0 +1,32 @@
+name: OCI Always Free Terraform validation
+
+on:
+  pull_request:
+    paths:
+      - "terraform/oci-always-free/**"
+      - ".github/workflows/terraform-oci-always-free.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/oci-always-free/**"
+      - ".github/workflows/terraform-oci-always-free.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform/oci-always-free
+      - name: Initialize providers without backend
+        working-directory: terraform/oci-always-free
+        run: terraform init -backend=false -input=false
+      - name: Validate configuration
+        working-directory: terraform/oci-always-free
+        run: terraform validate -no-color

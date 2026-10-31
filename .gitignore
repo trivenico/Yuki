@@ -56,3 +56,16 @@ YukiData/
 # Local backup archives may contain private data
 BACKUP/
 *.tmp.zip
+
+# Terraform local state, provider cache, and secrets
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
+    {"name":"huggingface_local","label":"Hugging Face Transformers (local)","auth":"local_checkpoint","privacy":"local_runtime","implemented":True,"capabilities":["text","local_inference","offline"],"model_env":None,"key_env":None},
+    {"name":"local_openai_compatible","label":"Local OpenAI-compatible runtime","auth":"optional_local_api_key","privacy":"local_runtime","implemented":True,"capabilities":["text","local_inference"],"model_env":"YUKI_LOCAL_OPENAI_MODEL","key_env":None},
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
@@ -19,6 +21,14 @@ _CATALOG = (
      "implemented":True,"capabilities":["text","per_task_routing"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
     {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
+    {"name":"oci","label":"Oracle Cloud Generative AI (API key)","auth":"oci_genai_api_key","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text"],"model_env":"YUKI_OCI_MODEL","key_env":"OCI_GENAI_API_KEY"},
+    {"name":"oci_iam","label":"Oracle Cloud Generative AI (OCI IAM)","auth":"oci_iam_principal","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text"],"model_env":"YUKI_OCI_MODEL","key_env":None},
+    {"name":"oci_responses","label":"Oracle Cloud Generative AI Responses API","auth":"oci_iam_principal","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text","responses_api"],"model_env":"YUKI_OCI_MODEL","key_env":None},
+    {"name":"multi","label":"Multi-provider router","auth":"per_provider","privacy":"task_policy","implemented":True,
+     "capabilities":["text","per_task_routing"],"model_env":None,"key_env":None},
     {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
     {"name":"deepseek","label":"DeepSeek API","auth":"api_key","privacy":"cloud_provider","implemented":False,
@@ -46,6 +56,13 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
     cfg = config if isinstance(config, dict) else {}
     env = os.environ if environ is None else environ
     current = str(cfg.get("provider", "mock")).strip().lower()
+    if provider_manager is not None:
+        try:
+            selected_info = provider_manager.current()
+            if selected_info is not None:
+                current = selected_info.name
+        except Exception:
+            pass
     manager = {}
     if provider_manager is not None:
         try:
@@ -57,8 +74,12 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         item = dict(entry)
         model_env = item.pop("model_env")
         key_env = item.pop("key_env")
-        model = _model(env.get(model_env, "")) if model_env else None
-        if item["name"] == "ollama":
+        model = _model(env.get(model_env, cfg.get("oci_model", "") if item["name"] in {"oci_iam", "oci_responses"} else "")) if model_env else None
+        if item["name"] == "huggingface_local":
+            model = "local-checkpoint" if str(env.get("YUKI_HF_LOCAL_MODEL_PATH", cfg.get("hf_local_model_path", ""))).strip() else None
+        elif item["name"] == "local_openai_compatible":
+            model = _model(env.get("YUKI_LOCAL_OPENAI_MODEL", cfg.get("local_openai_model", "")))
+        elif item["name"] == "ollama":
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
@@ -66,6 +87,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
+        elif item["name"] == "multi":
+            model = "multi-route" if (env.get("YUKI_OCI_MODEL") or env.get("YUKI_OLLAMA_MODEL") or cfg.get("ollama_model")) else None
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
         if item["name"] == "hybrid":
             key_name = str(env.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY")).strip()
@@ -78,6 +101,12 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         if item["name"] == "mock":
             ready = False
             reason = "test_only_adapter_not_exposed"
+        elif item["name"] == "huggingface_local":
+            ready = bool(model)
+            reason = "local_checkpoint_configured_runtime_not_probed" if ready else "local_checkpoint_not_configured"
+        elif item["name"] == "local_openai_compatible":
+            ready = bool(model)
+            reason = "local_endpoint_configured_runtime_not_probed" if ready else "local_model_not_configured"
         elif item["name"] == "openai":
             ready = bool(model and configured_key)
             reason = "api_key_and_model_configured" if ready else (
@@ -114,6 +143,28 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         elif item["name"] == "hybrid":
             ready = bool(_model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", ""))))
             reason = "local_model_configured_cloud_opt_in_required" if ready else "local_model_not_configured"
+        elif item["name"] == "oci":
+            project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
+            region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip()
+            ready = bool(model and configured_key and project.startswith("ocid1.generativeaiproject.") and region)
+            reason = "api_key_project_region_and_model_configured" if ready else "oci_api_key_project_region_or_model_missing"
+        elif item["name"] in {"oci_iam", "oci_responses"}:
+            project = str(env.get("YUKI_OCI_PROJECT_OCID", cfg.get("oci_project_ocid", ""))).strip()
+            region = str(env.get("YUKI_OCI_REGION", cfg.get("oci_region", ""))).strip()
+            # OCI IAM uses a signer/principal, not an API key. Catalog readiness
+            # describes non-secret configuration only; identity is not probed here.
+            ready = bool(model and project.startswith("ocid1.generativeaiproject.") and region)
+            reason = (
+                "iam_project_region_and_model_configured_principal_not_probed"
+                if ready else "oci_iam_project_region_or_model_missing"
+            )
+        elif item["name"] == "multi":
+            ready = bool(
+                _model(env.get("YUKI_OCI_MODEL", cfg.get("oci_model", "")))
+                or _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
+                or _model(env.get("YUKI_SELF_HOSTED_MODEL", cfg.get("self_hosted_model", "")))
+            )
+            reason = "at_least_one_route_configured" if ready else "no_provider_routes_configured"
         else:
             ready = False
             reason = "adapter_not_implemented"

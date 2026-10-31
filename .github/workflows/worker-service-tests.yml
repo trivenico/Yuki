@@ -3,12 +3,23 @@ name: Yuki worker service tests
 on:
   pull_request:
     paths:
+      - "automation/worker_service.py"
+      - "automation/agent_runtime.py"
+      - "automation/agent_handler_factory.py"
+      - "automation/specialist_worker.py"
+      - "automation/default_agents.py"
+      - "automation/sqlite_agent_registry.py"
+      - "providers/factory.py"
+      - "deploy/oci-free/**"
       - "yuki_agent_runtime.py"
       - "yuki_agent_worker.py"
       - "yuki_provider_worker.py"
       - "yuki_providers.py"
       - "yuki_worker_service.py"
       - "providers/**"
+      - "tests/test_worker_service.py"
+      - "tests/test_specialist_worker.py"
+      - "tests/test_worker_supervisor.py"
       - "tests/test_yuki_worker_service.py"
       - "tests/test_yuki_provider_worker.py"
       - "tests/test_yuki_agent_worker.py"
@@ -29,4 +40,4 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run worker service tests
-        run: python -m unittest discover -s tests -p 'test_yuki_worker_service.py'
+        run: python -m unittest discover -s tests -p 'test_worker_service.py' && python -m unittest discover -s tests -p 'test_specialist_worker.py' && python -m unittest discover -s tests -p 'test_worker_supervisor.py' && python -m unittest discover -s tests -p 'test_yuki_worker_service.py'

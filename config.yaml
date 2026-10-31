@@ -3,6 +3,33 @@ name: Yuki
 workspace: ./yuki_workspace
 provider: openai
 openai_model: gpt-4.1-mini
+# To use OCI Generative AI, set provider: oci and configure these secrets/settings
+# in the Yuki server environment (never commit credentials):
+# YUKI_OCI_REGION=us-chicago-1
+# YUKI_OCI_MODEL=<model-id-enabled-for-your-project-and-region>
+# YUKI_OCI_PROJECT_OCID=ocid1.generativeaiproject...
+# OCI_GENAI_API_KEY=<OCI-Generative-AI-API-key-secret>
+# Production OCI service: prefer provider: oci_iam and:
+# oci_auth_mode: resource_principal
+# To use OCI's Responses API for agentic inference:
+# provider: oci_responses
+# Or with provider: multi, set YUKI_OCI_API_MODE=responses
+# For OCI Compute directly: oci_auth_mode: instance_principal
+# For local development: oci_auth_mode: session (uses local OCI CLI profile)
+# Install optional IAM support: pip install -r requirements-oci.txt
+
+# To route managed OCI models and a private self-hosted vLLM/TGI server together:
+# provider: multi
+# provider_default_route: oci_managed
+# provider_routes:
+#   general: oci_managed
+#   reasoning: oci_managed
+#   coding: self_hosted
+#   code_review: self_hosted
+# YUKI_SELF_HOSTED_MODEL=<exact-model-id>
+# YUKI_SELF_HOSTED_BASE_URL=https://<private-inference-host>/v1
+# YUKI_CLOUD_ALLOWED_HOSTS=<exact-inference-hostname>
+# YUKI_SELF_HOSTED_API_KEY=<secret>
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
 max_agent_steps: 3

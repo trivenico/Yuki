@@ -131,6 +131,26 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 built.runtime.list_task_summaries(actor_id="untrusted-user")
 
+    def test_local_operator_can_message_registered_specialists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            sent = built.coordinator.send_agent_message(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                sender_agent_id="research",
+                recipient_agent_id="coding",
+                body="Review the research findings.",
+                idempotency_key="local-mailbox-1",
+            )
+            inbox = built.coordinator.read_agent_inbox(
+                actor_id=LOCAL_OPERATOR_ACTOR, recipient_agent_id="coding",
+            )
+            self.assertEqual(inbox[0].message_id, sent.message_id)
+            ack = built.coordinator.acknowledge_agent_message(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                recipient_agent_id="coding", message_id=sent.message_id,
+            )
+            self.assertIsNotNone(ack.acknowledged_at)
+
     def test_worker_service_is_not_granted_operator_listing(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())

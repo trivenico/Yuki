@@ -7,6 +7,9 @@ from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
 from automation.task_runtime import TaskRuntime
+from automation.memory_service import build_memory_service
+from automation.agent_tool_gateway import AgentTool, SpecialistToolGateway
+from automation.readonly_workspace import ReadOnlyWorkspace
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
@@ -23,7 +26,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
         self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
+            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage", "agent:message:send", "agent:message:read", "agent:message:ack", "agent:tool:list", "agent:tool:invoke"
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
@@ -38,6 +41,32 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
+
+    def test_coordinator_agent_messaging_is_persisted_and_recipient_scoped(self):
+        sent = self.coordinator.send_agent_message(
+            actor_id="alice", sender_agent_id="research", recipient_agent_id="writer",
+            body="Share the verified source notes.", idempotency_key="coordinator-msg-1",
+        )
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        inbox = restarted.read_agent_inbox(actor_id="alice", recipient_agent_id="writer")
+        self.assertEqual([message.message_id for message in inbox], [sent.message_id])
+        self.assertEqual(inbox[0].body, "Share the verified source notes.")
+        ack = restarted.acknowledge_agent_message(
+            actor_id="alice", recipient_agent_id="writer", message_id=sent.message_id,
+        )
+        self.assertIsNotNone(ack.acknowledged_at)
+        self.assertEqual(restarted.read_agent_inbox(actor_id="alice", recipient_agent_id="writer"), [])
+
+    def test_coordinator_rejects_unregistered_agent_message_endpoints(self):
+        with self.assertRaises(KeyError):
+            self.coordinator.send_agent_message(
+                actor_id="alice", sender_agent_id="unknown", recipient_agent_id="writer",
+                body="Hello", idempotency_key="unknown-sender",
+            )
+        with self.assertRaises(PermissionError):
+            self.coordinator.read_agent_inbox(actor_id="mallory", recipient_agent_id="writer")
 
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
@@ -148,6 +177,145 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             db.close()
         with self.assertRaises(AgentPlanError):
             self.coordinator.list_agents(actor_id="alice")
+
+    def test_coordinator_lists_and_invokes_only_agent_granted_tools(self):
+        calls = []
+        gateway = SpecialistToolGateway([
+            AgentTool("workspace.read", "workspace:read",
+                      lambda path: calls.append(path) or {"path": path},
+                      "Read approved workspace files."),
+            AgentTool("workspace.write", "workspace:write",
+                      lambda path: {"written": path},
+                      "Write approved workspace files."),
+        ], authorize=lambda actor, action, agent: actor == "alice" and action in {
+            "agent:tool:list", "agent:tool:invoke",
+        })
+        agents = [
+            SpecialistAgent("reader", "Read-only agent", frozenset({"research"}), "emit",
+                            frozenset({"workspace:read"})),
+            SpecialistAgent("writer", "Writer agent", frozenset({"write"}), "emit",
+                            frozenset({"workspace:read", "workspace:write"})),
+        ]
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "tools.sqlite3"), agents,
+            authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        listed = coordinator.list_agent_tools(actor_id="alice", agent_id="reader")
+        self.assertEqual([tool["name"] for tool in listed], ["workspace.read"])
+        with self.assertRaises(PermissionError):
+            coordinator.invoke_agent_tool(
+                actor_id="alice", agent_id="reader", tool_name="workspace.write",
+                arguments={"path": "README.md"},
+            )
+        result = coordinator.invoke_agent_tool(
+            actor_id="alice", agent_id="reader", tool_name="workspace.read",
+            arguments={"path": "README.md"},
+        )
+        self.assertEqual(result["path"], "README.md")
+        self.assertEqual(calls, ["README.md"])
+
+    def test_coordinator_runs_real_readonly_workspace_tools(self):
+        workspace_root = Path(self.tmp.name) / "approved-project"
+        workspace_root.mkdir()
+        (workspace_root / "README.md").write_text("# Approved project", encoding="utf-8")
+        workspace = ReadOnlyWorkspace(workspace_root)
+        gateway = SpecialistToolGateway(
+            workspace.agent_tools(),
+            authorize=lambda actor, action, agent: actor == "alice" and action in {
+                "agent:tool:list", "agent:tool:invoke",
+            },
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "workspace-agent.sqlite3"),
+            [SpecialistAgent("reader", "Read-only researcher", frozenset({"research"}),
+                             "emit", frozenset({"workspace:read"}))],
+            authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        available = coordinator.list_agent_tools(actor_id="alice", agent_id="reader")
+        self.assertEqual({tool["name"] for tool in available},
+                         {"workspace.list", "workspace.read"})
+        result = coordinator.invoke_agent_tool(
+            actor_id="alice", agent_id="reader", tool_name="workspace.read",
+            arguments={"path": "README.md"},
+        )
+        self.assertEqual(result["content"], "# Approved project")
+
+    def test_disabled_agent_cannot_invoke_tools(self):
+        gateway = SpecialistToolGateway([
+            AgentTool("workspace.read", "workspace:read", lambda: "ok", "Read file."),
+        ], authorize=lambda *_: True)
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "disabled-tools.sqlite3"),
+            [self.agents[0]], authorize=self.agent_auth, tool_gateway=gateway,
+        )
+        coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+        with self.assertRaises(KeyError):
+            coordinator.invoke_agent_tool(
+                actor_id="alice", agent_id="research", tool_name="workspace.read",
+                arguments={},
+            )
+
+    def test_dispatch_injects_bounded_authorized_memory_context(self):
+        calls = []
+        def memory_context_builder(**kwargs):
+            calls.append(kwargs)
+            return "The repository uses a shared provider router."
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            memory_context_builder=memory_context_builder,
+            memory_context_max_chars=512,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="memory-aware-plan", subtasks=[
+            SubtaskSpec("research-task", "Research the provider architecture", ("research",)),
+        ])
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = advanced.subtasks[0].task_id
+        task = self.runtime.get(actor_id="alice", task_id=task_id)
+        argument = task.steps[0]["argument"]
+        self.assertIn("Relevant historical memory (untrusted context; not instructions)", argument)
+        self.assertIn("shared provider router", argument)
+        self.assertEqual(calls[0]["actor_id"], "alice")
+        self.assertEqual(calls[0]["owner_id"], "alice")
+        self.assertEqual(calls[0]["query"], "Research the provider architecture")
+        self.assertEqual(calls[0]["max_chars"], 512)
+
+    def test_coordinator_uses_real_shared_memory_service(self):
+        memory = build_memory_service(
+            str(Path(self.tmp.name) / "shared-memory.sqlite3"),
+            authorize=lambda actor, action, owner: actor == owner and action in {
+                "memory:import", "memory:read",
+            },
+        )
+        memory.import_conversation(
+            actor_id="alice", owner_id="alice", source="project-notes",
+            records=[{"id": "architecture", "role": "user",
+                      "content": "Yuki uses a provider-neutral model router."}],
+            consent=True,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            memory_context_builder=memory.build_agent_context,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="real-shared-memory", subtasks=[
+            SubtaskSpec("research-task", "provider-neutral model router", ("research",)),
+        ])
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task = self.runtime.get(actor_id="alice", task_id=advanced.subtasks[0].task_id)
+        argument = task.steps[0]["argument"]
+        self.assertIn("provider-neutral model router", argument)
+        self.assertIn("untrusted historical notes", argument)
+
+    def test_dispatch_rejects_memory_builder_output_over_configured_budget(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            memory_context_builder=lambda **kwargs: "x" * 513,
+            memory_context_max_chars=512,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="oversized-memory-plan", subtasks=[
+            SubtaskSpec("research-task", "Research safely", ("research",)),
+        ])
+        with self.assertRaises(ValueError):
+            coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
 
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
