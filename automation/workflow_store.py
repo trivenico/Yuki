@@ -371,6 +371,59 @@ class WorkflowRunStore:
             ).fetchone()
             return self._row(renewed)
 
+    def renew_lease_with_event(
+        self, run_id: str, *, worker_id: str, expected_version: int,
+        lease_seconds: int, actor_id: str, payload: dict[str, Any],
+    ) -> WorkflowRun:
+        """Atomically renew a worker lease and append its event in one version step."""
+        from automation.task_runtime import TaskEvent, _EVENT_KINDS
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(payload, dict) or "task.lease_renewed" not in _EVENT_KINDS:
+            raise ValueError("invalid lease renewal event.")
+        payload_json = _bounded_json(payload, 8 * 1024, "task event payload")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if row["state"] != "running" or row["lease_owner"] != worker_id.strip():
+                raise WorkflowTransitionError("only the current worker may renew a running lease.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("workflow run version changed; reload before renewing.")
+            if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                raise WorkflowConflict("expired workflow lease cannot be renewed.")
+            updated = db.execute("""
+                UPDATE workflow_runs SET lease_expires_at=?, updated_at=?, version=version+1
+                WHERE run_id=? AND version=? AND state='running'
+                    AND lease_owner=? AND lease_expires_at>=?
+            """, (lease_expires, now, run_id, expected_version, worker_id.strip(), now))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow lease changed concurrently or expired.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            cursor = db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, sequence, "task.lease_renewed", actor_id.strip(), payload_json, now),
+            )
+            # Lease update and event append share this transaction and one version increment.
+            renewed = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            TaskEvent(cursor.lastrowid, run_id, sequence, "task.lease_renewed",
+                      actor_id.strip(), json.loads(payload_json), now)
+            return self._row(renewed)
+
     def get(self, run_id: str) -> WorkflowRun | None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("run_id must be non-empty text.")
