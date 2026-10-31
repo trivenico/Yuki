@@ -19,7 +19,7 @@ from core.durable_skill_worker import DurableSkillWorker
 from core.sync_runtime import SyncRuntime
 from core.sync_client import SyncClientError
 from core.task_sync_adapter import TaskSyncAdapter
-from core.conversation_store import ConversationStore
+from core.application_runtime import YukiApplicationRuntime
 from core.skill_pack_sync import SkillPackSyncAdapter
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
@@ -562,46 +562,42 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
 
 
 def main():
-    providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
+    application = YukiApplicationRuntime.create()
+    providers = application.providers
+    agent = application.agent
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
-    conversation_store = ConversationStore()
     conversation_context = {
-        "store": conversation_store,
-        "active_id": conversation_store.create("Yuki session", datetime.now(timezone.utc).isoformat()),
+        "store": application.conversations,
+        "active_id": application.active_conversation_id,
     }
-    print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
+    print("Yuki terminal. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
-    while True:
-        try:
-            message = input("\nYou > ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
-            break
-        try:
-            if message.strip() and not message.strip().startswith("/"):
-                conversation_store.append(
-                    conversation_context["active_id"], "user", message,
-                    datetime.now(timezone.utc).isoformat()
+    try:
+        while True:
+            try:
+                message = input("\\nYou > ")
+            except (EOFError, KeyboardInterrupt):
+                print("\\nGoodbye.")
+                break
+            try:
+                if message.strip() and not message.strip().startswith("/"):
+                    application.begin_turn(message)
+                response = handle_command(
+                    message, memory, tasks, agent, providers, policy, conversation_context
                 )
-            response = handle_command(
-                message, memory, tasks, agent, providers, policy, conversation_context
-            )
-            if message.strip() and not message.strip().startswith("/") and response and response != "__QUIT__":
-                conversation_store.append(
-                    conversation_context["active_id"], "assistant", response,
-                    datetime.now(timezone.utc).isoformat()
-                )
-        except Exception as error:
-            response = f"Yuki encountered a recoverable error: {type(error).__name__}."
-        if response == "__QUIT__":
-            print("Yuki > Goodbye.")
-            conversation_store.close()
-            break
-        if response:
-            print(f"Yuki > {response}")
+                if message.strip() and not message.strip().startswith("/") and response and response != "__QUIT__":
+                    application.finish_turn(response)
+            except Exception as error:
+                response = f"Yuki encountered a recoverable error: {type(error).__name__}."
+            if response == "__QUIT__":
+                print("Yuki > Goodbye.")
+                break
+            if response:
+                print(f"Yuki > {response}")
+    finally:
+        application.close()
 
 
 if __name__ == "__main__":
