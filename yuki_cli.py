@@ -445,11 +445,10 @@ def run_cli(
                     session_id = session["id"]
                 history = conversation_store.list_messages(args.workspace, session_id)
                 prompt = _build_persistent_session_prompt(history, args.prompt)
-                conversation_store.append_message(
-                    args.workspace, session_id, "user", args.prompt,
-                    idempotency_key=request_id,
+                conversation_store.begin_turn(
+                    args.workspace, session_id, request_id, args.prompt,
                 )
-            except (ValueError, KeyError, OSError) as exc:
+            except (ValueError, KeyError, OSError, RuntimeError) as exc:
                 output_fn(f"Persistent session could not be loaded ({type(exc).__name__}): {str(exc)[:200]}")
                 return 2
         else:
@@ -457,8 +456,14 @@ def run_cli(
             prompt = args.prompt
         if args.format == "text":
             answer, status = _safe_ask(provider, prompt)
-            if status == 0 and conversation_store is not None:
-                conversation_store.append_message(args.workspace, session_id, "assistant", answer)
+            if conversation_store is not None:
+                if status == 0:
+                    conversation_store.complete_turn(args.workspace, request_id, answer)
+                else:
+                    conversation_store.fail_turn(
+                        args.workspace, request_id,
+                        error_code="provider_unavailable" if status == 3 else "provider_error",
+                    )
             output_fn(answer)
             if args.new_session:
                 output_fn(f"Session: {session_id}")
@@ -467,6 +472,14 @@ def run_cli(
                              tool_execution="disabled"))
         answer, status = _safe_ask(provider, prompt)
         if status:
+            if conversation_store is not None:
+                try:
+                    conversation_store.fail_turn(
+                        args.workspace, request_id,
+                        error_code="provider_unavailable" if status == 3 else "provider_error",
+                    )
+                except (ValueError, KeyError, OSError):
+                    pass
             output_fn(event_line("error", session_id, request_id,
                                  code="provider_unavailable" if status == 3 else "provider_error",
                                  message=answer))
@@ -474,7 +487,7 @@ def run_cli(
             return status
         if conversation_store is not None:
             try:
-                conversation_store.append_message(args.workspace, session_id, "assistant", answer)
+                conversation_store.complete_turn(args.workspace, request_id, answer)
             except (ValueError, KeyError, OSError) as exc:
                 output_fn(event_line("error", session_id, request_id,
                                      code="session_persistence_failed",

@@ -68,6 +68,38 @@ class ConversationStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "JSON-compatible"):
             self.store.append_message("workspace-a", session["id"], "user", "x", metadata={"bad": object()})
 
+    def test_turn_lifecycle_is_atomic_and_prevents_concurrent_session_turns(self):
+        session = self.store.create_session("workspace-a")
+        first = self.store.begin_turn("workspace-a", session["id"], "request-1", "first question")
+        self.assertEqual(first["status"], "running")
+        with self.assertRaisesRegex(RuntimeError, "active turn"):
+            self.store.begin_turn("workspace-a", session["id"], "request-2", "overlapping question")
+        answer = self.store.complete_turn("workspace-a", "request-1", "first answer")
+        self.assertEqual(answer["role"], "assistant")
+        self.assertEqual(self.store.list_turns("workspace-a", session["id"])[0]["status"], "completed")
+        second = self.store.begin_turn("workspace-a", session["id"], "request-2", "next question")
+        self.assertEqual(second["status"], "running")
+
+    def test_turn_idempotency_and_workspace_isolation(self):
+        session = self.store.create_session("workspace-a")
+        first = self.store.begin_turn("workspace-a", session["id"], "stable-request", "hello")
+        again = self.store.begin_turn("workspace-a", session["id"], "stable-request", "hello")
+        self.assertEqual(first["user_message_id"], again["user_message_id"])
+        with self.assertRaisesRegex(ValueError, "different user content"):
+            self.store.begin_turn("workspace-a", session["id"], "stable-request", "changed")
+        with self.assertRaisesRegex(KeyError, "this workspace"):
+            self.store.list_turns("workspace-b", session["id"])
+
+    def test_failed_turn_keeps_user_message_and_allows_retry(self):
+        session = self.store.create_session("workspace-a")
+        self.store.begin_turn("workspace-a", session["id"], "failed-request", "retry me")
+        failed = self.store.fail_turn("workspace-a", "failed-request", error_code="provider_error")
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(failed["error_code"], "provider_error")
+        self.assertEqual([m["role"] for m in self.store.list_messages("workspace-a", session["id"])], ["user"])
+        retried = self.store.begin_turn("workspace-a", session["id"], "retry-request", "retry me")
+        self.assertEqual(retried["status"], "running")
+
     def test_requires_persistent_database_and_valid_workspace(self):
         with self.assertRaisesRegex(ValueError, "persistent database"):
             ConversationStore(":memory:")
