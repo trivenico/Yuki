@@ -48,7 +48,7 @@ class SyncCredentialAPITests(unittest.TestCase):
     def test_refresh_endpoint_rotates_access_and_refresh_tokens(self):
         code = self.credentials.create_pairing_code("user_0000001")
         _, pair = self.request("POST", "/v1/pair", {"code": code})
-        meta, rotated = self.request("/POST", "/v1/refresh", {"refresh_token": pair["refresh_token"]})
+        meta, rotated = self.request("POST", "/v1/refresh", {"refresh_token": pair["refresh_token"]})
         self.assertEqual(meta["status"], "200 OK")
         self.assertNotEqual(rotated["access_token"], pair["access_token"])
         meta, _ = self.request("GET", "/v1/events", token=pair["access_token"])
