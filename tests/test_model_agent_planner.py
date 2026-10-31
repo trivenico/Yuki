@@ -70,6 +70,8 @@ class ModelAgentPlannerTests(unittest.TestCase):
         self.assertEqual(by_id["collect"].status, "queued")
         task = self.coordinator.runtime.get(actor_id="alice", task_id=by_id["collect"].task_id)
         self.assertTrue(task.steps[0]["requires_approval"])
+        self.assertTrue(self.coordinator.runtime.store._requires_approval(task.steps))
+        self.assertIsNone(self.coordinator.runtime.store.claim_next(worker_id="worker-before-approval"))
         self.assertEqual(by_id["draft"].status, "pending")
         self.assertIn("untrusted", self.provider.prompts[0].lower())
 
