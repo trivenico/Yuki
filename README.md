@@ -20,6 +20,8 @@ The UI supports chat, local conversation history, new conversations and switchin
 
 Yuki stores its data under the current user's platform data directory by default (Windows LocalAppData, macOS Application Support, Linux XDG data home or ~/.local/share/Yuki). Set `YUKI_HOME` to choose another data root. This prevents an installed app from trying to write its database into a read-only installation directory.
 
+The desktop settings row also lists registered AI providers and lets you switch between implemented adapters (for example, OpenAI, Ollama or hybrid where configured). Providers marked planned are visible for transparency but cannot be selected until their adapters are implemented. Provider changes are applied through the shared runtime worker; no provider secret is displayed in the UI.
+
 This is an early source-run preview, not a signed installer or production release. The shell does not yet include streaming, cancellation, voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, or a packaged desktop installer. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
 
 ## Minimal project structure and navigation
