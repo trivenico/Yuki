@@ -50,6 +50,16 @@ class TaskContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ToolCall("task-1", "file.read", {"not-finite": float("nan")})
 
+    def test_tool_call_rejects_non_string_json_object_keys(self):
+        with self.assertRaisesRegex(ValueError, "keys must be strings"):
+            ToolCall("task-1", "file.read", {1: "README.md"})
+        with self.assertRaisesRegex(ValueError, "keys must be strings"):
+            ToolCall("task-1", "file.read", {"options": {True: "ambiguous"}})
+
+    def test_task_event_rejects_non_string_nested_object_keys(self):
+        with self.assertRaisesRegex(ValueError, "keys must be strings"):
+            TaskEvent("task-1", "task.progress", {"details": {1: "ambiguous"}})
+
     def test_registered_tool_schema_accepts_valid_call(self):
         definition = ToolDefinition(
             "file.read",
