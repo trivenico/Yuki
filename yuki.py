@@ -177,7 +177,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                         preview = TaskSyncAdapter.preview(tasks)
                         return (
                             f"Task sync preview: {preview['total']} eligible tasks; "
-                            f"{preview['already_queued']} have previous sync metadata. "
+                            f"{preview['tracked']} have sync tracking metadata. "
                             "Only description, completion state and creation timestamp are shared. "
                             "Nothing has been queued or uploaded. Use /sync tasks queue to opt in."
                         )
