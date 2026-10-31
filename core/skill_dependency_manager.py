@@ -234,7 +234,7 @@ def plan_skill_dependencies(
             if not version_satisfies(installed, constraint):
                 incompatible_python.add(f"{package} {constraint} required by {owner} (installed {installed})")
     current_python = python_version or ".".join(map(str, sys.version_info[:3]))
-    if not _VERSION_RE.fullmatch(current_python):
+    if not isinstance(current_python, str) or not _VERSION_RE.fullmatch(current_python):
         errors.append("Current Python version is not a supported numeric version.")
     else:
         for owner, constraint in python_compatibility:
