@@ -376,7 +376,7 @@ class WorkflowRunStore:
         lease_seconds: int, actor_id: str, payload: dict[str, Any],
     ) -> WorkflowRun:
         """Atomically renew a worker lease and append its event in one version step."""
-        from automation.task_runtime import TaskEvent, _EVENT_KINDS
+        from automation.task_runtime import _EVENT_KINDS
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
@@ -423,8 +423,6 @@ class WorkflowRunStore:
             )
             # Lease update and event append share this transaction and one version increment.
             renewed = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
-            TaskEvent(cursor.lastrowid, run_id, sequence, "task.lease_renewed",
-                      actor_id.strip(), json.loads(payload_json), now)
             return self._row(renewed)
 
     def get(self, run_id: str) -> WorkflowRun | None:
