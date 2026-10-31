@@ -141,7 +141,10 @@ def plan_skill_dependencies(
     """Plan a dependency closure against installed skills/packages; never install anything."""
     errors: list[str] = []
     by_id: dict[str, dict[str, Any]] = {}
-    for raw in manifests:
+    manifest_items = list(manifests)
+    if len(manifest_items) > 500:
+        return DependencyPlan(skill_id, False, (), (), (), (), (), (), ("Too many installed skill manifests (maximum 500).",))
+    for raw in manifest_items:
         if not isinstance(raw, Mapping):
             errors.append("A skill manifest is not an object.")
             continue
@@ -206,7 +209,21 @@ def plan_skill_dependencies(
         order.append(identifier)
 
     visit(skill_id)
-    available = {normalize_package_name(k): v for k, v in (python_packages if python_packages is not None else installed_python_distributions()).items()}
+    available: dict[str, str] = {}
+    raw_inventory = python_packages if python_packages is not None else installed_python_distributions()
+    if not isinstance(raw_inventory, Mapping):
+        errors.append("Python package inventory must be a mapping of package names to versions.")
+        raw_inventory = {}
+    for package_name, package_version in raw_inventory.items():
+        if not isinstance(package_name, str) or not _PACKAGE_RE.fullmatch(package_name):
+            errors.append("Python package inventory contains an invalid package name.")
+            continue
+        try:
+            _version_tuple(package_version)
+        except DependencyDeclarationError:
+            errors.append(f"Python package inventory contains an invalid version for {package_name}.")
+            continue
+        available[normalize_package_name(package_name)] = package_version
     for package, requirements in sorted(package_requirements.items()):
         installed = available.get(package)
         if installed is None:
