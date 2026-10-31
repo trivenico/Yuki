@@ -8,6 +8,9 @@ from yuki_cli import run_cli
 
 
 class FakeProvider:
+    def __init__(self):
+        self.calls = []
+
     def is_available(self):
         return True
 
@@ -15,6 +18,7 @@ class FakeProvider:
         return "legacy"
 
     def generate_chat(self, system, messages):
+        self.calls.append((system, messages))
         return "chat reply"
 
 
@@ -75,9 +79,9 @@ class CompanionMemoryCliTests(unittest.TestCase):
                 output_fn=output.append,
             )
             self.assertEqual(code, 0)
-            self.assertEqual(len(provider.generate_chat.__self__.__class__.__name__), 12)  # provider invoked through its bound method
-            # The only model request is the explicit chat message, not the saved entry.
-            self.assertNotIn("private preference", str(output[-1]))
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(provider.calls[0][1], [{"role": "user", "content": "hello"}])
+            self.assertEqual(output[-1], "Yuki> chat reply")
 
 
 if __name__ == "__main__":
