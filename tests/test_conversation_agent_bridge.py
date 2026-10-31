@@ -112,6 +112,11 @@ class ConversationAgentBridgeTests(unittest.TestCase):
             actor_id="alice", workspace_id="workspace-a",
             user_message="Research this request", request_id="stable-request",
         )
+        replay = self.bridge.submit_agent_turn(
+            actor_id="alice", workspace_id="workspace-a",
+            user_message="Research this request", session_id=first.session_id,
+            request_id="stable-request",
+        )
         self.assertTrue(first.ok and replay.ok)
         self.assertTrue(replay.replayed)
         self.assertEqual(first.plan_id, replay.plan_id)
@@ -125,7 +130,7 @@ class ConversationAgentBridgeTests(unittest.TestCase):
             user_message="Research this request", request_id="unauthorized",
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.error_code, "agent_plan_failed")
+        self.assertEqual(result.error_code, "agent_plan_unauthorized")
         self.assertEqual(self.planner_provider.calls, 0)
 
 
