@@ -12,7 +12,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry"}
+                       "task:complete", "task:lease:renew", "task:fail", "task:cancel", "task:retry"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -78,6 +78,36 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
                          "task.completed")
 
+    def test_worker_lease_renewal_is_authorized_owned_versioned_and_journaled(self):
+        task = self.create("renew-lease")
+        claimed = self.claim(task)
+        with self.assertRaises(PermissionError):
+            self.runtime.renew_lease(actor_id="supervisor", task_id=task.task_id,
+                                     expected_version=claimed.version, worker_id="worker-a")
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.renew_lease(actor_id="alice", task_id=task.task_id,
+                                     expected_version=claimed.version, worker_id="worker-b")
+        renewed = self.runtime.renew_lease(actor_id="alice", task_id=task.task_id,
+                                           expected_version=claimed.version, worker_id="worker-a",
+                                           lease_seconds=120)
+        self.assertEqual(renewed.version, claimed.version + 1)
+        self.assertEqual(renewed.lease_owner, "worker-a")
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.lease_renewed")
+        self.assertEqual(events[-1].payload["worker_id"], "worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(actor_id="alice", task_id=task.task_id,
+                                     expected_version=claimed.version, worker_id="worker-a")
+
+    def test_expired_worker_lease_cannot_be_renewed(self):
+        task = self.create("renew-expired-lease")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                       (task.task_id,))
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(actor_id="alice", task_id=task.task_id,
+                                     expected_version=claimed.version, worker_id="worker-a")
     def test_expired_lease_cannot_complete(self):
         task = self.create()
         claimed = self.claim(task)
