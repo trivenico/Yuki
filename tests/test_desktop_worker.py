@@ -64,6 +64,13 @@ class FakeRuntime:
         self._check_thread()
         return "reply:" + message
 
+    def stream_message(self, message):
+        self._check_thread()
+        self.conversations.streamed = []
+        for chunk in ("reply:", message):
+            self.conversations.streamed.append(chunk)
+            yield chunk
+
     def history(self):
         self._check_thread()
         return [{"role": "user", "content": "hello"}]
@@ -115,6 +122,23 @@ class DesktopWorkerTests(unittest.TestCase):
         worker.join(2)
         self.assertFalse(worker._thread.is_alive())
         self.assertTrue(runtimes[0].closed)
+
+    def test_stream_action_emits_incremental_chunks_and_final_response(self):
+        worker = DesktopRuntimeWorker(FakeRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        request_id = worker.submit("stream", message="hello")
+        first = self._next(worker, "chunk")
+        second = self._next(worker, "chunk")
+        final = self._next(worker, "stream")
+        self.assertEqual(first["chunk"], "reply:")
+        self.assertEqual(second["chunk"], "hello")
+        self.assertEqual(final["request_id"], request_id)
+        self.assertTrue(final["ok"])
+        self.assertEqual(final["response"], "reply:hello")
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
 
     def test_list_and_switch_are_dispatched_on_runtime_owner_thread(self):
         worker = DesktopRuntimeWorker(FakeRuntime)
