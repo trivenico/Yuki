@@ -143,6 +143,23 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Finite recording and chunked playback exist; automatic barge-in is not wired end to end.",),
     ),
     CapabilityContract(
+        "isolated-coding-execution", "Approval-gated Docker coding-task execution", "experimental",
+        "Executes reviewed coding-task checks in a resource-bounded Docker container with immutable "
+        "image digests, no network, restricted filesystem, non-root identity, and hash-only evidence.",
+        ("core/coding_task_runner.py", "core/coding_task_execution.py",
+         "core/sandbox_policy.py", "core/sandbox_runtime.py"),
+        ("Docker Engine", "trusted digest-pinned image", "SQLite evidence store"),
+        ("coding-task:execute", "coding-task:approve"),
+        ("bounded container execution", "execution evidence persistence"),
+        ("local",), "critical",
+        ("tests/test_coding_task_runner.py", "tests/test_coding_task_execution.py",
+         "tests/test_sandbox_runtime.py", "tests/test_sandbox_policy.py"),
+        ("Experimental; requires a trusted Docker daemon and reviewed immutable image digest.",
+         "The sandbox backend currently requires Unix UID/GID support; native Windows execution is not supported.",
+         "Not integrated as the universal executor for specialist agents, skills, plugins, or desktop automation.",
+         "No real-Docker adversarial integration test or production image provenance pipeline is included."),
+    ),
+    CapabilityContract(
         "typed-tool-execution", "Typed fail-closed agent tool execution", "experimental",
         "Validates structured tool calls against registered schemas, checks policy on every call, "
         "requires exact-call approval for side-effecting or high-risk tools, and bounds results.",
