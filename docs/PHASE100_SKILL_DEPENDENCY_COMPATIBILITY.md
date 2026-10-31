@@ -12,7 +12,9 @@ Provide validated skill and Python package dependency metadata and an auditable 
 - Validate bounded identifiers, dependency counts, numeric version clauses, and allowed comparison operators.
 - Resolve transitive dependencies against already-installed skill manifests in dependency-first order.
 - Detect missing and incompatible skill dependencies, missing and incompatible Python distributions, and skill dependency cycles.
+- Expose `plan_installed_skill_dependencies()` over the existing extension store and include version/dependency counts in the extension inventory.
 - Generate a structured plan with explicit empty side effects and `package_installation_performed: false`.
+- Bound the manifest inventory to 500 entries and validate externally supplied package/runtime inventory values.
 - Register the capability as experimental with regression-test evidence.
 
 ## Manifest example
