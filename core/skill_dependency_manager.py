@@ -10,6 +10,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import islice
 from typing import Any, Iterable, Mapping
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
@@ -141,7 +142,7 @@ def plan_skill_dependencies(
     """Plan a dependency closure against installed skills/packages; never install anything."""
     errors: list[str] = []
     by_id: dict[str, dict[str, Any]] = {}
-    manifest_items = list(manifests)
+    manifest_items = list(islice(manifests, 501))
     if len(manifest_items) > 500:
         return DependencyPlan(skill_id, False, (), (), (), (), (), (), ("Too many installed skill manifests (maximum 500).",))
     for raw in manifest_items:
