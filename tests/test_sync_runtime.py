@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.sync_runtime import SyncRuntime
+from core.sync_client import SyncClientError
 
 
 class FakeVault:
@@ -59,7 +60,7 @@ class SyncRuntimeTests(unittest.TestCase):
                 "operation": "upsert", "payload": {"status": "open"},
             }
             try:
-                with self.assertRaises(ValueError):
+                with self.assertRaises(SyncClientError):
                     runtime.enqueue_event(event)
             finally:
                 runtime.close()
