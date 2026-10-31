@@ -70,7 +70,7 @@ A feature-branch foundation is being built for connecting a Windows laptop to a 
 
 ### Sync CLI commands (feature branch)
 
-The terminal frontend exposes `/sync status` and `/sync pair`. Configure `YUKI_SYNC_URL` with the HTTPS hub URL and install the optional OS credential vault dependency from `requirements-sync.txt`. Pairing prompts for the one-time code without echoing it. `/sync run` is deliberately disabled until reviewed domain adapters can safely apply conversations, tasks and skills; no application data is uploaded by the current CLI commands. See `docs/WINDOWS_OCI_SYNC.md`.
+The terminal frontend exposes `/sync status`, `/sync pair`, `/sync tasks preview|queue`, `/sync chat preview|queue`, `/sync skills preview|queue`, and `/sync run`. Configure `YUKI_SYNC_URL` with the HTTPS hub URL and install the optional OS credential vault dependency from `requirements-sync.txt`. Pairing prompts for the one-time code without echoing it. Queue commands explicitly add allow-listed records to the local outbox; they do not upload immediately. The sync cycle currently applies task upserts, conversation metadata/messages, and data-only skill-pack metadata. It does not sync executable plugins, approval grants, preferences, deletions, or message/skill edits. Imported skills are forced to high risk and still require local approval. This is a development foundation, not a production deployment. See `docs/WINDOWS_OCI_SYNC.md`.
 
 ## External SSD portability
 
