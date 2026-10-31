@@ -448,7 +448,7 @@ def run_cli(
                 conversation_store.begin_turn(
                     args.workspace, session_id, request_id, args.prompt,
                 )
-            except (ValueError, KeyError, OSError) as exc:
+            except (ValueError, KeyError, OSError, RuntimeError) as exc:
                 output_fn(f"Persistent session could not be loaded ({type(exc).__name__}): {str(exc)[:200]}")
                 return 2
         else:
