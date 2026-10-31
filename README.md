@@ -308,6 +308,10 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. Network sync remains disabled until conflict-safe remote application is implemented. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
 
 
+### Desktop device pairing controls
+
+The native desktop now exposes **Sync status** and **Pair device** controls backed by the same `SyncRuntime` used by the CLI. Pairing-code input is masked and the sync runtime is initialized only when a sync action is requested. The desktop currently supports checking pairing/outbox status and enrolling a device; it does not yet run sync cycles or apply remote task/conversation/skill changes. Configure `YUKI_SYNC_URL`, install the OS credential-vault dependency, and issue the pairing code on the trusted hub before using Pair device.
+
 ### Task-only network sync (feature branch)
 
 `/sync run` now performs a bounded HTTPS sync cycle for task upserts only. It requires a paired device. Remote task revisions are validated and applied idempotently; unsupported collections and deletes are rejected without acknowledging the event. Concurrent edits may require manual conflict resolution. See [sync architecture and setup](docs/WINDOWS_OCI_SYNC.md).
