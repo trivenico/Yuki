@@ -297,7 +297,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             memory_context_builder=memory.build_agent_context,
         )
         plan = coordinator.submit(actor_id="alice", idempotency_key="real-shared-memory", subtasks=[
-            SubtaskSpec("research-task", "How is model routing implemented?", ("research",)),
+            SubtaskSpec("research-task", "provider-neutral model router", ("research",)),
         ])
         advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         task = self.runtime.get(actor_id="alice", task_id=advanced.subtasks[0].task_id)
