@@ -80,6 +80,8 @@ class SyncRuntime:
     def upload_pending(self, push_limit: int = 50):
         """Upload queued local events only; does not download or apply remote records."""
         from core.sync_client import SyncAgent
+        if self.vault is None:
+            raise SyncClientError("Install the optional keyring dependency before syncing.")
         agent = SyncAgent(self._require_transport(), self.outbox, self.vault,
                           apply_remote=lambda _event: None)
         return agent.push_pending(push_limit)
