@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_model_assisted_agent_planning_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "model-assisted-agent-planning"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/model_agent_planner.py", item.entrypoints)
+        self.assertIn("tests/test_model_agent_planner.py", item.test_evidence)
+        self.assertTrue(any("untrusted" in limitation.lower() for limitation in item.limitations))
+
     def test_shared_conversation_runtime_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
