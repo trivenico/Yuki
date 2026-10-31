@@ -24,6 +24,8 @@ class DesktopRuntimeWorker:
         )
         self._started = False
         self._closing = False
+        self._cancel_event = threading.Event()
+        self._active_request_id = None
 
     def start(self) -> None:
         if self._started:
@@ -34,7 +36,11 @@ class DesktopRuntimeWorker:
     def submit(self, action: str, **payload) -> str:
         if not self._started or self._closing:
             raise RuntimeError("Desktop runtime worker is not accepting commands.")
-        if action not in {"send", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "close"}:
+        if action == "cancel":
+            if self._active_request_id is not None:
+                self._cancel_event.set()
+            return uuid.uuid4().hex
+        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -71,6 +77,22 @@ class DesktopRuntimeWorker:
                 if action == "send":
                     response = runtime.send_message(payload.get("message", ""))
                     self._emit(request_id, action, ok=True, response=response)
+                elif action == "stream":
+                    self._cancel_event.clear()
+                    self._active_request_id = request_id
+                    chunks = []
+                    try:
+                        for chunk in runtime.stream_message(payload.get("message", "")):
+                            if self._cancel_event.is_set():
+                                break
+                            chunks.append(chunk)
+                            self._emit(request_id, "chunk", chunk=chunk)
+                        self._emit(request_id, action, ok=not self._cancel_event.is_set(),
+                                   cancelled=self._cancel_event.is_set(),
+                                   response="".join(chunks))
+                    finally:
+                        self._active_request_id = None
+                        self._cancel_event.clear()
                 elif action == "history":
                     self._emit(request_id, action, ok=True, messages=runtime.history())
                 elif action == "new":
