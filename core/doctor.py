@@ -33,7 +33,7 @@ class DoctorReport:
 
 def run_doctor(*, config_loader: Callable | None = None, provider_factory: Callable | None = None, environ=None) -> DoctorReport:
     env = os.environ if environ is None else environ
-    checks: list[Check] = [Check("python", "pass" if sys.version_info >= (3, 11) else "fail", f"Python {platform.python_version()} (requires 3.11+)")]
+    checks: list[Check] = [Check("python", "pass" if sys.version_info >= (3, 10) else "fail", f"Python {platform.python_version()} (requires 3.10+)")]
     provider_name = "unknown"
     if config_loader is None:
         from core.config import load_config
