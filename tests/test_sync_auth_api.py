@@ -7,6 +7,7 @@ from pathlib import Path
 from core.sync_api import SyncAPI
 from core.sync_auth import SyncCredentialStore
 from core.sync_store import SyncEventStore
+from yuki_sync_admin import issue_pairing_code
 
 
 class SyncCredentialAPITests(unittest.TestCase):
@@ -36,6 +37,20 @@ class SyncCredentialAPITests(unittest.TestCase):
             captured["headers"] = dict(headers)
         payload = b"".join(self.api(environ, start_response))
         return captured, json.loads(payload)
+
+    def test_local_admin_utility_issues_single_use_pairing_code(self):
+        database = Path(self.tmp.name) / "admin" / "sync.sqlite3"
+        code = issue_pairing_code(database, "user_0000001", 120)
+        self.assertGreaterEqual(len(code), 32)
+        result = self.credentials.consume_pairing_code(code, "Windows laptop")
+        self.assertTrue(self.credentials.authenticate_access(result["access_token"]))
+        with self.assertRaises(Exception):
+            self.credentials.consume_pairing_code(code, "Replay")
+
+    def test_admin_utility_rejects_invalid_code_lifetime(self):
+        database = Path(self.tmp.name) / "admin-invalid" / "sync.sqlite3"
+        with self.assertRaises(ValueError):
+            issue_pairing_code(database, "user_0000001", 10)
 
     def test_pairing_endpoint_consumes_code_and_returns_credentials(self):
         code = self.credentials.create_pairing_code("user_0000001")
