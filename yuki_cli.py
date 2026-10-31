@@ -9,7 +9,8 @@ import argparse
 import json
 from collections.abc import Callable, Sequence
 
-from companion.conversation import ConversationError, ConversationSession\nfrom core.config import load_config
+from companion.conversation import ConversationError, ConversationSession
+from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
