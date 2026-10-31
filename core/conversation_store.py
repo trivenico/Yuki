@@ -81,7 +81,7 @@ class ConversationStore:
                         id TEXT NOT NULL UNIQUE,
                         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
                         workspace_id TEXT NOT NULL,
-                        role TEXT NOT NULL CHECK(role IN ('system','user','assistant','tool')),
+                        role TEXT NOT NULL CHECK(role IN ('user','assistant','tool')),
                         content TEXT NOT NULL,
                         created_at TEXT NOT NULL,
                         idempotency_key TEXT,
