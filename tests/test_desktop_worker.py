@@ -11,11 +11,38 @@ class FakeStore:
         return [{"conversation_id": "c1", "title": "Test"}]
 
 
+class FakeProviders:
+    def __init__(self):
+        self.selected = "openai"
+
+    def current(self):
+        return type("Provider", (), {"name": self.selected})()
+
+    def list_providers(self):
+        return [
+            {"name": "openai", "implemented": True, "selected": self.selected == "openai"},
+            {"name": "anthropic", "implemented": False, "selected": False},
+        ]
+
+    def select(self, name):
+        if name != "openai":
+            return f"{name} is registered but not implemented."
+        self.selected = name
+        return "Selected provider: openai"
+
+
+class FakeAgent:
+    def set_provider(self, adapter):
+        self.provider = adapter
+
+
 class FakeRuntime:
     def __init__(self):
         self.owner = threading.get_ident()
         self.active_conversation_id = "c1"
         self.conversations = FakeStore()
+        self.providers = FakeProviders()
+        self.agent = FakeAgent()
         self.closed = False
 
     def _check_thread(self):
@@ -108,6 +135,25 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertFalse(closed["ok"])
         worker.join(2)
         self.assertFalse(worker._thread.is_alive())
+
+    def test_provider_catalog_and_selection_are_worker_actions(self):
+        worker = DesktopRuntimeWorker(FakeRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("providers")
+        listed = self._next(worker, "providers")
+        self.assertEqual(listed["selected"], "openai")
+        self.assertEqual(len(listed["providers"]), 2)
+        worker.submit("select_provider", name="openai")
+        selected = self._next(worker, "select_provider")
+        self.assertTrue(selected["ok"])
+        self.assertEqual(selected["selected"], "openai")
+        worker.submit("select_provider", name="anthropic")
+        rejected = self._next(worker, "select_provider")
+        self.assertFalse(rejected["ok"])
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
 
     def test_initialization_failure_is_reported_without_leaking_exception(self):
         worker = DesktopRuntimeWorker(lambda: (_ for _ in ()).throw(RuntimeError("private")))
