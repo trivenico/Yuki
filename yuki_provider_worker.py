@@ -53,12 +53,13 @@ def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PR
         context.check_cancelled()
         if not isinstance(response, str) or not response.strip():
             raise RuntimeError("provider returned an empty or invalid response")
-        if len(response) > MAX_PROVIDER_RESPONSE_CHARS:
+        truncated = len(response) > MAX_PROVIDER_RESPONSE_CHARS
+        if truncated:
             response = response[:MAX_PROVIDER_RESPONSE_CHARS] + "\n[Response truncated by Yuki.]"
         return {
             "provider": provider.__class__.__name__,
             "text": response,
-            "truncated": len(response) > MAX_PROVIDER_RESPONSE_CHARS,
+            "truncated": truncated,
         }
 
     return {"model.generate": generate}
