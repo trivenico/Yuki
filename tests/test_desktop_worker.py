@@ -140,6 +140,37 @@ class DesktopWorkerTests(unittest.TestCase):
         self._next(worker, "close")
         worker.join(2)
 
+    def test_stream_can_be_cancelled_without_persisting_partial_answer(self):
+        worker_holder = {}
+        closed = []
+
+        class SlowRuntime(FakeRuntime):
+            def stream_message(self, message):
+                self._check_thread()
+                try:
+                    yield "partial"
+                    while not worker_holder["worker"]._cancel_event.is_set():
+                        time.sleep(0.01)
+                finally:
+                    closed.append(True)
+
+        worker = DesktopRuntimeWorker(SlowRuntime)
+        worker_holder["worker"] = worker
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("stream", message="hello")
+        chunk = self._next(worker, "chunk")
+        self.assertEqual(chunk["chunk"], "partial")
+        worker.submit("cancel")
+        final = self._next(worker, "stream")
+        self.assertTrue(final["cancelled"])
+        self.assertFalse(final["ok"])
+        self.assertEqual(final["response"], "partial")
+        self.assertTrue(closed)
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
+
     def test_list_and_switch_are_dispatched_on_runtime_owner_thread(self):
         worker = DesktopRuntimeWorker(FakeRuntime)
         worker.start()
