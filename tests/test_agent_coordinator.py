@@ -78,6 +78,30 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIn("Evidence found: official documentation confirms the behavior.", argument)
         self.assertIn('"specialist": "research"', argument)
 
+    def test_failed_dependency_blocks_downstream_specialist(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-failure-1", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",), requires_approval=False),
+            SubtaskSpec("write", "Write report", ("write",), depends_on=("collect",), requires_approval=False),
+        ])
+        first = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        by_id = {item.subtask_id: item for item in first.subtasks}
+        self.assertIsNotNone(by_id["collect"].task_id)
+        self.assertIsNone(by_id["write"].task_id)
+        claimed = self.store.claim_next(worker_id="worker-fail")
+        self.assertEqual(claimed.run_id, by_id["collect"].task_id)
+        failed = self.store.transition(
+            claimed.run_id, expected_version=claimed.version, to_state="failed",
+            error_code="specialist_handler_failed",
+        )
+        self.store.append_task_event(
+            failed.run_id, kind="task.failed", actor_id="alice",
+            payload={"state_version": failed.version}, expected_version=failed.version,
+        )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        by_id = {item.subtask_id: item for item in advanced.subtasks}
+        self.assertEqual(by_id["collect"].status, "failed")
+        self.assertEqual(by_id["write"].status, "blocked")
+        self.assertIsNone(by_id["write"].task_id)
     def test_required_permissions_are_part_of_routing(self):
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(actor_id="alice", idempotency_key="no-permission", subtasks=[
