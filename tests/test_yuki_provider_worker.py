@@ -59,7 +59,7 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
         result = self.store.get(task["id"])["result"]
         self.assertTrue(result["truncated"])
         self.assertTrue(result["text"].endswith("[Response truncated by Yuki.]"))
-        self.assertEqual(len(result["text"]), 50_000 + len("\\n[Response truncated by Yuki.]"))
+        self.assertEqual(len(result["text"]), 50_000 + len("\n[Response truncated by Yuki.]"))
 
     def test_task_cannot_override_provider_or_endpoint(self):
         provider = FakeProvider()
