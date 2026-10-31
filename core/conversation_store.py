@@ -250,6 +250,9 @@ class ConversationStore:
                 if existing is not None:
                     if existing["conversation_id"] != session_id or existing["workspace_id"] != workspace:
                         raise ValueError("request_id is already bound to another conversation.")
+                    original = db.execute("SELECT content FROM conversation_messages WHERE id=?", (existing["user_message_id"],)).fetchone()
+                    if original is None or original["content"] != user_content:
+                        raise ValueError("request_id already exists with different user content.")
                     return dict(existing)
                 running = db.execute(
                     "SELECT request_id FROM conversation_turns WHERE conversation_id=? AND status='running'",
