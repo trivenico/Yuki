@@ -6,6 +6,7 @@ from typing import Any
 
 from core.portable_paths import data_root
 from core.sync_client import KeyringCredentialVault, SyncClientError, SyncHTTPTransport, SyncOutbox
+from core.task_sync_adapter import TaskSyncAdapter
 
 
 class SyncRuntime:
@@ -76,6 +77,56 @@ class SyncRuntime:
         if event.get("device_id") != paired[0]:
             raise SyncClientError("Event device_id does not match this paired device.")
         return self.outbox.enqueue(event)
+
+    def preview_application(self, application):
+        """Return counts only; no content is queued or transmitted."""
+        from core.skill_pack_sync import SkillPackSyncAdapter
+        from yuki_tasks import load_tasks
+        tasks = load_tasks()
+        return {
+            "tasks": TaskSyncAdapter.preview(tasks),
+            "conversations": application.conversations.preview_sync(),
+            "skills": SkillPackSyncAdapter().preview(),
+        }
+
+    def queue_application(self, collection: str, application):
+        """Explicitly queue one allow-listed collection for this paired device."""
+        from core.conversation_store import ConversationStore
+        from core.skill_pack_sync import SkillPackSyncAdapter
+        from core.task_sync_adapter import TaskSyncAdapter
+        from yuki_tasks import load_tasks, save_tasks
+        saved = self.vault.load() if self.vault is not None else None
+        if not saved:
+            raise SyncClientError("Pair this device before queueing sync data.")
+        device_id = saved[0]
+        if collection == "tasks":
+            tasks = load_tasks()
+            queued = TaskSyncAdapter.queue(tasks, device_id, self.enqueue_event)
+            if not save_tasks(tasks):
+                raise SyncClientError("Task events were queued, but task sync metadata could not be saved; retry safely.")
+            return {"collection": collection, "queued": queued}
+        if collection == "conversations":
+            result = application.conversations.queue_sync(device_id, self.enqueue_event)
+            return {"collection": collection, **result}
+        if collection == "skills":
+            result = SkillPackSyncAdapter().queue_installed(device_id, self.enqueue_event)
+            return {"collection": collection, **result}
+        raise ValueError("Choose tasks, conversations, or skills.")
+
+    def sync_application(self, application):
+        """Run the reviewed CLI domain handlers against the desktop's shared stores."""
+        from core.skill_pack_sync import SkillPackSyncAdapter
+        from core.task_sync_adapter import TaskSyncAdapter
+        from yuki_tasks import load_tasks, save_tasks
+        tasks = load_tasks()
+        def apply_remote(event):
+            collection = event["collection"]
+            if collection.startswith("conversation_"):
+                return application.conversations.apply_remote(event)
+            if collection == "skill_metadata":
+                return SkillPackSyncAdapter().apply_remote(event)
+            return TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
+        return self.sync_once(apply_remote)
 
     def upload_pending(self, push_limit: int = 50):
         """Upload queued local events only; does not download or apply remote records."""
