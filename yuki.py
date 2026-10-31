@@ -579,7 +579,7 @@ def main():
             try:
                 message = input("\\nYou > ")
             except (EOFError, KeyboardInterrupt):
-                print("\\nGoodbye.")
+                print("\nGoodbye.")
                 break
             try:
                 if message.strip() and not message.strip().startswith("/"):
