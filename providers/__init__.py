@@ -4,6 +4,7 @@ from .ollama import OllamaProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .hybrid import HybridProvider
 from .gemini_cli import GeminiCLIProvider
+from .colibri import ColibriProvider
 from .factory import create_provider
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "OpenAICompatibleProvider",
     "HybridProvider",
     "GeminiCLIProvider",
+    "ColibriProvider",
     "create_provider",
 ]
