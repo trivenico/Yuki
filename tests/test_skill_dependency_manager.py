@@ -90,6 +90,23 @@ class SkillDependencyManagerTests(unittest.TestCase):
         self.assertFalse(plan.ready)
         self.assertTrue(plan.cycles)
 
+    def test_invalid_package_inventory_and_runtime_version_fail_closed(self):
+        manifests = [self.manifest(
+            "root", dependencies={"skills": [], "python": [{"name": "requests", "version": ">=2.0"}]}
+        )]
+        plan = plan_skill_dependencies(
+            manifests, "root", python_packages={"requests": "latest"}, python_version=3.12
+        )
+        self.assertFalse(plan.ready)
+        self.assertTrue(any("invalid version" in error for error in plan.errors))
+        self.assertTrue(any("Current Python version" in error for error in plan.errors))
+
+    def test_bounds_manifest_inventory(self):
+        manifests = (self.manifest(f"skill_{index}") for index in range(501))
+        plan = plan_skill_dependencies(manifests, "skill_0", python_packages={})
+        self.assertFalse(plan.ready)
+        self.assertTrue(any("maximum 500" in error for error in plan.errors))
+
     def test_rejects_duplicate_manifest_ids_and_invalid_root(self):
         plan = plan_skill_dependencies([self.manifest("alpha"), self.manifest("alpha")], "alpha", python_packages={})
         self.assertFalse(plan.ready)
