@@ -11,6 +11,15 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _local_opener():
+    return urllib.request.build_opener(_NoRedirect())
+
 from providers.base import BaseProvider
 
 
@@ -47,7 +56,8 @@ class ColibriProvider(BaseProvider):
         path = parsed.path.rstrip("/")
         if path and path != "/v1":
             raise ValueError("Colibri base URL path must be empty or /v1.")
-        return f"http://{host}:{port or 8000}/v1"
+        authority = f"[{host}]" if ":" in host else host
+        return f"http://{authority}:{port or 8000}/v1"
 
     def is_available(self) -> bool:
         request = urllib.request.Request(
@@ -55,7 +65,7 @@ class ColibriProvider(BaseProvider):
             headers={"Accept": "application/json", "Authorization": "Bearer " + self.api_key},
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 3)) as response:
+            with _local_opener().open(request, timeout=min(self.timeout, 3)) as response:
                 body = response.read(256_000)
             data = json.loads(body.decode("utf-8"))
             return isinstance(data, dict) and isinstance(data.get("data"), list)
@@ -78,7 +88,7 @@ class ColibriProvider(BaseProvider):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with _local_opener().open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (OSError, TimeoutError, urllib.error.URLError) as exc:
             raise RuntimeError("Colibri request failed; check that the local server is running.") from exc
