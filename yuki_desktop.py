@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import queue
 import tkinter as tk
-from tkinter import ttk, simpledialog
+from tkinter import ttk, simpledialog, messagebox
 
 from core.desktop_worker import DesktopRuntimeWorker
 
@@ -51,6 +51,16 @@ class YukiDesktop:
         ttk.Label(shell, textvariable=self.provider_details, wraplength=900).pack(fill=tk.X, pady=(4, 0))
         self.sync_details = tk.StringVar(value="Sync is local-only until you configure a hub and pair this device.")
         ttk.Label(shell, textvariable=self.sync_details, wraplength=900).pack(fill=tk.X, pady=(3, 0))
+        sync_actions = ttk.Frame(shell)
+        sync_actions.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(sync_actions, text="Preview sharing", command=self._sync_preview).pack(side=tk.LEFT)
+        ttk.Button(sync_actions, text="Queue tasks", command=lambda: self._sync_queue("tasks")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(sync_actions, text="Queue chats", command=lambda: self._sync_queue("conversations")).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(sync_actions, text="Queue skills", command=lambda: self._sync_queue("skills")).pack(side=tk.LEFT, padx=(6, 0))
+        self.sync_run_button = ttk.Button(sync_actions, text="Sync both ways", command=self._sync_run)
+        self.sync_run_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.sync_run_active = False
+        self.sync_preview = None
         self.provider_names: dict[str, str] = {}
         self.provider_var.set("Loading…")
 
@@ -166,6 +176,38 @@ class YukiDesktop:
             self._submit("sync_pair", code=code.strip(), device_label="Yuki Windows Desktop")
             self.status.set("Pairing device…")
 
+    def _sync_preview(self):
+        if self.ready and not self.closing:
+            self.status.set("Preparing sync preview…")
+            self._submit("sync_preview")
+
+    def _sync_queue(self, collection):
+        if not self.ready or self.closing:
+            return
+        labels = {"tasks": "task details", "conversations": "conversation messages and titles", "skills": "data-only skill manifests"}
+        if not messagebox.askyesno(
+            "Queue Yuki data for sync",
+            "Queue " + labels[collection] + " on this device? This only adds them to the encrypted-transport outbox; nothing is uploaded until you choose Upload queued or Sync both ways.",
+            parent=self.root,
+        ):
+            return
+        self._submit("sync_queue", collection=collection)
+        self.status.set("Queueing " + collection + "…")
+
+    def _sync_run(self):
+        if not self.ready or self.closing or self.sync_run_active:
+            return
+        if not messagebox.askyesno(
+            "Synchronize Yuki devices",
+            "Run a bidirectional sync now? Queued data will be uploaded and supported remote task, conversation and data-only skill events will be applied locally.",
+            parent=self.root,
+        ):
+            return
+        self.sync_run_active = True
+        self.sync_run_button.configure(state=tk.DISABLED)
+        self.status.set("Synchronizing…")
+        self._submit("sync_run")
+
     def _sync_upload(self):
         if self.ready and not self.closing and not self.sync_upload_active:
             self.sync_upload_active = True
@@ -267,6 +309,52 @@ class YukiDesktop:
                     else:
                         self.status.set("Pairing failed")
                         self._append("Device pairing failed (" + event.get("error", "Error") + "). Check hub URL and OS credential vault.", "error")
+                elif action == "sync_preview":
+                    if event.get("ok"):
+                        self.sync_preview = event.get("result", {})
+                        tasks = self.sync_preview.get("tasks", {})
+                        chats = self.sync_preview.get("conversations", {})
+                        skills = self.sync_preview.get("skills", {})
+                        summary = (
+                            "Sharing preview — tasks: " + str(tasks.get("total", 0))
+                            + "; chats: " + str(chats.get("conversations", 0)) + " / "
+                            + str(chats.get("messages", 0)) + " messages; data-only skills: "
+                            + str(skills.get("installed_data_only_packs", 0))
+                            + ". Nothing queued or uploaded."
+                        )
+                        self.sync_details.set(summary)
+                        self._append(summary)
+                        self.status.set("Preview ready")
+                    else:
+                        self.status.set("Preview failed")
+                        self._append("Sync preview failed (" + event.get("error", "Error") + ").", "error")
+                elif action == "sync_queue":
+                    if event.get("ok"):
+                        result = event.get("result", {})
+                        queued = sum(value for key, value in result.items()
+                                     if key in {"queued", "conversations", "messages"} and isinstance(value, int))
+                        self.sync_details.set(event.get("status", "Sync queue updated."))
+                        self.status.set("Data queued locally")
+                        self._append("Queued " + str(queued) + " item(s) from " + result.get("collection", "selected collection") + ". Nothing uploaded yet.")
+                    else:
+                        self.status.set("Queue failed")
+                        self._append("Unable to queue sync data (" + event.get("error", "Error") + ").", "error")
+                elif action == "sync_run":
+                    self.sync_run_active = False
+                    self.sync_run_button.configure(state=tk.NORMAL)
+                    if event.get("ok"):
+                        result = event.get("result", {})
+                        self.sync_details.set(event.get("status", "Sync status refreshed."))
+                        self.status.set("Sync complete")
+                        self._append(
+                            "Bidirectional sync: " + str(result.get("pushed", 0)) + " uploaded, "
+                            + str(result.get("pulled", 0)) + " downloaded/applied, "
+                            + str(result.get("conflicts", 0)) + " conflicts."
+                        )
+                        self._submit("list")
+                    else:
+                        self.status.set("Sync stopped safely")
+                        self._append("Bidirectional sync stopped (" + event.get("error", "Error") + "). No unhandled event was acknowledged.", "error")
                 elif action == "sync_upload":
                     self.sync_upload_active = False
                     self.sync_upload_button.configure(state=tk.NORMAL)
