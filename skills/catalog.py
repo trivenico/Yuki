@@ -100,7 +100,7 @@ class SkillCatalog:
 
     def rank(self, query: str, *, limit: int = 8) -> tuple[SkillMatch, ...]:
         """Rank metadata matches deterministically; never imports or executes skills."""
-        if not isinstance(query, str) or not query.strip():
+        if not isinstance(query, str) or not query.strip() or len(query) > 2000:
             return ()
         if isinstance(limit, bool) or not isinstance(limit, int):
             limit = 8
@@ -159,6 +159,12 @@ class SkillCatalog:
         Ambiguous and weak matches fail closed. This method is discovery only;
         the caller must still obtain invocation authorization.
         """
+        if isinstance(min_score, bool) or not isinstance(min_score, int):
+            min_score = 4
+        if isinstance(min_margin, bool) or not isinstance(min_margin, int):
+            min_margin = 2
+        min_score = max(1, min(min_score, 1000))
+        min_margin = max(1, min(min_margin, 1000))
         matches = self.rank(query, limit=limit)
         if not matches or matches[0].score < min_score:
             return SkillSelection("not_found", None, matches, 0)
