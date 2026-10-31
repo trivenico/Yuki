@@ -95,6 +95,26 @@ class TaskSyncAdapterTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(TaskSyncAdapter.list_conflicts(tasks)[0]["remote_revision"], 2)
 
+    def test_second_remote_conflict_does_not_replace_existing_candidate(self):
+        tasks = [{"id": 12, "description": "Local edit", "completed": False,
+                  "created_at": "2026-10-31T10:00:00+00:00",
+                  "_yuki_sync": {"object_id": "task_shared0001", "revision": 2, "fingerprint": "local"},
+                  "_yuki_sync_conflict": {"revision": 2, "payload": {
+                      "description": "First remote", "completed": True,
+                      "created_at": "2026-10-31T11:00:00+00:00"}}}]
+        remote = {
+            "event_id": "event_remote0002", "device_id": "device_remote0001",
+            "collection": "task_records", "object_id": "task_shared0001",
+            "revision": 3, "occurred_at": "2026-10-31T12:00:00+00:00",
+            "operation": "upsert",
+            "payload": {"description": "Second remote", "completed": True,
+                        "created_at": "2026-10-31T12:00:00+00:00"},
+        }
+        before = deepcopy(tasks)
+        with self.assertRaises(Exception):
+            TaskSyncAdapter.apply_remote(remote, tasks, lambda _value: True)
+        self.assertEqual(tasks, before)
+
     def test_resolve_remote_conflict_accepts_candidate(self):
         tasks = [{"id": 12, "description": "Local edit", "completed": False,
                   "created_at": "2026-10-31T10:00:00+00:00",
