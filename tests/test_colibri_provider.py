@@ -41,13 +41,13 @@ class ColibriProviderTests(unittest.TestCase):
     def test_generate_returns_openai_compatible_text(self):
         provider = ColibriProvider("model")
         payload = json.dumps({"choices": [{"message": {"content": "hello"}}]}).encode()
-        with patch("providers.colibri.urllib.request.urlopen", return_value=_Response(payload)):
+        with patch("providers.colibri._local_opener", return_value=_Opener(_Response(payload))):
             self.assertEqual(provider.generate("say hello"), "hello")
 
     def test_generate_rejects_oversized_response(self):
         provider = ColibriProvider("model")
         payload = b" " * 2_000_001
-        with patch("providers.colibri.urllib.request.urlopen", return_value=_Response(payload)):
+        with patch("providers.colibri._local_opener", return_value=_Opener(_Response(payload))):
             with self.assertRaises(RuntimeError):
                 provider.generate("prompt")
 
