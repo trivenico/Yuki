@@ -20,7 +20,7 @@ class TaskSyncAdapter:
         valid = [item for item in tasks if isinstance(item, dict)
                  and isinstance(item.get("description"), str)
                  and isinstance(item.get("completed"), bool)]
-        return {"total": len(valid), "already_queued": sum(1 for x in valid if isinstance(x.get("_yuki_sync"), dict))}
+        return {"total": len(valid), "tracked": sum(1 for x in valid if isinstance(x.get("_yuki_sync"), dict))}
 
     @staticmethod
     def queue(tasks: list[dict[str, Any]], device_id: str, enqueue: Callable[[dict[str, Any]], bool]) -> int:
