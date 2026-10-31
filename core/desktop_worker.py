@@ -81,8 +81,9 @@ class DesktopRuntimeWorker:
                     self._cancel_event.clear()
                     self._active_request_id = request_id
                     chunks = []
+                    stream = runtime.stream_message(payload.get("message", ""))
                     try:
-                        for chunk in runtime.stream_message(payload.get("message", "")):
+                        for chunk in stream:
                             if self._cancel_event.is_set():
                                 break
                             chunks.append(chunk)
@@ -91,6 +92,7 @@ class DesktopRuntimeWorker:
                                    cancelled=self._cancel_event.is_set(),
                                    response="".join(chunks))
                     finally:
+                        stream.close()
                         self._active_request_id = None
                         self._cancel_event.clear()
                 elif action == "history":
