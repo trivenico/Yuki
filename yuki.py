@@ -493,9 +493,13 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                 for item in items[:20]
             ) or "No saved conversations."
         if action == "new":
-            now = datetime.now(timezone.utc).isoformat()
-            conversation_id = store.create("New conversation", now)
-            conversation_context["active_id"] = conversation_id
+            create_conversation = conversation_context.get("new_conversation")
+            if callable(create_conversation):
+                conversation_id = create_conversation("New conversation")
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                conversation_id = store.create("New conversation", now)
+                conversation_context["active_id"] = conversation_id
             return f"Started conversation {conversation_id}."
         if action == "show":
             if len(parts) < 3:
@@ -571,6 +575,7 @@ def main():
     conversation_context = {
         "store": application.conversations,
         "active_id": application.active_conversation_id,
+        "new_conversation": application.new_conversation,
     }
     print("Yuki terminal. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
@@ -583,12 +588,11 @@ def main():
                 break
             try:
                 if message.strip() and not message.strip().startswith("/"):
-                    application.begin_turn(message)
-                response = handle_command(
-                    message, memory, tasks, agent, providers, policy, conversation_context
-                )
-                if message.strip() and not message.strip().startswith("/") and response and response != "__QUIT__":
-                    application.finish_turn(response)
+                    response = application.send_message(message)
+                else:
+                    response = handle_command(
+                        message, memory, tasks, agent, providers, policy, conversation_context
+                    )
             except Exception as error:
                 response = f"Yuki encountered a recoverable error: {type(error).__name__}."
             if response == "__QUIT__":
