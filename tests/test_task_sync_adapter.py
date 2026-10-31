@@ -50,6 +50,16 @@ class TaskSyncAdapterTests(unittest.TestCase):
         self.assertEqual([event["revision"] for event in events], [1, 2])
         self.assertNotEqual(events[0]["event_id"], events[1]["event_id"])
 
+    def test_forwarded_remote_task_preserves_shared_object_identity(self):
+        task = sample_task()
+        task["_yuki_sync"] = {
+            "object_id": "task_remote0001", "revision": 4, "fingerprint": "old"
+        }
+        events = []
+        TaskSyncAdapter.queue([task], "device_0000002", lambda event: events.append(event) or True)
+        self.assertEqual(events[0]["object_id"], "task_remote0001")
+        self.assertEqual(events[0]["revision"], 5)
+
     def test_invalid_local_sync_metadata_does_not_crash(self):
         task = sample_task()
         task["_yuki_sync"] = {"revision": "not-an-integer", "fingerprint": "old"}
