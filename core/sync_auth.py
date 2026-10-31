@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
-import hmac
 import secrets
 import sqlite3
 import uuid
+from contextlib import closing
 from typing import Any
 
 from core.sync_store import SyncEventStore, SyncStoreError, UnknownDeviceError, RevokedDeviceError
@@ -38,7 +38,7 @@ class SyncCredentialStore:
 
     def __init__(self, event_store: SyncEventStore):
         self.store = event_store
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sync_pairing_codes (
                     code_hash TEXT PRIMARY KEY,
@@ -66,7 +66,7 @@ class SyncCredentialStore:
             raise ValueError("Pairing code lifetime must be between 30 and 600 seconds.")
         code = secrets.token_urlsafe(32)
         expires = (_now() + timedelta(seconds=ttl_seconds)).isoformat()
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             conn.execute(
                 "INSERT INTO sync_pairing_codes(code_hash,user_id,expires_at) VALUES(?,?,?)",
                 (_digest(code), user_id, expires),
@@ -103,7 +103,7 @@ class SyncCredentialStore:
         code_hash = _digest(code)
         now = _now()
         device_id = uuid.uuid4().hex
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
@@ -136,7 +136,7 @@ class SyncCredentialStore:
     def authenticate_access(self, access_token: str) -> str:
         if not isinstance(access_token, str) or not 32 <= len(access_token) <= 256:
             raise SyncAuthenticationError("Invalid access token.")
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             row = conn.execute(
                 """SELECT c.device_id,c.expires_at,d.active
                    FROM sync_credentials c JOIN sync_devices d ON d.device_id=c.device_id
@@ -152,7 +152,7 @@ class SyncCredentialStore:
             raise SyncAuthenticationError("Invalid refresh token.")
         now = _now()
         token_hash = _digest(refresh_token)
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
@@ -171,6 +171,12 @@ class SyncCredentialStore:
                     raise SyncAuthenticationError("Refresh token reuse detected; device revoked.")
                 if not row["active"] or datetime.fromisoformat(row["expires_at"]) <= now:
                     raise SyncAuthenticationError("Refresh token expired or device revoked.")
+                # Revoke existing access credentials immediately on refresh.
+                conn.execute(
+                    """UPDATE sync_credentials SET revoked_at=?
+                       WHERE device_id=? AND token_kind='access' AND revoked_at IS NULL""",
+                    (now.isoformat(), row["device_id"]),
+                )
                 conn.execute("UPDATE sync_credentials SET revoked_at=? WHERE token_hash=?", (now.isoformat(), token_hash))
                 result = self._issue_pair(conn, row["device_id"])
                 conn.commit()
@@ -182,7 +188,7 @@ class SyncCredentialStore:
 
     def revoke_device(self, device_id: str, user_id: str) -> None:
         now = _now().isoformat()
-        with self.store._lock, self.store._connect() as conn:
+        with self.store._lock, closing(self.store._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE sync_devices SET active=0,revoked_at=? WHERE device_id=? AND user_id=? AND active=1",
