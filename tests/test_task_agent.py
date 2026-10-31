@@ -101,13 +101,19 @@ class ApprovedTaskAgentTests(unittest.TestCase):
             task = ledger.list(limit=1)[0]
             events = ledger.list_events(task["id"])
             serialized = repr(events)
+            self.assertEqual(task["title"], "AI-assisted task")
+            self.assertEqual(task["detail"], "")
+            self.assertNotIn("private user objective", repr(task))
             self.assertNotIn("private user objective", serialized)
             self.assertNotIn("private-argument", serialized)
             started = events[0]["payload"]
             proposed = next(event["payload"] for event in events if event["event_type"] == "tool.proposed")
+            observed = next(event["payload"] for event in events if event["event_type"] == "tool.observed")
             self.assertEqual(len(started["goal_sha256"]), 64)
             self.assertEqual(len(proposed["argument_sha256"]), 64)
             self.assertEqual(proposed["argument_chars"], len("private-argument"))
+            self.assertNotIn("message", observed)
+            self.assertEqual(len(observed["message_sha256"]), 64)
 
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
