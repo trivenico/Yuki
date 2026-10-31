@@ -71,6 +71,23 @@ class AgentPlan:
     subtasks: tuple[PlannedSubtask, ...]
 
 
+    @property
+    def status(self) -> str:
+        """Return an aggregate lifecycle state suitable for CLI and desktop surfaces."""
+        states = {item.status for item in self.subtasks}
+        if states & {"running"}:
+            return "running"
+        if states & {"waiting_approval"}:
+            return "waiting_approval"
+        if states & {"queued", "pending"}:
+            return "queued"
+        if states == {"succeeded"}:
+            return "succeeded"
+        if states & {"failed", "blocked", "interrupted"}:
+            return "failed"
+        if states & {"cancelled"}:
+            return "cancelled"
+        return "failed"
 class SpecialistAgentCoordinator:
     """Deterministic capability routing and dependency-gated task dispatch."""
 
