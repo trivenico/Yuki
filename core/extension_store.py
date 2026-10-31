@@ -534,7 +534,11 @@ def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
         try:
             value = _read_json(path)
             checked = validate_skill_manifest(value) if kind == "skill" else validate_plugin_manifest(value)
-            results.append({"id": checked["id"], "name": checked["name"], "valid": True})
+            entry = {"id": checked["id"], "name": checked["name"], "valid": True}
+            if kind == "skill":
+                entry["risk"] = checked["risk"]
+                entry["requires_invocation_approval"] = checked["risk"] != "low"
+            results.append(entry)
         except ValueError as exc:
             results.append({"id": path.stem, "name": path.stem, "valid": False, "error": str(exc)})
     return results
