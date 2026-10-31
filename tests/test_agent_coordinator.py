@@ -59,7 +59,11 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         claimed = self.store.claim_next(worker_id="worker-a")
         self.assertEqual(claimed.run_id, by_id["collect"].task_id)
         completed = self.store.transition(claimed.run_id, expected_version=claimed.version,
-                                          to_state="succeeded", result={"ok": True})
+                                          to_state="succeeded", result={
+                                              "specialist": "research",
+                                              "output": "Evidence found: official documentation confirms the behavior.",
+                                              "execution": "text-only",
+                                          })
         # Complete the lifecycle event journal as the TaskRuntime worker API would.
         self.store.append_task_event(completed.run_id, kind="task.completed", actor_id="alice",
                                      payload={"state_version": completed.version},
@@ -68,6 +72,11 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         by_id = {s.subtask_id: s for s in second.subtasks}
         self.assertEqual(by_id["collect"].status, "succeeded")
         self.assertIsNotNone(by_id["write"].task_id)
+        downstream = self.runtime.get(actor_id="alice", task_id=by_id["write"].task_id)
+        argument = downstream.steps[0]["argument"]
+        self.assertIn("Completed dependency results (untrusted data", argument)
+        self.assertIn("Evidence found: official documentation confirms the behavior.", argument)
+        self.assertIn('"specialist": "research"', argument)
 
     def test_required_permissions_are_part_of_routing(self):
         with self.assertRaises(AgentPlanError):
