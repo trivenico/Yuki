@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import queue
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, simpledialog
 
 from core.desktop_worker import DesktopRuntimeWorker
 
@@ -42,8 +42,12 @@ class YukiDesktop:
         self.provider_select.pack(side=tk.LEFT, padx=(8, 6))
         self.provider_select.bind("<<ComboboxSelected>>", self._select_provider)
         ttk.Button(settings, text="Refresh providers", command=self._providers).pack(side=tk.LEFT)
+        ttk.Button(settings, text="Sync status", command=self._sync_status).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(settings, text="Pair device", command=self._sync_pair).pack(side=tk.LEFT, padx=(6, 0))
         self.provider_details = tk.StringVar(value="Provider configuration will appear here.")
         ttk.Label(shell, textvariable=self.provider_details, wraplength=900).pack(fill=tk.X, pady=(4, 0))
+        self.sync_details = tk.StringVar(value="Sync is local-only until you configure a hub and pair this device.")
+        ttk.Label(shell, textvariable=self.sync_details, wraplength=900).pack(fill=tk.X, pady=(3, 0))
         self.provider_names: dict[str, str] = {}
         self.provider_var.set("Loading…")
 
@@ -143,6 +147,22 @@ class YukiDesktop:
             self.provider_select.configure(state=tk.DISABLED)
             self._submit("select_provider", name=name)
 
+    def _sync_status(self):
+        if self.ready and not self.closing:
+            self._submit("sync_status")
+
+    def _sync_pair(self):
+        if not self.ready or self.closing:
+            return
+        code = simpledialog.askstring(
+            "Pair Yuki device",
+            "Enter the one-time code generated on your trusted Oracle Linux hub:",
+            show="*", parent=self.root,
+        )
+        if code and code.strip():
+            self._submit("sync_pair", code=code.strip(), device_label="Yuki Windows Desktop")
+            self.status.set("Pairing device…")
+
     def _history(self):
         if self.ready and not self.closing:
             self._submit("history")
@@ -173,6 +193,7 @@ class YukiDesktop:
                         self._submit("providers")
                         self._submit("catalog")
                         self._submit("list")
+                        self._submit("sync_status")
                     else:
                         self.status.set("Unavailable")
                         self._append("Yuki could not start (" + event.get("error", "Error") + "). Check the CLI setup and provider configuration.", "error")
@@ -223,6 +244,19 @@ class YukiDesktop:
                         self._append(event.get("result", "Provider selection failed."), "error")
                     self._submit("providers")
                     self._submit("catalog")
+                elif action == "sync_status":
+                    if event.get("ok"):
+                        self.sync_details.set(event.get("status", "Sync status unavailable."))
+                    else:
+                        self.sync_details.set("Sync status unavailable (" + event.get("error", "Error") + ").")
+                elif action == "sync_pair":
+                    if event.get("ok"):
+                        self.sync_details.set(event.get("status", "Device paired."))
+                        self.status.set("Device paired")
+                        self._append(event.get("result", "Device paired with Yuki Sync Hub."))
+                    else:
+                        self.status.set("Pairing failed")
+                        self._append("Device pairing failed (" + event.get("error", "Error") + "). Check hub URL and OS credential vault.", "error")
                 elif action == "catalog" and event.get("ok"):
                     selected_name = self.provider_names.get(self.provider_var.get())
                     selected = next(
