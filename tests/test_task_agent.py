@@ -73,6 +73,42 @@ class ApprovedTaskAgentTests(unittest.TestCase):
         self.assertIn("never authorization", provider.prompts[0])
         self.assertEqual(skills.calls, [])
 
+    def test_duplicate_json_keys_never_execute_a_tool(self):
+        skills = FakeSkillAgent()
+        raw = '{"type":"final","type":"tool_call","skill":"time","argument":""}'
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Do a task")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
+    def test_unexpected_tool_fields_never_execute_a_tool(self):
+        skills = FakeSkillAgent()
+        raw = json.dumps({"type": "tool_call", "skill": "time", "argument": "", "shell": "id"})
+        result = ApprovedTaskAgent(FakeProvider([raw]), skills).run("Do a task")
+        self.assertEqual(result.status, "invalid_model_output")
+        self.assertEqual(skills.calls, [])
+
+    def test_ledger_audits_goal_and_arguments_without_persisting_plaintext(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ledger = TaskLedger(Path(temp) / "tasks.sqlite3")
+            provider = FakeProvider([
+                json.dumps({"type": "tool_call", "skill": "time", "argument": "private-argument"}),
+                json.dumps({"type": "final", "message": "Done."}),
+            ])
+            result = ApprovedTaskAgent(provider, FakeSkillAgent(), max_steps=2, ledger=ledger).run(
+                "private user objective"
+            )
+            self.assertEqual(result.status, "awaiting_verification")
+            task = ledger.list(limit=1)[0]
+            events = ledger.list_events(task["id"])
+            serialized = repr(events)
+            self.assertNotIn("private user objective", serialized)
+            self.assertNotIn("private-argument", serialized)
+            started = events[0]["payload"]
+            proposed = next(event["payload"] for event in events if event["event_type"] == "tool.proposed")
+            self.assertEqual(len(started["goal_sha256"]), 64)
+            self.assertEqual(len(proposed["argument_sha256"]), 64)
+            self.assertEqual(proposed["argument_chars"], len("private-argument"))
+
     def test_invalid_json_never_executes_a_tool(self):
         skills = FakeSkillAgent()
         result = ApprovedTaskAgent(FakeProvider(["not JSON"]), skills).run("Do a task")
