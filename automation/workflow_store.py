@@ -53,7 +53,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _require_string_object_keys(value: Any, field: str) -> None:
+    """Reject Python mapping keys that JSON would otherwise silently coerce."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{field} object keys must be strings.")
+            _require_string_object_keys(child, field)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _require_string_object_keys(child, field)
+
+
 def _bounded_json(value: Any, limit: int, field: str) -> str:
+    _require_string_object_keys(value, field)
     try:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
