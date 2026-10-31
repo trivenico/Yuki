@@ -42,6 +42,8 @@ class YukiDesktop:
         self.provider_select.pack(side=tk.LEFT, padx=(8, 6))
         self.provider_select.bind("<<ComboboxSelected>>", self._select_provider)
         ttk.Button(settings, text="Refresh providers", command=self._providers).pack(side=tk.LEFT)
+        self.provider_details = tk.StringVar(value="Provider configuration will appear here.")
+        ttk.Label(shell, textvariable=self.provider_details, wraplength=900).pack(fill=tk.X, pady=(4, 0))
         self.provider_names: dict[str, str] = {}
         self.provider_var.set("Loading…")
 
@@ -114,6 +116,7 @@ class YukiDesktop:
     def _providers(self):
         if self.ready and not self.closing:
             self._submit("providers")
+            self._submit("catalog")
 
     def _select_provider(self, _event=None):
         name = self.provider_names.get(self.provider_var.get())
@@ -150,6 +153,7 @@ class YukiDesktop:
                         self.send_button.configure(state=tk.NORMAL)
                         self.entry.focus_set()
                         self._submit("providers")
+                        self._submit("catalog")
                         self._submit("list")
                     else:
                         self.status.set("Unavailable")
@@ -185,6 +189,18 @@ class YukiDesktop:
                         self.status.set("Provider unchanged")
                         self._append(event.get("result", "Provider selection failed."), "error")
                     self._submit("providers")
+                    self._submit("catalog")
+                elif action == "catalog" and event.get("ok"):
+                    selected = next((item for item in event.get("catalog", []) if item.get("selected")), None)
+                    if selected:
+                        model = selected.get("configured_model") or "model not configured"
+                        self.provider_details.set(
+                            f'Model: {model}  ·  Privacy: {selected.get("privacy", "unknown")}  ·  '
+                            f'Readiness: {selected.get("status", "unknown")}  ·  '
+                            f'Credential configured: {"yes" if selected.get("credential_configured") else "no"}'
+                        )
+                    else:
+                        self.provider_details.set("No provider is currently selected.")
                 elif action == "list" and event.get("ok"):
                     conversations = event.get("conversations", [])
                     self.conversation_ids = {
