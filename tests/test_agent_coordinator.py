@@ -68,6 +68,43 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             payload={"state_version": failed.version}, expected_version=failed.version,
         )
         self.assertEqual(self.coordinator.advance(actor_id="alice", plan_id=failed_plan.plan_id).status, "failed")
+    def test_dispatch_respects_configured_active_task_limit(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.coordinator.database_path, self.agents,
+            authorize=self.agent_auth, max_active_tasks=1,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="bounded-parallel-1", subtasks=[
+            SubtaskSpec("a", "First independent task", ("research",), requires_approval=False),
+            SubtaskSpec("b", "Second independent task", ("write",), requires_approval=False),
+        ])
+        first = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(sum(item.task_id is not None for item in first.subtasks), 1)
+        self.assertEqual(first.status, "running")
+        first_task = self.store.claim_next(worker_id="bounded-worker")
+        completed = self.store.transition(
+            first_task.run_id, expected_version=first_task.version, to_state="succeeded",
+            result={"ok": True},
+        )
+        self.store.append_task_event(
+            completed.run_id, kind="task.completed", actor_id="alice",
+            payload={"state_version": completed.version}, expected_version=completed.version,
+        )
+        second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(sum(item.task_id is not None for item in second.subtasks), 2)
+        self.assertEqual(second.status, "running")
+        self.assertNotEqual(
+            next(item.task_id for item in second.subtasks if item.subtask_id == "a"),
+            next(item.task_id for item in second.subtasks if item.subtask_id == "b"),
+        )
+
+    def test_active_task_limit_rejects_invalid_values(self):
+        for value in (0, -1, 21, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    SpecialistAgentCoordinator(
+                        self.runtime, self.coordinator.database_path, self.agents,
+                        authorize=self.agent_auth, max_active_tasks=value,
+                    )
     def test_capability_routing_is_deterministic_and_least_overprovisioned(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="route-1", subtasks=[
             SubtaskSpec("collect", "Collect public sources", ("research",), required_permissions=("web:read",)),
