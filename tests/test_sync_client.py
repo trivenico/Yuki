@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from core.sync_client import SyncClientError, SyncOutbox, SyncHTTPTransport, KeyringCredentialVault
+from core.sync_client import SyncClientError, SyncOutbox, SyncHTTPTransport, KeyringCredentialVault, SyncAgent, SyncHTTPError
 
 
 def make_event(event_id="event_00000001", revision=1):
@@ -15,6 +15,85 @@ def make_event(event_id="event_00000001", revision=1):
         "revision": revision, "occurred_at": "2026-10-31T10:00:00Z",
         "operation": "upsert", "payload": {"status": "open"},
     }
+
+
+class FakeSyncVault:
+    def load(self):
+        return ("device_0000001", "access-token", "refresh-token")
+    def save(self, device_id, access, refresh):
+        self.saved = (device_id, access, refresh)
+    def delete(self):
+        self.deleted = True
+
+
+class FakeUploadTransport:
+    def __init__(self, fail_first=None):
+        self.push_calls = []
+        self.pull_calls = 0
+        self.ack_calls = 0
+        self.refresh_calls = 0
+        self.fail_first = fail_first
+
+    def push(self, event, token):
+        self.push_calls.append((event, token))
+        if self.fail_first:
+            status = self.fail_first
+            self.fail_first = None
+            raise SyncHTTPError(status, "rejected")
+
+    def refresh(self, token):
+        self.refresh_calls += 1
+        return {"device_id": "device_0000001", "access_token": "new-access",
+                "refresh_token": "new-refresh"}
+
+    def pull(self, *args, **kwargs):
+        self.pull_calls += 1
+        raise AssertionError("upload-only operation must not pull remote events")
+
+    def acknowledge(self, *args, **kwargs):
+        self.ack_calls += 1
+        raise AssertionError("upload-only operation must not acknowledge remote events")
+
+
+class SyncUploadOnlyTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.outbox = SyncOutbox(Path(self.tmp.name) / "outbox.sqlite3")
+        self.outbox.enqueue(make_event())
+
+    def tearDown(self):
+        self.outbox.close()
+        self.tmp.cleanup()
+
+    def test_upload_pending_never_pulls_or_applies_remote_events(self):
+        transport = FakeUploadTransport()
+        applied = []
+        agent = SyncAgent(transport, self.outbox, FakeSyncVault(), applied.append)
+        result = agent.push_pending()
+        self.assertEqual(result, {"pushed": 1, "conflicts": 0, "pending": 0})
+        self.assertEqual(len(transport.push_calls), 1)
+        self.assertEqual(transport.pull_calls, 0)
+        self.assertEqual(transport.ack_calls, 0)
+        self.assertEqual(applied, [])
+        self.assertEqual(self.outbox.counts()["sent"], 1)
+
+    def test_upload_pending_rotates_credentials_after_unauthorized(self):
+        transport = FakeUploadTransport(fail_first=401)
+        vault = FakeSyncVault()
+        agent = SyncAgent(transport, self.outbox, vault, lambda _event: None)
+        result = agent.push_pending()
+        self.assertEqual(result["pushed"], 1)
+        self.assertEqual(transport.refresh_calls, 1)
+        self.assertEqual(transport.push_calls[-1][1], "new-access")
+
+    def test_upload_pending_quarantines_revision_conflict(self):
+        transport = FakeUploadTransport(fail_first=409)
+        agent = SyncAgent(transport, self.outbox, FakeSyncVault(), lambda _event: None)
+        result = agent.push_pending()
+        self.assertEqual(result["conflicts"], 1)
+        self.assertEqual(self.outbox.counts()["conflict"], 1)
+        self.assertEqual(transport.pull_calls, 0)
+
 
 
 class SyncOutboxTests(unittest.TestCase):
