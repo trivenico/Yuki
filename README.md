@@ -271,3 +271,8 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+### Explicit task synchronization
+
+The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. Network sync remains disabled until conflict-safe remote application is implemented. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
