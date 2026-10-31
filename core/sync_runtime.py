@@ -45,14 +45,14 @@ class SyncRuntime:
     def pair(self, code: str, device_label: str = "Yuki device") -> str:
         if not isinstance(code, str) or not code.strip() or len(code) > 256:
             raise ValueError("A valid one-time pairing code is required.")
+        if self.vault is None:
+            raise SyncClientError("Install the optional keyring dependency before pairing.")
         result = self._require_transport().pair(code.strip(), device_label[:80])
         device_id = result.get("device_id")
         access = result.get("access_token")
         refresh = result.get("refresh_token")
         if not all(isinstance(value, str) and value for value in (device_id, access, refresh)):
             raise SyncClientError("The sync hub returned an invalid pairing response.")
-        if self.vault is None:
-            raise SyncClientError("Install the optional keyring dependency before pairing.")
         self.vault.save(device_id, access, refresh)
         return "This device is paired with the Yuki Sync Hub. Credentials were saved to the OS credential vault."
 
