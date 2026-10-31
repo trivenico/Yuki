@@ -52,6 +52,14 @@ class SyncOutboxTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.outbox.set_cursor(11)
 
+    def test_memory_outbox_survives_separate_connections(self):
+        memory = SyncOutbox(":memory:")
+        try:
+            self.assertTrue(memory.enqueue(make_event()))
+            self.assertEqual(memory.ready(), [make_event()])
+        finally:
+            memory.close()
+
     def test_transport_rejects_non_https_endpoints(self):
         with self.assertRaises(ValueError):
             SyncHTTPTransport("http://sync.example.com")
