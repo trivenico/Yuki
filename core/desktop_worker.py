@@ -43,7 +43,7 @@ class DesktopRuntimeWorker:
             if self._active_request_id is not None:
                 self._cancel_event.set()
             return uuid.uuid4().hex
-        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "sync_upload", "sync_preview", "sync_queue", "sync_run", "close"}:
+        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "sync_upload", "sync_preview", "sync_queue", "sync_run", "sync_conflicts", "sync_resolve_task", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -159,6 +159,18 @@ class DesktopRuntimeWorker:
                     result = sync_runtime.sync_application(runtime)
                     self._emit(request_id, action, ok=True, result=result,
                                status=sync_runtime.status())
+                elif action == "sync_conflicts":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    self._emit(request_id, action, ok=True,
+                               result=sync_runtime.task_conflicts())
+                elif action == "sync_resolve_task":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    result = sync_runtime.resolve_task_conflict(
+                        payload.get("task_id"), payload.get("choice", "")
+                    )
+                    self._emit(request_id, action, ok=True, result=result)
                 elif action == "select_provider":
                     name = payload.get("name", "")
                     result = runtime.providers.select(name)
