@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_confidence_aware_skill_routing_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "confidence-aware-skill-routing"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("skills/catalog.py", item.entrypoints)
+        self.assertIn("tests/test_skill_catalog.py", item.test_evidence)
+        self.assertTrue(any("Lexical ranking" in limitation for limitation in item.limitations))
+
     def test_independent_python_review_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
