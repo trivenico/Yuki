@@ -62,6 +62,34 @@ class ApplicationRuntimeTests(unittest.TestCase):
             )
             runtime.close()
 
+    def test_shared_send_message_runs_provider_and_persists_both_turns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = YukiApplicationRuntime.create(
+                providers_factory=FakeProviders,
+                conversation_factory=lambda: ConversationStore(Path(tmp) / "chat.sqlite3"),
+            )
+            response = runtime.send_message("hello")
+            self.assertIn("hello", response)
+            self.assertEqual(
+                [(item["role"], item["content"]) for item in runtime.history()],
+                [("user", "hello"), ("assistant", response)],
+            )
+            runtime.close()
+
+    def test_switch_conversation_changes_active_runtime_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = YukiApplicationRuntime.create(
+                providers_factory=FakeProviders,
+                conversation_factory=lambda: ConversationStore(Path(tmp) / "chat.sqlite3"),
+            )
+            first = runtime.active_conversation_id
+            second = runtime.new_conversation("Second")
+            runtime.switch_conversation(first)
+            self.assertEqual(runtime.active_conversation_id, first)
+            with self.assertRaises(ValueError):
+                runtime.switch_conversation("not-a-real-conversation")
+            runtime.close()
+
     def test_runtime_closes_store_if_session_creation_fails(self):
         closed = []
 
