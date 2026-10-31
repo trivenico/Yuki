@@ -28,6 +28,16 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertFalse(unconfigured["ready"])
         self.assertEqual(unconfigured["status"], "api_key_not_configured")
 
+    def test_structured_chat_is_advertised_only_for_supported_adapters(self):
+        catalog = build_provider_catalog(environ={"OPENAI_API_KEY": "key", "YUKI_OPENAI_MODEL": "gpt-test",
+                                                   "YUKI_OLLAMA_MODEL": "qwen3"})
+        openai = next(x for x in catalog if x["name"] == "openai")
+        ollama = next(x for x in catalog if x["name"] == "ollama")
+        gemini = next(x for x in catalog if x["name"] == "gemini")
+        self.assertIn("structured_chat", openai["capabilities"])
+        self.assertIn("structured_chat", ollama["capabilities"])
+        self.assertNotIn("structured_chat", gemini["capabilities"])
+
     def test_ollama_requires_model_configuration(self):
         catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})
         item = next(x for x in catalog if x["name"] == "ollama")
