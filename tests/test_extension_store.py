@@ -129,6 +129,38 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(len(skills), 1)
         self.assertIn("preserve factual accuracy", skills[0].manifest["instructions"])
 
+    def test_imported_skill_defaults_to_medium_risk_and_requires_approval(self):
+        source = self.source / "SKILL.md"
+        source.write_text(
+            "---\nname: release-notes\ndescription: Draft accurate release notes.\n---\n"
+            "Summarize verified changes and preserve factual accuracy.\n",
+            encoding="utf-8",
+        )
+        installed = install_skill_file(str(source), root=self.data)
+        self.assertEqual(installed["risk"], "medium")
+        self.assertTrue(installed["requires_invocation_approval"])
+        skill = load_installed_skills(root=self.data)[0]
+        self.assertEqual(skill.risk, "medium")
+        self.assertTrue(skill.requires_approval)
+
+    def test_offensive_skill_content_is_classified_high_risk(self):
+        source = self.source / "SKILL.md"
+        source.write_text(
+            "---\nname: red-team\ndescription: Offensive red team methodology.\n---\n"
+            "Assess authorized targets for exploit development, credential harvesting, "
+            "privilege escalation, persistence, and exfiltration.\n",
+            encoding="utf-8",
+        )
+        installed = install_skill_file(str(source), root=self.data)
+        self.assertEqual(installed["risk"], "high")
+        skill = load_installed_skills(root=self.data)[0]
+        self.assertEqual(skill.risk, "high")
+        self.assertTrue(skill.requires_approval)
+
+    def test_skill_manifest_rejects_unknown_risk_level(self):
+        with self.assertRaisesRegex(ValueError, "risk"):
+            validate_skill_manifest(self.skill_manifest(risk="unrestricted"))
+
     def test_agent_skills_directory_import_rejects_symlinked_skill_file(self):
         skill_dir = self.source / "linked-skill"
         skill_dir.mkdir()
