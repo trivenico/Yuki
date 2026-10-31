@@ -28,7 +28,7 @@ class ConversationSessionTests(unittest.TestCase):
         second = session.respond("What did I just say?")
         self.assertEqual(first.message, "Hello there!")
         self.assertEqual(second.conversation_turns, 2)
-        self.assertIn('"name": "Yuki"', provider.prompts[0])
+        self.assertIn('You are Yuki', provider.prompts[0])
         self.assertIn("thoughtful long-term companion", provider.prompts[0].lower())
         self.assertIn("Hi Yuki", provider.prompts[1])
         self.assertIn("Hello there!", provider.prompts[1])
