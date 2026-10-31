@@ -38,9 +38,10 @@ class MemoryStore:
                 raise RuntimeError("Memory file contains an invalid entry.")
             if (
                 not isinstance(item["id"], str) or not item["id"] or len(item["id"]) > 64
-                or not isinstance(item["created_at"], str) or len(item["created_at"]) > 80
+                or not isinstance(item["created_at"], str) or not item["created_at"] or len(item["created_at"]) > 80
                 or not isinstance(item["text"], str) or not item["text"].strip()
                 or len(item["text"]) > self.MAX_TEXT
+                or not isinstance(item.get("category", "note"), str)
                 or item.get("category", "note") not in {"note", "preference", "lesson"}
             ):
                 raise RuntimeError("Memory file contains an invalid entry.")
