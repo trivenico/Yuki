@@ -101,12 +101,24 @@ def run_cli(
             command = message.strip().lower()
             if command in {"/quit", "/exit"}:
                 return 0
+            if command == "/role":
+                output_fn("Yuki> Available roles: companion, tutor, interviewer, developer, security, marketing. Use /role NAME.")
+                continue
+            if command.startswith("/role "):
+                role_name = command.split(None, 1)[1]
+                try:
+                    role = session.set_role(role_name)
+                except ValueError:
+                    output_fn("Yuki> Unknown role. Available: companion, tutor, interviewer, developer, security, marketing.")
+                else:
+                    output_fn("Yuki> Interaction style changed to " + role["name"] + ". Permissions are unchanged.")
+                continue
             if command == "/reset":
                 session.reset()
                 output_fn("Yuki> This conversation has been cleared.")
                 continue
             if command in {"/help", "/?"}:
-                output_fn("Yuki> I can chat with context during this session. Commands: /reset, /quit.")
+                output_fn("Yuki> I can chat with context during this session. Commands: /role NAME, /reset, /quit.")
                 continue
             if not message.strip():
                 continue

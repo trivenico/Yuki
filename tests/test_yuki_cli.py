@@ -134,6 +134,22 @@ class YukiCliTests(unittest.TestCase):
         self.assertNotIn("secret payload", " ".join(output))
         self.assertIn("Yuki> recovered", output)
 
+    def test_chat_role_command_updates_response_style(self):
+        provider = FakeProvider(answer="reviewed")
+        output = []
+        messages = iter(["/role developer", "review my code", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: provider,
+            input_fn=lambda prompt: next(messages),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Interaction style changed to developer", " ".join(output))
+        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("Permissions are unchanged", " ".join(output))
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(

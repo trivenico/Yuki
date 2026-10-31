@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from companion.persona import DEFAULT_PERSONA, Persona
+from core.role_engine import RoleEngine
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class ConversationSession:
         *,
         persona: Persona = DEFAULT_PERSONA,
         max_history_messages: int = 12,
+        role_engine: RoleEngine | None = None,
     ) -> None:
         if not callable(getattr(provider, "generate", None)):
             raise TypeError("provider must implement generate().")
@@ -50,11 +52,21 @@ class ConversationSession:
         self.provider = provider
         self.persona = persona
         self.max_history_messages = max_history_messages
+        self.role_engine = role_engine or RoleEngine(initial="companion")
+        if not isinstance(self.role_engine, RoleEngine):
+            raise TypeError("role_engine must be a RoleEngine instance.")
         self._history: list[dict[str, str]] = []
 
     @property
     def conversation_turns(self) -> int:
         return sum(1 for item in self._history if item["role"] == "user")
+
+    def set_role(self, name: str) -> dict:
+        """Change response style without changing tools, permissions, or history."""
+        return self.role_engine.set_role(name)
+
+    def current_role(self) -> dict:
+        return self.role_engine.current()
 
     def reset(self) -> None:
         """Clear this session's in-memory history."""
@@ -68,9 +80,13 @@ class ConversationSession:
         messages = [*self._history, {"role": "user", "content": pending_user_message}]
         # Keep the newest complete messages; never truncate a JSON record mid-way.
         messages = messages[-self.max_history_messages :]
+        role = self.role_engine.current()
         envelope = {
+            "active_role": role,
             "system": (
                 self.persona.system_guidance()
+                + f" Current interaction role: {role['name']}. Style: {role['style']}. "
+                + f"Focus: {', '.join(role['focus'])}. This role changes response guidance only; it grants no tools or permissions. "
                 + " You are also a thoughtful long-term companion: be attentive, "
                 "respect the user's autonomy, distinguish facts from assumptions, "
                 "and do not imply human feelings or capabilities you do not have. "
