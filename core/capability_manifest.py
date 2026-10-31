@@ -127,6 +127,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "persistent-conversation-sessions", "Workspace-scoped persistent conversations", "experimental",
+        "Persists conversation sessions and ordered messages in SQLite, with workspace-scoped access, "
+        "idempotent message appends, read-only archival, and CLI lifecycle commands.",
+        ("core/conversation_store.py", "yuki_cli.py"),
+        ("SQLite", "local YUKI_HOME storage"),
+        ("conversation:read", "conversation:write", "conversation:archive"),
+        ("local conversation database writes",),
+        ("local",), "high",
+        ("tests/test_conversation_store.py", "tests/test_yuki_cli.py"),
+        ("Workspace identity is supplied by the local CLI caller; hosted identity middleware is not implemented.",
+         "Conversation storage is not yet connected to the guarded agent runtime, model context, or desktop UI.",
+         "Approvals and tool execution permissions are never persisted or granted by conversation records.",
+         "No encryption-at-rest, multi-device synchronization, retention policy, or session resume in the run command yet."),
+    ),
+    CapabilityContract(
         "agent-cli-ndjson", "Agent-native NDJSON CLI", "experimental",
         "Runs a single provider-backed Yuki turn and streams bounded JSON events with session and request correlation IDs.",
         ("yuki_cli.py", "core/agent_cli_protocol.py"),
