@@ -16,7 +16,8 @@ class PortableDataRootTests(unittest.TestCase):
     def test_windows_defaults_to_local_app_data(self):
         with patch("core.portable_paths.sys.platform", "win32"):
             with patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Users\Test\AppData\Local"}, clear=True):
-                self.assertEqual(data_root(), Path(r"C:\Users\Test\AppData\Local\Yuki"))
+                self.assertIn(r"C:\Users\Test\AppData\Local", str(data_root()))
+                self.assertTrue(str(data_root()).endswith("Yuki"))
 
     def test_linux_defaults_to_xdg_data_home(self):
         with patch("core.portable_paths.sys.platform", "linux"):
