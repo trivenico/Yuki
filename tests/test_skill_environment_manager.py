@@ -51,6 +51,10 @@ class SkillEnvironmentManagerTests(unittest.TestCase):
             python_executable=self.python, wheelhouse=self.wheelhouse, lock_entries=self.entries,
         )
         self.assertIn("--no-index", plan.install_argv)
+        self.assertIn("--isolated", plan.install_argv)
+        self.assertEqual(plan.install_argv[-1], plan.lockfile_path)
+        self.assertEqual(len(plan.lockfile_sha256), 64)
+        self.assertEqual(plan.as_dict()["lockfile_sha256"], plan.lockfile_sha256)
         self.assertIn("--require-hashes", plan.install_argv)
         self.assertIn("--only-binary=:all:", plan.install_argv)
         self.assertEqual(plan.package_count, 1)
