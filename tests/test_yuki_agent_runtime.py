@@ -94,6 +94,25 @@ class TaskStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "budget_tokens"):
             self.store.submit("test", {}, budget_tokens=-1)
 
+    def test_rejects_non_string_nested_result_keys(self):
+        task = self.store.submit("test", {"input": "ok"}, approval_required=False)
+        claimed = self.store.claim_next("worker-a")
+        with self.assertRaisesRegex(ValueError, "string object keys"):
+            self.store.complete(task["id"], "worker-a", {"nested": {1: "ambiguous"}})
+        current = self.store.get(task["id"])
+        self.assertEqual(current["status"], "running")
+        self.assertEqual(current["result"], None)
+
+    def test_rejects_oversized_result_before_completing_task(self):
+        from yuki_agent_runtime import MAX_TASK_PAYLOAD_BYTES
+        task = self.store.submit("test", {"input": "ok"}, approval_required=False)
+        self.store.claim_next("worker-a")
+        with self.assertRaisesRegex(ValueError, "task limit"):
+            self.store.complete(task["id"], "worker-a", {"data": "x" * MAX_TASK_PAYLOAD_BYTES})
+        current = self.store.get(task["id"])
+        self.assertEqual(current["status"], "running")
+        self.assertIsNone(current["result"])
+
     def test_rejects_non_string_nested_payload_keys(self):
         with self.assertRaisesRegex(ValueError, "string object keys"):
             self.store.submit("test", {"nested": {1: "ambiguous"}})
