@@ -110,7 +110,7 @@ class ConversationAgentBridge:
                     None,
                 )
                 if saved is not None:
-                    match = re.match(r"Yuki created agent plan ([A-Za-z0-9_.-]+)\\.", saved["content"])
+                    match = re.match(r"Yuki created agent plan ([A-Za-z0-9_.-]+)\.", saved["content"])
                     plan_id = match.group(1) if match else None
                     plan_status = None
                     if plan_id is not None:
