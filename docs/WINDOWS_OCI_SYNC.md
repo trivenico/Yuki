@@ -1,6 +1,6 @@
 # Windows + Oracle Cloud synchronization architecture
 
-Status: design and validation foundation only. No network synchronization is enabled by this change.
+Status: backend implementation foundation. The WSGI API and credential primitives exist on the feature branch; no production deployment or Windows client synchronization is enabled.
 
 ## Target topology
 
@@ -38,9 +38,9 @@ This is validation only. It is not a transport, identity provider, encryption im
 
 ## Required service design
 
-1. Device enrollment: one-time pairing code displayed on the already authenticated hub; short TTL, single use, user approval and revocation.
-2. Authentication: short-lived access tokens, rotating refresh credentials stored in OS credential storage on Windows and a protected secret store on Linux. Never store plaintext tokens in sync records.
-3. Transport: HTTPS only, strict origin allow-list, request size limits, rate limits and authenticated device identity.
+1. Device enrollment: one-time high-entropy pairing code with a short TTL and single-use consumption is implemented in `core/sync_auth.py`; the administrative code-creation workflow and user-facing pairing UI remain to be built.
+2. Authentication: short-lived access tokens and rotating refresh credentials are implemented as hashed SQLite records; Windows Credential Manager and protected Linux secret storage are not yet wired. Refresh-token replay revokes the device.
+3. Transport: `core/sync_api.py` provides authenticated push/pull/ack routes plus pairing and refresh routes, with request-size bounds. TLS termination, rate limits, trusted proxy configuration and a production WSGI server are still required.
 4. Storage: server-side SQLite for a single-user starter deployment, with append-only event log, idempotency key on event_id, per-device cursor and transactional acknowledgements. Keep DB on local Linux disk; never expose SQLite over the network.
 5. Conflict handling: server sequence is authoritative; per-object revisions detect stale writes. Concurrent edits return a conflict to clients instead of silently overwriting. Tombstones are retained until all active devices acknowledge past their sequence or expire under a documented retention policy.
 6. Security: per-user/device authorization, device revocation, audit events, backup/restore, encrypted disks and TLS. Add end-to-end encryption for selected private content before claiming the sync hub cannot read it.
@@ -67,7 +67,7 @@ Do not enable sync by default until authentication, device revocation, replay/id
 
 # Yuki Sync Hub event store
 
-This phase adds the durable local storage layer only. It does not expose an HTTP endpoint or authenticate network requests.
+The durable local event store is implemented in `core/sync_store.py` and is used by the WSGI API. The API must still be deployed behind a production-grade TLS and authentication boundary.
 
 ## Store contract
 
@@ -104,4 +104,16 @@ Run:
 - a 256 KB request-body limit, bounded pull pages, JSON-only input, no-store responses, and generic internal errors;
 - injected authentication: the API passes only the authenticated device ID to the event store, which independently checks enrollment and revocation.
 
-The API deliberately does not issue or validate tokens itself. Production deployment must inject a reviewed short-lived-token authenticator, terminate TLS at a trusted reverse proxy, strip untrusted forwarded identity headers, rate-limit requests, and bind the WSGI server to loopback/private networking. Do not run the development WSGI server as a public internet service. Device pairing and credential lifecycle remain separate work.
+When constructed with `SyncCredentialStore`, the API validates access tokens and exposes one-time pairing and refresh endpoints. Pairing-code creation remains an administrative/local operation. Production deployment must terminate TLS at a trusted reverse proxy, strip untrusted forwarded identity headers, rate-limit requests, and bind the WSGI server to loopback/private networking. Do not run this WSGI application as a public internet service. OS credential storage and production token lifecycle controls remain outstanding.
+
+
+## Current API routes (feature branch)
+
+- `POST /v1/pair`: consume a one-time pairing code and return access/refresh credentials.
+- `POST /v1/refresh`: rotate credentials; replaying a previously rotated refresh token revokes the device.
+- `POST /v1/events`: authenticated event append.
+- `GET /v1/events?after=N&limit=N`: authenticated paginated pull.
+- `POST /v1/ack`: authenticated monotonic acknowledgement.
+- `GET /health`: read-only liveness response.
+
+Pairing codes are created through the local administrative credential-store API; this branch does not yet expose a remote pairing-code minting endpoint. Treat access/refresh responses as secrets and never log them. The API still needs rate limiting, TLS deployment, and production server configuration.
