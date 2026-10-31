@@ -59,6 +59,7 @@ class YukiDesktop:
         ttk.Button(sync_actions, text="Queue skills", command=lambda: self._sync_queue("skills")).pack(side=tk.LEFT, padx=(6, 0))
         self.sync_run_button = ttk.Button(sync_actions, text="Sync both ways", command=self._sync_run)
         self.sync_run_button.pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(sync_actions, text="Resolve task conflicts", command=self._sync_conflicts).pack(side=tk.LEFT, padx=(6, 0))
         self.sync_run_active = False
         self.sync_preview = None
         self.provider_names: dict[str, str] = {}
@@ -175,6 +176,30 @@ class YukiDesktop:
         if code and code.strip():
             self._submit("sync_pair", code=code.strip(), device_label="Yuki Windows Desktop")
             self.status.set("Pairing device…")
+
+    def _sync_conflicts(self):
+        if self.ready and not self.closing:
+            self.status.set("Checking task conflicts…")
+            self._submit("sync_conflicts")
+
+    def _resolve_task_conflict(self, conflict):
+        choice = messagebox.askyesnocancel(
+            "Resolve synchronized task",
+            "Task: " + str(conflict.get("description", "")) + "\\n"
+            + "Local revision " + str(conflict.get("local_revision", 0))
+            + ": " + str(conflict.get("description", "")) + "\\n"
+            + "Remote revision " + str(conflict.get("remote_revision", 0))
+            + ": " + str(conflict.get("remote_description", "")) + "\\n\\n"
+            + "Yes = accept remote version\\nNo = keep local version\\nCancel = leave unresolved",
+            parent=self.root,
+        )
+        if choice is None:
+            return
+        self._submit(
+            "sync_resolve_task",
+            task_id=conflict.get("task_id"),
+            choice="remote" if choice else "local",
+        )
 
     def _sync_preview(self):
         if self.ready and not self.closing:
@@ -355,6 +380,27 @@ class YukiDesktop:
                     else:
                         self.status.set("Sync stopped safely")
                         self._append("Bidirectional sync stopped (" + event.get("error", "Error") + "). No unhandled event was acknowledged.", "error")
+                elif action == "sync_conflicts":
+                    if event.get("ok"):
+                        conflicts = event.get("result", [])
+                        self.status.set(str(len(conflicts)) + " task conflict(s)")
+                        if not conflicts:
+                            messagebox.showinfo("Yuki sync conflicts", "No unresolved task conflicts.", parent=self.root)
+                        else:
+                            for conflict in conflicts:
+                                self._resolve_task_conflict(conflict)
+                    else:
+                        self.status.set("Unable to load conflicts")
+                        self._append("Conflict review failed (" + event.get("error", "Error") + ").", "error")
+                elif action == "sync_resolve_task":
+                    if event.get("ok"):
+                        self.status.set("Task conflict resolved")
+                        self._append("Task conflict resolved using the selected version.")
+                        self._submit("sync_conflicts")
+                        self._submit("list")
+                    else:
+                        self.status.set("Conflict resolution failed")
+                        self._append("Unable to resolve task conflict (" + event.get("error", "Error") + ").", "error")
                 elif action == "sync_upload":
                     self.sync_upload_active = False
                     self.sync_upload_button.configure(state=tk.NORMAL)
