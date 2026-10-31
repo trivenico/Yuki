@@ -12,11 +12,14 @@ import uuid
 from typing import Callable
 
 from core.application_runtime import YukiApplicationRuntime
+from core.sync_runtime import SyncRuntime
 
 
 class DesktopRuntimeWorker:
-    def __init__(self, runtime_factory: Callable = YukiApplicationRuntime.create):
+    def __init__(self, runtime_factory: Callable = YukiApplicationRuntime.create,
+                 sync_runtime_factory: Callable = SyncRuntime):
         self._runtime_factory = runtime_factory
+        self._sync_runtime_factory = sync_runtime_factory
         self._commands: queue.Queue = queue.Queue(maxsize=64)
         self.results: queue.Queue = queue.Queue()
         self._thread = threading.Thread(
@@ -40,7 +43,7 @@ class DesktopRuntimeWorker:
             if self._active_request_id is not None:
                 self._cancel_event.set()
             return uuid.uuid4().hex
-        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "close"}:
+        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -61,8 +64,10 @@ class DesktopRuntimeWorker:
 
     def _run(self) -> None:
         runtime = None
+        sync_runtime = None
         try:
             runtime = self._runtime_factory()
+            sync_runtime = self._sync_runtime_factory()
             self._emit(None, "ready", ok=True)
         except Exception as exc:
             self._emit(None, "ready", ok=False, error=type(exc).__name__)
@@ -119,6 +124,13 @@ class DesktopRuntimeWorker:
                 elif action == "catalog":
                     self._emit(request_id, action, ok=True,
                                catalog=runtime.providers.catalog())
+                elif action == "sync_status":
+                    self._emit(request_id, action, ok=True, status=sync_runtime.status())
+                elif action == "sync_pair":
+                    result = sync_runtime.pair(payload.get("code", ""),
+                                               payload.get("device_label", "Yuki Desktop"))
+                    self._emit(request_id, action, ok=True, result=result,
+                               status=sync_runtime.status())
                 elif action == "select_provider":
                     name = payload.get("name", "")
                     result = runtime.providers.select(name)
@@ -132,6 +144,8 @@ class DesktopRuntimeWorker:
                                if runtime.providers.current() else None)
                 elif action == "close":
                     try:
+                        if sync_runtime is not None:
+                            sync_runtime.close()
                         runtime.close()
                         self._emit(request_id, action, ok=True)
                     except Exception as exc:
@@ -139,5 +153,7 @@ class DesktopRuntimeWorker:
                     return
             except Exception as exc:
                 self._emit(request_id, action, ok=False, error=type(exc).__name__)
+        if sync_runtime is not None:
+            sync_runtime.close()
         if runtime is not None:
             runtime.close()
