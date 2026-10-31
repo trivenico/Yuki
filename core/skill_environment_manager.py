@@ -113,8 +113,8 @@ def plan_skill_environment(
     python = python.resolve(strict=True)
     wheels = wheels.resolve(strict=True)
     skill_root = root / skill_id
-    if skill_root.is_symlink():
-        raise SkillEnvironmentError("Per-skill environment directory must not be a symbolic link.")
+    if skill_root.is_symlink() or (skill_root.exists() and not skill_root.is_dir()):
+        raise SkillEnvironmentError("Per-skill environment directory must be a non-symlink directory.")
     environment = skill_root / skill_version
     if environment.exists() or environment.is_symlink():
         raise SkillEnvironmentError("Target environment already exists; refusing to overwrite it.")
