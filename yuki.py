@@ -202,7 +202,22 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                         )
                     return "Usage: /sync tasks preview | queue"
                 if action == "run":
-                    return "Network sync remains disabled until conflict-safe remote task application and conversation/skill adapters are complete. Queued task events remain local; nothing was uploaded."
+                    if runtime.vault is None or not runtime.vault.load():
+                        return "Pair this device first with /sync pair. No network request was made."
+                    try:
+                        result = runtime.sync_once(
+                            lambda event: TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
+                        )
+                    except SyncClientError as error:
+                        write_audit_event("sync:run", "rejected")
+                        return f"Sync stopped safely: {error} No unhandled event was acknowledged."
+                    write_audit_event("sync:run", "completed")
+                    return (
+                        "Yuki sync cycle completed. "
+                        f"Uploaded: {result['pushed']}; downloaded/applied: {result['pulled']}; "
+                        f"conflicts: {result['conflicts']}. "
+                        "Only task upserts are currently supported; deletes and other collections are rejected."
+                    )
                 return "Usage: /sync status | pair | tasks preview | tasks queue | run"
             finally:
                 runtime.close()
