@@ -5,7 +5,6 @@ to disk unless a caller explicitly adds a separate persistence integration.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,7 +23,7 @@ class ConversationError(RuntimeError):
 
 
 class ConversationSession:
-    """Build bounded context around a provider's single-prompt generate interface."""
+    """Build bounded context using a provider with structured chat support."""
 
     MAX_USER_CHARS = 4_000
     MAX_REPLY_CHARS = 8_000
@@ -38,8 +37,8 @@ class ConversationSession:
         max_history_messages: int = 12,
         role_engine: RoleEngine | None = None,
     ) -> None:
-        if not callable(getattr(provider, "generate", None)):
-            raise TypeError("provider must implement generate().")
+        if not callable(getattr(provider, "generate_chat", None)):
+            raise TypeError("provider must implement generate_chat().")
         if not isinstance(persona, Persona):
             raise TypeError("persona must be a Persona instance.")
         if (
@@ -78,7 +77,8 @@ class ConversationSession:
 
     def _chat_context(self, pending_user_message: str) -> tuple[str, list[dict[str, str]]]:
         messages = [*self._history, {"role": "user", "content": pending_user_message}]
-        messages = messages[-self.max_history_messages :]
+        while len(messages) > self.max_history_messages:
+            messages = messages[2:]
         role = self.role_engine.current()
         system = (
             self.persona.system_guidance()
