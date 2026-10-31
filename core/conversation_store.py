@@ -90,6 +90,19 @@ class ConversationStore:
                     );
                     CREATE INDEX IF NOT EXISTS conversation_messages_order
                         ON conversation_messages(conversation_id, sequence);
+                    CREATE TABLE IF NOT EXISTS conversation_turns (
+                        request_id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                        workspace_id TEXT NOT NULL,
+                        user_message_id TEXT NOT NULL REFERENCES conversation_messages(id),
+                        assistant_message_id TEXT REFERENCES conversation_messages(id),
+                        status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        error_code TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS conversation_turns_session_status
+                        ON conversation_turns(conversation_id, status, created_at);
                 """)
 
     @staticmethod
@@ -209,6 +222,128 @@ class ConversationStore:
                 (session_id, workspace, after_sequence, limit),
             ).fetchall()
         return [self._message(row) for row in rows]
+
+
+    def begin_turn(self, workspace_id: str, session_id: str, request_id: str, user_content: str) -> dict[str, Any]:
+        """Atomically persist a user message and acquire the session's single active-turn lease."""
+        workspace = self._workspace(workspace_id)
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id must be non-empty.")
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
+            raise ValueError("request_id must be non-empty text of at most 128 characters.")
+        if not isinstance(user_content, str) or not user_content.strip() or len(user_content) > _MAX_CONTENT:
+            raise ValueError("User content must be non-empty text of at most 64000 characters.")
+        now = _now()
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                session = db.execute(
+                    "SELECT status FROM conversations WHERE id=? AND workspace_id=?", (session_id, workspace)
+                ).fetchone()
+                if session is None:
+                    raise KeyError("Conversation not found in this workspace.")
+                if session["status"] != "active":
+                    raise ValueError("Archived conversations are read-only.")
+                existing = db.execute(
+                    "SELECT * FROM conversation_turns WHERE request_id=?", (request_id,)
+                ).fetchone()
+                if existing is not None:
+                    if existing["conversation_id"] != session_id or existing["workspace_id"] != workspace:
+                        raise ValueError("request_id is already bound to another conversation.")
+                    return dict(existing)
+                running = db.execute(
+                    "SELECT request_id FROM conversation_turns WHERE conversation_id=? AND status='running'",
+                    (session_id,),
+                ).fetchone()
+                if running is not None:
+                    raise RuntimeError("This conversation already has an active turn.")
+                message_id = uuid4().hex
+                db.execute(
+                    "INSERT INTO conversation_messages(id,conversation_id,workspace_id,role,content,created_at,idempotency_key,metadata_json) VALUES(?,?,?,?,?,?,?,?)",
+                    (message_id, session_id, workspace, "user", user_content, now, request_id, "{}"),
+                )
+                db.execute(
+                    "INSERT INTO conversation_turns(request_id,conversation_id,workspace_id,user_message_id,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (request_id, session_id, workspace, message_id, "running", now, now),
+                )
+                db.execute("UPDATE conversations SET updated_at=? WHERE id=? AND workspace_id=?", (now, session_id, workspace))
+                return dict(db.execute("SELECT * FROM conversation_turns WHERE request_id=?", (request_id,)).fetchone())
+
+    def complete_turn(self, workspace_id: str, request_id: str, assistant_content: str) -> dict[str, Any]:
+        """Persist the assistant response and close a running turn in one transaction."""
+        workspace = self._workspace(workspace_id)
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValueError("request_id must be non-empty.")
+        if not isinstance(assistant_content, str) or not assistant_content.strip() or len(assistant_content) > _MAX_CONTENT:
+            raise ValueError("Assistant content must be non-empty text of at most 64000 characters.")
+        now = _now()
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                turn = db.execute(
+                    "SELECT * FROM conversation_turns WHERE request_id=? AND workspace_id=?",
+                    (request_id, workspace),
+                ).fetchone()
+                if turn is None:
+                    raise KeyError("Conversation turn not found in this workspace.")
+                if turn["status"] == "completed":
+                    row = db.execute("SELECT * FROM conversation_messages WHERE id=?", (turn["assistant_message_id"],)).fetchone()
+                    return self._message(row)
+                if turn["status"] != "running":
+                    raise ValueError("Only running turns can be completed.")
+                message_id = uuid4().hex
+                db.execute(
+                    "INSERT INTO conversation_messages(id,conversation_id,workspace_id,role,content,created_at,metadata_json) VALUES(?,?,?,?,?,?,?)",
+                    (message_id, turn["conversation_id"], workspace, "assistant", assistant_content, now, "{}"),
+                )
+                db.execute(
+                    "UPDATE conversation_turns SET status='completed',assistant_message_id=?,updated_at=? WHERE request_id=?",
+                    (message_id, now, request_id),
+                )
+                db.execute("UPDATE conversations SET updated_at=? WHERE id=? AND workspace_id=?", (now, turn["conversation_id"], workspace))
+                row = db.execute("SELECT * FROM conversation_messages WHERE id=?", (message_id,)).fetchone()
+        return self._message(row)
+
+    def fail_turn(self, workspace_id: str, request_id: str, *, error_code: str) -> dict[str, Any]:
+        """Mark a failed provider turn without deleting its persisted user request."""
+        workspace = self._workspace(workspace_id)
+        if not isinstance(request_id, str) or not request_id.strip():
+            raise ValueError("request_id must be non-empty.")
+        if not isinstance(error_code, str) or not error_code.strip() or len(error_code) > 80:
+            raise ValueError("error_code must be non-empty text of at most 80 characters.")
+        with self._lock, closing(self._connect()) as db:
+            with db:
+                cursor = db.execute(
+                    "UPDATE conversation_turns SET status='failed',error_code=?,updated_at=? WHERE request_id=? AND workspace_id=? AND status='running'",
+                    (error_code, _now(), request_id, workspace),
+                )
+                if cursor.rowcount == 0:
+                    row = db.execute(
+                        "SELECT * FROM conversation_turns WHERE request_id=? AND workspace_id=?",
+                        (request_id, workspace),
+                    ).fetchone()
+                    if row is None:
+                        raise KeyError("Conversation turn not found in this workspace.")
+                    if row["status"] != "failed":
+                        raise ValueError("Only running turns can be failed.")
+                else:
+                    row = db.execute(
+                        "SELECT * FROM conversation_turns WHERE request_id=? AND workspace_id=?",
+                        (request_id, workspace),
+                    ).fetchone()
+        return dict(row)
+
+    def list_turns(self, workspace_id: str, session_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        workspace = self._workspace(workspace_id)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500.")
+        self.get_session(workspace, session_id)
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT * FROM conversation_turns WHERE conversation_id=? AND workspace_id=? ORDER BY created_at DESC LIMIT ?",
+                (session_id, workspace, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def archive_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
         workspace = self._workspace(workspace_id)
