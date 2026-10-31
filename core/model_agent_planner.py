@@ -98,6 +98,8 @@ class ModelAgentPlanner:
                     raise ValueError(f"{field} must be an array of strings")
             if type(row["requires_approval"]) is not bool:
                 raise ValueError("requires_approval must be a boolean")
+            if row["requires_approval"] is not True:
+                raise ValueError("model-proposed tasks must require explicit approval")
             specs.append(SubtaskSpec(
                 subtask_id=row["subtask_id"],
                 description=row["description"],
