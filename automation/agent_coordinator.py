@@ -183,6 +183,10 @@ class SpecialistAgentCoordinator:
         if type(agent.enabled) is not bool:
             raise ValueError("enabled must be a boolean.")
 
+    def can_submit_plan(self, actor_id: str) -> bool:
+        """Check plan-submission authorization before invoking an external model provider."""
+        return self._allowed(actor_id, "agent:plan", "")
+
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             return False
