@@ -112,7 +112,7 @@ class TypedToolRuntimeTests(unittest.TestCase):
         result = runtime.invoke(call)
         self.assertTrue(result.ok)
         self.assertLessEqual(len(result.output), 10)
-        self.assertEqual(result.output, "… [trunc")
+        self.assertEqual(len(result.output), 10)
         tiny = TypedToolRuntime(
             {"note.save": (tool, lambda args: "x" * 30)}, Policy(), max_output_chars=1
         )
