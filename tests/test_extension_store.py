@@ -218,6 +218,10 @@ class ExtensionStoreTests(unittest.TestCase):
                 "Leonxlnx/taste-skill", root=self.data, approve=lambda preview: False
             )
         self.assertFalse(cancelled["installed"])
+        self.assertEqual(cancelled["preview"]["risk"], "medium")
+        self.assertTrue(cancelled["preview"]["requires_invocation_approval"])
+        self.assertIn("lint_report", cancelled["preview"])
+        self.assertEqual(cancelled["preview"]["license"], None)
         self.assertIn("skills/taste-skill/scripts/draw.mjs", cancelled["preview"]["executable_script_candidates"])
         self.assertEqual(load_installed_skills(root=self.data), [])
 
@@ -228,6 +232,7 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(installed["source_commit"], commit)
         self.assertEqual(installed["source_path"], "skills/taste-skill/SKILL.md")
         self.assertEqual(installed["compatibility"], "instructions-only")
+        self.assertEqual(installed["risk"], "medium")
         skills = load_installed_skills(root=self.data)
         self.assertEqual(len(skills), 1)
         self.assertEqual(len(skills[0].manifest["instructions"]), len(document.split("---\n", 2)[-1].strip()))
