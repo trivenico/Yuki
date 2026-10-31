@@ -47,7 +47,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
     """Return sanitized catalog metadata; never include credential values."""
     cfg = config if isinstance(config, dict) else {}
     env = os.environ if environ is None else environ
-    current = str(cfg.get("provider", "mock")).strip().lower()
+    current = str(cfg.get("provider", env.get("YUKI_PROVIDER", "openai"))).strip().lower()
     manager = {}
     if provider_manager is not None:
         try:
