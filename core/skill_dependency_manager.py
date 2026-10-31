@@ -156,6 +156,9 @@ def plan_skill_dependencies(
             deps = validate_skill_dependencies(raw.get("dependencies"))
             skill_version = raw.get("skill_version", "0.0.0")
             _version_tuple(skill_version)
+            python_spec = raw.get("python_compatibility")
+            if python_spec is not None:
+                python_spec = validate_version_specifier(python_spec)
         except (DependencyDeclarationError, TypeError) as exc:
             errors.append(f"{identifier}: {exc}")
             continue
@@ -173,6 +176,7 @@ def plan_skill_dependencies(
     visiting: list[str] = []
     visited: set[str] = set()
     package_requirements: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    python_compatibility: list[tuple[str, str]] = []
 
     def visit(identifier: str) -> None:
         if identifier in visiting:
@@ -195,6 +199,8 @@ def plan_skill_dependencies(
             visit(dep_id)
         for dependency in manifest["dependencies"]["python"]:
             package_requirements[dependency["name"]].append((identifier, dependency["version"]))
+        if manifest.get("python_compatibility"):
+            python_compatibility.append((identifier, manifest["python_compatibility"]))
         visiting.pop()
         visited.add(identifier)
         order.append(identifier)
@@ -212,6 +218,10 @@ def plan_skill_dependencies(
     current_python = python_version or ".".join(map(str, sys.version_info[:3]))
     if not _VERSION_RE.fullmatch(current_python):
         errors.append("Current Python version is not a supported numeric version.")
+    else:
+        for owner, constraint in python_compatibility:
+            if not version_satisfies(current_python, constraint):
+                incompatible_python.add(f"Python {constraint} required by {owner} (current {current_python})")
     ready = not (errors or missing_skills or incompatible_skills or missing_python or incompatible_python or cycles)
     return DependencyPlan(
         skill_id, ready, tuple(order), tuple(sorted(missing_skills)),
