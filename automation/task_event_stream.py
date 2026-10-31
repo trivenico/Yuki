@@ -39,7 +39,8 @@ class TaskEventStream:
             raise ValueError("limit must be between 1 and 500")
         # Ask for one extra record so clients can distinguish a full page from completion.
         events = self.runtime.events(
-            actor_id=actor_id, task_id=task_id, after_sequence=after_sequence,
+            actor_id=actor_id, task_id=task_id,
+            after_sequence=after_sequence, limit=limit + 1,
         )
         page = tuple(events[:limit])
         return EventBatch(
