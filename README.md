@@ -308,6 +308,10 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. The CLI `/sync run` performs the reviewed HTTPS sync cycle for supported task upserts, conversation history and data-only skill packs. The desktop currently exposes upload-only sync and does not apply incoming records. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
 
 
+### Task conflict review
+
+When two devices submit different content for the same task revision, Yuki now preserves the local task and stores the remote candidate as a durable conflict record. The desktop **Resolve task conflicts** action shows both versions and lets the user accept the remote version, keep the local version (which is queued as a new revision), or cancel and leave the conflict unresolved. Failed conflict persistence rolls back the in-memory change, so the incoming event remains unacknowledged and can be retried. Task edits are blocked from queueing while a conflict remains unresolved.
+
 ### Desktop collection sync controls
 
 The native desktop now shares the application runtime's task, conversation and skill synchronization adapters. **Preview sharing** reports counts without queueing content. **Queue tasks**, **Queue chats** and **Queue skills** require a confirmation and add only the selected allow-listed data to the durable local outbox. **Sync both ways** requires a separate confirmation and invokes the same reviewed CLI application handlers for task upserts, conversation history and data-only skill packs. Executable plugins, credentials, approval grants and deletes remain excluded. Conversation content is private unless the user explicitly queues it.
