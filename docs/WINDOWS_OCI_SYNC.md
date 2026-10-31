@@ -192,3 +192,23 @@ Run the focused regression suite with:
 `python -m unittest tests.test_task_sync_adapter tests.test_task_sync_outbox_integration tests.test_remote_task_apply tests.test_sync_agent -v`
 
 Tests are authored but have not been executed in this implementation environment. End-to-end acceptance on Windows and Linux remains required.
+
+## Shared local data root (`YUKI_HOME`)
+
+Yuki task persistence now uses the same portable data-root resolver as the sync runtime. Set `YUKI_HOME` to an absolute writable directory on Windows or Linux to keep task data, local sync outbox and other portable state outside the source/install directory. The default remains the repository root for backwards compatibility.
+
+Windows PowerShell example:
+```powershell
+$env:YUKI_HOME = "$env:LOCALAPPDATA\Yuki"
+python .\yuki.py
+```
+
+Linux example:
+```bash
+export YUKI_HOME="$HOME/.local/share/yuki"
+python ./yuki.py
+```
+
+Use the same local path for the CLI and desktop on a given machine. Do not point two machines at a shared network filesystem; cross-device sharing must go through the authenticated sync hub. `YUKI_HOME` is local state, not a cloud mount.
+
+Regression coverage: `tests/test_yuki_home_task_path.py` checks the configured path and backwards-compatible default.
