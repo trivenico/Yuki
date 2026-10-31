@@ -20,6 +20,7 @@ For ordinary conversation, the path ends after the model response. Tool executio
 ## Trust boundaries
 
 - Retrieved documents, skill descriptions, conversation history, and model output are untrusted input.
+- **Important current gap:** the existing provider contract accepts a single prompt string, and the OpenAI-compatible adapter currently sends that whole prompt as a user message. A JSON field named `system` inside that string is not a privileged system message. Prompt-injection resistance is therefore not established by prompt wording alone. Before enabling broad autonomous execution, introduce a structured chat-message provider contract with distinct system/developer/user/tool roles for supported adapters, and retain deterministic policy enforcement outside the model.
 - Only capabilities registered by trusted application code are eligible for invocation.
 - Role profiles (companion, tutor, interviewer, developer, security, marketing) change response guidance only. They do not grant tools, permissions, or access.
 - Every action requiring approval must pass the existing PermissionGate/approval workflow. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
