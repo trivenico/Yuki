@@ -152,6 +152,9 @@ class YukiDesktop:
                     self.conversation_var.set(active_label)
                     self._submit("history")
                 elif action == "history" and event.get("ok"):
+                    self.transcript.configure(state=tk.NORMAL)
+                    self.transcript.delete("1.0", tk.END)
+                    self.transcript.configure(state=tk.DISABLED)
                     messages = event.get("messages", [])
                     if messages:
                         self._append("— Conversation history —")
