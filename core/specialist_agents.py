@@ -123,6 +123,11 @@ _FAMILIES: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("integration_test_engineer", "Test service boundaries and dependency contracts."),
         ("end_to_end_tester", "Design user-journey acceptance tests."),
         ("performance_tester", "Measure latency, throughput, and resource use."),
+        ("accessibility_tester", "Validate accessibility behavior and assistive-technology workflows."),
+        ("compatibility_tester", "Test supported Python versions, operating systems, and runtime combinations."),
+        ("reliability_tester", "Exercise retries, recovery, cancellation, and fault scenarios."),
+        ("security_regression_tester", "Run safe regression checks for previously fixed security issues."),
+        ("test_data_engineer", "Create deterministic, privacy-safe fixtures and test datasets."),
     )),
     ("cloud_devops", (
         ("cloud_architect", "Design secure, cost-aware cloud deployment topology."),
