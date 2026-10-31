@@ -44,6 +44,7 @@ class YukiDesktop:
         ttk.Button(settings, text="Refresh providers", command=self._providers).pack(side=tk.LEFT)
         ttk.Button(settings, text="Sync status", command=self._sync_status).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(settings, text="Pair device", command=self._sync_pair).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(settings, text="Upload queued", command=self._sync_upload).pack(side=tk.LEFT, padx=(6, 0))
         self.provider_details = tk.StringVar(value="Provider configuration will appear here.")
         ttk.Label(shell, textvariable=self.provider_details, wraplength=900).pack(fill=tk.X, pady=(4, 0))
         self.sync_details = tk.StringVar(value="Sync is local-only until you configure a hub and pair this device.")
@@ -163,6 +164,11 @@ class YukiDesktop:
             self._submit("sync_pair", code=code.strip(), device_label="Yuki Windows Desktop")
             self.status.set("Pairing device…")
 
+    def _sync_upload(self):
+        if self.ready and not self.closing:
+            self.status.set("Uploading queued events…")
+            self._submit("sync_upload")
+
     def _history(self):
         if self.ready and not self.closing:
             self._submit("history")
@@ -257,6 +263,19 @@ class YukiDesktop:
                     else:
                         self.status.set("Pairing failed")
                         self._append("Device pairing failed (" + event.get("error", "Error") + "). Check hub URL and OS credential vault.", "error")
+                elif action == "sync_upload":
+                    if event.get("ok"):
+                        result = event.get("result", {})
+                        self.sync_details.set(event.get("status", "Sync status refreshed."))
+                        self.status.set("Upload complete")
+                        self._append(
+                            "Sync upload: " + str(result.get("pushed", 0)) + " uploaded, "
+                            + str(result.get("conflicts", 0)) + " conflicts, "
+                            + str(result.get("pending", 0)) + " still pending."
+                        )
+                    else:
+                        self.status.set("Upload failed")
+                        self._append("Sync upload failed (" + event.get("error", "Error") + ").", "error")
                 elif action == "catalog" and event.get("ok"):
                     selected_name = self.provider_names.get(self.provider_var.get())
                     selected = next(
