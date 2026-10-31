@@ -32,6 +32,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_specialist_worker.py", item.test_evidence)
         self.assertTrue(item.limitations)
 
+    def test_third_party_skill_import_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "third-party-skill-import"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/extension_store.py", item.entrypoints)
+        self.assertIn("tests/test_extension_store.py", item.test_evidence)
+        self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
+
     def test_independent_python_review_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
