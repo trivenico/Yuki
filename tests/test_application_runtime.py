@@ -76,6 +76,53 @@ class ApplicationRuntimeTests(unittest.TestCase):
             )
             runtime.close()
 
+    def test_stream_message_persists_only_after_successful_completion(self):
+        class StreamingProvider(MockProvider):
+            def stream(self, prompt):
+                yield "Hello "
+                yield "streaming"
+
+        class StreamingProviders(FakeProviders):
+            def __init__(self):
+                self.adapter = StreamingProvider()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = YukiApplicationRuntime.create(
+                providers_factory=StreamingProviders,
+                conversation_factory=lambda: ConversationStore(Path(tmp) / "chat.sqlite3"),
+            )
+            chunks = list(runtime.stream_message("hello"))
+            self.assertEqual(chunks, ["Hello ", "streaming"])
+            self.assertEqual(
+                [(item["role"], item["content"]) for item in runtime.history()],
+                [("user", "hello"), ("assistant", "Hello streaming")],
+            )
+            runtime.close()
+
+    def test_interrupted_stream_does_not_persist_partial_assistant_answer(self):
+        class StreamingProvider(MockProvider):
+            def stream(self, prompt):
+                yield "partial answer"
+                yield "more"
+
+        class StreamingProviders(FakeProviders):
+            def __init__(self):
+                self.adapter = StreamingProvider()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = YukiApplicationRuntime.create(
+                providers_factory=StreamingProviders,
+                conversation_factory=lambda: ConversationStore(Path(tmp) / "chat.sqlite3"),
+            )
+            stream = runtime.stream_message("hello")
+            self.assertEqual(next(stream), "partial answer")
+            stream.close()
+            self.assertEqual(
+                [(item["role"], item["content"]) for item in runtime.history()],
+                [("user", "hello")],
+            )
+            runtime.close()
+
     def test_switch_conversation_changes_active_runtime_session(self):
         with tempfile.TemporaryDirectory() as tmp:
             runtime = YukiApplicationRuntime.create(
