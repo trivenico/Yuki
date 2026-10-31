@@ -46,6 +46,28 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.message, "searched:deployment guide")
         self.assertRegex(self.gate.requests[0]["action"], r"^skill:workspace_search:sha256:[0-9a-f]{64}$")
 
+    def test_ambiguous_match_fails_closed_without_approval_or_execution(self):
+        class SecondSkill(DemoSkill):
+            name = "workspace_search_alt"
+            def run(self, argument=""):
+                self.executed = True
+                return SkillResult(True, "second:" + argument)
+
+        second = SecondSkill()
+        self.agent.registry.register(second)
+        result = self.agent.run_skill_for_task("research workspace files", "deployment guide")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "skill_ambiguous")
+        self.assertEqual(self.gate.requests, [])
+        self.assertFalse(hasattr(self.skill, "executed"))
+        self.assertFalse(hasattr(second, "executed"))
+
+    def test_weak_match_fails_closed_without_approval(self):
+        result = self.agent.run_skill_for_task("project", "anything")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "skill_not_found")
+        self.assertEqual(self.gate.requests, [])
+
     def test_no_match_fails_closed_without_approval_or_execution(self):
         result = self.agent.run_skill_for_task("bake sourdough bread", "recipe")
         self.assertFalse(result.ok)

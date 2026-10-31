@@ -16,6 +16,21 @@ _RISKS = {"low", "medium", "high", "critical"}
 
 
 @dataclass(frozen=True)
+class SkillMatch:
+    card: "SkillCard"
+    score: int
+    matched_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SkillSelection:
+    status: str
+    selected: SkillMatch | None
+    candidates: tuple[SkillMatch, ...]
+    margin: int
+
+
+@dataclass(frozen=True)
 class SkillCard:
     name: str
     description: str
@@ -83,9 +98,9 @@ class SkillCatalog:
             requires_approval=bool(getattr(skill, "requires_approval", True)) or risk.lower() in {"high", "critical"},
         )
 
-    def search(self, query: str, *, limit: int = 8) -> tuple[SkillCard, ...]:
-        """Return deterministic lexical matches; search never grants authorization."""
-        if not isinstance(query, str) or not query.strip():
+    def rank(self, query: str, *, limit: int = 8) -> tuple[SkillMatch, ...]:
+        """Rank metadata matches deterministically; never imports or executes skills."""
+        if not isinstance(query, str) or not query.strip() or len(query) > 2000:
             return ()
         if isinstance(limit, bool) or not isinstance(limit, int):
             limit = 8
@@ -94,24 +109,69 @@ class SkillCatalog:
         if not query_tokens:
             return ()
         matches = []
+        normalized_query = " ".join(query.lower().split())
         for name in self._registry.names():
             card = self.get(name)
             if card is None:
                 continue
-            name_tokens = _tokens(card.name.replace("_", " ").replace("-", " "))
-            tag_tokens = _tokens(" ".join(card.tags))
-            description_tokens = _tokens(card.description)
-            usage_tokens = _tokens(card.usage)
-            score = (
-                5 * len(query_tokens & name_tokens)
-                + 4 * len(query_tokens & tag_tokens)
-                + 3 * len(query_tokens & description_tokens)
-                + len(query_tokens & usage_tokens)
+            fields = {
+                "name": _tokens(card.name.replace("_", " ").replace("-", " ")),
+                "tags": _tokens(" ".join(card.tags)),
+                "description": _tokens(card.description),
+                "usage": _tokens(card.usage),
+                "examples": _tokens(" ".join(card.examples)),
+            }
+            weights = {"name": 5, "tags": 4, "description": 3, "usage": 2, "examples": 1}
+            matched_fields = tuple(
+                field for field, tokens in fields.items() if query_tokens & tokens
             )
+            score = sum(
+                weights[field] * len(query_tokens & tokens)
+                for field, tokens in fields.items()
+            )
+            # A phrase match is useful evidence, but never sufficient by itself
+            # to grant authorization or bypass the confidence threshold.
+            searchable = (
+                card.name.replace("_", " ").replace("-", " "),
+                " ".join(card.tags), card.description, card.usage,
+                " ".join(card.examples),
+            )
+            phrase_bonus = 0
+            for field, value in zip(fields, searchable):
+                normalized_value = " ".join(value.lower().split())
+                if len(query_tokens) >= 2 and len(normalized_query) >= 4 and normalized_query in normalized_value:
+                    phrase_bonus += weights[field]
+            score += min(phrase_bonus, 8)
             if score:
-                matches.append((score, card.name, card))
-        matches.sort(key=lambda row: (-row[0], row[1]))
-        return tuple(row[2] for row in matches[:limit])
+                matches.append(SkillMatch(card, score, matched_fields))
+        matches.sort(key=lambda match: (-match.score, match.card.name))
+        return tuple(matches[:limit])
+
+    def search(self, query: str, *, limit: int = 8) -> tuple[SkillCard, ...]:
+        """Compatibility API returning ranked cards without confidence decisions."""
+        return tuple(match.card for match in self.rank(query, limit=limit))
+
+    def select(
+        self, query: str, *, limit: int = 5, min_score: int = 4, min_margin: int = 2
+    ) -> SkillSelection:
+        """Select only a sufficiently strong, unambiguous lexical match.
+
+        Ambiguous and weak matches fail closed. This method is discovery only;
+        the caller must still obtain invocation authorization.
+        """
+        if isinstance(min_score, bool) or not isinstance(min_score, int):
+            min_score = 4
+        if isinstance(min_margin, bool) or not isinstance(min_margin, int):
+            min_margin = 2
+        min_score = max(1, min(min_score, 1000))
+        min_margin = max(1, min(min_margin, 1000))
+        matches = self.rank(query, limit=limit)
+        if not matches or matches[0].score < min_score:
+            return SkillSelection("not_found", None, matches, 0)
+        margin = matches[0].score - matches[1].score if len(matches) > 1 else matches[0].score
+        if len(matches) > 1 and margin < min_margin:
+            return SkillSelection("ambiguous", None, matches, margin)
+        return SkillSelection("selected", matches[0], matches, margin)
 
     def invoke(
         self,

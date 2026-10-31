@@ -48,6 +48,39 @@ class SkillCatalogTests(unittest.TestCase):
         self.catalog.search("project research")
         self.assertFalse(hasattr(self.skill, "was_executed"))
 
+    def test_rank_exposes_score_and_matched_fields(self):
+        ranked = self.catalog.rank("search project files")
+        self.assertEqual(ranked[0].card.name, "workspace_search")
+        self.assertGreater(ranked[0].score, 0)
+        self.assertIn("tags", ranked[0].matched_fields)
+
+    def test_select_requires_a_confident_match(self):
+        selection = self.catalog.select("search project files")
+        self.assertEqual(selection.status, "selected")
+        self.assertEqual(selection.selected.card.name, "workspace_search")
+
+    def test_select_fails_closed_for_weak_match(self):
+        selection = self.catalog.select("project", min_score=100)
+        self.assertEqual(selection.status, "not_found")
+        self.assertIsNone(selection.selected)
+
+    def test_select_fails_closed_for_ambiguous_matches(self):
+        class SecondSkill(Skill):
+            name = "project_search"
+        second = SecondSkill()
+        catalog = SkillCatalog(Registry(self.skill, second))
+        selection = catalog.select("search files", min_margin=2)
+        self.assertEqual(selection.status, "ambiguous")
+        self.assertIsNone(selection.selected)
+        self.assertEqual(len(selection.candidates), 2)
+
+    def test_rank_rejects_oversized_queries(self):
+        self.assertEqual(self.catalog.rank("x" * 2001), ())
+
+    def test_select_normalizes_invalid_threshold_types(self):
+        selection = self.catalog.select("search project files", min_score=True, min_margin="bad")
+        self.assertEqual(selection.status, "selected")
+
     def test_invocation_uses_shared_approval_guard(self):
         approvals = OneShotSkillApprovals()
         result = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)

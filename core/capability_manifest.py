@@ -193,6 +193,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
          "Not a bulk marketplace, signature verification service, or universal skill runtime."),
     ),
     CapabilityContract(
+        "confidence-aware-skill-routing", "Confidence-aware on-demand skill discovery", "experimental",
+        "Ranks registered skill metadata deterministically, exposes match evidence, and refuses weak "
+        "or ambiguous task-to-skill selections before requesting invocation approval.",
+        ("skills/catalog.py", "core/agent.py"),
+        ("registered skill metadata", "Python standard library"),
+        ("skill:discover", "skill:invoke"),
+        ("metadata-only registry reads", "explicitly approved skill invocation"),
+        ("local", "hosted"), "high",
+        ("tests/test_skill_catalog.py", "tests/test_agent_skill_catalog_integration.py"),
+        ("Lexical ranking is not semantic retrieval and may miss paraphrases or multilingual queries.",
+         "Confidence thresholds require evaluation against a representative task/skill benchmark.",
+         "Discovery does not authorize execution; PermissionGate and guarded invocation remain mandatory.",
+         "CLI/provider task loops and specialist workers are not yet integrated with this selector."),
+    ),
+    CapabilityContract(
         "typed-tool-execution", "Typed fail-closed agent tool execution", "experimental",
         "Validates structured tool calls against registered schemas, checks policy on every call, "
         "requires exact-call approval for side-effecting or high-risk tools, and bounds results.",
