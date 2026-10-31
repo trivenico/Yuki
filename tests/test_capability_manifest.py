@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_durable_task_event_stream_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "durable-task-event-stream"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("automation/task_event_stream.py", item.entrypoints)
+        self.assertIn("tests/test_task_event_stream.py", item.test_evidence)
+        self.assertTrue(any("HTTP server" in limitation for limitation in item.limitations))
+
     def test_conversation_agent_bridge_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
