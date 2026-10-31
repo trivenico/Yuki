@@ -69,6 +69,10 @@ class YukiDesktop:
         self.send_button = ttk.Button(composer, text="Send", command=self._send,
                                       state=tk.DISABLED)
         self.send_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.cancel_button = ttk.Button(composer, text="Stop", command=self._cancel,
+                                        state=tk.DISABLED)
+        self.cancel_button.pack(side=tk.LEFT, padx=(6, 0))
+        self.stream_active = False
 
         actions = ttk.Frame(shell)
         actions.pack(fill=tk.X, pady=(8, 0))
@@ -106,8 +110,21 @@ class YukiDesktop:
         self.entry.delete(0, tk.END)
         self._append("You: " + message, "user")
         self.send_button.configure(state=tk.DISABLED)
-        self._submit("send", message=message)
+        self.stream_active = True
+        self.cancel_button.configure(state=tk.NORMAL)
+        self._submit("stream", message=message)
         return "break"
+
+    def _cancel(self):
+        if self.stream_active and not self.closing:
+            self.status.set("Stopping response…")
+            self._submit("cancel")
+
+    def _append_stream_chunk(self, chunk: str) -> None:
+        self.transcript.configure(state=tk.NORMAL)
+        self.transcript.insert(tk.END, chunk, "assistant")
+        self.transcript.see(tk.END)
+        self.transcript.configure(state=tk.DISABLED)
 
     def _new_chat(self):
         if self.ready and not self.closing:
@@ -158,12 +175,25 @@ class YukiDesktop:
                     else:
                         self.status.set("Unavailable")
                         self._append("Yuki could not start (" + event.get("error", "Error") + "). Check the CLI setup and provider configuration.", "error")
-                elif action == "send":
+                elif action == "chunk":
+                    if not getattr(self, "_stream_header_written", False):
+                        self._append("Yuki: ")
+                        self._stream_header_written = True
+                    self._append_stream_chunk(event.get("chunk", ""))
+                elif action == "stream":
+                    self.stream_active = False
+                    self._stream_header_written = False
                     self.send_button.configure(state=tk.NORMAL)
-                    if event.get("ok"):
-                        self._append("Yuki: " + event.get("response", ""), "assistant")
+                    self.cancel_button.configure(state=tk.DISABLED)
+                    if event.get("cancelled"):
+                        self._append("\n[Response stopped. Partial output was not saved as a completed answer.]")
+                        self.status.set("Response stopped")
+                    elif event.get("ok"):
+                        self._append("\n")
+                        self.status.set("Ready")
                     else:
-                        self._append("Yuki request failed: " + event.get("error", "Error"), "error")
+                        self._append("\nYuki request failed: " + event.get("error", "Error"), "error")
+                        self.status.set("Request failed")
                 elif action == "providers" and event.get("ok"):
                     providers = event.get("providers", [])
                     self.provider_names = {
