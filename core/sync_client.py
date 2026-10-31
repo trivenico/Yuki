@@ -9,6 +9,7 @@ from contextlib import closing
 from pathlib import Path
 import json
 import sqlite3
+import platform
 import ssl
 import time
 import uuid
@@ -38,6 +39,18 @@ class KeyringCredentialVault:
             import keyring
         except ImportError as exc:
             raise SyncClientError("Install the optional 'keyring' package for OS credential storage.") from exc
+        backend = keyring.get_keyring()
+        backend_name = (type(backend).__module__ + "." + type(backend).__name__).lower()
+        system = platform.system()
+        approved = {
+            "Windows": ("windows", "winvault"),
+            "Darwin": ("macos", "keychain"),
+            "Linux": ("secretservice", "kwallet"),
+        }.get(system, ())
+        if not any(marker in backend_name for marker in approved):
+            raise SyncClientError(
+                "No approved OS credential backend is active; refusing an insecure keyring fallback."
+            )
         self._keyring = keyring
         self.service = service
 
