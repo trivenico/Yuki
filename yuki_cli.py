@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
 
+    run = sub.add_parser("run", help="Run one agent-compatible, machine-readable Yuki turn")
+    run.add_argument("prompt", help="Prompt text")
+    run.add_argument("--format", choices=("text", "json"), default="text",
+                     help="Output format; json streams bounded NDJSON events")
+
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
     return parser
 
@@ -361,6 +366,35 @@ def run_cli(
         answer, status = _safe_ask(provider, args.prompt)
         output_fn(answer)
         return status
+
+    if args.command == "run":
+        if args.format == "text":
+            answer, status = _safe_ask(provider, args.prompt)
+            output_fn(answer)
+            return status
+        from core.agent_cli_protocol import (
+            content_events, event_line, new_request_id, new_session_id,
+        )
+        session_id, request_id = new_session_id(), new_request_id()
+        output_fn(event_line("start", session_id, request_id, mode="single_turn",
+                             tool_execution="disabled"))
+        answer, status = _safe_ask(provider, args.prompt)
+        if status:
+            output_fn(event_line("error", session_id, request_id,
+                                 code="provider_unavailable" if status == 3 else "provider_error",
+                                 message=answer))
+            output_fn(event_line("done", session_id, request_id, status=status))
+            return status
+        try:
+            for line in content_events(answer, session_id=session_id, request_id=request_id):
+                output_fn(line)
+        except ValueError as exc:
+            output_fn(event_line("error", session_id, request_id,
+                                 code="invalid_provider_output", message=str(exc)))
+            output_fn(event_line("done", session_id, request_id, status=4))
+            return 4
+        output_fn(event_line("done", session_id, request_id, status=0))
+        return 0
 
     if args.command == "chat":
         output_fn("Yuki chat. Type /quit to exit. Tool execution is disabled in this CLI mode.")

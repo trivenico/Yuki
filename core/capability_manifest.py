@@ -127,6 +127,17 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "agent-cli-ndjson", "Agent-native NDJSON CLI", "experimental",
+        "Runs a single provider-backed Yuki turn and streams bounded JSON events with session and request correlation IDs.",
+        ("yuki_cli.py", "core/agent_cli_protocol.py"),
+        ("configured model provider",), ("provider:invoke",),
+        ("outbound model-provider request",), ("local",),
+        "medium", ("tests/test_agent_cli_protocol.py", "tests/test_yuki_cli.py"),
+        ("Single-turn only; no session resume or conversation persistence.",
+         "Tool execution is disabled in this CLI path; events are not tool authorization.",
+         "Streaming currently chunks a completed provider response rather than forwarding provider token deltas."),
+    ),
+    CapabilityContract(
         "desktop-control", "General desktop computer control", "planned",
         "Permissioned observe-act-verify control of selected desktop applications.",
         ("companion/",), ("desktop automation adapter",),

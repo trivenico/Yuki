@@ -183,6 +183,38 @@ class YukiCliTests(unittest.TestCase):
         install.assert_called_once_with("/tmp/docs.json", "plugin")
         self.assertIn("no third-party code was executed", output[0])
 
+    def test_run_json_streams_correlated_ndjson_without_tools(self):
+        output = []
+        provider = FakeProvider(answer="Yuki says hello")
+        code = run_cli(
+            ["run", "hello", "--format", "json"],
+            config_loader=lambda: {},
+            provider_factory=lambda _: provider,
+            output_fn=output.append,
+        )
+        events = [json.loads(line) for line in output]
+        self.assertEqual(code, 0)
+        self.assertEqual([event["type"] for event in events], ["start", "content", "done"])
+        self.assertEqual(len({event["session_id"] for event in events}), 1)
+        self.assertEqual(len({event["request_id"] for event in events}), 1)
+        self.assertEqual(events[0]["data"]["tool_execution"], "disabled")
+        self.assertEqual(events[1]["data"]["text"], "Yuki says hello")
+
+    def test_run_json_reports_provider_failure_as_error_event(self):
+        output = []
+        provider = FakeProvider(available=False)
+        code = run_cli(
+            ["run", "hello", "--format", "json"],
+            config_loader=lambda: {},
+            provider_factory=lambda _: provider,
+            output_fn=output.append,
+        )
+        events = [json.loads(line) for line in output]
+        self.assertEqual(code, 3)
+        self.assertEqual([event["type"] for event in events], ["start", "error", "done"])
+        self.assertEqual(events[1]["data"]["code"], "provider_unavailable")
+        self.assertEqual(events[-1]["data"]["status"], 3)
+
     def test_start_routes_to_integrated_guarded_runtime(self):
         with patch("main.main") as integrated_main:
             self.assertEqual(run_cli(["start"], output_fn=lambda _: None), 0)
