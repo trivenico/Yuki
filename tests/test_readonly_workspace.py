@@ -58,6 +58,18 @@ class ReadOnlyWorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.workspace.read_file("large.txt")
 
+    def test_hidden_parent_directory_does_not_hide_workspace_files(self):
+        hidden_parent = Path(self.tmp.name) / ".private-parent"
+        project = hidden_parent / "visible-project"
+        project.mkdir(parents=True)
+        (project / "README.md").write_text("visible", encoding="utf-8")
+        workspace = ReadOnlyWorkspace(project)
+        self.assertEqual(workspace.read_file("README.md")["content"], "visible")
+        self.assertEqual(
+            [entry["name"] for entry in workspace.list_files()["entries"]],
+            ["README.md"],
+        )
+
     def test_tool_bundle_is_read_only_and_permission_scoped(self):
         tools = self.workspace.agent_tools()
         self.assertEqual({tool.name for tool in tools}, {"workspace.list", "workspace.read"})
