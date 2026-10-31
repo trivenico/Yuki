@@ -196,11 +196,12 @@ class ExtensionStoreTests(unittest.TestCase):
                 {"path": "skills/taste-skill/references/type.md", "type": "blob"},
                 {"path": "skills/taste-skill/scripts/draw.mjs", "type": "blob"},
                 {"path": "README.md", "type": "blob"},
+                {"path": "LICENSE", "type": "blob"},
             ],
         }
         def fake_api(url, *, max_bytes=5 * 1024 * 1024):
             if url.endswith("/repos/Leonxlnx/taste-skill"):
-                return {"default_branch": "main"}
+                return {"default_branch": "main", "license": {"spdx_id": "MIT"}}
             if "/commits/" in url:
                 return {"sha": commit}
             if "/git/trees/" in url:
@@ -221,7 +222,8 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(cancelled["preview"]["risk"], "medium")
         self.assertTrue(cancelled["preview"]["requires_invocation_approval"])
         self.assertIn("lint_report", cancelled["preview"])
-        self.assertEqual(cancelled["preview"]["license"], None)
+        self.assertEqual(cancelled["preview"]["license"], "MIT")
+        self.assertEqual(cancelled["preview"]["license_file"], "LICENSE")
         self.assertIn("skills/taste-skill/scripts/draw.mjs", cancelled["preview"]["executable_script_candidates"])
         self.assertEqual(load_installed_skills(root=self.data), [])
 
@@ -233,6 +235,9 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(installed["source_path"], "skills/taste-skill/SKILL.md")
         self.assertEqual(installed["compatibility"], "instructions-only")
         self.assertEqual(installed["risk"], "medium")
+        installed_manifest = json.loads(next((self.data / "installed_skills").glob("*.json")).read_text(encoding="utf-8"))
+        self.assertEqual(installed_manifest["source_license"], "MIT")
+        self.assertEqual(installed_manifest["source_license_path"], "LICENSE")
         skills = load_installed_skills(root=self.data)
         self.assertEqual(len(skills), 1)
         self.assertEqual(len(skills[0].manifest["instructions"]), len(document.split("---\n", 2)[-1].strip()))
