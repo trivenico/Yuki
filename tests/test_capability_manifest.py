@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_agent_cli_ndjson_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "agent-cli-ndjson"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/agent_cli_protocol.py", item.entrypoints)
+        self.assertIn("tests/test_agent_cli_protocol.py", item.test_evidence)
+        self.assertTrue(any("Single-turn only" in limitation for limitation in item.limitations))
+
     def test_isolated_skill_environment_planning_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
