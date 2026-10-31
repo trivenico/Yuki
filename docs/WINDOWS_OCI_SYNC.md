@@ -142,3 +142,21 @@ result = agent.sync_once()
 ```
 
 Expand the outbox path with Path(...).expanduser() before constructing it. Pairing is done through transport.pair(code); the returned credentials must be saved with vault.save(device_id, access_token, refresh_token). Never print or log returned token values.
+
+## CLI integration (feature branch)
+
+The terminal frontend now uses the shared application-facing `core/sync_runtime.py` composition:
+- `/sync status`: reports the configured HTTPS hub, paired device, outbox counts and download cursor.
+- `/sync pair`: prompts for a one-time pairing code without echoing it and saves returned credentials through the optional OS keyring adapter.
+- `/sync run`: intentionally reports that data synchronization is disabled until real domain adapters are wired. It does not upload or acknowledge application data.
+
+Configure the hub URL in the process environment as `YUKI_SYNC_URL=https://your-hostname`. Install the optional credential-store dependency with `python -m pip install -r requirements-sync.txt`. Verify the active keyring backend on Windows before pairing. The current branch does not yet provide a user-facing pairing-code minting command on the Linux hub; codes are created by the local administrative `SyncCredentialStore.create_pairing_code` API and must be delivered securely.
+
+The desktop app should import and use `SyncRuntime` rather than implementing its own credential, transport or outbox logic. Do not enable automatic sync until approved task/conversation/skill adapters and idempotent apply handlers are implemented.
+
+### Sync runtime tests
+
+Run:
+`python -m unittest tests.test_sync_runtime tests.test_sync_client tests.test_sync_agent tests.test_sync_auth_api -v`
+
+These tests are authored but have not been executed as part of this implementation session.
