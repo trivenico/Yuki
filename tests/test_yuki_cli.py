@@ -123,6 +123,12 @@ class YukiCliTests(unittest.TestCase):
                     raise RuntimeError("secret payload")
                 return "recovered"
 
+            def generate_chat(self, system, messages):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("secret payload")
+                return "recovered"
+
         provider = FlakyProvider()
         output = []
         messages = iter(["hello", "retry", "/quit"])
