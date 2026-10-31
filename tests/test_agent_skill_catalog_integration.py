@@ -48,7 +48,7 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
 
     def test_ambiguous_match_fails_closed_without_approval_or_execution(self):
         class SecondSkill(DemoSkill):
-            name = "project_search"
+            name = "workspace_search_alt"
             def run(self, argument=""):
                 self.executed = True
                 return SkillResult(True, "second:" + argument)
