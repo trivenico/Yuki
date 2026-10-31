@@ -127,6 +127,23 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "conversation-agent-bridge", "Persistent conversation to approval-gated specialist planning", "experimental",
+        "Connects workspace-scoped durable conversation turns to the guarded agent execution service, preserving request "
+        "idempotency and reporting plan state without executing specialist work inside the conversation request.",
+        ("core/conversation_agent_bridge.py", "core/conversation_runtime.py", "core/conversation_store.py",
+         "core/agent_execution_service.py"),
+        ("ConversationRuntime", "ConversationStore", "AgentExecutionService", "ModelAgentPlanner"),
+        ("conversation:write", "conversation:read", "agent:plan", "agent:dispatch", "agent:read"),
+        ("durable user and assistant conversation messages", "durable specialist plan and task creation"),
+        ("local",), "high",
+        ("tests/test_conversation_agent_bridge.py", "tests/test_conversation_runtime.py",
+         "tests/test_agent_execution_service.py"),
+        ("Caller must provide trusted actor and workspace identities from authentication middleware.",
+         "Only explicit agent-task entry point; ordinary chat remains tool-free.",
+         "Every proposed specialist task remains human-approval-gated; workers execute separately.",
+         "Synchronous plan creation; no streaming events, hosted API, CLI or desktop adapter in this phase."),
+    ),
+    CapabilityContract(
         "unified-agent-execution-service", "Unified guarded agent planning approval and worker execution", "experimental",
         "Composes the model planner, specialist coordinator, authenticated workflow approval service, and bounded worker "
         "supervisor into one application service while requiring shared task-store wiring.",
