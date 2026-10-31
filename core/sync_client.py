@@ -11,6 +11,7 @@ import json
 import sqlite3
 import ssl
 import time
+import uuid
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -73,7 +74,7 @@ class SyncOutbox:
         raw_path = str(path)
         self._memory = raw_path == ":memory:"
         self.path = (
-            "file:yuki_outbox_" + __import__("uuid").uuid4().hex + "?mode=memory&cache=shared"
+            "file:yuki_outbox_" + uuid.uuid4().hex + "?mode=memory&cache=shared"
             if self._memory else str(Path(raw_path).expanduser())
         )
         self._anchor = None
