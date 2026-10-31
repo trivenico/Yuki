@@ -46,4 +46,4 @@ This example is not a production launcher: it does not implement OS credential p
 
 ## Current limitations
 
-No desktop shell, renderer/main-process bridge, secure token provisioning, service auto-start, streaming, cancellation, multi-window session isolation or installer is included. This API currently serializes calls into one active conversation. The API is intentionally small and must not grow arbitrary filesystem, shell, browser or tool-execution endpoints without separate threat modeling and explicit approvals.
+A native Tkinter desktop shell now exists in yuki_desktop.py and uses a thread-confined DesktopRuntimeWorker. The WSGI local API remains a separate future integration path; the current Tkinter shell calls the shared runtime worker directly. There is no packaged installer, secure API-token provisioning, streaming, cancellation, multi-window session isolation or service auto-start yet. This API currently serializes calls into one active conversation. The API is intentionally small and must not grow arbitrary filesystem, shell, browser or tool-execution endpoints without separate threat modeling and explicit approvals.
