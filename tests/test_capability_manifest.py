@@ -32,6 +32,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_specialist_worker.py", item.test_evidence)
         self.assertTrue(item.limitations)
 
+    def test_typed_tool_execution_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "typed-tool-execution"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/typed_tool_runtime.py", item.entrypoints)
+        self.assertIn("tests/test_typed_tool_runtime.py", item.test_evidence)
+        self.assertTrue(any("not a sandbox" in limitation for limitation in item.limitations))
+
     def test_implemented_capability_requires_test_evidence(self):
         contract = CapabilityContract(
             capability_id="test-capability", name="Example", status="implemented",
