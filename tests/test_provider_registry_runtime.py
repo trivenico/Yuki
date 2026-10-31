@@ -15,17 +15,21 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
-    def test_default_openai_adapter_is_constructible_without_credentials(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
-        adapter = ProviderManager(environ={}).create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+    def test_default_local_ollama_adapter_is_constructible(self):
+        manager = ProviderManager(environ={})
+        adapter = manager.create_selected_adapter()
+        self.assertIsInstance(adapter, OllamaProvider)
+        self.assertEqual(adapter.model, "llama3.2:3b")
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager(
+            {"ollama_model": "", "ollama_base_url": "ftp://invalid.example"},
+            environ={},
+        )
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertIsNone(manager._selected_adapter)
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
@@ -38,7 +42,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})

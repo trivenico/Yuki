@@ -1,6 +1,7 @@
 """Regression tests for real-provider runtime defaults."""
 import unittest
 
+from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from yuki_providers import ProviderManager
 
@@ -12,15 +13,35 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertNotIn("mock", names)
         self.assertIn("openai", names)
 
-    def test_openai_is_selected_by_default_without_network_access(self):
+    def test_ollama_is_selected_by_default_without_network_access(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
         adapter = manager.create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+        self.assertIsInstance(adapter, OllamaProvider)
+
+    def test_provider_environment_override_takes_precedence_over_config(self):
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"YUKI_PROVIDER": "ollama"},
+        )
+        self.assertEqual(manager.current().name, "ollama")
+        self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
+
+    def test_explicit_selection_can_override_startup_environment_provider(self):
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"YUKI_PROVIDER": "ollama"},
+        )
+        result = manager.select("openai")
+        self.assertEqual(result, "Selected provider: openai")
+        self.assertEqual(manager.current().name, "openai")
+        self.assertIsInstance(manager.create_selected_adapter(), OpenAICompatibleProvider)
 
     def test_openai_key_is_read_from_environment(self):
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
+        manager = ProviderManager(
+            {"provider": "openai"},
+            environ={"OPENAI_API_KEY": "test-only-not-a-real-key"},
+        )
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertTrue(adapter.is_available())
@@ -29,7 +50,7 @@ class RealProviderDefaultTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         result = manager.select("mock")
         self.assertIn("Unknown provider", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(manager.current().name, "ollama")
 
 
 if __name__ == "__main__":
