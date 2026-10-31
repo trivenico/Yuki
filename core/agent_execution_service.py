@@ -61,6 +61,10 @@ class AgentExecutionService:
         """Read the current durable plan through coordinator authorization."""
         return self.coordinator.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def advance_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Reconcile worker task states and dispatch newly dependency-ready subtasks."""
+        return self.coordinator.advance(actor_id=actor_id, plan_id=plan_id)
+
     def approve_subtask(
         self,
         *,
