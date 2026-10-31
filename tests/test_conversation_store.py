@@ -60,7 +60,7 @@ class ConversationStoreTests(unittest.TestCase):
 
     def test_rejects_invalid_roles_content_and_non_json_metadata(self):
         session = self.store.create_session("workspace-a")
-        for role in ("developer", "tool_call", ""):
+        for role in ("system", "developer", "tool_call", ""):
             with self.subTest(role=role), self.assertRaises(ValueError):
                 self.store.append_message("workspace-a", session["id"], role, "content")
         with self.assertRaisesRegex(ValueError, "non-empty"):
