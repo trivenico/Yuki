@@ -65,7 +65,7 @@ class TaskEventStream:
                 "created_at": event.created_at,
             }
             data = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-            frames.append(f"id: {event.sequence}\\nevent: {event.kind}\\ndata: {data}\\n\\n")
+            frames.append(f"id: {event.sequence}\nevent: {event.kind}\ndata: {data}\n\n")
         return "".join(frames)
 
     def read_sse(
