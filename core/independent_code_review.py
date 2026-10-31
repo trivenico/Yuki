@@ -134,11 +134,11 @@ def review_python_changes(changes: Mapping[str, str]) -> ReviewReport:
         for pattern in SECRET_PATTERNS:
             for match in pattern.finditer(source):
                 line = source.count("\n", 0, match.start()) + 1
-                evidence = source.splitlines()[line - 1].strip()[:240]
                 findings.append(ReviewFinding(
                     path, line, "SEC001", "critical",
                     "Potential hard-coded credential or private key detected.",
-                    evidence, "Remove the credential, rotate it, and load secrets from a managed secret store."
+                    "Potential credential assignment (source value redacted).",
+                    "Remove the credential, rotate it, and load secrets from a managed secret store."
                 ))
         try:
             tree = ast.parse(source, filename=path)
