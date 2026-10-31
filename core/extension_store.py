@@ -129,7 +129,7 @@ def _atomic_json(destination: Path, value: dict) -> None:
 
 def validate_skill_manifest(value: dict) -> dict:
     required = {"type", "id", "version", "name", "description", "instructions"}
-    optional = {"source", "source_commit", "source_path", "risk"}
+    optional = {"source", "source_commit", "source_path", "source_license", "source_license_path", "risk"}
     if not required.issubset(value) or set(value) - required - optional or value.get("type") != "yuki_skill":
         raise ValueError("Skill manifest contains missing or unsupported fields.")
     if "source" in value and (
@@ -157,6 +157,16 @@ def validate_skill_manifest(value: dict) -> dict:
         item = value[key]
         if not isinstance(item, str) or not item.strip() or len(item) > limit:
             raise ValueError(f"{key} must be non-empty and at most {limit} characters.")
+    if "source_license" in value and (
+        not isinstance(value["source_license"], str) or len(value["source_license"]) > 100
+    ):
+        raise ValueError("Skill source license identifier is invalid.")
+    if "source_license_path" in value and (
+        not isinstance(value["source_license_path"], str) or len(value["source_license_path"]) > 500
+        or value["source_license_path"].startswith("/") or "\\" in value["source_license_path"]
+        or any(part in {"", ".", ".."} for part in value["source_license_path"].split("/"))
+    ):
+        raise ValueError("Skill source license path is invalid.")
     risk = value.get("risk", "medium")
     if not isinstance(risk, str) or risk not in _ALLOWED_SKILL_RISKS:
         raise ValueError("Skill risk must be low, medium, or high.")
@@ -329,7 +339,7 @@ def install_skill_file(
         "risk": selected_risk,
     }
     if source_metadata is not None:
-        if not isinstance(source_metadata, dict) or set(source_metadata) != {"source", "source_commit", "source_path"}:
+        if not isinstance(source_metadata, dict) or not {"source", "source_commit", "source_path"}.issubset(source_metadata) or set(source_metadata) - {"source", "source_commit", "source_path", "source_license", "source_license_path"}:
             raise ValueError("Skill source metadata is invalid.")
         manifest_value.update(source_metadata)
     manifest = validate_skill_manifest(manifest_value)
@@ -486,6 +496,8 @@ def install_github_skill(
     skill_name = parsed_frontmatter.get("name", "") if isinstance(parsed_frontmatter, dict) else ""
     skill_description = parsed_frontmatter.get("description", "") if isinstance(parsed_frontmatter, dict) else ""
     risk = classify_imported_skill_risk(str(skill_name), str(skill_description), instructions)
+    license_entry = next((item["path"] for item in safe_entries if item["path"].lower() in {"license", "license.md", "copying", "copying.md"}), None)
+    license_spdx = (repo_info.get("license") or {}).get("spdx_id") if isinstance(repo_info.get("license"), dict) else None
     preview = {
         "repository": repository,
         "commit": commit,
@@ -498,7 +510,8 @@ def install_github_skill(
         "risk": risk,
         "requires_invocation_approval": risk in {"medium", "high"},
         "lint_report": lint_report,
-        "license": (repo_info.get("license") or {}).get("spdx_id") if isinstance(repo_info.get("license"), dict) else None,
+        "license": license_spdx,
+        "license_file": license_entry,
         "content_sha256": __import__("hashlib").sha256(document.encode("utf-8")).hexdigest(),
     }
     if approve is None or not approve(preview):
@@ -514,6 +527,8 @@ def install_github_skill(
                 "source": repository,
                 "source_commit": commit,
                 "source_path": document_path,
+                **({"source_license": license_spdx} if license_spdx else {}),
+                **({"source_license_path": license_entry} if license_entry else {}),
             },
             risk=risk,
         )
