@@ -8,6 +8,7 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
+from providers.colibri import ColibriProvider
 
 
 def create_provider(config=None, *, environ=None):
@@ -31,14 +32,16 @@ def create_provider(config=None, *, environ=None):
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
             environ=env,
         )
+    if selected == "colibri":
+        return ColibriProvider(model=str(env.get("YUKI_COLIBRI_MODEL", "")).strip(), base_url=str(env.get("YUKI_COLIBRI_BASE_URL", "http://127.0.0.1:8000/v1")), timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 120)))
     if selected == "gemini":
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
             max_prompt_chars=cfg.get("gemini_max_prompt_chars", 20000),
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
-    if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+    if selected not in {"ollama", "hybrid", "colibri"}:
+        raise ValueError("provider must be one of: openai, ollama, colibri, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
