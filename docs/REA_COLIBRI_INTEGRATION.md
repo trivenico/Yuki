@@ -9,7 +9,7 @@ Audit date: 2026-10-31.
 - Yuki integration: `skills/upstream/rea/rea-investigation/SKILL.md` is a data-only workflow guide that can be imported using Yuki's existing `/skill install` command.
 - Scope: evidence-based investigation of authorized applications, binaries, websites, model artifacts and runtime behavior. Static inspection is preferred; runtime interaction requires separate approval.
 - Limitation: REA exposes a local MCP server. Yuki's current MCP client supports HTTPS Streamable HTTP only and does not launch stdio MCP processes. The skill therefore documents external MCP-host setup and does not falsely advertise a native connection.
-- Setup: follow the official REA instructions at https://github.com/morluto/rea. Its documented setup requires a supported Node.js 22/24/26 release and npm. Do not run `npx rea-agents setup` without explicit user approval.
+- Setup: follow the official REA instructions at https://github.com/morluto/rea. Its documented setup requires a supported Node.js 22/24/26 release and npm. The REA repository is MIT-licensed; the complete upstream license text is retained at `licenses/MIT-REA.txt`. REA bundles or invokes third-party analysis tools, whose individual licenses and installation requirements remain separate. Do not run `npx rea-agents setup` without explicit user approval.
 
 ## Colibri — optional local inference engine
 
@@ -31,7 +31,7 @@ YUKI_COLIBRI_MODEL=<model-id-from-coli-status>
 YUKI_COLIBRI_BASE_URL=http://127.0.0.1:8000/v1
 ```
 
-Start Colibri separately using its official launcher, then start Yuki. The adapter uses a local placeholder bearer token because Colibri's local OpenAI-compatible API accepts a non-empty key; it is not an authentication boundary. Keep the service bound to loopback and do not expose it to a LAN or the public internet.
+Start Colibri separately using its official launcher, then start Yuki. The adapter sends a local placeholder bearer token; it is not an authentication boundary. The adapter blocks redirects and only permits loopback URLs. Keep the service bound to loopback and do not expose it to a LAN or the public internet.
 
 ### Hardware expectations
 
