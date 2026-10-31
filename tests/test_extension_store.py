@@ -143,6 +143,31 @@ class ExtensionStoreTests(unittest.TestCase):
         self.assertEqual(skill.risk, "medium")
         self.assertTrue(skill.requires_approval)
 
+    def test_imported_skill_invocation_uses_existing_one_shot_approval_guard(self):
+        from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
+
+        source = self.source / "SKILL.md"
+        source.write_text(
+            "---\nname: release-notes\ndescription: Draft accurate release notes.\n---\n"
+            "Summarize verified changes and preserve factual accuracy.\n",
+            encoding="utf-8",
+        )
+        install_skill_file(str(source), root=self.data)
+        skill = load_installed_skills(root=self.data)[0]
+
+        class Registry:
+            def get(self, name):
+                return skill if name == skill.name else None
+
+        approvals = OneShotSkillApprovals()
+        denied = invoke_registered_skill(Registry(), skill.name, "release v1", approvals=approvals)
+        self.assertEqual(denied.status, "approval_required")
+        approvals.approve(skill.name, "release v1")
+        allowed = invoke_registered_skill(Registry(), skill.name, "release v1", approvals=approvals)
+        self.assertTrue(allowed.ok)
+        replay = invoke_registered_skill(Registry(), skill.name, "release v1", approvals=approvals)
+        self.assertEqual(replay.status, "approval_required")
+
     def test_offensive_skill_content_is_classified_high_risk(self):
         source = self.source / "SKILL.md"
         source.write_text(
