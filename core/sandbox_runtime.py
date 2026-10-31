@@ -60,7 +60,7 @@ def build_docker_argv(
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--interactive", "--read-only",
+        "docker", "run", "--rm", "--interactive", "--init", "--ipc=private", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
         "--pids-limit", str(policy.max_processes), "--cap-drop", "ALL",
