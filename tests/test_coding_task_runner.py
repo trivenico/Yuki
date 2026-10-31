@@ -35,7 +35,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
         approve = unittest.mock.Mock(return_value=True)
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(
-                self.policy, image="python:3.12", workspace=self.tmp.name,
+                self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                 command=["python", "bad\x00arg"], approve=approve,
             )
         approve.assert_not_called()
@@ -43,31 +43,31 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_requires_approval_before_launch(self, build, popen, _kill):
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "-V"], approve=lambda request: False)
         popen.assert_not_called()
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_approval_callback_exception_fails_closed(self, build, popen, _kill):
         def broken(request):
             raise RuntimeError("approval service unavailable")
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "-V"], approve=broken)
         popen.assert_not_called()
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_success_is_argv_only_and_output_is_bounded(self, build, popen, _kill):
         proc = FakeProcess(b"123456789012")
         popen.return_value = proc
-        result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+        result = run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                     command=["python", "-V"], approve=lambda request: True)
         self.assertEqual(len(result.output.encode("utf-8")), 8)
         self.assertTrue(result.output_truncated)
@@ -82,10 +82,10 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_normal_output_returns_result(self, build, popen, _kill):
         popen.return_value = FakeProcess(b"ok\n", 0)
-        result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+        result = run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                     command=["python", "-V"], approve=lambda request: True)
         self.assertEqual(result.output, "ok\n")
         self.assertEqual(result.returncode, 0)
@@ -95,24 +95,24 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_container_cleanup_runs_when_wait_raises(self, build, popen, kill_container):
         proc = FakeProcess()
         proc.wait = unittest.mock.Mock(side_effect=OSError("docker client interrupted"))
         popen.return_value = proc
         with self.assertRaises(OSError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "-V"], approve=lambda request: True)
         kill_container.assert_called_once()
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_timeout_kills_client_and_container(self, build, popen, kill_container):
         proc = FakeProcess()
         proc.wait = unittest.mock.Mock(side_effect=[subprocess.TimeoutExpired("docker", 2), -9])
         popen.return_value = proc
-        result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+        result = run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                     command=["python", "-V"], approve=lambda request: True)
         self.assertTrue(result.timed_out)
         self.assertEqual(result.returncode, -9)
@@ -120,37 +120,50 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container", return_value=False)
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_cleanup_failure_fails_closed(self, _build, popen, _kill):
         popen.return_value = FakeProcess(b"ok\\n", 0)
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "-V"], approve=lambda request: True)
 
     @patch("core.coding_task_runner.build_docker_argv")
     def test_command_argument_count_and_size_are_bounded(self, build):
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python"] + ["x"] * 64, approve=lambda request: True)
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "x" * 2049], approve=lambda request: True)
+        build.assert_not_called()
+
+    @patch("core.coding_task_runner.build_docker_argv")
+    def test_mutable_or_malformed_image_reference_is_rejected_before_approval(self, build):
+        approve = unittest.mock.Mock(return_value=True)
+        for image in ("python:3.12", "python:latest", "python@sha256:abcd", "python@@sha256:" + "a" * 64):
+            with self.subTest(image=image):
+                with self.assertRaises(SandboxExecutionError):
+                    run_sandboxed_task(
+                        self.policy, image=image, workspace=self.tmp.name,
+                        command=["python", "-V"], approve=approve,
+                    )
+        approve.assert_not_called()
         build.assert_not_called()
 
     def test_missing_approval_callback_is_rejected(self):
         with self.assertRaises(SandboxExecutionError):
-            run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
+            run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
                                command=["python", "-V"], approve=None)
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "python", "-V"])
     def test_approval_receives_exact_execution_intent(self, build, popen, _kill):
         seen = []
         proc = FakeProcess(b"ok\n", 0)
         popen.return_value = proc
         result = run_sandboxed_task(
-            self.policy, image="python:3.12", workspace=self.tmp.name,
+            self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
             command=["python", "-V"], approve=lambda request: seen.append(request) or True,
         )
         self.assertEqual(result.returncode, 0)

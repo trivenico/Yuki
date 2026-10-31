@@ -20,7 +20,7 @@ class CodingTaskExecutionTests(unittest.TestCase):
                                           review="Human reviewed patch.")
     def call(self, **overrides):
         args = dict(task_store=self.tasks, evidence_store=self.evidence, policy=SandboxPolicy(),
-            task_id=self.task.task_id, image="python:3.12", workspace=str(self.workspace),
+            task_id=self.task.task_id, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=str(self.workspace),
             command=["pytest","-q"], approve=lambda task_id, patch_hash, request: True)
         args.update(overrides); return execute_approved_coding_task(**args)
     @patch("core.coding_task_execution.run_sandboxed_task")
@@ -29,13 +29,13 @@ class CodingTaskExecutionTests(unittest.TestCase):
         result,evidence = self.call(); saved = self.evidence.get(evidence.run_id)
         self.assertEqual(result.returncode,0); self.assertEqual(saved.output_sha256,evidence.output_sha256)
         self.assertFalse(hasattr(saved,"output"))
-        request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
+        request = SandboxExecutionRequest("python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
         self.assertTrue(run.call_args.kwargs["approve"](request))
     @patch("core.coding_task_execution.run_sandboxed_task")
     def test_approval_binds_task_and_patch(self, run):
         run.return_value = SandboxExecutionResult(0,"ok",False,False,0.1); seen=[]
         self.call(approve=lambda tid,digest,req: seen.append((tid,digest,req)) or True)
-        request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
+        request = SandboxExecutionRequest("python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
         self.assertTrue(run.call_args.kwargs["approve"](request))
         self.assertEqual(seen[0][0],self.task.task_id); self.assertEqual(seen[0][1],self.task.patch_sha256)
         self.assertIsInstance(seen[0][2],SandboxExecutionRequest)
