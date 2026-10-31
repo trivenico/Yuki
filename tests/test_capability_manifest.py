@@ -20,6 +20,18 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(item.status in CAPABILITY_STATUSES for item in DEFAULT_CAPABILITIES))
 
+    def test_specialist_orchestration_is_experimental_with_runtime_evidence(self):
+        from core.capability_manifest import capability_manifest
+        item = next(
+            capability for capability in capability_manifest()
+            if capability.capability_id == "specialist-orchestration"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("automation/agent_coordinator.py", item.entrypoints)
+        self.assertIn("automation/specialist_worker.py", item.entrypoints)
+        self.assertIn("tests/test_specialist_worker.py", item.test_evidence)
+        self.assertTrue(item.limitations)
+
     def test_implemented_capability_requires_test_evidence(self):
         contract = CapabilityContract(
             capability_id="test-capability", name="Example", status="implemented",

@@ -95,6 +95,9 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.lease_renewed")
         self.assertEqual(events[-1].payload["worker_id"], "worker-a")
+        self.assertEqual(events[-1].payload["state_version"], renewed.version)
+        self.assertEqual(events[-1].payload["lease_expires_at"], renewed.lease_expires_at)
+        self.assertEqual(renewed.version, claimed.version + 1)
         with self.assertRaises(WorkflowConflict):
             self.runtime.renew_lease(actor_id="alice", task_id=task.task_id,
                                      expected_version=claimed.version, worker_id="worker-a")
