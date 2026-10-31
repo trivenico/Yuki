@@ -169,7 +169,7 @@ The CLI now supports `/sync tasks preview` and `/sync tasks queue`.
 - Queue requires a paired device and explicit user action.
 - Only task description (max 500 characters), completion state and creation timestamp are exported. Local numeric IDs and all other task fields are excluded.
 - Events are revisioned and placed in the durable local outbox. Queueing does not make a network request.
-- `/sync run` remains disabled until remote task application has a conflict policy and idempotent local handler.
+- The CLI `/sync run` now performs a bounded HTTPS cycle using the reviewed task-domain apply handler. Desktop upload remains push-only and does not apply incoming task events.
 
 Task events use a deterministic per-device object identity and event ID so a retry after a process interruption can reproduce the same event. The local `_yuki_sync` metadata is stored with the task JSON. If the metadata file cannot be saved after queueing, the CLI warns and asks the user to retry before editing the affected task; a full transactional bridge between task storage and outbox remains future work.
 
@@ -225,6 +225,6 @@ Security boundaries:
 - Unversioned edits to a previously queued skill are rejected; skill update/revision and deletion/tombstone support are not implemented.
 - A conflicting local pack is never overwritten automatically.
 
-After a successful sync, the existing SkillRegistry.defaults() loader discovers the received pack on the next CLI command. The desktop must use the same registry and shared YUKI_HOME to see the same pack; desktop wiring is not yet implemented.
+After a successful CLI sync, the existing SkillRegistry.defaults() loader discovers the received pack on the next CLI command. The desktop shares the same YUKI_HOME-backed local runtime, but its incoming skill/task/chat application path is not yet wired; desktop upload currently sends queued events only.
 
 The sync cycle now supports task upserts, conversation metadata/messages, and data-only skill metadata. Executable plugins, preferences, approval state, deletions, skill edits and message edits remain unsupported.
