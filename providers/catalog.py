@@ -12,13 +12,13 @@ from urllib.parse import urlsplit
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
-     "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
+     "capabilities":["text","local_inference","structured_chat"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
      "implemented":True,"capabilities":["text","official_cli"],"model_env":"YUKI_GEMINI_MODEL","key_env":None},
     {"name":"hybrid","label":"Hybrid local/cloud","auth":"local_runtime_and_optional_api_key","privacy":"task_policy",
-     "implemented":True,"capabilities":["text","per_task_routing"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
+     "implemented":True,"capabilities":["text","per_task_routing","structured_chat"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
     {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":True,
-     "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
+     "capabilities":["text","tooling_provider_dependent","structured_chat"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
     {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
     {"name":"deepseek","label":"DeepSeek API","auth":"api_key","privacy":"cloud_provider","implemented":False,
