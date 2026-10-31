@@ -64,6 +64,10 @@ class ConversationSessionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             session.respond("x" * (session.MAX_USER_CHARS + 1))
 
+    def test_history_limit_must_preserve_complete_user_assistant_pairs(self):
+        with self.assertRaises(ValueError):
+            ConversationSession(FakeProvider(), max_history_messages=3)
+
     def test_invalid_or_oversized_provider_output_not_committed(self):
         provider = FakeProvider([" "])
         session = ConversationSession(provider)
