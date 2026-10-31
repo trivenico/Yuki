@@ -427,73 +427,59 @@ def run_cli(
             content_events, event_line, new_request_id, new_session_id,
         )
         request_id = new_request_id()
-        conversation_store = None
-        if args.session or args.new_session:
-            if not args.workspace or (args.session and args.new_session):
-                output_fn("Persistent runs require --workspace and either --session or --new-session.")
-                return 2
+        persistent = bool(args.session or args.new_session)
+        if persistent and (not args.workspace or (args.session and args.new_session)):
+            output_fn("Persistent runs require --workspace and either --session or --new-session.")
+            return 2
+        if persistent:
             try:
                 from pathlib import Path
                 from core.conversation_store import ConversationStore
+                from core.conversation_runtime import ConversationRuntime
                 data_root = Path(os.environ.get("YUKI_HOME", Path.home() / ".yuki")).expanduser()
-                conversation_store = ConversationStore(data_root / "conversations.sqlite3")
-                if args.new_session:
-                    session = conversation_store.create_session(args.workspace, args.prompt[:80] or "New conversation")
-                    session_id = session["id"]
-                else:
-                    session = conversation_store.get_session(args.workspace, args.session)
-                    session_id = session["id"]
-                history = conversation_store.list_messages(args.workspace, session_id)
-                prompt = _build_persistent_session_prompt(history, args.prompt)
-                conversation_store.begin_turn(
-                    args.workspace, session_id, request_id, args.prompt,
+                store = ConversationStore(data_root / "conversations.sqlite3")
+                result = ConversationRuntime(store, provider).run_turn(
+                    workspace_id=args.workspace,
+                    user_message=args.prompt,
+                    session_id=args.session,
+                    title=args.prompt[:80] or "New conversation",
+                    request_id=request_id,
                 )
             except (ValueError, KeyError, OSError, RuntimeError) as exc:
-                output_fn(f"Persistent session could not be loaded ({type(exc).__name__}): {str(exc)[:200]}")
+                output_fn(f"Persistent session could not be processed ({type(exc).__name__}): {str(exc)[:200]}")
                 return 2
-        else:
-            session_id = new_session_id()
-            prompt = args.prompt
+            session_id = result.session_id
+            if args.format == "text":
+                output_fn(result.message)
+                if args.new_session:
+                    output_fn(f"Session: {session_id}")
+                return result.status
+            output_fn(event_line("start", session_id, request_id, mode="single_turn",
+                                 tool_execution="disabled"))
+            if not result.ok:
+                output_fn(event_line("error", session_id, request_id,
+                                     code=result.error_code or "conversation_error",
+                                     message=result.message))
+                output_fn(event_line("done", session_id, request_id, status=result.status))
+                return result.status
+            for line in content_events(result.message, session_id=session_id, request_id=request_id):
+                output_fn(line)
+            output_fn(event_line("done", session_id, request_id, status=0))
+            return 0
+
+        session_id = new_session_id()
+        answer, status = _safe_ask(provider, args.prompt)
         if args.format == "text":
-            answer, status = _safe_ask(provider, prompt)
-            if conversation_store is not None:
-                if status == 0:
-                    conversation_store.complete_turn(args.workspace, request_id, answer)
-                else:
-                    conversation_store.fail_turn(
-                        args.workspace, request_id,
-                        error_code="provider_unavailable" if status == 3 else "provider_error",
-                    )
             output_fn(answer)
-            if args.new_session:
-                output_fn(f"Session: {session_id}")
             return status
         output_fn(event_line("start", session_id, request_id, mode="single_turn",
                              tool_execution="disabled"))
-        answer, status = _safe_ask(provider, prompt)
         if status:
-            if conversation_store is not None:
-                try:
-                    conversation_store.fail_turn(
-                        args.workspace, request_id,
-                        error_code="provider_unavailable" if status == 3 else "provider_error",
-                    )
-                except (ValueError, KeyError, OSError):
-                    pass
             output_fn(event_line("error", session_id, request_id,
                                  code="provider_unavailable" if status == 3 else "provider_error",
                                  message=answer))
             output_fn(event_line("done", session_id, request_id, status=status))
             return status
-        if conversation_store is not None:
-            try:
-                conversation_store.complete_turn(args.workspace, request_id, answer)
-            except (ValueError, KeyError, OSError) as exc:
-                output_fn(event_line("error", session_id, request_id,
-                                     code="session_persistence_failed",
-                                     message=f"Response generated but could not be saved ({type(exc).__name__})."))
-                output_fn(event_line("done", session_id, request_id, status=5))
-                return 5
         try:
             for line in content_events(answer, session_id=session_id, request_id=request_id):
                 output_fn(line)
