@@ -6,7 +6,7 @@ code or automatically replay work after an expired worker lease.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 
@@ -158,11 +158,7 @@ class TaskRuntime:
         renewed = self.store.renew_lease_with_event(
             task_id, worker_id=worker_id.strip(), expected_version=expected_version,
             lease_seconds=lease_seconds, actor_id=actor,
-            payload={"worker_id": worker_id.strip(),
-                     "lease_expires_at": (
-                         datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
-                     ).isoformat(),
-                     "state_version": expected_version + 1},
+            payload={"worker_id": worker_id.strip()},
         )
         return self._record(renewed)
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
