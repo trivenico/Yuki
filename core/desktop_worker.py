@@ -43,7 +43,7 @@ class DesktopRuntimeWorker:
             if self._active_request_id is not None:
                 self._cancel_event.set()
             return uuid.uuid4().hex
-        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "sync_upload", "close"}:
+        if action not in {"send", "stream", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "sync_status", "sync_pair", "sync_upload", "sync_preview", "sync_queue", "sync_run", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -138,6 +138,25 @@ class DesktopRuntimeWorker:
                     if sync_runtime is None:
                         sync_runtime = self._sync_runtime_factory()
                     result = sync_runtime.upload_pending()
+                    self._emit(request_id, action, ok=True, result=result,
+                               status=sync_runtime.status())
+                elif action == "sync_preview":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    result = sync_runtime.preview_application(runtime)
+                    self._emit(request_id, action, ok=True, result=result)
+                elif action == "sync_queue":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    result = sync_runtime.queue_application(
+                        payload.get("collection", ""), runtime
+                    )
+                    self._emit(request_id, action, ok=True, result=result,
+                               status=sync_runtime.status())
+                elif action == "sync_run":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
+                    result = sync_runtime.sync_application(runtime)
                     self._emit(request_id, action, ok=True, result=result,
                                status=sync_runtime.status())
                 elif action == "select_provider":
