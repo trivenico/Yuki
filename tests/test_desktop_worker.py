@@ -33,6 +33,14 @@ class FakeProviders:
     def create_selected_adapter(self):
         return object()
 
+    def catalog(self):
+        return [{
+            "name": "openai", "configured_model": "gpt-4.1-mini",
+            "privacy": "cloud_provider", "credential_configured": True,
+            "ready": True, "status": "api_key_and_model_configured",
+            "selected": True, "implemented": True,
+        }]
+
 
 class FakeAgent:
     def set_provider(self, adapter):
@@ -138,6 +146,21 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertFalse(closed["ok"])
         worker.join(2)
         self.assertFalse(worker._thread.is_alive())
+
+    def test_sanitized_model_catalog_is_available_to_desktop(self):
+        worker = DesktopRuntimeWorker(FakeRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("catalog")
+        event = self._next(worker, "catalog")
+        self.assertTrue(event["ok"])
+        selected = event["catalog"][0]
+        self.assertEqual(selected["configured_model"], "gpt-4.1-mini")
+        self.assertEqual(selected["privacy"], "cloud_provider")
+        self.assertNotIn("api_key", selected)
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
 
     def test_provider_catalog_and_selection_are_worker_actions(self):
         worker = DesktopRuntimeWorker(FakeRuntime)
