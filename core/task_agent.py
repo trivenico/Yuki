@@ -57,7 +57,7 @@ class ApprovedTaskAgent:
         if self.ledger is None or not isinstance(goal, str) or not goal.strip():
             return self._run(goal, council_context=council_context)
         normalized_goal = goal.strip()[:4000]
-        task = self.ledger.create(normalized_goal[:240], detail=normalized_goal, metadata={"agent": "ApprovedTaskAgent"})
+        task = self.ledger.create("AI-assisted task", detail="", metadata={"agent": "ApprovedTaskAgent", "goal_chars": len(normalized_goal), "goal_sha256": _fingerprint(normalized_goal)})
         task_id = task["id"]
         self.ledger.transition(task_id, "running")
         self.ledger.append_event(TaskEvent(task_id, "task.started", {
@@ -164,7 +164,7 @@ class ApprovedTaskAgent:
                 self.ledger.append_event(TaskEvent(
                     task_id, "tool.observed",
                     {"skill": skill_name, "ok": bool(result.ok), "stage": str(result.stage),
-                     "message": str(result.message)[:1000], "step": step_number},
+                     "message_chars": len(str(result.message)), "message_sha256": _fingerprint(str(result.message)), "step": step_number},
                 ))
             if not result.ok:
                 return TaskResult(False, result.message, step_number,
