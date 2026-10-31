@@ -183,6 +183,54 @@ class YukiCliTests(unittest.TestCase):
         install.assert_called_once_with("/tmp/docs.json", "plugin")
         self.assertIn("no third-party code was executed", output[0])
 
+    def test_sessions_cli_persists_and_lists_without_provider_initialization(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        output = []
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"YUKI_HOME": directory}):
+            created = run_cli(
+                ["sessions", "create", "--workspace", "project-a", "--title", "Build Yuki"],
+                output_fn=output.append,
+            )
+            self.assertEqual(created, 0)
+            session_id = json.loads(output[-1])["session"]["id"]
+            listed = run_cli(
+                ["sessions", "list", "--workspace", "project-a"],
+                output_fn=output.append,
+            )
+            self.assertEqual(listed, 0)
+            self.assertEqual(json.loads(output[-1])["sessions"][0]["id"], session_id)
+            shown = run_cli(
+                ["sessions", "show", "--workspace", "project-a", session_id],
+                output_fn=output.append,
+            )
+            self.assertEqual(shown, 0)
+            self.assertEqual(json.loads(output[-1])["messages"], [])
+            archived = run_cli(
+                ["sessions", "archive", "--workspace", "project-a", session_id],
+                output_fn=output.append,
+            )
+            self.assertEqual(archived, 0)
+            self.assertEqual(json.loads(output[-1])["session"]["status"], "archived")
+            self.assertTrue((Path(directory) / "conversations.sqlite3").is_file())
+
+    def test_sessions_cli_rejects_cross_workspace_access(self):
+        import os
+        import tempfile
+
+        output = []
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"YUKI_HOME": directory}):
+            run_cli(["sessions", "create", "--workspace", "workspace-a"], output_fn=output.append)
+            session_id = json.loads(output[-1])["session"]["id"]
+            code = run_cli(
+                ["sessions", "show", "--workspace", "workspace-b", session_id],
+                output_fn=output.append,
+            )
+        self.assertEqual(code, 2)
+        self.assertIn("failed safely", output[-1])
+
     def test_run_json_streams_correlated_ndjson_without_tools(self):
         output = []
         provider = FakeProvider(answer="Yuki says hello")
