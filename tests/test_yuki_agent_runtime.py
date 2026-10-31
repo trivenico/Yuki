@@ -86,6 +86,34 @@ class TaskStoreTests(unittest.TestCase):
         self.assertIsNone(self.store.claim_next("worker-c"))
         self.assertEqual(self.store.get(task["id"])["status"], "failed")
 
+    def test_expired_worker_cannot_complete_after_lease_deadline(self):
+        task = self.store.submit("test", {"input": "ok"}, approval_required=False, max_attempts=2)
+        self.store.claim_next("worker-a", lease_seconds=60)
+        with self.store._session() as db:
+            db.execute(
+                "UPDATE agent_tasks SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+                (task["id"],),
+            )
+        result = self.store.complete(task["id"], "worker-a", {"stale": True})
+        self.assertEqual(result["status"], "queued")
+        self.assertIsNone(result["worker_id"])
+        self.assertIsNone(result["result"])
+        self.assertEqual(result["error"], "worker lease expired before completion")
+        self.assertEqual(self.store.claim_next("worker-b")["attempts"], 2)
+
+    def test_expired_worker_cannot_extend_lease_with_heartbeat(self):
+        task = self.store.submit("test", {"input": "ok"}, approval_required=False, max_attempts=2)
+        self.store.claim_next("worker-a", lease_seconds=60)
+        with self.store._session() as db:
+            db.execute(
+                "UPDATE agent_tasks SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+                (task["id"],),
+            )
+        result = self.store.heartbeat(task["id"], "worker-a")
+        self.assertEqual(result["status"], "queued")
+        self.assertIsNone(result["worker_id"])
+        self.assertEqual(result["error"], "worker lease expired")
+
     def test_invalid_payload_and_budgets_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "JSON-compatible"):
             self.store.submit("test", {"not_json": object()})
