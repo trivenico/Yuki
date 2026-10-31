@@ -12,6 +12,16 @@ The CLI now composes its provider manager, AI agent and durable conversation sto
 
 This is an incremental foundation, not a completed desktop/cloud client-server architecture. The runtime currently executes in-process and has a bounded authenticated loopback WSGI API for desktop-client integration, but no desktop UI, background worker, remote RPC protocol or production server launcher. Those are subsequent milestones.
 
+## Native desktop shell (early preview)
+
+A first native Tkinter desktop chat shell is available in `yuki_desktop.py`. On Windows, run `start_yuki_desktop.bat`; it creates an isolated `.venv`, installs `requirements.txt`, and starts the app. Python 3.10+ with Tcl/Tk support is required. On systems with Tk installed, run `python yuki_desktop.py`.
+
+The UI supports chat, local conversation history, new conversations and switching between saved conversations. The UI thread never accesses SQLite or providers: `core/desktop_worker.py` creates and owns the application runtime on a dedicated worker thread and exchanges bounded commands/results with the UI.
+
+Yuki stores its data under the current user's platform data directory by default (Windows LocalAppData, macOS Application Support, Linux XDG data home or ~/.local/share/Yuki). Set `YUKI_HOME` to choose another data root. This prevents an installed app from trying to write its database into a read-only installation directory.
+
+This is an early source-run preview, not a signed installer or production release. The shell does not yet include streaming, cancellation, voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, or a packaged desktop installer. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
