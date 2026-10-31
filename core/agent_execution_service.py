@@ -42,6 +42,10 @@ class AgentExecutionService:
         self.approvals = approvals
         self.supervisor = supervisor
 
+    def can_submit_goal(self, actor_id: str) -> bool:
+        """Check authorization before conversation persistence or model invocation."""
+        return self.planner.can_submit(actor_id)
+
     def submit_goal(
         self,
         *,
