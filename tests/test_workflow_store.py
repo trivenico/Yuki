@@ -212,6 +212,23 @@ class WorkflowRunStoreTests(unittest.TestCase):
             )
         self.assertEqual(self.store.list_runs(), [])
 
+    def test_nested_non_string_result_keys_are_rejected_before_transition(self):
+        run = self.create(key="nested-invalid-result")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=run.version
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=approved.version, to_state="running", lease_owner="worker-a"
+        )
+        with self.assertRaisesRegex(ValueError, "object keys must be strings"):
+            self.store.transition(
+                run.run_id, expected_version=running.version, to_state="succeeded",
+                result={"metadata": [{"nested": {1: "ambiguous"}}]},
+            )
+        current = self.store.get(run.run_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, running.version)
+
     def test_payload_and_result_limits(self):
         with self.assertRaises(ValueError):
             self.store.create(
