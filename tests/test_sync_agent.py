@@ -1,6 +1,6 @@
 import unittest
 
-from core.sync_client import SyncAgent, SyncOutbox, SyncHTTPError
+from core.sync_client import SyncAgent, SyncOutbox, SyncHTTPError, SyncClientError
 
 
 def event(event_id="event_00000001", device="device_0000001", revision=1):
@@ -99,6 +99,18 @@ class SyncAgentTests(unittest.TestCase):
             agent.sync_once()
         self.assertEqual(applied, [])
         self.assertEqual(transport.acked, [])
+
+    def test_failed_remote_apply_does_not_acknowledge_or_advance_cursor(self):
+        outbox, vault, transport = MemoryOutbox(), MemoryVault(), FakeTransport()
+        remote = event("event_00000002", "device_0000002", 1)
+        transport.pull_page = {"events": [{"sequence": 5, **remote}], "next_after": 5}
+        def reject(_event):
+            raise SyncClientError("unsupported remote event")
+        agent = SyncAgent(transport, outbox, vault, reject)
+        with self.assertRaises(SyncClientError):
+            agent.sync_once()
+        self.assertEqual(transport.acked, [])
+        self.assertEqual(outbox.cursor(), 0)
 
     def test_conflicting_push_is_quarantined(self):
         class ConflictTransport(FakeTransport):
