@@ -139,7 +139,7 @@ class SkillCatalog:
             phrase_bonus = 0
             for field, value in zip(fields, searchable):
                 normalized_value = " ".join(value.lower().split())
-                if len(normalized_query) >= 4 and normalized_query in normalized_value:
+                if len(query_tokens) >= 2 and len(normalized_query) >= 4 and normalized_query in normalized_value:
                     phrase_bonus += weights[field]
             score += min(phrase_bonus, 8)
             if score:
