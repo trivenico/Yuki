@@ -154,17 +154,20 @@ class TaskRuntime:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        renewed = self.store.renew_lease(
+        current = self.store.get(task_id)
+        if current is None:
+            raise KeyError("task not found.")
+        # The lease update and audit event must be one atomic version transition.
+        renewed = self.store.renew_lease_with_event(
             task_id, worker_id=worker_id.strip(), expected_version=expected_version,
-            lease_seconds=lease_seconds,
+            lease_seconds=lease_seconds, actor_id=actor,
+            payload={"worker_id": worker_id.strip(),
+                     "lease_expires_at": (
+                         datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
+                     ).isoformat(),
+                     "state_version": expected_version + 1},
         )
-        self.store.append_task_event(
-            task_id, kind="task.lease_renewed", actor_id=actor,
-            payload={"worker_id": worker_id.strip(), "lease_expires_at": renewed.lease_expires_at,
-                     "state_version": renewed.version},
-            expected_version=renewed.version,
-        )
-        return self._record(self.store.get(task_id))
+        return self._record(renewed)
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
                  worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
         actor = self._actor(actor_id)
