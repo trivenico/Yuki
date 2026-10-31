@@ -18,7 +18,7 @@ class MemoryOutbox:
         self.state = {}
         self._cursor = 0
     def ready(self, limit):
-        return [x for x in self.items if self.state.get(x["event_id"]) == "pending"][:limit]
+        return [x for x in self.items if self.state.get(x["event_id"], "pending") == "pending"][:limit]
     def mark_sent(self, event_id):
         self.state[event_id] = "sent"
     def mark_retry(self, event_id, error):
