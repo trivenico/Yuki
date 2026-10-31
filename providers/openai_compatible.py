@@ -68,6 +68,54 @@ class OpenAICompatibleProvider:
     def is_available(self):
         return bool(self._environ.get(self.api_key_env, "").strip())
 
+    def stream(self, prompt: str):
+        """Yield bounded Server-Sent Events content from Chat Completions."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
+        api_key = self._environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt.strip()[:20000]}],
+            "stream": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream",
+                     "Authorization": "Bearer " + api_key}, method="POST",
+        )
+        total = 0
+        try:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                while True:
+                    line = response.readline(256_001)
+                    if not line:
+                        break
+                    total += len(line)
+                    if len(line) > 256_000 or total > 2_000_000:
+                        raise RuntimeError("Cloud stream exceeded the response limit.")
+                    line = line.decode("utf-8", errors="strict").strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        event = json.loads(data)
+                        choices = event.get("choices", [])
+                        delta = choices[0].get("delta", {}) if choices else {}
+                        chunk = delta.get("content", "")
+                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                        raise RuntimeError("Cloud provider returned an unsupported stream event.") from exc
+                    if chunk:
+                        if not isinstance(chunk, str):
+                            raise RuntimeError("Cloud provider emitted a non-text chunk.")
+                        yield chunk
+        except (urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError) as exc:
+            raise RuntimeError("Cloud provider stream failed; redirects are not followed.") from exc
+
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")

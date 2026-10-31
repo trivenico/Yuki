@@ -13,3 +13,8 @@ class BaseProvider(ABC):
     def is_available(self) -> bool:
         """Report whether this provider is ready to use."""
         raise NotImplementedError
+
+
+    def stream(self, prompt: str):
+        """Yield response text chunks; adapters may override with native streaming."""
+        yield self.generate(prompt)

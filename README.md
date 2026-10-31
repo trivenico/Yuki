@@ -6,6 +6,36 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Shared application runtime
+
+The CLI now composes its provider manager, AI agent and durable conversation store through `core/application_runtime.py`. This is the first shared service boundary intended for both the Windows desktop interface and the Oracle Linux service. Interfaces should call `YukiApplicationRuntime.create()`, `send_message()`, `new_conversation()`, `switch_conversation()` and `close()` rather than constructing their own provider or conversation services.
+
+This is an incremental foundation, not a completed desktop/cloud client-server architecture. The runtime currently executes in-process and has a bounded authenticated loopback WSGI API for desktop-client integration. A native Tkinter desktop UI and thread-confined runtime worker are now present as an early source-run preview; remote RPC and a production server launcher remain subsequent milestones.
+
+## Native desktop shell (early preview)
+
+A first native Tkinter desktop chat shell is available in `yuki_desktop.py`. On Windows, run `start_yuki_desktop.bat`; it creates an isolated `.venv`, installs `requirements.txt`, and starts the app. Python 3.10+ with Tcl/Tk support is required. On systems with Tk installed, run `python yuki_desktop.py`.
+
+The UI supports chat, local conversation history, new conversations and switching between saved conversations. The UI thread never accesses SQLite or providers: `core/desktop_worker.py` creates and owns the application runtime on a dedicated worker thread and exchanges bounded commands/results with the UI.
+
+Yuki stores its data under the current user's platform data directory by default (Windows LocalAppData, macOS Application Support, Linux XDG data home or ~/.local/share/Yuki). Set `YUKI_HOME` to choose another data root. This prevents an installed app from trying to write its database into a read-only installation directory.
+
+The desktop settings row lists registered AI providers, distinguishes implemented adapters from planned integrations, and lets you switch between available adapters. It also displays the selected provider's configured model, privacy classification, readiness reason and whether a credential is configured (never its value). This is metadata-only; it does not probe remote providers or enumerate their model catalogues. Provider changes and catalog reads are handled by the shared runtime worker.
+
+The desktop now renders provider output incrementally and includes a Stop control. Ollama and OpenAI-compatible adapters use native bounded streaming; adapters without a native streaming implementation use the backward-compatible complete-response fallback. Stopping closes the active stream and deliberately leaves the user message in history without recording partial assistant output as a completed answer. This is still an early source-run preview, not a signed installer or production release. Voice, remote Oracle Cloud connection controls, automatic sync, secure updater, crash recovery, and a packaged desktop installer remain outstanding. Oracle Linux remains a headless service/CLI deployment; it does not need a graphical desktop environment.
+
+## Windows + Oracle Linux sync foundation
+
+Yuki has an opt-in HTTPS sync protocol, durable local outbox, rotating device credentials, one-time pairing codes, and CLI commands for status, pairing, previewing/queueing approved data, and explicit sync. The Windows and Linux clients use the same protocol. No background sync starts automatically; preview and queue are separate from upload, and only explicitly queued allow-listed task, conversation, and data-only skill metadata are eligible. Credentials, executable plugins, approval grants and arbitrary files are excluded.
+
+For a personal Oracle Linux hub, configure the hub service and TLS reverse proxy first. On the trusted Linux host, issue a short-lived pairing code locally:
+
+```bash
+python yuki_sync_admin.py --user YOUR_USER_ID --ttl 300
+```
+
+Deliver that code privately to the Windows laptop. Configure `YUKI_SYNC_URL` to the hub's HTTPS URL, install the optional OS vault dependency with `python -m pip install -r requirements-sync.txt`, then run `python yuki.py` and use `/sync pair`. Verify Windows Credential Manager is the active keyring backend before pairing. Use `/sync status`, `/sync tasks preview`, `/sync tasks queue`, `/sync chat preview`, `/sync chat queue`, `/sync skills preview`, `/sync skills queue`, and `/sync run` for explicit operations. Pairing and transport are implemented foundations; desktop pairing controls, unattended background sync, end-to-end payload encryption, production deployment hardening and Windows/Linux acceptance testing are still outstanding. Do not expose the WSGI development app directly to the public internet.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
@@ -63,6 +93,14 @@ This is the target layout, not a claim that the migration is already complete.
 5. Make CLI and desktop call the same application layer.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
+
+## Windows + Oracle Cloud synchronization
+
+A feature-branch foundation is being built for connecting a Windows laptop to a Yuki Sync Hub on Oracle Cloud Linux. It includes an allow-listed event contract, SQLite event store, authenticated API primitives, one-time pairing, rotating credentials, and a shared cross-platform client/outbox. It is **not yet an install-and-sync release**: the CLI/desktop still need to enqueue and apply real application records, the background worker and Windows credential-vault integration need end-to-end validation, and the Linux service still needs hardened deployment. See [Windows + Oracle Cloud sync status and setup](docs/WINDOWS_OCI_SYNC.md). The optional Windows OS credential-vault dependency is listed in `requirements-sync.txt`.
+
+### Sync CLI commands (feature branch)
+
+The terminal frontend exposes `/sync status`, `/sync pair`, `/sync tasks preview|queue`, `/sync chat preview|queue`, `/sync skills preview|queue`, and `/sync run`. Configure `YUKI_SYNC_URL` with the HTTPS hub URL and install the optional OS credential vault dependency from `requirements-sync.txt`. Pairing prompts for the one-time code without echoing it. Queue commands explicitly add allow-listed records to the local outbox; they do not upload immediately. The sync cycle currently applies task upserts, conversation metadata/messages, and data-only skill-pack metadata. It does not sync executable plugins, approval grants, preferences, deletions, or message/skill edits. Imported skills are forced to high risk and still require local approval. This is a development foundation, not a production deployment. See `docs/WINDOWS_OCI_SYNC.md`.
 
 ## External SSD portability
 
@@ -263,3 +301,29 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+
+### Explicit task synchronization
+
+The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. The CLI `/sync run` performs the reviewed HTTPS sync cycle for supported task upserts, conversation history and data-only skill packs. The desktop currently exposes upload-only sync and does not apply incoming records. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
+
+
+### Task conflict review
+
+When two devices submit different content for the same task revision, Yuki now preserves the local task and stores the remote candidate as a durable conflict record. The desktop **Resolve task conflicts** action shows both versions and lets the user accept the remote version, keep the local version (which is queued as a new revision), or cancel and leave the conflict unresolved. Failed conflict persistence rolls back the in-memory change, so the incoming event remains unacknowledged and can be retried. Task edits are blocked from queueing while a conflict remains unresolved.
+
+### Desktop collection sync controls
+
+The native desktop now shares the application runtime's task, conversation and skill synchronization adapters. **Preview sharing** reports counts without queueing content. **Queue tasks**, **Queue chats** and **Queue skills** require a confirmation and add only the selected allow-listed data to the durable local outbox. **Sync both ways** requires a separate confirmation and invokes the same reviewed CLI application handlers for task upserts, conversation history and data-only skill packs. Executable plugins, credentials, approval grants and deletes remain excluded. Conversation content is private unless the user explicitly queues it.
+
+### Desktop explicit upload
+
+The native desktop also exposes **Upload queued**. It uploads only events already placed in the local outbox by an explicit queue action. It never pulls or applies remote records. The operation uses the shared bounded upload worker, rotates expired credentials, and quarantines revision conflicts. Incoming task/chat/skill application remains available through the reviewed CLI `/sync run` path and will be brought to desktop only after the same domain handlers are integrated and tested there.
+
+### Desktop device pairing controls
+
+The native desktop now exposes **Sync status** and **Pair device** controls backed by the same `SyncRuntime` used by the CLI. Pairing-code input is masked and the sync runtime is initialized only when a sync action is requested. The desktop supports checking pairing/outbox status, enrolling a device, and explicitly uploading events already placed in the local outbox. The desktop upload action is intentionally push-only: it does not download or apply remote changes. The CLI `/sync run` has separate reviewed application handlers for task upserts, conversation history and data-only skill packs; those handlers are not yet exposed by the desktop. Configure `YUKI_SYNC_URL`, install the OS credential-vault dependency, and issue the pairing code on the trusted hub before using Pair device.
+
+### Task-only network sync (feature branch)
+
+`/sync run` now performs a bounded HTTPS sync cycle for task upserts only. It requires a paired device. Remote task revisions are validated and applied idempotently; unsupported collections and deletes are rejected without acknowledging the event. Concurrent edits may require manual conflict resolution. See [sync architecture and setup](docs/WINDOWS_OCI_SYNC.md).

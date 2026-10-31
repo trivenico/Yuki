@@ -1,13 +1,14 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from yuki_agent import YukiAgent
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
-from yuki_tasks import load_tasks, add_task, list_tasks, complete_task, delete_task
+from yuki_tasks import load_tasks, save_tasks, add_task, list_tasks, complete_task, delete_task
 from yuki_tools import TOOLS, run_tool
 from skills.registry import SkillRegistry
 from core.guarded_skill_runtime import OneShotSkillApprovals
@@ -15,6 +16,11 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
+from core.sync_runtime import SyncRuntime
+from core.sync_client import SyncClientError
+from core.task_sync_adapter import TaskSyncAdapter
+from core.application_runtime import YukiApplicationRuntime
+from core.skill_pack_sync import SkillPackSyncAdapter
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -84,6 +90,11 @@ Yuki commands:
   /providers                      List provider adapters and implementation status
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
+  /sync status                    Show sync hub, device and outbox status
+  /sync pair                      Pair this device using a one-time code
+  /sync tasks preview             Preview eligible task fields
+  /sync tasks queue               Queue approved task fields locally
+  /sync run                       Synchronize supported task upserts
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
   /skill diagnostics              Show installed skill-pack load health
@@ -113,7 +124,7 @@ The runtime defaults to the real OpenAI API. The mock adapter is reserved for au
 """)
 
 
-def handle_command(message, memory, tasks, agent, providers, policy=None):
+def handle_command(message, memory, tasks, agent, providers, policy=None, conversation_context=None):
     command = message.strip()
     if not command:
         return ""
@@ -143,6 +154,121 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Provider selection failed. The previous provider remains active."
         write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
         return result
+    if command == "/sync" or command.startswith("/sync "):
+        parts = command.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "status"
+        try:
+            runtime = SyncRuntime()
+            try:
+                if action == "status":
+                    return runtime.status()
+                if action == "pair":
+                    if len(parts) != 2:
+                        return "Use /sync pair; Yuki will request the one-time code without echoing it."
+                    if not runtime.endpoint:
+                        return "Set YUKI_SYNC_URL to your HTTPS Yuki Sync Hub endpoint first."
+                    if runtime.vault is None:
+                        return "OS credential storage is unavailable. Install requirements-sync.txt and verify the Windows Credential Manager backend."
+                    from getpass import getpass
+                    code = getpass("One-time Yuki pairing code (input hidden): ")
+                    if not code.strip():
+                        return "Pairing cancelled."
+                    result = runtime.pair(code)
+                    write_audit_event("sync:pair", "completed")
+                    return result
+                if action == "tasks":
+                    subcommand = parts[2] if len(parts) > 2 else "preview"
+                    if subcommand == "preview":
+                        preview = TaskSyncAdapter.preview(tasks)
+                        return (
+                            f"Task sync preview: {preview['total']} eligible tasks; "
+                            f"{preview['tracked']} have sync tracking metadata. "
+                            "Only description, completion state and creation timestamp are shared. "
+                            "Nothing has been queued or uploaded. Use /sync tasks queue to opt in."
+                        )
+                    if subcommand == "queue":
+                        if runtime.vault is None or not runtime.vault.load():
+                            return "Pair this device first with /sync pair. No tasks were queued."
+                        device_id = runtime.vault.load()[0]
+                        queued = TaskSyncAdapter.queue(
+                            tasks, device_id, runtime.enqueue_event
+                        )
+                        if not save_tasks(tasks):
+                            write_audit_event("sync:tasks:queue", "metadata_save_failed")
+                            return (
+                                f"{queued} task events are safely in the local outbox, but "
+                                "sync metadata could not be saved. Retry /sync tasks queue; "
+                                "event IDs are deterministic so duplicates will not be uploaded."
+                            )
+                        write_audit_event("sync:tasks:queue", "completed")
+                        return (
+                            f"{queued} task event(s) added or already present in the local outbox. "
+                            "Nothing was uploaded. Review the preview before any future sync run."
+                        )
+                    return "Usage: /sync tasks preview | queue"
+                if action == "skills":
+                    adapter = SkillPackSyncAdapter()
+                    subcommand = parts[2] if len(parts) > 2 else "preview"
+                    if subcommand == "preview":
+                        counts = adapter.preview()
+                        return (
+                            f"Skill sync preview: {counts['installed_data_only_packs']} data-only skill pack(s). "
+                            "Executable plugins, approval grants and credentials are never shared."
+                        )
+                    if subcommand == "queue":
+                        saved = runtime.vault.load() if runtime.vault is not None else None
+                        if not saved:
+                            return "Pair this device first. No skill packs were queued."
+                        result = adapter.queue_installed(saved[0], runtime.enqueue_event)
+                        return (
+                            f"Queued {result['queued']} skill pack event(s); "
+                            f"{result['already_queued']} already existed. Nothing was uploaded."
+                        )
+                    return "Usage: /sync skills preview | queue"
+                if action == "chat":
+                    store = conversation_context["store"] if conversation_context else None
+                    if store is None:
+                        return "Local chat history is unavailable."
+                    mode = parts[2] if len(parts) > 2 else "preview"
+                    if mode == "preview":
+                        counts = store.preview_sync()
+                        return f"Preview: {counts['conversations']} chats and {counts['messages']} messages."
+                    if mode == "queue":
+                        saved = runtime.vault.load() if runtime.vault is not None else None
+                        if not saved:
+                            return "Pair this device first. Nothing was queued."
+                        counts = store.queue_sync(saved[0], runtime.enqueue_event)
+                        return f"Queued {counts['conversations']} chats and {counts['messages']} messages locally. Nothing uploaded."
+                    return "Usage: /sync chat preview | queue"
+                if action == "run":
+                    if runtime.vault is None or not runtime.vault.load():
+                        return "Pair this device first with /sync pair. No network request was made."
+                    try:
+                        def apply_remote(event):
+                            if event["collection"].startswith("conversation_"):
+                                if conversation_context is None:
+                                    raise SyncClientError("Local chat store is unavailable.")
+                                return conversation_context["store"].apply_remote(event)
+                            if event["collection"] == "skill_metadata":
+                                return SkillPackSyncAdapter().apply_remote(event)
+                            return TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
+                        result = runtime.sync_once(apply_remote)
+                    except SyncClientError as error:
+                        write_audit_event("sync:run", "rejected")
+                        return f"Sync stopped safely: {error} No unhandled event was acknowledged."
+                    write_audit_event("sync:run", "completed")
+                    return (
+                        "Yuki sync cycle completed. "
+                        f"Uploaded: {result['pushed']}; downloaded/applied: {result['pulled']}; "
+                        f"conflicts: {result['conflicts']}. "
+                        "Task upserts, chat history and data-only skill packs are supported; executable plugins, preferences and deletes are not."
+                    )
+                return "Usage: /sync status | pair | tasks preview | tasks queue | chat preview | chat queue | skills preview | skills queue | run"
+            finally:
+                runtime.close()
+        except (SyncClientError, ValueError, OSError):
+            write_audit_event("sync:" + action, "rejected")
+            return "Sync operation unavailable. Check YUKI_SYNC_URL, optional credential storage and hub connectivity."
     if command == "/dashboard":
         current = providers.current()
         available_tools = ", ".join(policy.allowed_tools())
@@ -354,6 +480,34 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             write_audit_event("task:" + parts[1], "completed" if result in ("Task completed.", "Task deleted.") else "failed")
             return result
         return "Usage: /task add DESCRIPTION | list | done ID | delete ID"
+    if command == "/conversation" or command.startswith("/conversation "):
+        if conversation_context is None or conversation_context.get("store") is None:
+            return "Conversation storage is unavailable."
+        parts = command.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "list"
+        store = conversation_context["store"]
+        if action == "list":
+            items = store.list_conversations()
+            return "\n".join(
+                f"{item['conversation_id']} — {item['title']} ({item['message_count']} messages)"
+                for item in items[:20]
+            ) or "No saved conversations."
+        if action == "new":
+            create_conversation = conversation_context.get("new_conversation")
+            if callable(create_conversation):
+                conversation_id = create_conversation("New conversation")
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                conversation_id = store.create("New conversation", now)
+                conversation_context["active_id"] = conversation_id
+            return f"Started conversation {conversation_id}."
+        if action == "show":
+            if len(parts) < 3:
+                return "Usage: /conversation show ID"
+            messages = store.messages(parts[2])
+            return "\n".join(f"{item['role']}: {item['content']}" for item in messages) or "No messages found."
+        return "Usage: /conversation list | new | show ID"
+
     if command == "/memory":
         return "\n".join(f"{i + 1}. {note}" for i, note in enumerate(memory)) or "No saved memory yet."
     if command.startswith("/memory add "):
@@ -412,28 +566,42 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 
 def main():
-    providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
+    application = YukiApplicationRuntime.create()
+    providers = application.providers
+    agent = application.agent
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
-    print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
+    conversation_context = {
+        "store": application.conversations,
+        "active_id": application.active_conversation_id,
+        "new_conversation": application.new_conversation,
+    }
+    print("Yuki terminal. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
-    while True:
-        try:
-            message = input("\nYou > ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
-            break
-        try:
-            response = handle_command(message, memory, tasks, agent, providers, policy)
-        except Exception as error:
-            response = f"Yuki encountered a recoverable error: {type(error).__name__}."
-        if response == "__QUIT__":
-            print("Yuki > Goodbye.")
-            break
-        if response:
-            print(f"Yuki > {response}")
+    try:
+        while True:
+            try:
+                message = input("\\nYou > ")
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye.")
+                break
+            try:
+                if message.strip() and not message.strip().startswith("/"):
+                    response = application.send_message(message)
+                else:
+                    response = handle_command(
+                        message, memory, tasks, agent, providers, policy, conversation_context
+                    )
+            except Exception as error:
+                response = f"Yuki encountered a recoverable error: {type(error).__name__}."
+            if response == "__QUIT__":
+                print("Yuki > Goodbye.")
+                break
+            if response:
+                print(f"Yuki > {response}")
+    finally:
+        application.close()
 
 
 if __name__ == "__main__":
