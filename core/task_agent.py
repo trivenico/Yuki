@@ -6,6 +6,7 @@ human approval gate. This module never executes shell commands or arbitrary code
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 
@@ -19,6 +20,19 @@ class TaskResult:
     steps: int = 0
     status: str = "failed"
 
+
+def _strict_json_object(pairs):
+    """Reject duplicate keys instead of silently accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _fingerprint(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 class ApprovedTaskAgent:
     """Run at most a few approved registered-skill calls for a single user goal."""
@@ -46,7 +60,10 @@ class ApprovedTaskAgent:
         task = self.ledger.create(normalized_goal[:240], detail=normalized_goal, metadata={"agent": "ApprovedTaskAgent"})
         task_id = task["id"]
         self.ledger.transition(task_id, "running")
-        self.ledger.append_event(TaskEvent(task_id, "task.started", {"agent": "ApprovedTaskAgent", "goal": normalized_goal}))
+        self.ledger.append_event(TaskEvent(task_id, "task.started", {
+            "agent": "ApprovedTaskAgent", "goal_chars": len(normalized_goal),
+            "goal_sha256": _fingerprint(normalized_goal),
+        }))
         try:
             result = self._run(goal, council_context=council_context, task_id=task_id)
         except Exception as exc:
@@ -95,8 +112,8 @@ class ApprovedTaskAgent:
                 return TaskResult(False, "AI provider returned an invalid or oversized plan.",
                                   step_number, "invalid_model_output")
             try:
-                proposal = json.loads(raw)
-            except json.JSONDecodeError:
+                proposal = json.loads(raw, object_pairs_hook=_strict_json_object)
+            except (json.JSONDecodeError, ValueError):
                 return TaskResult(False, "AI response was not valid JSON; no action was executed.",
                                   step_number, "invalid_model_output")
             if not isinstance(proposal, dict):
@@ -104,6 +121,9 @@ class ApprovedTaskAgent:
                                   step_number, "invalid_model_output")
             kind = proposal.get("type")
             if kind == "final":
+                if set(proposal) != {"type", "message"}:
+                    return TaskResult(False, "AI final response contained unsupported fields.",
+                                      step_number, "invalid_model_output")
                 message = proposal.get("message")
                 if not isinstance(message, str) or not message.strip():
                     return TaskResult(False, "AI final response was invalid.", step_number,
@@ -111,6 +131,9 @@ class ApprovedTaskAgent:
                 return TaskResult(True, message.strip()[:4000], step_number, "completed")
             if kind != "tool_call":
                 return TaskResult(False, "AI requested an unsupported action; nothing was executed.",
+                                  step_number, "invalid_model_output")
+            if set(proposal) != {"type", "skill", "argument"}:
+                return TaskResult(False, "AI tool request contained unsupported fields.",
                                   step_number, "invalid_model_output")
             skill_name = proposal.get("skill")
             argument = proposal.get("argument", "")
@@ -123,7 +146,10 @@ class ApprovedTaskAgent:
                                   step_number, "invalid_model_output")
             if task_id is not None:
                 self.ledger.append_event(TaskEvent(
-                    task_id, "tool.proposed", {"skill": skill_name, "argument": argument, "step": step_number}
+                    task_id, "tool.proposed", {
+                        "skill": skill_name, "argument_chars": len(argument),
+                        "argument_sha256": _fingerprint(argument), "step": step_number,
+                    }
                 ))
             result = self.skill_agent.run_skill(skill_name, argument)
             observation = {
