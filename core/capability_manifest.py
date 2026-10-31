@@ -134,7 +134,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("configured BaseProvider", "SQLite conversation store"),
         ("conversation:read", "conversation:write", "provider:invoke"),
         ("outbound configured model-provider request", "local conversation database writes"),
-        ("local", "desktop-adapter-ready"), "high",
+        ("local",), "high",
         ("tests/test_conversation_runtime.py", "tests/test_conversation_store.py", "tests/test_yuki_cli.py"),
         ("Workspace identity is caller-supplied in local mode; hosted adapters must derive it from trusted authentication.",
          "Synchronous provider generate API; no token streaming or tokenizer-aware context budget.",
