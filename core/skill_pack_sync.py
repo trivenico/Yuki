@@ -41,6 +41,13 @@ class SkillPackSyncAdapter:
                     payload_hash TEXT NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS queued_packs (
+                    name TEXT PRIMARY KEY,
+                    manifest_hash TEXT NOT NULL,
+                    event_json TEXT NOT NULL
+                )
+            """)
 
     @staticmethod
     def _event_id(device_id: str, name: str) -> str:
@@ -69,17 +76,41 @@ class SkillPackSyncAdapter:
                     raise ValueError("Skill pack filename does not match its manifest.")
                 # The sync contract only carries data-only manifest fields.
                 payload = validate_skill_pack(manifest)
-                event = {
-                    "event_id": self._event_id(device_id, payload["name"]),
-                    "device_id": device_id,
-                    "collection": "skill_metadata",
-                    "object_id": "skill_" + hashlib.sha256(payload["name"].encode()).hexdigest()[:32],
-                    "revision": 1,
-                    "occurred_at": datetime.now(timezone.utc).isoformat(),
-                    "operation": "upsert",
-                    "payload": payload,
-                }
-                validate_sync_event(event)
+                manifest_hash = hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+                ).hexdigest()
+                with sqlite3.connect(self.state_path, timeout=10) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    prior = db.execute(
+                        "SELECT manifest_hash,event_json FROM queued_packs WHERE name=?",
+                        (payload["name"],),
+                    ).fetchone()
+                    if prior and prior[0] != manifest_hash:
+                        raise SyncClientError(
+                            "Skill pack updates are not supported yet; a changed pack needs a reviewed revision migration."
+                        )
+                    if prior:
+                        event = json.loads(prior[1])
+                    else:
+                        event = {
+                            "event_id": self._event_id(device_id, payload["name"]),
+                            "device_id": device_id,
+                            "collection": "skill_metadata",
+                            "object_id": "skill_" + hashlib.sha256(payload["name"].encode()).hexdigest()[:32],
+                            "revision": 1,
+                            "occurred_at": datetime.now(timezone.utc).isoformat(),
+                            "operation": "upsert",
+                            "payload": payload,
+                        }
+                        validate_sync_event(event)
+                        db.execute(
+                            "INSERT INTO queued_packs(name,manifest_hash,event_json) VALUES(?,?,?)",
+                            (payload["name"], manifest_hash,
+                             json.dumps(event, ensure_ascii=False, sort_keys=True)),
+                        )
+                    db.commit()
+                if event["device_id"] != device_id:
+                    raise SyncClientError("Skill pack event belongs to a different paired device.")
                 if enqueue(event):
                     queued += 1
                 else:
