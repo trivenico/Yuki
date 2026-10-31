@@ -81,6 +81,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--format", choices=("text", "json"), default="text",
                      help="Output format; json streams bounded NDJSON events")
 
+    sessions = sub.add_parser("sessions", help="Manage persistent workspace-scoped conversations")
+    session_actions = sessions.add_subparsers(dest="session_action", required=True)
+    for action in ("list", "create", "show", "archive"):
+        command = session_actions.add_parser(action)
+        command.add_argument("--workspace", required=True, help="Workspace identifier resolved by the local caller")
+        if action in {"show", "archive"}:
+            command.add_argument("session_id")
+        if action == "create":
+            command.add_argument("--title", default="New conversation")
+
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
     return parser
 
@@ -341,6 +351,29 @@ def run_cli(
             return 3
         output_fn(f"Model download completed: {model}. Run 'python yuki_cli.py doctor' next; inference is not yet verified.")
         return 0
+
+    if args.command == "sessions":
+        try:
+            from pathlib import Path
+            from core.conversation_store import ConversationStore
+            data_root = Path(os.environ.get("YUKI_HOME", Path.home() / ".yuki")).expanduser()
+            store = ConversationStore(data_root / "conversations.sqlite3")
+            if args.session_action == "list":
+                result = {"sessions": store.list_sessions(args.workspace)}
+            elif args.session_action == "create":
+                result = {"session": store.create_session(args.workspace, args.title)}
+            elif args.session_action == "show":
+                result = {
+                    "session": store.get_session(args.workspace, args.session_id),
+                    "messages": store.list_messages(args.workspace, args.session_id),
+                }
+            else:
+                result = {"session": store.archive_session(args.workspace, args.session_id)}
+            _write_json(result, output_fn)
+            return 0
+        except (ValueError, OSError, KeyError) as exc:
+            output_fn(f"Session operation failed safely ({type(exc).__name__}): {str(exc)[:200]}")
+            return 2
 
     try:
         config = config_loader()
