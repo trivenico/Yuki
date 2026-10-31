@@ -193,6 +193,22 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
          "Not a bulk marketplace, signature verification service, or universal skill runtime."),
     ),
     CapabilityContract(
+        "isolated-skill-environment-planning", "Offline hash-locked skill environment planning", "experimental",
+        "Validates pinned package lock entries and generates per-skill virtual-environment and offline "
+        "installation command plans without creating environments, launching processes, or accessing networks.",
+        ("core/skill_environment_manager.py", "core/skill_dependency_manager.py"),
+        ("Python standard library",),
+        ("skills:read", "dependencies:inspect", "environments:plan"),
+        ("metadata validation", "deterministic lockfile rendering", "offline command-plan generation"),
+        ("local",), "high",
+        ("tests/test_skill_environment_manager.py",),
+        ("No environment is created and no command is executed; a separate approved executor is required.",
+         "The lockfile format is a deliberately narrow internal subset, not a complete pip requirements parser.",
+         "Every direct and transitive package must be pinned and hash-locked by a trusted lock-generation process.",
+         "Wheel provenance, signatures, malware scanning, and artifact attestation are not implemented.",
+         "No CLI or desktop environment lifecycle commands are wired yet."),
+    ),
+    CapabilityContract(
         "skill-dependency-planning", "Read-only skill dependency and compatibility planning", "experimental",
         "Validates bounded skill and Python package constraints, resolves installed skill dependency "
         "closures, and reports missing, incompatible, or cyclic dependencies without installing packages.",
