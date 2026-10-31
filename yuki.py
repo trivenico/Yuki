@@ -205,6 +205,21 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                             "Nothing was uploaded. Review the preview before any future sync run."
                         )
                     return "Usage: /sync tasks preview | queue"
+                if action == "chat":
+                    store = conversation_context["store"] if conversation_context else None
+                    if store is None:
+                        return "Local chat history is unavailable."
+                    mode = parts[2] if len(parts) > 2 else "preview"
+                    if mode == "preview":
+                        counts = store.preview_sync()
+                        return f"Preview: {counts['conversations']} chats and {counts['messages']} messages."
+                    if mode == "queue":
+                        saved = runtime.vault.load() if runtime.vault is not None else None
+                        if not saved:
+                            return "Pair this device first. Nothing was queued."
+                        counts = store.queue_sync(saved[0], runtime.enqueue_event)
+                        return f"Queued {counts['conversations']} chats and {counts['messages']} messages locally. Nothing uploaded."
+                    return "Usage: /sync chat preview | queue"
                 if action == "run":
                     if runtime.vault is None or not runtime.vault.load():
                         return "Pair this device first with /sync pair. No network request was made."
