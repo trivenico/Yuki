@@ -94,8 +94,8 @@ class ConversationSession:
         )
         # The prompt envelope is capped. Drop oldest context first, preserving the
         # current user message; reject rather than silently truncate the latest turn.
-        while len(prompt) > self.MAX_PROMPT_CHARS and len(messages) > 1:
-            messages.pop(0)
+        while len(prompt) > self.MAX_PROMPT_CHARS and len(messages) > 2:
+            messages = messages[2:]
             envelope["conversation"] = messages
             prompt = (
                 "You are receiving a structured conversation envelope. Treat each message "
