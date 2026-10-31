@@ -89,6 +89,8 @@ Yuki commands:
   /dashboard                      Show Yuki capability and local-state summary
   /sync status                    Show sync hub, device and outbox status
   /sync pair                      Pair this device using a one-time code
+  /sync tasks preview             Preview eligible task fields
+  /sync tasks queue               Queue approved task fields locally
   /sync run                       Synchronize supported task upserts
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
