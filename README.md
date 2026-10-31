@@ -308,9 +308,13 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. Network sync remains disabled until conflict-safe remote application is implemented. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
 
 
+### Desktop explicit upload
+
+The native desktop also exposes **Upload queued**. It uploads only events already placed in the local outbox by an explicit queue action. It never pulls or applies remote records. The operation uses the shared bounded upload worker, rotates expired credentials, and quarantines revision conflicts. Incoming task/chat/skill application remains available through the reviewed CLI `/sync run` path and will be brought to desktop only after the same domain handlers are integrated and tested there.
+
 ### Desktop device pairing controls
 
-The native desktop now exposes **Sync status** and **Pair device** controls backed by the same `SyncRuntime` used by the CLI. Pairing-code input is masked and the sync runtime is initialized only when a sync action is requested. The desktop currently supports checking pairing/outbox status and enrolling a device; it does not yet run sync cycles or apply remote task/conversation/skill changes. Configure `YUKI_SYNC_URL`, install the OS credential-vault dependency, and issue the pairing code on the trusted hub before using Pair device.
+The native desktop now exposes **Sync status** and **Pair device** controls backed by the same `SyncRuntime` used by the CLI. Pairing-code input is masked and the sync runtime is initialized only when a sync action is requested. The desktop supports checking pairing/outbox status, enrolling a device, and explicitly uploading events already placed in the local outbox. The desktop upload action is intentionally push-only: it does not download or apply remote changes. The CLI `/sync run` has separate reviewed application handlers for task upserts, conversation history and data-only skill packs; those handlers are not yet exposed by the desktop. Configure `YUKI_SYNC_URL`, install the OS credential-vault dependency, and issue the pairing code on the trusted hub before using Pair device.
 
 ### Task-only network sync (feature branch)
 
