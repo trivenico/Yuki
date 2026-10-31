@@ -137,6 +137,19 @@ class CodingTaskRunnerTests(unittest.TestCase):
                                command=["python", "x" * 2049], approve=lambda request: True)
         build.assert_not_called()
 
+    @patch("core.coding_task_runner.build_docker_argv")
+    def test_mutable_or_malformed_image_reference_is_rejected_before_approval(self, build):
+        approve = unittest.mock.Mock(return_value=True)
+        for image in ("python:3.12", "python:latest", "python@sha256:abcd"):
+            with self.subTest(image=image):
+                with self.assertRaises(SandboxExecutionError):
+                    run_sandboxed_task(
+                        self.policy, image=image, workspace=self.tmp.name,
+                        command=["python", "-V"], approve=approve,
+                    )
+        approve.assert_not_called()
+        build.assert_not_called()
+
     def test_missing_approval_callback_is_rejected(self):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", workspace=self.tmp.name,
