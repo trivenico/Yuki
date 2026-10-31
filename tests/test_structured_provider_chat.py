@@ -76,6 +76,13 @@ class StructuredProviderChatTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             provider.generate_chat("system", [{"role": "assistant", "content": "no user turn"}])
 
+    def test_structured_chat_rejects_non_string_role_without_type_error(self):
+        provider = OpenAICompatibleProvider(
+            "test-model", environ={"OPENAI_API_KEY": "test-secret"}
+        )
+        with self.assertRaises(ValueError):
+            provider.generate_chat("system", [{"role": [], "content": "hello"}])
+
     def test_structured_chat_rejects_non_alternating_history(self):
         provider = OpenAICompatibleProvider(
             "test-model", environ={"OPENAI_API_KEY": "test-secret"}
