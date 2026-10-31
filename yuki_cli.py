@@ -9,7 +9,7 @@ import argparse
 import json
 from collections.abc import Callable, Sequence
 
-from core.config import load_config
+from companion.conversation import ConversationError, ConversationSession\nfrom core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -89,21 +89,35 @@ def run_cli(
         return status
 
     if args.command == "chat":
-        output_fn("Yuki chat. Type /quit to exit. Tool execution is disabled in this CLI mode.")
+        session = ConversationSession(provider)
+        output_fn("Yuki companion chat. Type /reset to clear this session or /quit to exit. Tool execution is disabled.")
         while True:
             try:
                 message = input_fn("You> ")
             except (EOFError, KeyboardInterrupt):
                 output_fn("")
                 return 0
-            if message.strip().lower() in {"/quit", "/exit"}:
+            command = message.strip().lower()
+            if command in {"/quit", "/exit"}:
                 return 0
+            if command == "/reset":
+                session.reset()
+                output_fn("Yuki> This conversation has been cleared.")
+                continue
+            if command in {"/help", "/?"}:
+                output_fn("Yuki> I can chat with context during this session. Commands: /reset, /quit.")
+                continue
             if not message.strip():
                 continue
-            answer, status = _safe_ask(provider, message)
-            output_fn("Yuki> " + answer)
-            if status in {3, 4}:
-                return status
+            try:
+                reply = session.respond(message)
+            except ValueError:
+                output_fn("Yuki> Please send a message of up to 4000 characters.")
+                continue
+            except ConversationError as exc:
+                output_fn("Yuki> " + str(exc))
+                continue
+            output_fn("Yuki> " + reply.message)
 
 
 def main() -> int:
