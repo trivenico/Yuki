@@ -64,8 +64,8 @@ def review_coding_task_changes(
         "merge_authorized": False,
     }
     serialized = json.dumps(review_record, sort_keys=True, ensure_ascii=True)
-    if len(serialized) > 20_000:
-        raise CodingTaskReviewError("review evidence exceeds the task review storage limit")
+    if len(serialized) > 7_500:
+        raise CodingTaskReviewError("review evidence exceeds the bounded task review storage limit")
 
     if not report.eligible_for_human_review:
         return report, task
