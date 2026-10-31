@@ -89,6 +89,51 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("unavailable", output[0].lower())
 
+    def test_chat_uses_companion_context_and_reset_command(self):
+        provider = FakeProvider(answer="Yuki response")
+        output = []
+        messages = iter(["first message", "follow-up", "/reset", "fresh start", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: provider,
+            input_fn=lambda prompt: next(messages),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(provider.prompts), 3)
+        self.assertIn("first message", provider.prompts[1])
+        self.assertIn("Yuki response", provider.prompts[1])
+        self.assertNotIn("first message", provider.prompts[2])
+        self.assertTrue(any("conversation has been cleared" in line for line in output))
+
+    def test_chat_handles_provider_failure_without_leaking_exception(self):
+        class FlakyProvider(FakeProvider):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def generate(self, prompt):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("secret payload")
+                return "recovered"
+
+        provider = FlakyProvider()
+        output = []
+        messages = iter(["hello", "retry", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: provider,
+            input_fn=lambda prompt: next(messages),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Yuki could not reach the AI provider", output[1])
+        self.assertNotIn("secret payload", " ".join(output))
+        self.assertIn("Yuki> recovered", output)
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
