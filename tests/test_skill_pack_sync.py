@@ -33,6 +33,29 @@ class SkillPackSyncTests(unittest.TestCase):
             self.assertEqual(events[0]["payload"]["name"], "research_helper")
             self.assertNotIn("permissions", events[0]["payload"])
 
+    def test_repeated_queue_reuses_identical_event_envelope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            write_pack(source)
+            adapter = SkillPackSyncAdapter(root / "state.sqlite3", source)
+            first, second = [], []
+            adapter.queue_installed("device_0000001", lambda event: first.append(event) or True)
+            result = adapter.queue_installed("device_0000001", lambda event: second.append(event) or True)
+            self.assertEqual(result, {"queued": 1, "already_queued": 0})
+            self.assertEqual(first, second)
+
+    def test_changed_skill_pack_is_rejected_until_revisions_are_supported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            path = write_pack(source)
+            adapter = SkillPackSyncAdapter(root / "state.sqlite3", source)
+            adapter.queue_installed("device_0000001", lambda _: True)
+            path.write_text(path.read_text().replace("Research helper", "Changed description"))
+            with self.assertRaises(SyncClientError):
+                adapter.queue_installed("device_0000001", lambda _: True)
+
     def test_remote_pack_is_installed_as_high_risk_and_idempotently(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
