@@ -127,6 +127,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Not wired into the default runtime command/registry/UI; no stdio or SSE-only servers.",),
     ),
     CapabilityContract(
+        "model-assisted-agent-planning", "Model-assisted specialist agent planning and guarded dispatch", "experimental",
+        "Converts strict bounded model JSON into validated SubtaskSpec values, then delegates capability routing, "
+        "authorization, dependency gating, durable task creation and approval state to SpecialistAgentCoordinator.",
+        ("core/model_agent_planner.py", "automation/agent_coordinator.py", "automation/task_runtime.py"),
+        ("configured BaseProvider", "SpecialistAgentCoordinator", "TaskRuntime"),
+        ("agent:plan", "agent:dispatch", "agent:read", "task:create", "task:read"),
+        ("outbound configured model-provider request", "durable agent plan and task journal writes"),
+        ("local",), "high",
+        ("tests/test_model_agent_planner.py", "tests/test_agent_coordinator.py"),
+        ("Model output is untrusted and is never authorization; coordinator and task runtime enforce routing and grants.",
+         "Specialist workers execute separately; planning does not execute tools or complete tasks.",
+         "Actor identity must be supplied by a trusted caller; this module does not authenticate users.",
+         "Provider planning call is synchronous; no streaming or hosted adapter is included."),
+    ),
+    CapabilityContract(
         "shared-conversation-runtime", "Shared persistent provider-backed conversation runtime", "experimental",
         "Provides shared session loading, bounded context assembly, atomic turn persistence, provider invocation, "
         "idempotent replay of completed requests, and fail-closed handling of duplicate running requests.",
