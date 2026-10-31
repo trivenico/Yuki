@@ -14,6 +14,18 @@ class ApprovalOutcome:
     result: Any = None
 
 
+def _reject_non_string_object_keys(value: Any) -> None:
+    """Reject Python mappings that cannot be represented unambiguously as JSON."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings.")
+            _reject_non_string_object_keys(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _reject_non_string_object_keys(child)
+
+
 class ApprovalCoordinator:
     def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
@@ -41,6 +53,8 @@ class ApprovalCoordinator:
             raise ValueError("Pending action has an invalid skill id or arguments.")
         import json
         try:
+            _reject_non_string_object_keys(action)
+            _reject_non_string_object_keys(arguments)
             snapshot = json.loads(json.dumps(action, allow_nan=False, ensure_ascii=False))
             args_snapshot = json.loads(json.dumps(arguments, allow_nan=False, ensure_ascii=False))
             if len(json.dumps(snapshot, ensure_ascii=False).encode("utf-8")) > 16 * 1024:
