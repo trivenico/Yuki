@@ -279,6 +279,16 @@ class TaskStore:
                 raise KeyError("task not found")
             if row["status"] != "running" or row["worker_id"] != worker_id.strip():
                 raise ValueError("task is not owned by this running worker")
+            if row["lease_expires_at"] and row["lease_expires_at"] <= now:
+                next_status = "queued" if row["attempts"] < row["max_attempts"] and not (
+                    row["deadline_at"] and row["deadline_at"] <= now
+                ) else "failed"
+                db.execute(
+                    "UPDATE agent_tasks SET status=?,updated_at=?,worker_id=NULL,lease_expires_at=NULL,error=? WHERE id=?",
+                    (next_status, now, "worker lease expired", task_id),
+                )
+                self._event(db, task_id, "lease_expired", {"next_status": next_status})
+                return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
             if row["deadline_at"] and row["deadline_at"] <= now:
                 db.execute("UPDATE agent_tasks SET status='failed',updated_at=?,error=?,worker_id=NULL,lease_expires_at=NULL WHERE id=?",
                            (now, "task deadline expired", task_id))
@@ -316,6 +326,16 @@ class TaskStore:
                 raise KeyError("task not found")
             if row["status"] != "running" or row["worker_id"] != worker_id.strip():
                 raise ValueError("task is not owned by this running worker")
+            if row["lease_expires_at"] and row["lease_expires_at"] <= now:
+                next_status = "queued" if row["attempts"] < row["max_attempts"] and not (
+                    row["deadline_at"] and row["deadline_at"] <= now
+                ) else "failed"
+                db.execute(
+                    "UPDATE agent_tasks SET status=?,updated_at=?,worker_id=NULL,lease_expires_at=NULL,result_json=NULL,error=? WHERE id=?",
+                    (next_status, now, "worker lease expired before completion", task_id),
+                )
+                self._event(db, task_id, "lease_expired", {"next_status": next_status})
+                return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
             if row["deadline_at"] and row["deadline_at"] <= now:
                 status, error, result_json = "failed", "task deadline expired", None
                 retryable = False
