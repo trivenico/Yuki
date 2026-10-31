@@ -35,8 +35,8 @@ class TaskEventStream:
     ) -> EventBatch:
         if type(after_sequence) is not int or after_sequence < 0:
             raise ValueError("after_sequence must be a non-negative integer")
-        if type(limit) is not int or not 1 <= limit <= 500:
-            raise ValueError("limit must be between 1 and 500")
+        if type(limit) is not int or not 1 <= limit <= 499:
+            raise ValueError("limit must be between 1 and 499")
         # Ask for one extra record so clients can distinguish a full page from completion.
         events = self.runtime.events(
             actor_id=actor_id, task_id=task_id,
