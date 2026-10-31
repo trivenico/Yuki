@@ -283,6 +283,46 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(output, ["real answer"])
         self.assertEqual(provider.prompts, ["hello"])
 
+    def test_chat_carries_recent_session_context_between_turns(self):
+        provider = FakeProvider(answer="first answer")
+        output = []
+        messages = iter(["first question", "follow-up question", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda _config: provider,
+            input_fn=lambda _prompt: next(messages),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(provider.prompts), 2)
+        self.assertIn("User: first question", provider.prompts[1])
+        self.assertIn("Yuki: first answer", provider.prompts[1])
+        self.assertIn("User: follow-up question", provider.prompts[1])
+
+    def test_chat_context_is_bounded_to_recent_turns(self):
+        from yuki_cli import CHAT_HISTORY_TURNS, _build_chat_prompt
+        history = [(f"user-{i}", f"assistant-{i}") for i in range(CHAT_HISTORY_TURNS + 3)]
+        prompt = _build_chat_prompt(history, "current")
+        self.assertIn(f"user-{CHAT_HISTORY_TURNS + 2}", prompt)
+        self.assertNotIn("user-0", prompt)
+        self.assertIn("User: current", prompt)
+
+    def test_chat_rejects_oversized_message_without_calling_provider(self):
+        provider = FakeProvider()
+        output = []
+        messages = iter(["x" * 5000, "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda _config: provider,
+            input_fn=lambda _prompt: next(messages),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(provider.prompts, [])
+        self.assertTrue(any("chat limit" in line for line in output))
+
     def test_provider_status_reports_unavailable_with_nonzero_exit(self):
         provider = FakeProvider(available=False)
         output = []
