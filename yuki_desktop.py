@@ -32,6 +32,19 @@ class YukiDesktop:
         ttk.Label(header, text="Yuki", font=("Segoe UI", 20, "bold")).pack(side=tk.LEFT)
         self.status = tk.StringVar(value="Starting Yuki…")
         ttk.Label(header, textvariable=self.status).pack(side=tk.RIGHT)
+        settings = ttk.Frame(shell)
+        settings.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(settings, text="AI provider").pack(side=tk.LEFT)
+        self.provider_var = tk.StringVar()
+        self.provider_select = ttk.Combobox(
+            settings, textvariable=self.provider_var, state="readonly", width=18
+        )
+        self.provider_select.pack(side=tk.LEFT, padx=(8, 6))
+        self.provider_select.bind("<<ComboboxSelected>>", self._select_provider)
+        ttk.Button(settings, text="Refresh providers", command=self._providers).pack(side=tk.LEFT)
+        self.provider_names: dict[str, str] = {}
+        self.provider_var.set("Loading…")
+
         self.conversation_var = tk.StringVar()
         self.conversation_select = ttk.Combobox(
             shell, textvariable=self.conversation_var, state="readonly"
@@ -98,6 +111,17 @@ class YukiDesktop:
         if self.ready and not self.closing:
             self._submit("new", title="Yuki session")
 
+    def _providers(self):
+        if self.ready and not self.closing:
+            self._submit("providers")
+
+    def _select_provider(self, _event=None):
+        name = self.provider_names.get(self.provider_var.get())
+        if name and self.ready and not self.closing:
+            self.status.set("Switching provider…")
+            self.provider_select.configure(state=tk.DISABLED)
+            self._submit("select_provider", name=name)
+
     def _history(self):
         if self.ready and not self.closing:
             self._submit("history")
@@ -125,6 +149,7 @@ class YukiDesktop:
                         self.status.set("Ready")
                         self.send_button.configure(state=tk.NORMAL)
                         self.entry.focus_set()
+                        self._submit("providers")
                         self._submit("list")
                     else:
                         self.status.set("Unavailable")
@@ -135,6 +160,31 @@ class YukiDesktop:
                         self._append("Yuki: " + event.get("response", ""), "assistant")
                     else:
                         self._append("Yuki request failed: " + event.get("error", "Error"), "error")
+                elif action == "providers" and event.get("ok"):
+                    providers = event.get("providers", [])
+                    self.provider_names = {
+                        f'{item.get("name", "unknown")} — {"implemented" if item.get("implemented") else "planned"}':
+                        item.get("name", "")
+                        for item in providers
+                    }
+                    self.provider_select.configure(values=list(self.provider_names))
+                    selected = event.get("selected")
+                    selected_label = next(
+                        (label for label, name in self.provider_names.items() if name == selected),
+                        "",
+                    )
+                    self.provider_var.set(selected_label)
+                    self.provider_select.configure(state="readonly")
+                    self.status.set("Ready · " + (selected or "no provider"))
+                elif action == "select_provider":
+                    self.provider_select.configure(state="readonly")
+                    if event.get("ok"):
+                        self.status.set("Ready · " + event.get("selected", "provider selected"))
+                        self._append(event.get("result", "Provider selected."))
+                    else:
+                        self.status.set("Provider unchanged")
+                        self._append(event.get("result", "Provider selection failed."), "error")
+                    self._submit("providers")
                 elif action == "list" and event.get("ok"):
                     conversations = event.get("conversations", [])
                     self.conversation_ids = {
