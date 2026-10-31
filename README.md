@@ -6,6 +6,12 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Shared application runtime
+
+The CLI now composes its provider manager, AI agent and durable conversation store through `core/application_runtime.py`. This is the first shared service boundary intended for both the Windows desktop interface and the Oracle Linux service. Interfaces should call `YukiApplicationRuntime.create()`, `send_message()`, `new_conversation()`, `switch_conversation()` and `close()` rather than constructing their own provider or conversation services.
+
+This is an incremental foundation, not a completed desktop/cloud client-server architecture. The runtime currently executes in-process and does not expose an authenticated local API, background worker, remote RPC protocol or desktop UI. Those are subsequent milestones.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
