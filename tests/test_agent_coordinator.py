@@ -79,7 +79,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         ])
         first = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(sum(item.task_id is not None for item in first.subtasks), 1)
-        self.assertEqual(first.status, "running")
+        self.assertEqual(first.status, "queued")
         first_task = self.store.claim_next(worker_id="bounded-worker")
         completed = self.store.transition(
             first_task.run_id, expected_version=first_task.version, to_state="succeeded",
@@ -91,7 +91,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(sum(item.task_id is not None for item in second.subtasks), 2)
-        self.assertEqual(second.status, "running")
+        self.assertEqual(second.status, "queued")
         self.assertNotEqual(
             next(item.task_id for item in second.subtasks if item.subtask_id == "a"),
             next(item.task_id for item in second.subtasks if item.subtask_id == "b"),
