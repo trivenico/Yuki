@@ -5,7 +5,7 @@
 - Added `automation/task_event_stream.py` as a transport-neutral event replay boundary.
 - Reads task lifecycle events from the existing SQLite workflow event journal through `TaskRuntime`.
 - Enforces `task:read` authorization for every batch.
-- Adds bounded cursor pagination (sequence cursor, maximum page size 500, one-record lookahead).
+- Adds bounded cursor pagination (sequence cursor, maximum page size 499 (with one-record lookahead), one-record lookahead).
 - Emits Server-Sent Events frames with monotonically increasing per-task sequence IDs, event names and JSON data.
 - Supports reconnect/replay by passing the last successfully consumed sequence as `after_sequence`.
 - Extended `TaskRuntime.events()` with a bounded limit parameter while preserving its authorization check.
