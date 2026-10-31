@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from core.sync_api import SyncAPI
-from core.sync_auth import SyncCredentialStore
+from core.sync_auth import SyncAuthenticationError, SyncCredentialStore
 from core.sync_store import SyncEventStore
 from yuki_sync_admin import issue_pairing_code
 
@@ -42,10 +42,18 @@ class SyncCredentialAPITests(unittest.TestCase):
         database = Path(self.tmp.name) / "admin" / "sync.sqlite3"
         code = issue_pairing_code(database, "user_0000001", 120)
         self.assertGreaterEqual(len(code), 32)
-        result = self.credentials.consume_pairing_code(code, "Windows laptop")
-        self.assertTrue(self.credentials.authenticate_access(result["access_token"]))
-        with self.assertRaises(Exception):
-            self.credentials.consume_pairing_code(code, "Replay")
+        admin_store = SyncEventStore(database)
+        try:
+            admin_credentials = SyncCredentialStore(admin_store)
+            result = admin_credentials.consume_pairing_code(code, "Windows laptop")
+            self.assertEqual(
+                admin_credentials.authenticate_access(result["access_token"]),
+                result["device_id"],
+            )
+            with self.assertRaises(SyncAuthenticationError):
+                admin_credentials.consume_pairing_code(code, "Replay")
+        finally:
+            admin_store.close()
 
     def test_admin_utility_rejects_invalid_code_lifetime(self):
         database = Path(self.tmp.name) / "admin-invalid" / "sync.sqlite3"
