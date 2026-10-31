@@ -23,6 +23,21 @@ class YukiAgent:
         except Exception:
             return "Provider status is unknown."
 
+    def stream(self, prompt):
+        """Yield provider text chunks, falling back to one complete chunk."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
+        if not self.provider.is_available():
+            raise RuntimeError("AI provider is unavailable.")
+        streamer = getattr(self.provider, "stream", None)
+        if callable(streamer):
+            yield from streamer(prompt.strip())
+        else:
+            result = self.provider.generate(prompt.strip())
+            if not isinstance(result, str):
+                raise RuntimeError("Provider returned an unsupported response.")
+            yield result
+
     def ask(self, prompt):
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
