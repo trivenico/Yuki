@@ -190,6 +190,11 @@ class CodingTaskStore:
         return self._mutate(task_id, expected_version, "draft", "draft",
                             {"patch": patch, "patch_sha256": digest, "review": None})
 
+    def attach_review_evidence(self, task_id: str, *, expected_version: int, review: str) -> CodingTask:
+        """Persist bounded review evidence without changing the task lifecycle state."""
+        evidence = self._bounded_text(review, "review", 8000)
+        return self._mutate(task_id, expected_version, "draft", "draft", {"review": evidence})
+
     def transition(self, task_id: str, *, expected_version: int, new_state: str,
                    review: str | None = None) -> CodingTask:
         if new_state not in _STATES:
