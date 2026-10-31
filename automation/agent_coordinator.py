@@ -393,8 +393,6 @@ class SpecialistAgentCoordinator:
         by_id = {row["subtask_id"]: row for row in rows}
 
         for row in rows:
-            if active_count >= self.max_active_tasks:
-                break
             if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
             dependencies = json.loads(row["dependencies_json"])
@@ -424,6 +422,10 @@ class SpecialistAgentCoordinator:
                 row["status"] = "blocked"
                 continue
             if waiting:
+                continue
+            # The limit gates only new work; continue inspecting remaining rows so
+            # failed dependencies are marked blocked even while capacity is full.
+            if active_count >= self.max_active_tasks:
                 continue
             agent = self.agents.get(row["agent_id"])
             if agent is None or not agent.enabled:
