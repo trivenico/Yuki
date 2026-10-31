@@ -15,7 +15,7 @@ from typing import Any
 from uuid import uuid4
 
 SESSION_STATUSES = frozenset({"active", "archived"})
-MESSAGE_ROLES = frozenset({"system", "user", "assistant", "tool"})
+MESSAGE_ROLES = frozenset({"user", "assistant", "tool"})
 _MAX_WORKSPACE_ID = 128
 _MAX_TITLE = 200
 _MAX_CONTENT = 64_000
