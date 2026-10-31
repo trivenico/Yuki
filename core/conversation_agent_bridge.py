@@ -8,6 +8,7 @@ approval and worker controls.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -109,9 +110,19 @@ class ConversationAgentBridge:
                     None,
                 )
                 if saved is not None:
+                    match = re.match(r"Yuki created agent plan ([A-Za-z0-9_.-]+)\\.", saved["content"])
+                    plan_id = match.group(1) if match else None
+                    plan_status = None
+                    if plan_id is not None:
+                        try:
+                            plan = self.agents.get_plan(actor_id=actor_id, plan_id=plan_id)
+                            plan_status = plan.status
+                        except (KeyError, PermissionError, ValueError):
+                            # Keep the completed turn replayable if current plan access changed.
+                            pass
                     return AgentTurnResult(
                         True, session_id, request_id, saved["content"], 0,
-                        replayed=True,
+                        plan_id=plan_id, plan_status=plan_status, replayed=True,
                     )
             code = "turn_already_running" if turn["status"] == "running" else "turn_already_failed"
             message = (
