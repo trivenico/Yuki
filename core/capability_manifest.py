@@ -143,6 +143,20 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Finite recording and chunked playback exist; automatic barge-in is not wired end to end.",),
     ),
     CapabilityContract(
+        "typed-tool-execution", "Typed fail-closed agent tool execution", "experimental",
+        "Validates structured tool calls against registered schemas, checks policy on every call, "
+        "requires exact-call approval for side-effecting or high-risk tools, and bounds results.",
+        ("core/typed_tool_runtime.py", "core/task_contracts.py"),
+        ("Python standard library",),
+        ("tool:invoke", "tool:policy:authorize", "tool:approval:exact-call"),
+        ("registered handler invocation", "metadata-only audit events"),
+        ("local",), "high",
+        ("tests/test_typed_tool_runtime.py", "tests/test_task_contracts.py"),
+        ("In-process execution is not a sandbox; registered handlers retain process privileges.",
+         "Timeouts and process isolation must be supplied by a future isolated executor.",
+         "The runtime is not yet wired as the single dispatch path for every CLI, desktop, plugin, and worker call site."),
+    ),
+    CapabilityContract(
         "specialist-orchestration", "Bounded specialist-agent orchestration", "experimental",
         "Durably plans and routes bounded specialist subtasks, enforces dependencies and approvals, "
         "and executes registered text-only handlers with task leases and recovery.",
