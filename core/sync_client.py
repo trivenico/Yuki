@@ -306,6 +306,48 @@ class SyncAgent:
         self.vault.save(device_id, access, refresh)
         return access, refresh
 
+    def push_pending(self, push_limit: int = 50) -> dict[str, int]:
+        """Upload only explicitly queued events; never pull or apply remote data."""
+        if isinstance(push_limit, bool) or not isinstance(push_limit, int) or not 1 <= push_limit <= 200:
+            raise ValueError("push_limit must be between 1 and 200.")
+        device_id, access, refresh = self._credentials()
+        pushed = conflicts = 0
+        for event in self.outbox.ready(push_limit):
+            try:
+                self.transport.push(event, access)
+                self.outbox.mark_sent(event["event_id"])
+                pushed += 1
+            except SyncHTTPError as exc:
+                if exc.status == 401:
+                    access, refresh = self._refresh(device_id, refresh)
+                    try:
+                        self.transport.push(event, access)
+                        self.outbox.mark_sent(event["event_id"])
+                        pushed += 1
+                    except SyncHTTPError as retry_exc:
+                        if retry_exc.status == 409:
+                            self.outbox.mark_conflict(event["event_id"], "Server revision conflict.")
+                            conflicts += 1
+                        elif retry_exc.status in (401, 403):
+                            self.outbox.mark_retry(event["event_id"], "Authorization failed.")
+                            raise SyncClientError("Sync authorization failed; re-pair this device.") from None
+                        else:
+                            self.outbox.mark_retry(event["event_id"], "HTTP " + str(retry_exc.status))
+                    except SyncClientError:
+                        self.outbox.mark_retry(event["event_id"], "Network or transport failure.")
+                    continue
+                if exc.status == 409:
+                    self.outbox.mark_conflict(event["event_id"], "Server revision conflict.")
+                    conflicts += 1
+                elif exc.status in (401, 403):
+                    raise SyncClientError("Sync authorization failed; re-pair this device.") from None
+                else:
+                    self.outbox.mark_retry(event["event_id"], "HTTP " + str(exc.status))
+            except SyncClientError:
+                self.outbox.mark_retry(event["event_id"], "Network or transport failure.")
+        counts = self.outbox.counts()
+        return {"pushed": pushed, "conflicts": conflicts, "pending": counts["pending"]}
+
     def sync_once(self, push_limit: int = 50, pull_limit: int = 100) -> dict[str, int]:
         device_id, access, refresh = self._credentials()
         pushed = conflicts = pulled = 0
