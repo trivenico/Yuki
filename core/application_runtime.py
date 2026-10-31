@@ -65,6 +65,20 @@ class YukiApplicationRuntime:
             self.active_conversation_id, "assistant", content, utc_now()
         )
 
+    def switch_conversation(self, conversation_id: str) -> None:
+        self._ensure_open()
+        known = {item["conversation_id"] for item in self.conversations.list_conversations()}
+        if conversation_id not in known:
+            raise ValueError("Conversation does not exist on this device.")
+        self.active_conversation_id = conversation_id
+
+    def send_message(self, content: str) -> str:
+        """Run a normal chat turn through the shared provider and persist both sides."""
+        self.begin_turn(content)
+        response = self.agent.ask(content)
+        self.finish_turn(response)
+        return response
+
     def new_conversation(self, title: str = "Yuki session") -> str:
         self._ensure_open()
         conversation_id = self.conversations.create(title, utc_now())
