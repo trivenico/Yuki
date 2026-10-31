@@ -103,6 +103,9 @@ class FakeSyncRuntime:
         self.paired = True
         return "This device is paired."
 
+    def upload_pending(self):
+        return {"pushed": 2, "conflicts": 0, "pending": 0}
+
     def close(self):
         self.closed = True
 
@@ -206,6 +209,25 @@ class DesktopWorkerTests(unittest.TestCase):
         paired = self._next(worker, "sync_pair")
         self.assertTrue(paired["ok"])
         self.assertIn("paired", paired["status"])
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
+        self.assertTrue(sync_instances[0].closed)
+
+    def test_sync_upload_is_explicit_worker_action(self):
+        sync_instances = []
+        def sync_factory():
+            instance = FakeSyncRuntime()
+            sync_instances.append(instance)
+            return instance
+        worker = DesktopRuntimeWorker(FakeRuntime, sync_factory)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("sync_upload")
+        result = self._next(worker, "sync_upload")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["result"]["pushed"], 2)
+        self.assertEqual(result["result"]["pending"], 0)
         worker.submit("close")
         self._next(worker, "close")
         worker.join(2)
