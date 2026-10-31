@@ -16,6 +16,13 @@ class _Response:
         return self.payload[:limit]
 
 
+class _Opener:
+    def __init__(self, response):
+        self.response = response
+    def open(self, request, timeout=None):
+        return self.response
+
+
 class ColibriProviderTests(unittest.TestCase):
     def test_rejects_remote_endpoint(self):
         with self.assertRaises(ValueError):
@@ -28,7 +35,7 @@ class ColibriProviderTests(unittest.TestCase):
     def test_is_available_checks_models_envelope(self):
         provider = ColibriProvider("model")
         payload = json.dumps({"data": [{"id": "model"}]}).encode()
-        with patch("providers.colibri.urllib.request.urlopen", return_value=_Response(payload)):
+        with patch("providers.colibri._local_opener", return_value=_Opener(_Response(payload))):
             self.assertTrue(provider.is_available())
 
     def test_generate_returns_openai_compatible_text(self):
