@@ -50,21 +50,31 @@ class YukiCoreAgent:
         """Find relevant registered skills without executing or authorizing them."""
         return SkillCatalog(self.registry).search(task_query, limit=limit)
 
-    def run_skill_for_task(self, task_query: str, argument: str = "") -> AgentResponse:
-        """Select the best catalog match, then use the normal approval-gated path.
+    def select_skill_for_task(self, task_query: str):
+        """Return a confidence-aware catalog decision without executing a skill."""
+        return SkillCatalog(self.registry).select(task_query, limit=5)
 
-        Empty queries and missing matches fail closed. Catalog ranking is discovery,
-        not authorization; PermissionGate remains the final approval boundary.
+    def run_skill_for_task(self, task_query: str, argument: str = "") -> AgentResponse:
+        """Select an unambiguous skill, then use the normal approval-gated path.
+
+        Weak and ambiguous matches fail closed. Discovery never authorizes invocation;
+        PermissionGate remains the mandatory human approval boundary.
         """
-        cards = self.discover_skills(task_query, limit=5)
-        if not cards:
+        selection = self.select_skill_for_task(task_query)
+        if selection.status == "not_found":
             return AgentResponse(
                 False,
-                "No registered skill matches this task; clarify the request or choose a skill.",
+                "No sufficiently relevant registered skill matches this task; clarify the request or choose a skill.",
                 stage="skill_not_found",
             )
-        selected = cards[0]
-        return self.run_skill(selected.name, argument)
+        if selection.status == "ambiguous":
+            names = ", ".join(match.card.name for match in selection.candidates[:3])
+            return AgentResponse(
+                False,
+                f"Several skills match this task ({names}); clarify the required capability or choose a skill.",
+                stage="skill_ambiguous",
+            )
+        return self.run_skill(selection.selected.card.name, argument)
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
         if not isinstance(argument, str) or len(argument) > 20000:
