@@ -34,7 +34,7 @@ class DesktopRuntimeWorker:
     def submit(self, action: str, **payload) -> str:
         if not self._started or self._closing:
             raise RuntimeError("Desktop runtime worker is not accepting commands.")
-        if action not in {"send", "history", "new", "list", "switch", "providers", "select_provider", "close"}:
+        if action not in {"send", "history", "new", "list", "switch", "providers", "catalog", "select_provider", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -92,6 +92,9 @@ class DesktopRuntimeWorker:
                     self._emit(request_id, action, ok=True,
                                providers=runtime.providers.list_providers(),
                                selected=current.name if current else None)
+                elif action == "catalog":
+                    self._emit(request_id, action, ok=True,
+                               catalog=runtime.providers.catalog())
                 elif action == "select_provider":
                     name = payload.get("name", "")
                     result = runtime.providers.select(name)
