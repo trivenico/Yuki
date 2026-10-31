@@ -47,7 +47,7 @@ class ConversationSessionTests(unittest.TestCase):
         role = session.set_role("developer")
         self.assertEqual(role["name"], "developer")
         session.respond("Review this design")
-        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("Current interaction role: developer", provider.prompts[0])
         self.assertIn("grants no tools or permissions", provider.prompts[0])
         self.assertEqual(session.current_role()["name"], "developer")
 
