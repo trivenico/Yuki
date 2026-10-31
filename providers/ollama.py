@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from providers.base import validate_chat_messages
 from urllib.parse import urlsplit
 
 
@@ -65,6 +66,36 @@ class OllamaProvider:
             if installed == self.model or installed.startswith(self.model + ":"):
                 return True
         return False
+
+    def generate_chat(self, system: str, messages: list[dict]) -> str:
+        validate_chat_messages(system, messages)
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "system", "content": system.strip()}]
+                + [{"role": item["role"], "content": item["content"]} for item in messages],
+            "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/chat",
+            data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Local Ollama chat request failed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Ollama response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            text = body["message"]["content"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise RuntimeError("Ollama returned an unsupported chat response.") from exc
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Ollama returned no chat response.")
+        return text.strip()
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
