@@ -113,6 +113,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             broken.submit(actor_id="alice", idempotency_key="broken",
                           subtasks=[SubtaskSpec("a", "A", ("research",))])
 
+    def test_oversized_generator_is_rejected_after_bounded_consumption(self):
+        consumed = []
+        def unbounded_subtasks():
+            index = 0
+            while True:
+                consumed.append(index)
+                yield SubtaskSpec(f"task-{index}", "Bounded task", ("research",))
+                index += 1
+
+        with self.assertRaisesRegex(AgentPlanError, "1-20 subtasks"):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="unbounded-generator",
+                subtasks=unbounded_subtasks(),
+            )
+        self.assertEqual(len(consumed), 21)
+
     def test_plan_bounds_and_duplicate_agent_ids(self):
         with self.assertRaises(ValueError):
             SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "dupe.sqlite3"),
