@@ -103,7 +103,7 @@ def installed_python_distributions() -> dict[str, str]:
     for distribution in importlib.metadata.distributions():
         name = distribution.metadata.get("Name")
         version = distribution.version
-        if name and isinstance(version, str) and _VERSION_RE.fullmatch(version):
+        if name and isinstance(version, str) and len(version) <= 100:
             found[normalize_package_name(name)] = version
     return found
 
