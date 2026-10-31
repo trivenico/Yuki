@@ -15,6 +15,8 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
+from core.sync_runtime import SyncRuntime
+from core.sync_client import SyncClientError
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -84,6 +86,9 @@ Yuki commands:
   /providers                      List provider adapters and implementation status
   /provider select NAME           Select an implemented provider adapter
   /dashboard                      Show Yuki capability and local-state summary
+  /sync status                    Show sync hub, device and outbox status
+  /sync pair                      Pair this device using a one-time code
+  /sync run                       Run sync when application adapters are enabled
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
   /skill diagnostics              Show installed skill-pack load health
@@ -143,6 +148,36 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Provider selection failed. The previous provider remains active."
         write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
         return result
+    if command == "/sync" or command.startswith("/sync "):
+        parts = command.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "status"
+        try:
+            runtime = SyncRuntime()
+            try:
+                if action == "status":
+                    return runtime.status()
+                if action == "pair":
+                    if len(parts) != 2:
+                        return "Use /sync pair; Yuki will request the one-time code without echoing it."
+                    if not runtime.endpoint:
+                        return "Set YUKI_SYNC_URL to your HTTPS Yuki Sync Hub endpoint first."
+                    if runtime.vault is None:
+                        return "OS credential storage is unavailable. Install requirements-sync.txt and verify the Windows Credential Manager backend."
+                    from getpass import getpass
+                    code = getpass("One-time Yuki pairing code (input hidden): ")
+                    if not code.strip():
+                        return "Pairing cancelled."
+                    result = runtime.pair(code)
+                    write_audit_event("sync:pair", "completed")
+                    return result
+                if action == "run":
+                    return "Sync execution is not enabled yet: local conversations, tasks and skills still need reviewed domain adapters. No data was uploaded."
+                return "Usage: /sync status | pair | run"
+            finally:
+                runtime.close()
+        except (SyncClientError, ValueError, OSError):
+            write_audit_event("sync:" + action, "rejected")
+            return "Sync operation unavailable. Check YUKI_SYNC_URL, optional credential storage and hub connectivity."
     if command == "/dashboard":
         current = providers.current()
         available_tools = ", ".join(policy.allowed_tools())
