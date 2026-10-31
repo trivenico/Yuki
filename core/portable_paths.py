@@ -7,6 +7,7 @@ credentials are created by this module.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -14,10 +15,22 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def data_root() -> Path:
+    """Return a writable per-user data directory unless YUKI_HOME overrides it."""
     configured = os.environ.get("YUKI_HOME", "").strip()
-    root = Path(configured).expanduser() if configured else REPOSITORY_ROOT
-    if not root.is_absolute():
-        root = (REPOSITORY_ROOT / root).resolve()
+    if configured:
+        root = Path(configured).expanduser()
+        if not root.is_absolute():
+            root = REPOSITORY_ROOT / root
+        return root.resolve()
+
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        root = Path(base).expanduser() / "Yuki" if base else Path.home() / "AppData" / "Local" / "Yuki"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "Yuki"
+    else:
+        base = os.environ.get("XDG_DATA_HOME")
+        root = (Path(base).expanduser() / "Yuki") if base else Path.home() / ".local" / "share" / "Yuki"
     return root.resolve()
 
 
