@@ -74,6 +74,13 @@ class SkillCatalogTests(unittest.TestCase):
         self.assertIsNone(selection.selected)
         self.assertEqual(len(selection.candidates), 2)
 
+    def test_rank_rejects_oversized_queries(self):
+        self.assertEqual(self.catalog.rank("x" * 2001), ())
+
+    def test_select_normalizes_invalid_threshold_types(self):
+        selection = self.catalog.select("search project files", min_score=True, min_margin="bad")
+        self.assertEqual(selection.status, "selected")
+
     def test_invocation_uses_shared_approval_guard(self):
         approvals = OneShotSkillApprovals()
         result = self.catalog.invoke("workspace_search", "deploy", approvals=approvals)
