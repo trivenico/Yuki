@@ -43,9 +43,9 @@ class ConversationSession:
         if (
             isinstance(max_history_messages, bool)
             or not isinstance(max_history_messages, int)
-            or not 2 <= max_history_messages <= 50
+            or not 2 <= max_history_messages <= 50\n            or max_history_messages % 2 != 0
         ):
-            raise ValueError("max_history_messages must be between 2 and 50.")
+            raise ValueError("max_history_messages must be an even number between 2 and 50.")
         self.provider = provider
         self.persona = persona
         self.max_history_messages = max_history_messages
