@@ -110,10 +110,6 @@ class ConversationAgentBridgeTests(unittest.TestCase):
         )
         replay = self.bridge.submit_agent_turn(
             actor_id="alice", workspace_id="workspace-a",
-            user_message="Research this request", request_id="stable-request",
-        )
-        replay = self.bridge.submit_agent_turn(
-            actor_id="alice", workspace_id="workspace-a",
             user_message="Research this request", session_id=first.session_id,
             request_id="stable-request",
         )
