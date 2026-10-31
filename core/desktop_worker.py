@@ -67,7 +67,6 @@ class DesktopRuntimeWorker:
         sync_runtime = None
         try:
             runtime = self._runtime_factory()
-            sync_runtime = self._sync_runtime_factory()
             self._emit(None, "ready", ok=True)
         except Exception as exc:
             self._emit(None, "ready", ok=False, error=type(exc).__name__)
@@ -125,8 +124,12 @@ class DesktopRuntimeWorker:
                     self._emit(request_id, action, ok=True,
                                catalog=runtime.providers.catalog())
                 elif action == "sync_status":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
                     self._emit(request_id, action, ok=True, status=sync_runtime.status())
                 elif action == "sync_pair":
+                    if sync_runtime is None:
+                        sync_runtime = self._sync_runtime_factory()
                     result = sync_runtime.pair(payload.get("code", ""),
                                                payload.get("device_label", "Yuki Desktop"))
                     self._emit(request_id, action, ok=True, result=result,
