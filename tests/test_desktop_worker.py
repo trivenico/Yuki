@@ -117,6 +117,13 @@ class FakeSyncRuntime:
     def sync_application(self, application):
         return {"pushed": 2, "pulled": 1, "conflicts": 0}
 
+    def task_conflicts(self):
+        return [{"task_id": 12, "description": "Local", "local_revision": 2,
+                 "remote_revision": 2, "remote_description": "Remote"}]
+
+    def resolve_task_conflict(self, task_id, choice):
+        return choice
+
     def close(self):
         self.closed = True
 
@@ -267,6 +274,22 @@ class DesktopWorkerTests(unittest.TestCase):
         self._next(worker, "close")
         worker.join(2)
         self.assertTrue(sync_instances[0].closed)
+
+    def test_task_conflict_review_and_resolution_are_worker_actions(self):
+        worker = DesktopRuntimeWorker(FakeRuntime, FakeSyncRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("sync_conflicts")
+        conflicts = self._next(worker, "sync_conflicts")
+        self.assertTrue(conflicts["ok"])
+        self.assertEqual(conflicts["result"][0]["task_id"], 12)
+        worker.submit("sync_resolve_task", task_id=12, choice="remote")
+        resolved = self._next(worker, "sync_resolve_task")
+        self.assertTrue(resolved["ok"])
+        self.assertEqual(resolved["result"], "remote")
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
 
     def test_list_and_switch_are_dispatched_on_runtime_owner_thread(self):
         worker = DesktopRuntimeWorker(FakeRuntime)
