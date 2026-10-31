@@ -63,3 +63,34 @@ The VM's public address or DNS name is configured on Windows as the sync endpoin
 ## Release gate
 
 Do not enable sync by default until authentication, device revocation, replay/idempotency, conflict tests, Windows/Linux clean-install tests, TLS deployment checks and backup restore tests pass. Until then, Yuki remains usable independently on each device and local data stays local.
+
+
+# Yuki Sync Hub event store
+
+This phase adds the durable local storage layer only. It does not expose an HTTP endpoint or authenticate network requests.
+
+## Store contract
+
+`core/sync_store.py` implements:
+- SQLite WAL-backed append-only event history.
+- Device registration and revocation, scoped to a user.
+- Event idempotency using a unique event identifier; retries must have byte-equivalent normalized event content.
+- Per-object monotonically increasing revisions; stale writes and revision gaps return conflicts.
+- Per-device monotonic acknowledgement cursors.
+- User-scoped event pulls, bounded to 500 events per page.
+- Transactional event insertion and head-revision updates.
+
+## Trust boundary
+
+The future API must authenticate a request before calling the store and pass the authenticated device ID as `authenticated_device_id`. Never trust the device ID in the submitted JSON as the caller identity. The store verifies the event device ID matches that authenticated identity and verifies that the device is active.
+
+Device registration/revocation functions are administrative operations and must not be exposed to an unauthenticated route. Device pairing and credential issuance are intentionally not implemented here.
+
+## Data and deployment
+
+Use a private local Linux filesystem path, e.g. `/var/lib/yuki/sync/sync.sqlite3`, owned by the Yuki service account. Do not expose the database file, SQLite port, or filesystem directory over the network. Use HTTPS at the future API reverse proxy. Keep the event database in backup scope and test restore.
+
+## Tests
+
+Run:
+`python -m unittest tests.test_sync_contract tests.test_sync_store -v`
