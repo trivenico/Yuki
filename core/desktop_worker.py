@@ -34,7 +34,7 @@ class DesktopRuntimeWorker:
     def submit(self, action: str, **payload) -> str:
         if not self._started or self._closing:
             raise RuntimeError("Desktop runtime worker is not accepting commands.")
-        if action not in {"send", "history", "new", "list", "switch", "close"}:
+        if action not in {"send", "history", "new", "list", "switch", "providers", "select_provider", "close"}:
             raise ValueError("Unsupported desktop runtime action.")
         request_id = uuid.uuid4().hex
         command = {"request_id": request_id, "action": action, "payload": payload}
@@ -87,6 +87,22 @@ class DesktopRuntimeWorker:
                     runtime.switch_conversation(payload.get("conversation_id", ""))
                     self._emit(request_id, action, ok=True,
                                conversation_id=runtime.active_conversation_id)
+                elif action == "providers":
+                    current = runtime.providers.current()
+                    self._emit(request_id, action, ok=True,
+                               providers=runtime.providers.list_providers(),
+                               selected=current.name if current else None)
+                elif action == "select_provider":
+                    name = payload.get("name", "")
+                    result = runtime.providers.select(name)
+                    if result.startswith("Selected provider:"):
+                        adapter = runtime.providers.create_selected_adapter()
+                        if adapter is None:
+                            raise RuntimeError("Selected provider adapter is unavailable.")
+                        runtime.agent.set_provider(adapter)
+                    self._emit(request_id, action, ok=result.startswith("Selected provider:"),
+                               result=result, selected=runtime.providers.current().name
+                               if runtime.providers.current() else None)
                 elif action == "close":
                     try:
                         runtime.close()
