@@ -72,12 +72,28 @@ class YukiApplicationRuntime:
             raise ValueError("Conversation does not exist on this device.")
         self.active_conversation_id = conversation_id
 
+    def stream_message(self, content: str):
+        """Stream a turn while persisting the final assembled assistant response."""
+        self.begin_turn(content)
+        chunks = []
+        try:
+            for chunk in self.agent.stream(content):
+                if not isinstance(chunk, str):
+                    raise RuntimeError("Provider emitted a non-text stream chunk.")
+                if chunk:
+                    chunks.append(chunk)
+                    yield chunk
+        except Exception:
+            # Keep the user's message, but never persist a partial assistant turn
+            # as if it were a completed answer.
+            raise
+        response = "".join(chunks).strip()
+        if response:
+            self.finish_turn(response)
+
     def send_message(self, content: str) -> str:
         """Run a normal chat turn through the shared provider and persist both sides."""
-        self.begin_turn(content)
-        response = self.agent.ask(content)
-        self.finish_turn(response)
-        return response
+        return "".join(self.stream_message(content))
 
     def new_conversation(self, title: str = "Yuki session") -> str:
         self._ensure_open()
