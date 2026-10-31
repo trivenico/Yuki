@@ -349,6 +349,8 @@ class SyncAgent:
         return {"pushed": pushed, "conflicts": conflicts, "pending": counts["pending"]}
 
     def sync_once(self, push_limit: int = 50, pull_limit: int = 100) -> dict[str, int]:
+        if isinstance(pull_limit, bool) or not isinstance(pull_limit, int) or not 1 <= pull_limit <= 200:
+            raise ValueError("pull_limit must be between 1 and 200.")
         device_id, access, refresh = self._credentials()
         pushed = conflicts = pulled = 0
 
