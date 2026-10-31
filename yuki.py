@@ -17,6 +17,7 @@ from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
 from core.sync_runtime import SyncRuntime
 from core.sync_client import SyncClientError
+from core.task_sync_adapter import TaskSyncAdapter
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -170,9 +171,39 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                     result = runtime.pair(code)
                     write_audit_event("sync:pair", "completed")
                     return result
+                if action == "tasks":
+                    subcommand = parts[2] if len(parts) > 2 else "preview"
+                    if subcommand == "preview":
+                        preview = TaskSyncAdapter.preview(tasks)
+                        return (
+                            f"Task sync preview: {preview['total']} eligible tasks; "
+                            f"{preview['already_queued']} have previous sync metadata. "
+                            "Only description, completion state and creation timestamp are shared. "
+                            "Nothing has been queued or uploaded. Use /sync tasks queue to opt in."
+                        )
+                    if subcommand == "queue":
+                        if runtime.vault is None or not runtime.vault.load():
+                            return "Pair this device first with /sync pair. No tasks were queued."
+                        device_id = runtime.vault.load()[0]
+                        queued = TaskSyncAdapter.queue(
+                            tasks, device_id, runtime.enqueue_event
+                        )
+                        if not save_tasks(tasks):
+                            write_audit_event("sync:tasks:queue", "metadata_save_failed")
+                            return (
+                                f"{queued} task events are safely in the local outbox, but "
+                                "sync metadata could not be saved. Retry /sync tasks queue; "
+                                "event IDs are deterministic so duplicates will not be uploaded."
+                            )
+                        write_audit_event("sync:tasks:queue", "completed")
+                        return (
+                            f"{queued} task event(s) added or already present in the local outbox. "
+                            "Nothing was uploaded. Review the preview before any future sync run."
+                        )
+                    return "Usage: /sync tasks preview | queue"
                 if action == "run":
-                    return "Sync execution is not enabled yet: local conversations, tasks and skills still need reviewed domain adapters. No data was uploaded."
-                return "Usage: /sync status | pair | run"
+                    return "Network sync remains disabled until conflict-safe remote task application and conversation/skill adapters are complete. Queued task events remain local; nothing was uploaded."
+                return "Usage: /sync status | pair | tasks preview | tasks queue | run"
             finally:
                 runtime.close()
         except (SyncClientError, ValueError, OSError):
