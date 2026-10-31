@@ -117,3 +117,28 @@ When constructed with `SyncCredentialStore`, the API validates access tokens and
 - `GET /health`: read-only liveness response.
 
 Pairing codes are created through the local administrative credential-store API; this branch does not yet expose a remote pairing-code minting endpoint. Treat access/refresh responses as secrets and never log them. The API still needs rate limiting, TLS deployment, and production server configuration.
+
+
+## Cross-platform client foundation
+
+core/sync_client.py now provides a shared CLI/desktop client layer:
+- SyncOutbox: durable SQLite outbox, idempotent enqueue, bounded batches, exponential retry and conflict quarantine.
+- SyncHTTPTransport: HTTPS-only API client using the platform TLS trust store, request timeouts and bounded response reads.
+- KeyringCredentialVault: optional OS credential-store adapter. On Windows, install the optional dependency with `python -m pip install -r requirements-sync.txt`; verify the selected keyring backend is Windows Credential Manager before storing production credentials.
+- SyncAgent: one bounded sync cycle that pushes queued events, refreshes expired credentials, validates pulled events, applies them through an injected idempotent callback, then acknowledges and advances the local cursor.
+
+The same SyncAgent is intended to be composed by both CLI and desktop; neither interface should implement its own protocol. The application still needs to wire real task/conversation/skill persistence into the apply_remote callback and enqueue local domain changes. No background worker is automatically started yet. The first client integration should use explicit user-triggered sync and diagnostics, then add a cancellable background worker after Windows/Linux integration tests.
+
+### Client usage outline
+
+```python
+from core.sync_client import KeyringCredentialVault, SyncHTTPTransport, SyncOutbox, SyncAgent
+
+vault = KeyringCredentialVault()
+transport = SyncHTTPTransport("https://sync.example.com")
+outbox = SyncOutbox("~/.yuki/sync/outbox.sqlite3")
+agent = SyncAgent(transport, outbox, vault, apply_remote=your_idempotent_apply_function)
+result = agent.sync_once()
+```
+
+Expand the outbox path with Path(...).expanduser() before constructing it. Pairing is done through transport.pair(code); the returned credentials must be saved with vault.save(device_id, access_token, refresh_token). Never print or log returned token values.
