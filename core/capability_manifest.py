@@ -160,6 +160,21 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
          "No real-Docker adversarial integration test or production image provenance pipeline is included."),
     ),
     CapabilityContract(
+        "independent-python-review", "Deterministic read-only Python change reviewer", "experimental",
+        "Scans bounded proposed Python file contents for selected unsafe execution, deserialization, "
+        "TLS, dynamic import, syntax, and credential patterns without executing the changes.",
+        ("core/independent_code_review.py",),
+        ("Python standard library",),
+        ("review:read-proposed-source",),
+        ("structured review findings only",),
+        ("local", "hosted"), "high",
+        ("tests/test_independent_code_review.py",),
+        ("Static heuristics are incomplete and can produce false positives and false negatives.",
+         "Only Python source is analyzed; non-Python files are skipped and prevent a clean approval signal.",
+         "Not an LLM reviewer, type checker, dependency scanner, test runner, or security certification.",
+         "A clean report is not merge authorization; trusted human and CI approval remain mandatory."),
+    ),
+    CapabilityContract(
         "typed-tool-execution", "Typed fail-closed agent tool execution", "experimental",
         "Validates structured tool calls against registered schemas, checks policy on every call, "
         "requires exact-call approval for side-effecting or high-risk tools, and bounds results.",
