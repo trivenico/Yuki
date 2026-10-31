@@ -181,6 +181,19 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcomes.count("completed"), 1)
         self.assertEqual(outcomes.count("pending_not_found"), 1)
 
+    def test_rejects_non_string_keys_in_approval_action_payloads(self):
+        malformed = {
+            "action": {
+                "skill_id": "notes.write",
+                "arguments": {"text": "safe", "metadata": {1: "ambiguous"}},
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "JSON-safe"):
+            self.coordinator.record(
+                self.planner, malformed, actor="owner", session_id="session-a"
+            )
+        self.assertEqual(self.planner.executed, [])
+
     def test_rejects_oversized_action_snapshot(self):
         with self.assertRaisesRegex(ValueError, "JSON-safe"):
             self.coordinator.record(
