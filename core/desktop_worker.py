@@ -81,7 +81,8 @@ class DesktopRuntimeWorker:
                                conversation_id=conversation_id)
                 elif action == "list":
                     self._emit(request_id, action, ok=True,
-                               conversations=runtime.conversations.list_conversations())
+                               conversations=runtime.conversations.list_conversations(),
+                               active_conversation_id=runtime.active_conversation_id)
                 elif action == "switch":
                     runtime.switch_conversation(payload.get("conversation_id", ""))
                     self._emit(request_id, action, ok=True,
