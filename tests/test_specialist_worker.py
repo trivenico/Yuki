@@ -99,6 +99,32 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.failed")
 
+    def test_coordinator_task_executes_through_routed_provider_end_to_end(self):
+        provider = FakeProvider(output="Provider-backed specialist result")
+        class Manager:
+            def resolve_for_task(self, *, required_capabilities, preference=(), allow_cloud=False):
+                self.last_route = (required_capabilities, preference, allow_cloud)
+                return "local-test", provider
+
+        manager = Manager()
+        handlers = build_routed_specialist_handlers(
+            manager,
+            {"code-review": "coding"},
+            role_capabilities={"coding": ("text",)},
+            role_preferences={"coding": ("ollama",)},
+        )
+        task_id = self.create_task()
+        result = self.worker(handlers).run_once()
+
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["specialist"], "code-review")
+        self.assertEqual(result.result["output"], "Provider-backed specialist result")
+        self.assertEqual(manager.last_route, (("text",), ("ollama",), False))
+        self.assertEqual(len(provider.prompts), 1)
+        self.assertIn("Specialist role: coding", provider.prompts[0])
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "succeeded")
+
     def test_provider_handlers_are_bounded_and_role_specific(self):
         provider = FakeProvider(output="x" * 20_000)
         handlers = build_provider_specialist_handlers(provider)
