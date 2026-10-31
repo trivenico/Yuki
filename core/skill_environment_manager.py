@@ -29,7 +29,9 @@ class SkillEnvironmentPlan:
     skill_id: str
     skill_version: str
     environment_path: str
+    lockfile_path: str
     lockfile_content: str
+    lockfile_sha256: str
     create_venv_argv: tuple[str, ...]
     install_argv: tuple[str, ...]
     package_count: int
@@ -40,7 +42,9 @@ class SkillEnvironmentPlan:
             "skill_id": self.skill_id,
             "skill_version": self.skill_version,
             "environment_path": self.environment_path,
+            "lockfile_path": self.lockfile_path,
             "lockfile_content": self.lockfile_content,
+            "lockfile_sha256": self.lockfile_sha256,
             "create_venv_argv": list(self.create_venv_argv),
             "install_argv": list(self.install_argv),
             "package_count": self.package_count,
@@ -125,11 +129,12 @@ def plan_skill_environment(
     create_venv = (str(python), "-I", "-m", "venv", str(environment))
     install = (
         str(environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")),
-        "-I", "-m", "pip", "install", "--disable-pip-version-check",
+        "-I", "-m", "pip", "install", "--isolated", "--disable-pip-version-check",
         "--no-index", "--only-binary=:all:", "--require-hashes",
         "--find-links", str(wheels), "-r", str(lock_path),
     )
     return SkillEnvironmentPlan(
-        skill_id, skill_version, str(environment), lock_content, create_venv, install,
+        skill_id, skill_version, str(environment), str(lock_path), lock_content,
+        hashlib.sha256(lock_content.encode("utf-8")).hexdigest(), create_venv, install,
         len(validate_hashed_lockfile(lock_entries)),
     )
