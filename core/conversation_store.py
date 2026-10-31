@@ -9,6 +9,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,6 +22,15 @@ class ConversationStoreError(RuntimeError):
 
 
 class ConversationStore:
+    @staticmethod
+    def _valid_timestamp(value: Any) -> bool:
+        if not isinstance(value, str) or len(value) > 40:
+            return False
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+        except ValueError:
+            return False
+
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path is not None else data_root() / ".yuki" / "conversations.sqlite3"
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +190,7 @@ class ConversationStore:
         if collection == "conversation_metadata":
             if set(payload) != {"title", "created_at"} or not isinstance(payload["title"], str) or len(payload["title"]) > 160:
                 raise SyncClientError("Remote conversation metadata is invalid.")
-            if not isinstance(payload["created_at"], str):
+            if not self._valid_timestamp(payload["created_at"]):
                 raise SyncClientError("Remote conversation timestamp is invalid.")
             existing = self._db.execute(
                 "SELECT conversation_id FROM conversations WHERE conversation_id=?", (object_id,)
@@ -205,6 +215,8 @@ class ConversationStore:
                 raise SyncClientError("Remote conversation content is invalid.")
             if not isinstance(payload["ordinal"], int) or isinstance(payload["ordinal"], bool) or payload["ordinal"] < 1:
                 raise SyncClientError("Remote conversation message order is invalid.")
+            if not self._valid_timestamp(payload["created_at"]):
+                raise SyncClientError("Remote message timestamp is invalid.")
             if not self._db.execute(
                 "SELECT 1 FROM conversations WHERE conversation_id=?", (payload["conversation_id"],)
             ).fetchone():
