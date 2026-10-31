@@ -140,7 +140,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
     @patch("core.coding_task_runner.build_docker_argv")
     def test_mutable_or_malformed_image_reference_is_rejected_before_approval(self, build):
         approve = unittest.mock.Mock(return_value=True)
-        for image in ("python:3.12", "python:latest", "python@sha256:abcd"):
+        for image in ("python:3.12", "python:latest", "python@sha256:abcd", "python@@sha256:" + "a" * 64):
             with self.subTest(image=image):
                 with self.assertRaises(SandboxExecutionError):
                     run_sandboxed_task(
