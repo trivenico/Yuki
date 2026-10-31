@@ -85,6 +85,7 @@ class SyncRuntime:
         tasks = load_tasks()
         return {
             "tasks": TaskSyncAdapter.preview(tasks),
+            "task_conflicts": TaskSyncAdapter.list_conflicts(tasks),
             "conversations": application.conversations.preview_sync(),
             "skills": SkillPackSyncAdapter().preview(),
         }
