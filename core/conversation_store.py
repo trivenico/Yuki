@@ -160,7 +160,7 @@ class ConversationStore:
         workspace = self._workspace(workspace_id)
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be non-empty.")
-        if role not in MESSAGE_ROLES:
+        if not isinstance(role, str) or role not in MESSAGE_ROLES:
             raise ValueError("Unsupported conversation message role.")
         if not isinstance(content, str) or not content.strip() or len(content) > _MAX_CONTENT:
             raise ValueError("Message content must be non-empty text of at most 64000 characters.")
@@ -212,6 +212,8 @@ class ConversationStore:
 
     def archive_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
         workspace = self._workspace(workspace_id)
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id must be non-empty.")
         with self._lock, closing(self._connect()) as db:
             with db:
                 db.execute("BEGIN IMMEDIATE")
