@@ -212,3 +212,19 @@ python ./yuki.py
 Use the same local path for the CLI and desktop on a given machine. Do not point two machines at a shared network filesystem; cross-device sharing must go through the authenticated sync hub. `YUKI_HOME` is local state, not a cloud mount.
 
 Regression coverage: `tests/test_yuki_home_task_path.py` checks the configured path and backwards-compatible default.
+
+## Data-only skill-pack synchronization
+
+The core/skill_pack_sync.py adapter synchronizes only validated JSON skill-pack manifests from Yuki's installed data-only skill-pack directory. The CLI exposes /sync skills preview and /sync skills queue; queueing adds events to the local outbox but does not upload until /sync run.
+
+Security boundaries:
+- Python modules, shell scripts, executable plugins, arbitrary skill directories, credentials and approval grants are never transferred.
+- The receiver validates the manifest and writes it atomically under the shared YUKI_HOME/skill_packs directory.
+- Every remotely received pack is forced to high risk, regardless of its sender's risk metadata. The local guarded skill runtime still requires approval.
+- Event identity and exact event envelope are persisted locally so retries remain idempotent.
+- Unversioned edits to a previously queued skill are rejected; skill update/revision and deletion/tombstone support are not implemented.
+- A conflicting local pack is never overwritten automatically.
+
+After a successful sync, the existing SkillRegistry.defaults() loader discovers the received pack on the next CLI command. The desktop must use the same registry and shared YUKI_HOME to see the same pack; desktop wiring is not yet implemented.
+
+The sync cycle now supports task upserts, conversation metadata/messages, and data-only skill metadata. Executable plugins, preferences, approval state, deletions, skill edits and message edits remain unsupported.
