@@ -189,6 +189,7 @@ DEFAULT_CAPABILITIES: tuple[CapabilityContract, ...] = (
         ("Risk classification is heuristic and cannot establish that a skill is safe.",
          "Only SKILL.md is imported; companion scripts and reference assets are not installed.",
          "Operator must review exact pinned source and license before approval.",
+         "License identifier/path are recorded, but full license text is not bundled for redistribution.",
          "Not a bulk marketplace, signature verification service, or universal skill runtime."),
     ),
     CapabilityContract(
