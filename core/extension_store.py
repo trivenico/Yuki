@@ -571,6 +571,8 @@ def list_extensions(kind: str, *, root: Path | None = None) -> list[dict]:
             if kind == "skill":
                 entry["risk"] = checked["risk"]
                 entry["requires_invocation_approval"] = checked["risk"] != "low"
+                entry["skill_version"] = checked["skill_version"]
+                entry["dependency_count"] = len(checked["dependencies"]["skills"]) + len(checked["dependencies"]["python"])
             results.append(entry)
         except ValueError as exc:
             results.append({"id": path.stem, "name": path.stem, "valid": False, "error": str(exc)})
@@ -607,6 +609,26 @@ class InstalledPromptSkill(Skill):
             + self.manifest["instructions"] + "\n\nUser task: " + argument,
             {"skill_pack": self.manifest["id"]},
         )
+
+
+def plan_installed_skill_dependencies(
+    skill_id: str, *, root: Path | None = None, python_packages: dict[str, str] | None = None,
+    python_version: str | None = None,
+):
+    """Inspect installed skill manifests and return a read-only dependency plan."""
+    from core.skill_dependency_manager import plan_skill_dependencies
+
+    folder = _extension_root("skill", root)
+    manifests = []
+    if folder.exists():
+        for path in sorted(folder.glob("*.json")):
+            try:
+                manifests.append(validate_skill_manifest(_read_json(path)))
+            except (ValueError, TypeError):
+                continue
+    return plan_skill_dependencies(
+        manifests, skill_id, python_packages=python_packages, python_version=python_version
+    )
 
 
 def load_installed_skills(*, root: Path | None = None) -> list[InstalledPromptSkill]:
