@@ -17,6 +17,10 @@ class FakeProvider:
         self.prompts.append(prompt)
         return self.answer
 
+    def generate_chat(self, system, messages):
+        self.prompts.append(json.dumps({"system": system, "conversation": messages}))
+        return self.answer
+
 
 class FakeReport:
     def to_dict(self):
