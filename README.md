@@ -308,6 +308,10 @@ The new tests cover registry wiring, input bounds, workspace path containment, a
 The CLI supports `/sync tasks preview` and `/sync tasks queue`. Preview is read-only; queue requires a paired device and places allow-listed task events in the local outbox only. It does not upload data. The CLI `/sync run` performs the reviewed HTTPS sync cycle for supported task upserts, conversation history and data-only skill packs. The desktop currently exposes upload-only sync and does not apply incoming records. See [Windows + Oracle Cloud sync documentation](docs/WINDOWS_OCI_SYNC.md).
 
 
+### Desktop collection sync controls
+
+The native desktop now shares the application runtime's task, conversation and skill synchronization adapters. **Preview sharing** reports counts without queueing content. **Queue tasks**, **Queue chats** and **Queue skills** require a confirmation and add only the selected allow-listed data to the durable local outbox. **Sync both ways** requires a separate confirmation and invokes the same reviewed CLI application handlers for task upserts, conversation history and data-only skill packs. Executable plugins, credentials, approval grants and deletes remain excluded. Conversation content is private unless the user explicitly queues it.
+
 ### Desktop explicit upload
 
 The native desktop also exposes **Upload queued**. It uploads only events already placed in the local outbox by an explicit queue action. It never pulls or applies remote records. The operation uses the shared bounded upload worker, rotates expired credentials, and quarantines revision conflicts. Incoming task/chat/skill application remains available through the reviewed CLI `/sync run` path and will be brought to desktop only after the same domain handlers are integrated and tested there.
