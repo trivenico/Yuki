@@ -94,3 +94,14 @@ Use a private local Linux filesystem path, e.g. `/var/lib/yuki/sync/sync.sqlite3
 
 Run:
 `python -m unittest tests.test_sync_contract tests.test_sync_store -v`
+
+
+## HTTP API foundation
+
+`core/sync_api.py` adds a framework-neutral WSGI application with:
+- unauthenticated, read-only `GET /health`;
+- authenticated `POST /v1/events`, `GET /v1/events?after=N&limit=N`, and `POST /v1/ack`;
+- a 256 KB request-body limit, bounded pull pages, JSON-only input, no-store responses, and generic internal errors;
+- injected authentication: the API passes only the authenticated device ID to the event store, which independently checks enrollment and revocation.
+
+The API deliberately does not issue or validate tokens itself. Production deployment must inject a reviewed short-lived-token authenticator, terminate TLS at a trusted reverse proxy, strip untrusted forwarded identity headers, rate-limit requests, and bind the WSGI server to loopback/private networking. Do not run the development WSGI server as a public internet service. Device pairing and credential lifecycle remain separate work.
