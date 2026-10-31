@@ -53,6 +53,7 @@ class ModelAgentPlannerTests(unittest.TestCase):
             '"required_permissions":["artifact:write"],"requires_approval":true}'
             ']}'
         )
+        self.coordinator = coordinator
         self.planner = ModelAgentPlanner(self.provider, coordinator)
 
     def test_model_proposal_is_routed_and_dispatched_as_dependency_gated_tasks(self):
@@ -66,7 +67,10 @@ class ModelAgentPlannerTests(unittest.TestCase):
         self.assertEqual(by_id["draft"].agent_id, "writer")
         self.assertIsNotNone(by_id["collect"].task_id)
         self.assertIsNone(by_id["draft"].task_id)
-        self.assertEqual(by_id["collect"].status, "awaiting_approval")
+        self.assertEqual(by_id["collect"].status, "queued")
+        task = self.coordinator.runtime.get(actor_id="alice", task_id=by_id["collect"].task_id)
+        self.assertTrue(task.steps[0]["requires_approval"])
+        self.assertEqual(by_id["draft"].status, "pending")
         self.assertIn("untrusted", self.provider.prompts[0].lower())
 
     def test_model_output_is_strict_json_and_duplicate_keys_are_rejected(self):
