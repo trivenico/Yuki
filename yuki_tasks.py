@@ -4,7 +4,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-TASKS_FILE = Path(__file__).with_name("yuki_tasks.json")
+from core.portable_paths import data_root
+
+TASKS_FILE = data_root() / "yuki_tasks.json"
 
 
 def load_tasks():
