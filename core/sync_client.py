@@ -158,7 +158,7 @@ class SyncOutbox:
             rows = conn.execute(
                 """SELECT event_json FROM sync_outbox
                    WHERE state='pending' AND next_attempt<=?
-                   ORDER BY created_at,event_id LIMIT ?""",
+                   ORDER BY rowid LIMIT ?""",
                 (now, limit),
             ).fetchall()
             return [json.loads(row["event_json"]) for row in rows]
