@@ -29,6 +29,9 @@ class FakeProvider:
     def is_available(self):
         return self.available
 
+    def generate(self, prompt):
+        return "legacy local answer"
+
     def generate_chat(self, system, messages):
         self.calls.append((system, messages))
         return "local structured answer"
