@@ -94,7 +94,7 @@ class ConversationSession:
         if len(system) > self.MAX_PROMPT_CHARS:
             raise ConversationError("Yuki's conversation instructions exceed the safe context limit.")
         while sum(len(item["content"]) for item in messages) + len(system) > self.MAX_PROMPT_CHARS and len(messages) > 1:
-            messages = messages[2:]
+            messages = messages[2:] if len(messages) > 2 else messages[-1:]
         if sum(len(item["content"]) for item in messages) + len(system) > self.MAX_PROMPT_CHARS:
             raise ConversationError("Your message is too long to send safely.")
         return system, messages
