@@ -20,12 +20,12 @@ For ordinary conversation, the path ends after the model response. Tool executio
 ## Trust boundaries
 
 - Retrieved documents, skill descriptions, conversation history, and model output are untrusted input.
-- **Important current gap:** the existing provider contract accepts a single prompt string, and the OpenAI-compatible adapter currently sends that whole prompt as a user message. A JSON field named `system` inside that string is not a privileged system message. Prompt-injection resistance is therefore not established by prompt wording alone. Before enabling broad autonomous execution, introduce a structured chat-message provider contract with distinct system/developer/user/tool roles for supported adapters, and retain deterministic policy enforcement outside the model.
+- **Structured chat implementation in progress:** the provider contract now has a `generate_chat(system, messages)` method and strict validation for bounded, alternating user/assistant history. OpenAI-compatible adapters send a distinct provider-level `system` message; Ollama uses `/api/chat`; the direct Gemini API adapter uses Gemini `systemInstruction` and maps assistant history to the provider's `model` role. Gemini CLI remains a separate integration and does not implement structured chat, so companion chat fails closed for that provider. Hybrid mode keeps companion chat local and fails closed rather than flattening roles or silently routing to cloud. Legacy `generate(prompt)` remains for non-companion one-shot calls. This separation is an important defense-in-depth improvement, not a guarantee against prompt injection; deterministic policy and approval checks remain mandatory.
 - Only capabilities registered by trusted application code are eligible for invocation.
 - Role profiles (companion, tutor, interviewer, developer, security, marketing) change response guidance only. They do not grant tools, permissions, or access.
 - Every action requiring approval must pass the existing PermissionGate/approval workflow. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
 - Local inference is the default privacy route in hybrid mode. Cloud routing is explicit and allow-listed; there is no implicit cloud fallback when local inference fails.
-- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature and requires explicit user controls.
+- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature: it is off by default, session-scoped consent is required before `/remember`, existing entries are never silently erased by disabling memory, and `/forget`, `/memory export`, and `/memory clear confirm` provide user controls. Saved entries are not automatically injected into model context. The current JSON store is local plaintext (filesystem permissions only); do not store secrets or sensitive personal data until encryption-at-rest and key-management are implemented. The data file is git-ignored.
 
 ## Client strategy
 
@@ -52,9 +52,9 @@ Yuki is not production-ready solely because unit tests pass or a capability exis
 ## Current implementation boundaries (October 2026)
 
 - The repository contains Python provider adapters, a local/cloud hybrid router, guarded skill execution, a bounded model-guided task loop, durable task/workflow foundations, companion persona and local memory primitives, reminders, and role profiles.
-- The companion conversation session and CLI integration are being delivered in draft PR #423; safe role selection is stacked in draft PR #424.
+- The companion conversation session and CLI integration are in draft PR #423; safe role selection is stacked in draft PR #424; structured provider chat, explicit CLI memory consent, and the direct Gemini API adapter are in draft PR #425. The memory store remains plaintext and is not yet suitable for secrets or sensitive personal data.
 - The 100 specialist role catalog is metadata only in draft PR #422.
-- Native desktop packaging, production cloud deployment, end-to-end persistent companion memory consent UX, and full release qualification remain unfinished.
+- Native desktop packaging, production cloud deployment, encrypted-at-rest memory, desktop memory-consent UX, retention scheduling, and full release qualification remain unfinished.
 - Do not advertise these unfinished capabilities as production features.
 
 ## Deployment direction

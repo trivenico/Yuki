@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.gemini_api import GeminiAPIProvider
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -22,6 +23,7 @@ class ProviderManager:
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            "gemini-api": lambda: create_provider({**self._config, "provider": "gemini-api"}, environ=self._environ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
@@ -30,6 +32,7 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
+            ProviderInfo("gemini-api", ("GEMINI_API_KEY",), True),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),

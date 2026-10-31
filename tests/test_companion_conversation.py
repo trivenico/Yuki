@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from companion.conversation import ConversationError, ConversationSession
@@ -14,6 +15,13 @@ class FakeProvider:
 
     def generate(self, prompt):
         self.prompts.append(prompt)
+        value = self.answers.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def generate_chat(self, system, messages):
+        self.prompts.append(json.dumps({"system": system, "conversation": messages}))
         value = self.answers.pop(0)
         if isinstance(value, Exception):
             raise value
@@ -39,7 +47,7 @@ class ConversationSessionTests(unittest.TestCase):
         role = session.set_role("developer")
         self.assertEqual(role["name"], "developer")
         session.respond("Review this design")
-        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("Current interaction role: developer", provider.prompts[0])
         self.assertIn("grants no tools or permissions", provider.prompts[0])
         self.assertEqual(session.current_role()["name"], "developer")
 

@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from providers.base import validate_chat_messages
+
 _DEFAULT_ALLOWED_HOSTS = frozenset({
     "api.openai.com", "openrouter.ai", "api.deepseek.com",
     "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
@@ -71,13 +73,22 @@ class OpenAICompatibleProvider:
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
+        return self._request([{"role": "user", "content": prompt.strip()[:20000]}])
+
+    def generate_chat(self, system: str, messages: list[dict]) -> str:
+        validate_chat_messages(system, messages)
+        return self._request(
+            [{"role": "system", "content": system.strip()}]
+            + [{"role": item["role"], "content": item["content"]} for item in messages]
+        )
+
+    def _request(self, messages: list[dict]) -> str:
         api_key = self._environ.get(self.api_key_env, "").strip()
         if not api_key:
             raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
         payload = json.dumps({
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt.strip()[:20000]},
-            ],
+            "messages": messages,
             "stream": False,
         }).encode("utf-8")
         request = urllib.request.Request(
@@ -86,8 +97,6 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            # Deliberately disable automatic redirects: even a valid initial host must
-            # not redirect credentials/prompts to an unreviewed destination.
             opener = urllib.request.build_opener(_RejectRedirects())
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)

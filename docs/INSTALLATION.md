@@ -19,6 +19,12 @@ Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\pytho
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
 
+## Google Gemini providers
+
+Yuki supports two separate Google integrations. Set `YUKI_PROVIDER=gemini` to use the official Gemini CLI installed and authenticated on your machine. This adapter checks for the CLI executable; it does not claim to verify account authentication until a real request is made.
+
+For direct API access, set `YUKI_PROVIDER=gemini-api`, provide `GEMINI_API_KEY` through your shell or secret manager, and optionally set `YUKI_GEMINI_MODEL` (default: `gemini-2.5-flash`). The direct API adapter uses the Gemini `generateContent` endpoint, sends the API key in the `x-goog-api-key` header, preserves system instructions separately from user/assistant history, rejects redirects, and bounds request time and response size. Never commit the key or put it in `config.yaml`.
+
 ## Optional integrations
 
 Install only what you intend to use:

@@ -11,7 +11,7 @@ from typing import Iterable, Mapping
 
 
 _ALLOWED_CAPABILITIES = frozenset({
-    "text", "local_inference", "per_task_routing", "official_cli",
+    "text", "local_inference", "per_task_routing", "official_cli", "structured_chat",
     "model_discovery", "multi_provider_routing",
 })
 _LOCAL_PRIVACY = frozenset({"local", "local_runtime", "local_only"})

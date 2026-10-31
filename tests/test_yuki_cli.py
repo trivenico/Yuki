@@ -17,6 +17,10 @@ class FakeProvider:
         self.prompts.append(prompt)
         return self.answer
 
+    def generate_chat(self, system, messages):
+        self.prompts.append(json.dumps({"system": system, "conversation": messages}))
+        return self.answer
+
 
 class FakeReport:
     def to_dict(self):
@@ -119,6 +123,12 @@ class YukiCliTests(unittest.TestCase):
                     raise RuntimeError("secret payload")
                 return "recovered"
 
+            def generate_chat(self, system, messages):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("secret payload")
+                return "recovered"
+
         provider = FlakyProvider()
         output = []
         messages = iter(["hello", "retry", "/quit"])
@@ -147,7 +157,7 @@ class YukiCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertIn("Interaction style changed to developer", " ".join(output))
-        self.assertIn('"active_role":{"name":"developer"', provider.prompts[0])
+        self.assertIn("Current interaction role: developer", provider.prompts[0])
         self.assertIn("Permissions are unchanged", " ".join(output))
 
     def test_provider_initialization_failure_is_sanitized(self):
