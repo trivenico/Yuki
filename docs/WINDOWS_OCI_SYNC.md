@@ -177,3 +177,18 @@ Run the new tests with:
 `python -m unittest tests.test_task_sync_adapter tests.test_task_sync_outbox_integration -v`
 
 These tests have been added but have not yet been executed in this environment.
+
+## Task-only sync execution
+
+The CLI `/sync run` now invokes the bounded `SyncAgent` cycle with the task-domain adapter as its remote apply handler. It requires a paired device and configured HTTPS hub.
+
+Supported remote operation: `task_records` upserts with exactly `description`, `completed` and `created_at`. A new remote task receives a local numeric ID while retaining its opaque shared object ID. Subsequent revisions update the existing local task after a strict next-revision check. Duplicate deliveries are idempotent; stale revisions are ignored; revision gaps or same-revision/different-content payloads stop the cycle.
+
+Deletes and all other collections are rejected. A rejected remote event is not acknowledged and the download cursor does not advance, so the user must resolve unsupported events before the device can continue past them. This is intentionally safer than silently skipping data.
+
+Task identity is preserved when a receiving device later edits and re-queues the task. The task's local numeric ID is not shared. Concurrent edits from multiple devices can still produce revision conflicts; there is no automatic last-write-wins merge.
+
+Run the focused regression suite with:
+`python -m unittest tests.test_task_sync_adapter tests.test_task_sync_outbox_integration tests.test_remote_task_apply tests.test_sync_agent -v`
+
+Tests are authored but have not been executed in this implementation environment. End-to-end acceptance on Windows and Linux remains required.
