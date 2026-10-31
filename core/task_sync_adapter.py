@@ -43,7 +43,9 @@ class TaskSyncAdapter:
                 continue
             # Deterministic per-device identity makes a crash before metadata
             # persistence safe: retrying produces the same object/event IDs.
-            object_id = "task_" + hashlib.sha256((device_id + ":" + str(item["id"])).encode("utf-8")).hexdigest()[:32]
+            object_id = old_meta.get("object_id")
+            if not isinstance(object_id, str) or not object_id.startswith("task_"):
+                object_id = "task_" + hashlib.sha256((device_id + ":" + str(item["id"])).encode("utf-8")).hexdigest()[:32]
             old_revision = old_meta.get("revision", 0)
             if isinstance(old_revision, bool) or not isinstance(old_revision, int) or old_revision < 0:
                 old_revision = 0
