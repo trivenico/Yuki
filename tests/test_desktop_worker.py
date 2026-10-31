@@ -78,6 +78,37 @@ class DesktopWorkerTests(unittest.TestCase):
         self.assertFalse(worker._thread.is_alive())
         self.assertTrue(runtimes[0].closed)
 
+    def test_list_and_switch_are_dispatched_on_runtime_owner_thread(self):
+        worker = DesktopRuntimeWorker(FakeRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("list")
+        listed = self._next(worker, "list")
+        self.assertEqual(listed["active_conversation_id"], "c1")
+        self.assertEqual(listed["conversations"][0]["conversation_id"], "c1")
+        worker.submit("switch", conversation_id="c2")
+        switched = self._next(worker, "switch")
+        self.assertTrue(switched["ok"])
+        self.assertEqual(switched["conversation_id"], "c2")
+        worker.submit("close")
+        self._next(worker, "close")
+        worker.join(2)
+
+    def test_worker_exits_if_runtime_close_raises(self):
+        class BrokenCloseRuntime(FakeRuntime):
+            def close(self):
+                self._check_thread()
+                raise RuntimeError("cleanup failed")
+
+        worker = DesktopRuntimeWorker(BrokenCloseRuntime)
+        worker.start()
+        self._next(worker, "ready")
+        worker.submit("close")
+        closed = self._next(worker, "close")
+        self.assertFalse(closed["ok"])
+        worker.join(2)
+        self.assertFalse(worker._thread.is_alive())
+
     def test_initialization_failure_is_reported_without_leaking_exception(self):
         worker = DesktopRuntimeWorker(lambda: (_ for _ in ()).throw(RuntimeError("private")))
         worker.start()
