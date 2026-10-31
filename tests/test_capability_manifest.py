@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_unified_agent_execution_service_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "unified-agent-execution-service"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/agent_execution_service.py", item.entrypoints)
+        self.assertIn("tests/test_agent_execution_service.py", item.test_evidence)
+        self.assertTrue(any("approval" in limitation.lower() for limitation in item.limitations))
+
     def test_model_assisted_agent_planning_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
