@@ -13,17 +13,26 @@ from core.sync_store import (
     RevokedDeviceError, SyncConflictError, SyncEventStore,
     SyncStoreError, UnknownDeviceError,
 )
+from core.sync_auth import SyncAuthenticationError, SyncCredentialStore
 
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_PAGE_SIZE = 500
 
 
 class SyncAPI:
-    def __init__(self, store: SyncEventStore, authenticate: Callable[[str], str]):
-        if not callable(authenticate):
+    def __init__(
+        self,
+        store: SyncEventStore,
+        authenticate: Callable[[str], str] | None = None,
+        credentials: SyncCredentialStore | None = None,
+    ):
+        if authenticate is None and credentials is None:
+            raise TypeError("Provide credentials or an authenticator.")
+        if authenticate is not None and not callable(authenticate):
             raise TypeError("authenticate must be callable.")
         self.store = store
-        self.authenticate = authenticate
+        self.credentials = credentials
+        self.authenticate = authenticate or credentials.authenticate_access
 
     @staticmethod
     def _response(start_response, status: str, payload: dict, headers=None):
@@ -62,11 +71,44 @@ class SyncAPI:
         path = environ.get("PATH_INFO", "/")
         if method == "GET" and path == "/health":
             return self._response(start_response, "200 OK", {"ok": True, "service": "yuki-sync"})
+        if method == "POST" and path == "/v1/pair":
+            if self.credentials is None:
+                return self._response(start_response, "404 Not Found", {"error": "not_found"})
+            try:
+                raw = self._read_json(environ)
+                if set(raw) - {"code", "device_label"} or not isinstance(raw.get("code"), str):
+                    raise ValueError("Pair request must contain code and optional device_label.")
+                result = self.credentials.consume_pairing_code(
+                    raw["code"], raw.get("device_label", "Yuki device")
+                )
+                return self._response(start_response, "201 Created", result)
+            except SyncAuthenticationError:
+                return self._response(start_response, "401 Unauthorized", {"error": "invalid_or_expired_pairing_code"})
+            except ValueError as exc:
+                return self._response(start_response, "400 Bad Request", {"error": str(exc)})
+        if method == "POST" and path == "/v1/refresh":
+            if self.credentials is None:
+                return self._response(start_response, "404 Not Found", {"error": "not_found"})
+            try:
+                raw = self._read_json(environ)
+                if set(raw) != {"refresh_token"} or not isinstance(raw["refresh_token"], str):
+                    raise ValueError("Refresh request must contain only refresh_token.")
+                result = self.credentials.refresh(raw["refresh_token"])
+                return self._response(start_response, "200 OK", result)
+            except SyncAuthenticationError:
+                return self._response(start_response, "401 Unauthorized", {"error": "invalid_refresh_token"})
+            except ValueError as exc:
+                return self._response(start_response, "400 Bad Request", {"error": str(exc)})
         auth = environ.get("HTTP_AUTHORIZATION", "")
         if not auth.startswith("Bearer ") or len(auth) > 4096:
             return self._response(start_response, "401 Unauthorized", {"error": "authentication_required"})
         try:
-            device_id = self.authenticate(auth[7:])
+            try:
+                device_id = self.authenticate(auth[7:])
+            except SyncAuthenticationError:
+                return self._response(start_response, "401 Unauthorized", {"error": "invalid_credentials"})
+            except Exception:
+                return self._response(start_response, "401 Unauthorized", {"error": "invalid_credentials"})
             if not isinstance(device_id, str) or not device_id:
                 return self._response(start_response, "401 Unauthorized", {"error": "invalid_credentials"})
             if method == "POST" and path == "/v1/events":
