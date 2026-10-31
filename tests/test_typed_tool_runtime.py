@@ -111,7 +111,12 @@ class TypedToolRuntimeTests(unittest.TestCase):
         call = ToolCall("task-1", "note.save", {"text": "ok"})
         result = runtime.invoke(call)
         self.assertTrue(result.ok)
-        self.assertEqual(result.output, "x" * 10 + "… [truncated]")
+        self.assertLessEqual(len(result.output), 10)
+        self.assertTrue(result.output.endswith("… [truncated]"))
+        tiny = TypedToolRuntime(
+            {"note.save": (tool, lambda args: "x" * 30)}, Policy(), max_output_chars=1
+        )
+        self.assertEqual(len(tiny.invoke(call).output), 1)
 
         bad = TypedToolRuntime(
             {"note.save": (tool, lambda args: float("nan"))}, Policy()
