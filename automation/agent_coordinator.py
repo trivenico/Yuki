@@ -419,10 +419,6 @@ class SpecialistAgentCoordinator:
                 self._set_subtask(plan_id, row["subtask_id"], status=state)
                 row["status"] = state
 
-        active_count = sum(
-            1 for row in rows
-            if row["task_id"] is not None and row["status"] in {"queued", "running", "waiting_approval"}
-        )
         by_id = {row["subtask_id"]: row for row in rows}
 
         for row in rows:
@@ -490,8 +486,6 @@ class SpecialistAgentCoordinator:
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
             row["status"] = task.state
-            if task.state in {"queued", "running", "waiting_approval"}:
-                active_count += 1
 
         # Refresh runtime states outside coordinator DB transactions.
         with self._connect() as db:
