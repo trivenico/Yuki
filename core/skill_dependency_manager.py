@@ -197,8 +197,10 @@ def plan_skill_dependencies(
             if target is None:
                 missing_skills.add(dep_id)
                 continue
-            if not version_satisfies(target["skill_version"], dependency["version"]):
-                incompatible_skills.add(f"{dep_id} {dependency[\"version\"]} (installed {target[\"skill_version\"]})")
+            dependency_version = dependency["version"]
+            target_version = target["skill_version"]
+            if not version_satisfies(target_version, dependency_version):
+                incompatible_skills.add(f"{dep_id} {dependency_version} (installed {target_version})")
                 continue
             visit(dep_id)
         for dependency in manifest["dependencies"]["python"]:
