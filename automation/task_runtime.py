@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.lease_renewed", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -144,6 +144,27 @@ class TaskRuntime:
                                      expected_version=expected_version)
         return self._record(self.store.get(task_id))
 
+    def renew_lease(self, *, actor_id: str, task_id: str, expected_version: int,
+                    worker_id: str, lease_seconds: int = 60) -> TaskRecord:
+        """Renew the current worker lease and journal the renewal."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:lease:renew", task_id):
+            raise PermissionError("task lease renewal is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        renewed = self.store.renew_lease(
+            task_id, worker_id=worker_id.strip(), expected_version=expected_version,
+            lease_seconds=lease_seconds,
+        )
+        self.store.append_task_event(
+            task_id, kind="task.lease_renewed", actor_id=actor,
+            payload={"worker_id": worker_id.strip(), "lease_expires_at": renewed.lease_expires_at,
+                     "state_version": renewed.version},
+            expected_version=renewed.version,
+        )
+        return self._record(self.store.get(task_id))
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
                  worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
         actor = self._actor(actor_id)
