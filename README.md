@@ -194,7 +194,7 @@ Yuki accepts its existing JSON skill-pack format and portable `SKILL.md` files w
 
 Imported Markdown is converted to Yuki's data-only skill-pack format. Third-party skills default to high risk and require the normal one-shot invocation approval. Frontmatter such as `allowed-tools`, `command-tool`, and `command-dispatch` is descriptive only: it does not grant tools, shell access, network access, or execution permissions. Imported skill instructions are untrusted content; no Python or shell code is imported or run. License and author metadata are retained for provenance.
 
-See [upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md) and [third-party notices](THIRD_PARTY_NOTICES.md) for reuse decisions and license attribution.
+See [upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md), [REA and Colibri integration](docs/REA_COLIBRI_INTEGRATION.md), and [third-party notices](THIRD_PARTY_NOTICES.md) for reuse decisions and license attribution.
 
 Yuki also bundles an adapted Hermes Agent root-cause debugging skill. From a repository checkout, install it with:
 
