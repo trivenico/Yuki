@@ -66,6 +66,46 @@ class OllamaProvider:
                 return True
         return False
 
+    def stream(self, prompt: str):
+        """Yield bounded JSONL response chunks from Ollama's native stream."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
+        payload = json.dumps({
+            "model": self.model, "prompt": prompt.strip()[:20000], "stream": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/generate", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
+            method="POST",
+        )
+        total = 0
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                while True:
+                    line = response.readline(256_001)
+                    if not line:
+                        break
+                    total += len(line)
+                    if len(line) > 256_000 or total > 2_000_000:
+                        raise RuntimeError("Ollama stream exceeded the response limit.")
+                    try:
+                        event = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("Ollama returned an invalid stream event.") from exc
+                    if not isinstance(event, dict):
+                        raise RuntimeError("Ollama returned an unsupported stream event.")
+                    chunk = event.get("response", "")
+                    if chunk:
+                        if not isinstance(chunk, str):
+                            raise RuntimeError("Ollama emitted a non-text chunk.")
+                        yield chunk
+                    if event.get("error"):
+                        raise RuntimeError("Ollama generation failed.")
+                    if event.get("done") is True:
+                        return
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Local Ollama stream failed.") from exc
+
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
