@@ -62,7 +62,7 @@ class ProviderManager:
     def list_providers(self):
         return [{
             "name": p.name, "auth_methods": list(p.auth_methods),
-            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid"}),
+            "implemented": p.implemented and (p.name in self._factories or p.name in {"ollama", "hybrid", "colibri"}),
             "selected": name == self._selected,
         } for name, p in sorted(self._providers.items())]
 
@@ -85,7 +85,7 @@ class ProviderManager:
         info = self._providers.get(key)
         if info is None:
             return f"Unknown provider: {key}"
-        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
+        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid", "colibri"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
             adapter = self._build_adapter(key)
