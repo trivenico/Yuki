@@ -56,7 +56,9 @@ class CodingTaskReviewIntegrationTests(unittest.TestCase):
         )
         self.assertFalse(report.eligible_for_human_review)
         self.assertEqual(unchanged.state, "draft")
-        self.assertEqual(unchanged.version, self.task.version)
+        self.assertEqual(unchanged.version, self.task.version + 1)
+        self.assertIn("PY001", unchanged.review)
+        self.assertIn('"merge_authorized": false', unchanged.review)
 
     def test_stale_task_version_is_rejected(self):
         with self.assertRaises(CodingTaskConflict):
