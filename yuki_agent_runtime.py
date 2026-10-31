@@ -36,6 +36,21 @@ def _positive_int(value: int, field: str, *, maximum: int) -> int:
     return value
 
 
+MAX_TASK_PAYLOAD_BYTES = 256 * 1024
+
+
+def _require_string_object_keys(value: Any) -> None:
+    """Reject non-string keys before canonical JSON serialization."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+            _require_string_object_keys(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _require_string_object_keys(child)
+
+
 class TaskStore:
     """SQLite-backed task queue with leases, approvals, budgets and an event ledger."""
 
@@ -153,9 +168,12 @@ class TaskStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters")
         try:
+            _require_string_object_keys(payload)
             payload_json = json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True)
         except (TypeError, ValueError) as exc:
-            raise ValueError("payload must contain only finite JSON-compatible values") from exc
+            raise ValueError("payload must contain only finite JSON-compatible values with string object keys") from exc
+        if len(payload_json.encode("utf-8")) > MAX_TASK_PAYLOAD_BYTES:
+            raise ValueError(f"payload exceeds the {MAX_TASK_PAYLOAD_BYTES}-byte task limit")
 
         now = _now()
         created = _stamp(now)
