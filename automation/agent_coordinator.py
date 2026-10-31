@@ -79,7 +79,7 @@ class AgentPlan:
             return "running"
         if states & {"waiting_approval"}:
             return "waiting_approval"
-        if states & {"queued", "pending"}:
+        if states & {"queued", "pending", "dispatching"}:
             return "queued"
         if states == {"succeeded"}:
             return "succeeded"
@@ -456,14 +456,17 @@ class SpecialistAgentCoordinator:
                 continue
             if waiting:
                 continue
-            # Reserve atomically: a process-local count alone lets concurrent
-            # coordinator instances exceed the plan's configured capacity.
-            if not self._reserve_dispatch_slot(plan_id, row["subtask_id"]):
-                continue
             agent = self.agents.get(row["agent_id"])
             if agent is None or not agent.enabled:
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
+                continue
+            # Validate/build bounded context before reserving capacity so malformed
+            # dependency data cannot strand a dispatch slot.
+            argument = self._build_dependency_argument(row["description"], dependency_results)
+            # Reserve atomically: a process-local count alone lets concurrent
+            # coordinator instances exceed the plan's configured capacity.
+            if not self._reserve_dispatch_slot(plan_id, row["subtask_id"]):
                 continue
             try:
                 task = self.runtime.enqueue(
@@ -472,7 +475,7 @@ class SpecialistAgentCoordinator:
                     name=f"agent-{agent.agent_id}-{row['subtask_id']}",
                     steps=[{
                         "name": row["subtask_id"], "action": agent.action,
-                        "argument": self._build_dependency_argument(row["description"], dependency_results),
+                        "argument": argument,
                         "requires_approval": bool(row["requires_approval"]),
                     }],
                 )
