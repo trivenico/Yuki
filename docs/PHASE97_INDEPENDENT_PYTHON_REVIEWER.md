@@ -42,7 +42,7 @@ Adds a deterministic, read-only second-pass reviewer for proposed Python file co
 
 ## Coding-task lifecycle integration
 
-`core/coding_task_review.py` binds the static report to the exact stored patch SHA-256 and task version. It accepts the proposed post-change source snapshot from a trusted caller, and does not apply patches or execute code. A clean, fully scanned Python-only report attaches bounded review evidence and advances a draft task only to `ready_for_review`. Blocking or incomplete reports leave the task in draft. A human must still inspect the patch and evidence and explicitly perform the separate approval transition. The evidence explicitly records `merge_authorized: false`.
+`core/coding_task_review.py` binds the static report to the exact stored patch SHA-256 and task version. It accepts the proposed post-change source snapshot from a trusted caller, and does not apply patches or execute code. A clean, fully scanned Python-only report attaches bounded review evidence and advances a draft task only to `ready_for_review`. Blocking or incomplete reports persist their bounded findings while leaving the task in draft and incrementing its version. A human must still inspect the patch and evidence and explicitly perform the separate approval transition. The evidence explicitly records `merge_authorized: false`.
 
 The integration trusts the caller to supply the exact post-patch source snapshot; it does not independently reconstruct that snapshot from the Git diff. Production integration must obtain this snapshot from a trusted isolated checkout and bind its revision to the patch digest.
 
