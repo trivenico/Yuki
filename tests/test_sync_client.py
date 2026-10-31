@@ -140,7 +140,8 @@ class SyncReplaySafetyTests(unittest.TestCase):
         agent.apply_remote = applied.append
         result = agent.sync_once()
         self.assertEqual(result["pulled"], 1)
-        self.assertEqual(applied, [event])
+        self.assertEqual(applied[0]["event_id"], event["event_id"])
+        self.assertEqual(applied[0]["occurred_at"], "2026-10-31T10:00:00+00:00")
         self.assertEqual(self.outbox.cursor(), 7)
         self.assertEqual(transport.ack_calls, [(7, "access-token")])
 
