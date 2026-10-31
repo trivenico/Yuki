@@ -51,14 +51,19 @@ def _safe_path(value: str) -> bool:
 
 
 class _PythonReviewer(ast.NodeVisitor):
-    def __init__(self, path: str, source: str):
+    def __init__(self, path: str, source: str, redacted_lines: set[int] | None = None):
         self.path = path
         self.lines = source.splitlines()
+        self.redacted_lines = redacted_lines or set()
         self.findings: list[ReviewFinding] = []
 
     def add(self, node: ast.AST, rule: str, severity: str, message: str, remediation: str) -> None:
         line = getattr(node, "lineno", 1)
-        evidence = self.lines[line - 1].strip()[:240] if 0 < line <= len(self.lines) else ""
+        evidence = (
+            "Potential credential-bearing line (source value redacted)."
+            if line in self.redacted_lines else
+            self.lines[line - 1].strip()[:240] if 0 < line <= len(self.lines) else ""
+        )
         self.findings.append(ReviewFinding(
             self.path, line, rule, severity, message, evidence, remediation
         ))
@@ -131,9 +136,11 @@ def review_python_changes(changes: Mapping[str, str]) -> ReviewReport:
             skipped += 1
             continue
         scanned += 1
+        redacted_lines: set[int] = set()
         for pattern in SECRET_PATTERNS:
             for match in pattern.finditer(source):
                 line = source.count("\n", 0, match.start()) + 1
+                redacted_lines.add(line)
                 findings.append(ReviewFinding(
                     path, line, "SEC001", "critical",
                     "Potential hard-coded credential or private key detected.",
@@ -150,7 +157,7 @@ def review_python_changes(changes: Mapping[str, str]) -> ReviewReport:
                 "Fix the syntax error and rerun the independent review."
             ))
             continue
-        visitor = _PythonReviewer(path, source)
+        visitor = _PythonReviewer(path, source, redacted_lines)
         visitor.visit(tree)
         findings.extend(visitor.findings)
 
