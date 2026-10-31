@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from companion.conversation import ConversationError, ConversationSession
@@ -14,6 +15,13 @@ class FakeProvider:
 
     def generate(self, prompt):
         self.prompts.append(prompt)
+        value = self.answers.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def generate_chat(self, system, messages):
+        self.prompts.append(json.dumps({"system": system, "conversation": messages}))
         value = self.answers.pop(0)
         if isinstance(value, Exception):
             raise value
