@@ -42,6 +42,16 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertIn("tests/test_extension_store.py", item.test_evidence)
         self.assertTrue(any("heuristic" in limitation for limitation in item.limitations))
 
+    def test_conversation_agent_bridge_is_experimental_and_evidence_backed(self):
+        item = next(
+            capability for capability in DEFAULT_CAPABILITIES
+            if capability.capability_id == "conversation-agent-bridge"
+        )
+        self.assertEqual(item.status, "experimental")
+        self.assertIn("core/conversation_agent_bridge.py", item.entrypoints)
+        self.assertIn("tests/test_conversation_agent_bridge.py", item.test_evidence)
+        self.assertTrue(any("human-approval" in limitation for limitation in item.limitations))
+
     def test_unified_agent_execution_service_is_experimental_and_evidence_backed(self):
         item = next(
             capability for capability in DEFAULT_CAPABILITIES
