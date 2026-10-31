@@ -167,7 +167,7 @@ class ConversationStore:
         )
         if normalized["operation"] != "upsert":
             raise SyncClientError("Conversation deletions are not supported yet.")
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        digest = hashlib.sha256(json.dumps(normalized, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         prior = self._db.execute(
             "SELECT payload_hash FROM applied_events WHERE event_id=?",
             (normalized["event_id"],),
