@@ -38,6 +38,21 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertIn("structured_chat", ollama["capabilities"])
         self.assertNotIn("structured_chat", gemini["capabilities"])
 
+    def test_gemini_api_catalog_requires_key_and_advertises_structured_chat(self):
+        item = next(x for x in build_provider_catalog(environ={
+            "GEMINI_API_KEY": "secret", "YUKI_GEMINI_MODEL": "gemini-2.5-flash"
+        }) if x["name"] == "gemini-api")
+        self.assertTrue(item["implemented"])
+        self.assertTrue(item["ready"])
+        self.assertIn("structured_chat", item["capabilities"])
+        self.assertEqual(item["configured_model"], "gemini-2.5-flash")
+
+    def test_gemini_api_catalog_does_not_claim_ready_without_key(self):
+        item = next(x for x in build_provider_catalog(environ={}) if x["name"] == "gemini-api")
+        self.assertTrue(item["implemented"])
+        self.assertFalse(item["ready"])
+        self.assertEqual(item["status"], "api_key_not_configured")
+
     def test_ollama_requires_model_configuration(self):
         catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})
         item = next(x for x in catalog if x["name"] == "ollama")
