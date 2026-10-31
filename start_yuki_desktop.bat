@@ -9,6 +9,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
+if errorlevel 1 (
+  echo Yuki requires Python 3.10 or newer.
+  pause
+  exit /b 1
+)
+
 if not exist ".venv\Scripts\python.exe" (
   echo Creating Yuki's isolated Python environment...
   py -3 -m venv .venv
