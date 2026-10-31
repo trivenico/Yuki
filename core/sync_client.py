@@ -70,19 +70,32 @@ class SyncOutbox:
     """Persistent local event queue with retry and conflict states."""
 
     def __init__(self, path: str | Path):
-        self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        raw_path = str(path)
+        self._memory = raw_path == ":memory:"
+        self.path = (
+            "file:yuki_outbox_" + __import__("uuid").uuid4().hex + "?mode=memory&cache=shared"
+            if self._memory else str(Path(raw_path).expanduser())
+        )
+        self._anchor = None
+        if self._memory:
+            self._anchor = self._connect()
+        else:
+            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None, uri=self._memory)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
-        if self.path != ":memory:":
+        if not self._memory:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
         return conn
+
+    def close(self) -> None:
+        if self._anchor is not None:
+            self._anchor.close()
+            self._anchor = None
 
     def _initialize(self):
         with closing(self._connect()) as conn:
@@ -329,14 +342,23 @@ class SyncAgent:
             raise SyncClientError("The sync hub returned an invalid event page.")
         if len(events) > pull_limit or next_after < cursor:
             raise SyncClientError("The sync hub returned an invalid event cursor.")
+        previous_sequence = cursor
         for item in events:
-            if not isinstance(item, dict) or not isinstance(item.get("sequence"), int):
-                raise SyncClientError("The sync hub returned a malformed event.")
+            if (
+                not isinstance(item, dict)
+                or isinstance(item.get("sequence"), bool)
+                or not isinstance(item.get("sequence"), int)
+                or item["sequence"] <= previous_sequence
+            ):
+                raise SyncClientError("The sync hub returned a malformed event sequence.")
+            previous_sequence = item["sequence"]
             event = {key: value for key, value in item.items() if key != "sequence"}
             from core.sync_contract import validate_sync_event
             normalized = validate_sync_event(event)
             self.apply_remote(normalized.to_dict())
             pulled += 1
+        if (events and next_after != previous_sequence) or (not events and next_after != cursor):
+            raise SyncClientError("The sync hub returned an inconsistent page cursor.")
 
         if next_after > cursor:
             self.transport.acknowledge(next_after, access)
