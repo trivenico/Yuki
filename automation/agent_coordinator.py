@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+from itertools import islice
 from pathlib import Path
 import re
 import sqlite3
@@ -174,7 +175,8 @@ class SpecialistAgentCoordinator:
         if isinstance(subtasks, (str, bytes)):
             raise AgentPlanError("subtasks must be a sequence of subtask specifications.")
         try:
-            items = tuple(subtasks)
+            iterator = iter(subtasks)
+            items = tuple(islice(iterator, max_subtasks + 1))
         except TypeError as exc:
             raise AgentPlanError("subtasks must be iterable.") from exc
         if not 1 <= len(items) <= max_subtasks:
