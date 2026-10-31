@@ -224,9 +224,13 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                     if runtime.vault is None or not runtime.vault.load():
                         return "Pair this device first with /sync pair. No network request was made."
                     try:
-                        result = runtime.sync_once(
-                            lambda event: TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
-                        )
+                        def apply_remote(event):
+                            if event["collection"].startswith("conversation_"):
+                                if conversation_context is None:
+                                    raise SyncClientError("Local chat store is unavailable.")
+                                return conversation_context["store"].apply_remote(event)
+                            return TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
+                        result = runtime.sync_once(apply_remote)
                     except SyncClientError as error:
                         write_audit_event("sync:run", "rejected")
                         return f"Sync stopped safely: {error} No unhandled event was acknowledged."
@@ -235,7 +239,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                         "Yuki sync cycle completed. "
                         f"Uploaded: {result['pushed']}; downloaded/applied: {result['pulled']}; "
                         f"conflicts: {result['conflicts']}. "
-                        "Only task upserts are currently supported; deletes and other collections are rejected."
+                        "Task upserts and chat history are supported; skills, preferences and deletes are not."
                     )
                 return "Usage: /sync status | pair | tasks preview | tasks queue | run"
             finally:
