@@ -20,6 +20,7 @@ from core.sync_runtime import SyncRuntime
 from core.sync_client import SyncClientError
 from core.task_sync_adapter import TaskSyncAdapter
 from core.conversation_store import ConversationStore
+from core.skill_pack_sync import SkillPackSyncAdapter
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -205,6 +206,25 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                             "Nothing was uploaded. Review the preview before any future sync run."
                         )
                     return "Usage: /sync tasks preview | queue"
+                if action == "skills":
+                    adapter = SkillPackSyncAdapter()
+                    subcommand = parts[2] if len(parts) > 2 else "preview"
+                    if subcommand == "preview":
+                        counts = adapter.preview()
+                        return (
+                            f"Skill sync preview: {counts['installed_data_only_packs']} data-only skill pack(s). "
+                            "Executable plugins, approval grants and credentials are never shared."
+                        )
+                    if subcommand == "queue":
+                        saved = runtime.vault.load() if runtime.vault is not None else None
+                        if not saved:
+                            return "Pair this device first. No skill packs were queued."
+                        result = adapter.queue_installed(saved[0], runtime.enqueue_event)
+                        return (
+                            f"Queued {result['queued']} skill pack event(s); "
+                            f"{result['already_queued']} already existed. Nothing was uploaded."
+                        )
+                    return "Usage: /sync skills preview | queue"
                 if action == "chat":
                     store = conversation_context["store"] if conversation_context else None
                     if store is None:
@@ -229,6 +249,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                                 if conversation_context is None:
                                     raise SyncClientError("Local chat store is unavailable.")
                                 return conversation_context["store"].apply_remote(event)
+                            if event["collection"] == "skill_metadata":
+                                return SkillPackSyncAdapter().apply_remote(event)
                             return TaskSyncAdapter.apply_remote(event, tasks, save_tasks)
                         result = runtime.sync_once(apply_remote)
                     except SyncClientError as error:
@@ -239,9 +261,9 @@ def handle_command(message, memory, tasks, agent, providers, policy=None, conver
                         "Yuki sync cycle completed. "
                         f"Uploaded: {result['pushed']}; downloaded/applied: {result['pulled']}; "
                         f"conflicts: {result['conflicts']}. "
-                        "Task upserts and chat history are supported; skills, preferences and deletes are not."
+                        "Task upserts, chat history and data-only skill packs are supported; executable plugins, preferences and deletes are not."
                     )
-                return "Usage: /sync status | pair | tasks preview | tasks queue | run"
+                return "Usage: /sync status | pair | tasks preview | tasks queue | chat preview | chat queue | skills preview | skills queue | run"
             finally:
                 runtime.close()
         except (SyncClientError, ValueError, OSError):
