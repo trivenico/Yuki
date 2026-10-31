@@ -38,7 +38,7 @@ class ReviewReport:
     files_scanned: int
     files_skipped: int
     findings: tuple[ReviewFinding, ...]
-    approved_for_merge: bool
+    eligible_for_human_review: bool
     blocking_count: int
     summary: str
 
@@ -160,7 +160,7 @@ def review_python_changes(changes: Mapping[str, str]) -> ReviewReport:
         files_scanned=scanned,
         files_skipped=skipped,
         findings=tuple(findings),
-        approved_for_merge=(blocking == 0 and scanned > 0 and skipped == 0),
+        eligible_for_human_review=(blocking == 0 and scanned > 0 and skipped == 0),
         blocking_count=blocking,
         summary=("No configured high-severity patterns detected; human review remains required."
                  if blocking == 0 and scanned > 0 and skipped == 0
