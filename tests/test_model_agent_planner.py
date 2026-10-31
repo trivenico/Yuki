@@ -87,6 +87,15 @@ class ModelAgentPlannerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ModelAgentPlanner.parse_proposal(response)
 
+    def test_model_cannot_disable_human_approval(self):
+        proposal = (
+            '{"subtasks":[{"subtask_id":"a","description":"Read public information",'
+            '"required_capabilities":["research"],"depends_on":[],'
+            '"required_permissions":["web:read"],"requires_approval":false}]}'
+        )
+        with self.assertRaisesRegex(ValueError, "must require explicit approval"):
+            ModelAgentPlanner.parse_proposal(proposal)
+
     def test_invalid_graph_and_unknown_capability_fail_before_dispatch(self):
         self.provider.response = (
             '{"subtasks":['
