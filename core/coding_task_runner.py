@@ -103,7 +103,7 @@ def run_sandboxed_task(
     # A mutable tag can silently change the code executed after approval.
     # Require an immutable OCI/Docker digest on every coding-task execution.
     if not isinstance(image, str) or not re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}@sha256:[0-9a-f]{64}", image
+        r"[A-Za-z0-9][A-Za-z0-9._/:-]{0,254}@sha256:[0-9a-f]{64}", image
     ):
         raise SandboxExecutionError("sandbox image must be pinned to a lowercase sha256 digest")
 
