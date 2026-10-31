@@ -114,7 +114,8 @@ class ConversationAgentBridgeTests(unittest.TestCase):
         )
         self.assertTrue(first.ok and replay.ok)
         self.assertTrue(replay.replayed)
-        self.assertEqual(first.plan_id, replay.plan_id if replay.plan_id else first.plan_id)
+        self.assertEqual(first.plan_id, replay.plan_id)
+        self.assertEqual(first.plan_status, replay.plan_status)
         self.assertEqual(self.planner_provider.calls, 1)
         self.assertEqual(len(self.conversation_store.list_messages("workspace-a", first.session_id)), 2)
 
