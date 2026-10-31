@@ -81,7 +81,7 @@ class ConversationStore:
                         id TEXT NOT NULL UNIQUE,
                         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
                         workspace_id TEXT NOT NULL,
-                        role TEXT NOT NULL CHECK(role IN ('system','user','assistant','tool')),
+                        role TEXT NOT NULL CHECK(role IN ('user','assistant','tool')),
                         content TEXT NOT NULL,
                         created_at TEXT NOT NULL,
                         idempotency_key TEXT,
@@ -253,7 +253,9 @@ class ConversationStore:
                     original = db.execute("SELECT content FROM conversation_messages WHERE id=?", (existing["user_message_id"],)).fetchone()
                     if original is None or original["content"] != user_content:
                         raise ValueError("request_id already exists with different user content.")
-                    return dict(existing)
+                    result = dict(existing)
+                    result["created"] = False
+                    return result
                 running = db.execute(
                     "SELECT request_id FROM conversation_turns WHERE conversation_id=? AND status='running'",
                     (session_id,),
@@ -270,7 +272,9 @@ class ConversationStore:
                     (request_id, session_id, workspace, message_id, "running", now, now),
                 )
                 db.execute("UPDATE conversations SET updated_at=? WHERE id=? AND workspace_id=?", (now, session_id, workspace))
-                return dict(db.execute("SELECT * FROM conversation_turns WHERE request_id=?", (request_id,)).fetchone())
+                result = dict(db.execute("SELECT * FROM conversation_turns WHERE request_id=?", (request_id,)).fetchone())
+                result["created"] = True
+                return result
 
     def complete_turn(self, workspace_id: str, request_id: str, assistant_content: str) -> dict[str, Any]:
         """Persist the assistant response and close a running turn in one transaction."""
