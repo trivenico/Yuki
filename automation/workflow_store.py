@@ -387,10 +387,13 @@ class WorkflowRunStore:
             raise ValueError("actor_id must be non-empty bounded text.")
         if not isinstance(payload, dict) or "task.lease_renewed" not in _EVENT_KINDS:
             raise ValueError("invalid lease renewal event.")
-        payload_json = _bounded_json(payload, 8 * 1024, "task event payload")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        event_payload = dict(payload)
+        event_payload["lease_expires_at"] = lease_expires
+        event_payload["state_version"] = expected_version + 1
+        payload_json = _bounded_json(event_payload, 8 * 1024, "task event payload")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
