@@ -340,11 +340,13 @@ class YukiDesktop:
                         tasks = self.sync_preview.get("tasks", {})
                         chats = self.sync_preview.get("conversations", {})
                         skills = self.sync_preview.get("skills", {})
+                        task_conflicts = self.sync_preview.get("task_conflicts", [])
                         summary = (
                             "Sharing preview — tasks: " + str(tasks.get("total", 0))
                             + "; chats: " + str(chats.get("conversations", 0)) + " / "
                             + str(chats.get("messages", 0)) + " messages; data-only skills: "
                             + str(skills.get("installed_data_only_packs", 0))
+                            + "; unresolved task conflicts: " + str(len(task_conflicts))
                             + ". Nothing queued or uploaded."
                         )
                         self.sync_details.set(summary)
