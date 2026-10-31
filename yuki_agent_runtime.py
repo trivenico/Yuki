@@ -290,9 +290,12 @@ class TaskStore:
 
     def complete(self, task_id: str, worker_id: str, result: Any) -> dict[str, Any]:
         try:
+            _require_string_object_keys(result)
             result_json = json.dumps(result, ensure_ascii=False, allow_nan=False, sort_keys=True)
         except (TypeError, ValueError) as exc:
-            raise ValueError("result must be JSON-compatible and finite") from exc
+            raise ValueError("result must be finite JSON-compatible data with string object keys") from exc
+        if len(result_json.encode("utf-8")) > MAX_TASK_PAYLOAD_BYTES:
+            raise ValueError(f"result exceeds the {MAX_TASK_PAYLOAD_BYTES}-byte task limit")
         return self._finish(task_id, worker_id, "succeeded", result_json=result_json)
 
     def fail(self, task_id: str, worker_id: str, error: str, *, retryable: bool = True) -> dict[str, Any]:
