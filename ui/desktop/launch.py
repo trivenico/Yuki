@@ -155,6 +155,7 @@ def run() -> int:
             self.controller = None
             self.busy = False
             self.current_plan = None
+            self.migration_preview = None
             self._build_ui()
             self._initialize()
 
@@ -343,7 +344,186 @@ def run() -> int:
             backup_layout.addStretch(1)
             tabs.addTab(backup_page, "Backup & Restore")
 
+            migration_page = QWidget()
+            migration_layout = QVBoxLayout(migration_page)
+            migration_layout.addWidget(QLabel(
+                "Move data from an earlier Yuki installation into a separate, empty folder. "
+                "The original data is retained."
+            ))
+            migration_layout.addWidget(QLabel(
+                "Migration does not activate or replace the running profile. "
+                "Create an encrypted backup before proceeding."
+            ))
+            self.migration_source = QLineEdit()
+            self.migration_source.setReadOnly(True)
+            source_row = QHBoxLayout()
+            source_row.addWidget(self.migration_source, 1)
+            choose_source = QPushButton("Choose old data folder…")
+            choose_source.clicked.connect(self._choose_migration_source)
+            source_row.addWidget(choose_source)
+            migration_layout.addLayout(source_row)
+            self.migration_destination = QLineEdit()
+            self.migration_destination.setReadOnly(True)
+            destination_row = QHBoxLayout()
+            destination_row.addWidget(self.migration_destination, 1)
+            choose_migration_destination = QPushButton("Choose new empty folder…")
+            choose_migration_destination.clicked.connect(self._choose_migration_destination)
+            destination_row.addWidget(choose_migration_destination)
+            migration_layout.addLayout(destination_row)
+            migration_actions = QHBoxLayout()
+            self.migration_preview_button = QPushButton("Preview migration")
+            self.migration_preview_button.clicked.connect(self._preview_migration)
+            migration_actions.addWidget(self.migration_preview_button)
+            self.migration_execute_button = QPushButton("Migrate verified copy")
+            self.migration_execute_button.setEnabled(False)
+            self.migration_execute_button.clicked.connect(self._execute_migration)
+            migration_actions.addWidget(self.migration_execute_button)
+            migration_layout.addLayout(migration_actions)
+            self.migration_preview_view = QPlainTextEdit()
+            self.migration_preview_view.setReadOnly(True)
+            self.migration_preview_view.setPlaceholderText(
+                "Select source and destination, then preview the migration."
+            )
+            migration_layout.addWidget(self.migration_preview_view, 1)
+            self.migration_status = QLabel("Migration is available after signing in.")
+            self.migration_status.setWordWrap(True)
+            migration_layout.addWidget(self.migration_status)
+            tabs.addTab(migration_page, "Migration")
+
             self.pages.addWidget(tabs)
+
+        def _clear_migration_preview(self):
+            self.migration_preview = None
+            self.migration_execute_button.setEnabled(False)
+            self.migration_preview_view.clear()
+            self.migration_status.setText("Preview required before migration.")
+
+        def _choose_migration_source(self):
+            path = QFileDialog.getExistingDirectory(self, "Choose earlier Yuki data folder")
+            if path:
+                self.migration_source.setText(path)
+                self._clear_migration_preview()
+
+        def _choose_migration_destination(self):
+            path = QFileDialog.getExistingDirectory(self, "Choose separate empty destination")
+            if path:
+                self.migration_destination.setText(path)
+                self._clear_migration_preview()
+
+        def _preview_migration(self):
+            if self.controller is None or self.busy:
+                return
+            source = self.migration_source.text().strip()
+            destination = self.migration_destination.text().strip()
+            if not source or not destination:
+                self.migration_status.setText("Choose both a source and destination folder.")
+                return
+            self.busy = True
+            self.migration_preview_button.setEnabled(False)
+            self.migration_execute_button.setEnabled(False)
+            self.migration_status.setText("Inspecting source files without modifying them…")
+            controller = self.controller
+            worker = BackupWorker(
+                lambda: controller.preview_migration(source, destination)
+            )
+            worker.signals.finished.connect(self._migration_preview_finished)
+            self.pool.start(worker)
+
+        @Slot(object, object)
+        def _migration_preview_finished(self, preview: Any, error: Any):
+            self.busy = False
+            self.migration_preview_button.setEnabled(True)
+            if error is not None:
+                self.migration_preview = None
+                self.migration_status.setText(
+                    "Migration preview failed (" + type(error).__name__ + "). No files were changed."
+                )
+                self.migration_preview_view.clear()
+                if isinstance(error, PermissionError):
+                    self._return_to_login()
+                return
+            self.migration_preview = preview
+            lines = [
+                "READ-ONLY MIGRATION PREVIEW",
+                "",
+                f"Source: {preview.source}",
+                f"Destination: {preview.destination}",
+                f"Files: {len(preview.files)}",
+                f"Total source size: {preview.total_bytes:,} bytes",
+                "",
+                "Files to be copied:",
+            ]
+            lines.extend(f"  • {name}" for name in preview.files[:200])
+            if len(preview.files) > 200:
+                lines.append(f"  … and {len(preview.files) - 200} more files")
+            lines.extend([
+                "",
+                "SQLite databases are snapshotted and integrity-checked.",
+                "Other files are SHA-256 verified.",
+                "The original source is retained.",
+                "The destination must remain empty until migration starts.",
+            ])
+            self.migration_preview_view.setPlainText("\\n".join(lines))
+            self.migration_status.setText("Preview complete. Review every path before proceeding.")
+            self.migration_execute_button.setEnabled(True)
+
+        def _execute_migration(self):
+            if self.controller is None or self.busy or self.migration_preview is None:
+                return
+            preview = self.migration_preview
+            if (
+                preview.source != Path(self.migration_source.text()).expanduser().resolve()
+                or preview.destination != Path(self.migration_destination.text()).expanduser().resolve()
+            ):
+                self._clear_migration_preview()
+                self.migration_status.setText("Paths changed. Generate a new preview.")
+                return
+            answer = QMessageBox.warning(
+                self, "Confirm Yuki data migration",
+                f"Copy {len(preview.files)} files ({preview.total_bytes:,} bytes) "
+                f"from the selected source into a separate destination?\\n\\n"
+                "The original data will be retained. Existing destination data will not be overwritten. "
+                "This will not replace the currently running Yuki profile.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            source = str(preview.source)
+            destination = str(preview.destination)
+            controller = self.controller
+            self.busy = True
+            self.migration_preview_button.setEnabled(False)
+            self.migration_execute_button.setEnabled(False)
+            self.migration_status.setText("Copying, verifying and publishing migrated data…")
+            worker = BackupWorker(
+                lambda: controller.migrate_data(source, destination)
+            )
+            worker.signals.finished.connect(self._migration_finished)
+            self.pool.start(worker)
+
+        @Slot(object, object)
+        def _migration_finished(self, result: Any, error: Any):
+            self.busy = False
+            self.migration_preview_button.setEnabled(True)
+            self.migration_execute_button.setEnabled(False)
+            if error is not None:
+                self.migration_preview = None
+                self.migration_status.setText(
+                    "Migration failed (" + type(error).__name__ + "). "
+                    "The original source was retained; review the destination before retrying."
+                )
+                if isinstance(error, PermissionError):
+                    self._return_to_login()
+                return
+            self.migration_preview = None
+            self.migration_status.setText(
+                f"Migration verified: {len(result['files'])} files. "
+                f"Destination: {self.migration_destination.text()}. "
+                "Original source retained."
+            )
+            self.migration_preview_view.appendPlainText(
+                "\\n\\nMIGRATION COMPLETE — verified manifest written to destination."
+            )
 
         def _choose_backup_path(self):
             path, _ = QFileDialog.getSaveFileName(
@@ -848,6 +1028,8 @@ def run() -> int:
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
             self.restore_passphrase.clear()
+            self._clear_migration_preview()
+            self.migration_status.setText("Sign in to use migration.")
             self.backup_status.setText("Sign in to use backup and restore.")
             self.task_approve_button.setEnabled(False)
             self.task_cancel_button.setEnabled(False)
