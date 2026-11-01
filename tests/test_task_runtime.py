@@ -60,7 +60,7 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_idempotency_key_rejects_nul_characters(self):
         with self.assertRaises(ValueError):
             self.runtime.enqueue(
-                actor_id="alice", idempotency_key="invalid\\x00key",
+                actor_id="alice", idempotency_key="invalid\x00key",
                 name="task", steps=self.steps,
             )
 
