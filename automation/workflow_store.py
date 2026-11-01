@@ -80,7 +80,9 @@ class WorkflowRun:
     lease_expires_at: str | None
     approved_by: str | None
     approved_at: str | None
+    approval_digest: str | None
     approved_session_hash: str | None
+    request_digest: str
 
 
 class WorkflowRunStore:
@@ -203,7 +205,9 @@ class WorkflowRunStore:
             lease_expires_at=row["lease_expires_at"],
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
+            approval_digest=row["approval_digest"],
             approved_session_hash=row["approved_session_hash"],
+            request_digest=row["request_digest"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
