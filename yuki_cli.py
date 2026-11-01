@@ -9,12 +9,14 @@ import argparse
 import json
 import os
 from collections.abc import Callable, Sequence
+from uuid import uuid4
 from getpass import getpass
 from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
 from companion.memory_consent import CompanionMemory, MemoryConsentError
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
@@ -48,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
         task_action.add_argument("task_id")
         task_action.add_argument("--version", type=int, required=True,
                                  help="Current task version shown by yuki tasks inspect")
+
+    agents = sub.add_parser("agents", help="Discover and supervise specialist agents")
+    agent_sub = agents.add_subparsers(dest="agent_command", required=True)
+    agent_sub.add_parser("list", help="List configured specialist agents")
+    agent_plan = agent_sub.add_parser("plan", help="Generate a bounded agent plan for review")
+    agent_plan.add_argument("goal", help="Goal to decompose into specialist subtasks")
+    agent_plan.add_argument("--idempotency-key", help="Stable request key; generated when omitted")
+    agent_show = agent_sub.add_parser("inspect", help="Inspect a saved agent plan")
+    agent_show.add_argument("plan_id")
+    agent_dispatch = agent_sub.add_parser("dispatch", help="Create approval-gated tasks from a reviewed plan")
+    agent_dispatch.add_argument("plan_id")
 
     auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
     auth_sub = auth.add_subparsers(dest="auth_command", required=True)
@@ -250,6 +263,89 @@ def run_cli(
             return 4
         except Exception as exc:
             output_fn("Yuki task operation failed (" + type(exc).__name__ + ").")
+            return 5
+
+    if args.command == "agents":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            runtime = TaskRuntime(WorkflowRunStore(database_path), authorize=permission_check)
+            built_in_agents = (
+                SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
+                SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
+                SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
+                SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
+            )
+            coordinator = SpecialistAgentCoordinator(
+                runtime, database_path, built_in_agents, authorize=permission_check,
+            )
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki agent service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+
+        try:
+            if args.agent_command == "list":
+                records = coordinator.list_agents(actor_id=actor_id)
+                _write_json(list(records), output_fn)
+                return 0
+            if args.agent_command == "plan":
+                key = args.idempotency_key or uuid4().hex
+                try:
+                    config = config_loader()
+                    provider = provider_factory(config)
+                except Exception as exc:
+                    output_fn("Yuki could not initialize the planning provider (" + type(exc).__name__ + ").")
+                    return 5
+                plan = coordinator.submit_model_plan(
+                    provider=provider, actor_id=actor_id,
+                    idempotency_key=key, goal=args.goal,
+                )
+            elif args.agent_command == "inspect":
+                plan = coordinator.get_plan(actor_id=actor_id, plan_id=args.plan_id)
+            else:
+                plan = coordinator.advance(actor_id=actor_id, plan_id=args.plan_id)
+            _write_json({
+                "plan_id": plan.plan_id,
+                "idempotency_key": plan.idempotency_key,
+                "created_at": plan.created_at,
+                "subtasks": [{
+                    "subtask_id": item.subtask_id,
+                    "agent_id": item.agent_id,
+                    "description": item.description,
+                    "required_capabilities": list(item.required_capabilities),
+                    "depends_on": list(item.depends_on),
+                    "requires_approval": item.requires_approval,
+                    "task_id": item.task_id,
+                    "status": item.status,
+                } for item in plan.subtasks],
+            }, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this agent action.")
+            return 3
+        except (WorkflowConflict, ValueError, RuntimeError) as exc:
+            output_fn("Yuki: Agent operation was not completed (" + type(exc).__name__ + ").")
+            return 2
+        except KeyError:
+            output_fn("Yuki: Agent plan not found.")
+            return 4
+        except Exception as exc:
+            output_fn("Yuki agent operation failed (" + type(exc).__name__ + ").")
             return 5
 
     if args.command == "doctor":
