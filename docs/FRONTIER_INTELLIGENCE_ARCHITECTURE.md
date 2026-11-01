@@ -36,7 +36,7 @@ for the actual OpenAI project before use.
 ## Anthropic configuration
 
     export ANTHROPIC_API_KEY="..."
-    export YUKI_ANTHROPIC_MODEL="claude-fable-5-1"
+    export YUKI_ANTHROPIC_MODEL="claude-fable-5"
     export YUKI_ANTHROPIC_EFFORT="high"
     export YUKI_ANTHROPIC_MAX_OUTPUT_TOKENS="8192"
 
