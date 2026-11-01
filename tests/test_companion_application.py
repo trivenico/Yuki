@@ -117,6 +117,51 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         with self.assertRaises(ConversationError):
             self.app.dispatch_agent_plan(actor_id="alice", plan_id="unknown")
 
+    def test_companion_reads_redacted_task_progress_and_cancels_explicitly(self):
+        db_path = str(Path(self.temp.name) / "companion-task-runtime.sqlite3")
+        store = WorkflowRunStore(db_path)
+        runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task: actor == "alice" and action in {
+                "task:create", "task:read", "task:cancel",
+            },
+        )
+        task = runtime.enqueue(
+            actor_id="alice", idempotency_key="companion-task-progress",
+            name="research", steps=[{
+                "name": "collect", "action": "emit", "argument": "private prompt",
+                "requires_approval": False,
+            }],
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        updates = app.task_progress(
+            actor_id="alice", task_id=task.task_id, after_sequence=0,
+        )
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].message, "Started task: research")
+        self.assertNotIn("private prompt", repr(updates))
+
+        cancelled = app.cancel_task(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=task.version,
+        )
+        self.assertEqual(cancelled.state, "cancelled")
+        final_updates = app.task_progress(
+            actor_id="alice", task_id=task.task_id,
+            after_sequence=updates[-1].sequence,
+        )
+        self.assertEqual([item.kind for item in final_updates], ["task.cancelled"])
+
+    def test_companion_task_controls_fail_closed_without_runtime(self):
+        with self.assertRaises(ConversationError):
+            self.app.task_progress(actor_id="alice", task_id="missing")
+        with self.assertRaises(ConversationError):
+            self.app.cancel_task(
+                actor_id="alice", task_id="missing", expected_version=0,
+            )
+
     def test_service_rejects_mismatched_provider_session(self):
         from companion.conversation import ConversationSession
         other = FakeProvider()
