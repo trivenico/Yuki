@@ -87,6 +87,11 @@ class DesktopCompanionController:
             actor_id=self._require_live_session(), state=state, limit=limit
         )
 
+    def get_task(self, task_id: str):
+        return self.application.get_task(
+            actor_id=self._require_live_session(), task_id=task_id
+        )
+
     def task_progress(self, task_id: str, *, after_sequence: int = 0, limit: int = 50):
         return self.application.task_progress(
             actor_id=self._require_live_session(), task_id=task_id,
