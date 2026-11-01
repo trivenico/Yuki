@@ -30,6 +30,13 @@ class WorkflowApprovalService:
         run = self.store.get(run_id)
         if run is None:
             raise KeyError("Workflow run not found.")
+        if self.authorize is not None:
+            try:
+                allowed = self.authorize(principal, run) is True
+            except Exception as exc:
+                raise PermissionError("Authorization failed closed.") from exc
+            if not allowed:
+                raise PermissionError("Principal cannot inspect this workflow.")
         return {
             "run_id": run.run_id,
             "state": run.state,
