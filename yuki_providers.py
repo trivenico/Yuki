@@ -21,12 +21,14 @@ class ProviderManager:
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
+            "openai_responses": lambda: create_provider({**self._config, "provider": "openai_responses"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
+            ProviderInfo("openai_responses", ("OPENAI_API_KEY", "YUKI_OPENAI_RESPONSES_MODEL"), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
