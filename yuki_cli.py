@@ -93,7 +93,15 @@ def run_cli(
 
     if args.command == "chat":
         session = ConversationSession(provider)
-        memory = memory_factory()
+        try:
+            memory = memory_factory()
+        except Exception as exc:
+            output_fn(
+                "Yuki could not initialize companion memory ("
+                + type(exc).__name__
+                + "). No plaintext fallback was used."
+            )
+            return 5
         output_fn("Yuki companion chat. Memory is off by default. Use /memory on to enable explicit saves. Tool execution is disabled.")
         while True:
             try:
