@@ -243,6 +243,58 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
 
+    def test_authenticated_agent_plan_review_and_dispatch(self):
+        class PlanningProvider(FakeProvider):
+            def generate_chat(self, system, messages):
+                return json.dumps({"tasks": [{
+                    "task_id": "implementation",
+                    "description": "Prepare an implementation proposal",
+                    "required_capabilities": ["coding"],
+                    "depends_on": [],
+                }]})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            user = auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(["agents", "list"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn("coding", outputs[-1])
+                code = run_cli(
+                    ["agents", "plan", "Build a small application", "--idempotency-key", "cli-agent-plan"],
+                    config_loader=lambda: {},
+                    provider_factory=lambda config: PlanningProvider(),
+                    output_fn=outputs.append,
+                )
+                self.assertEqual(code, 0)
+                proposal = json.loads(outputs[-1])
+                self.assertEqual(proposal["subtasks"][0]["agent_id"], "coding")
+                self.assertTrue(proposal["subtasks"][0]["requires_approval"])
+                self.assertIsNone(proposal["subtasks"][0]["task_id"])
+                plan_id = proposal["plan_id"]
+                code = run_cli(["agents", "inspect", plan_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn(plan_id, outputs[-1])
+                code = run_cli(["agents", "dispatch", plan_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                dispatched = json.loads(outputs[-1])
+                self.assertEqual(dispatched["subtasks"][0]["status"], "waiting_approval")
+                self.assertTrue(dispatched["subtasks"][0]["task_id"])
+
+    def test_signed_out_user_cannot_list_or_plan_agents(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+                code = run_cli(["agents", "list"], output_fn=outputs.append)
+            self.assertEqual(code, 1)
+            self.assertIn("Sign in first", outputs[-1])
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
