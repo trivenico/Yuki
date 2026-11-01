@@ -39,6 +39,26 @@ class EvidenceCollectorTests(unittest.TestCase):
             )
             self.assertFalse(bundle.tests_passed)
 
+    def test_inconsistent_outcome_and_nonfinite_duration_are_rejected(self):
+        result = self.result(exit_code=1)
+        inconsistent = EngineeringWorkflowResult(
+            result.workflow_id, result.inspection_report, result.change_result,
+            result.test_result, "succeeded",
+        )
+        with self.assertRaises(EvidenceCollectionError):
+            collect_engineering_evidence(
+                inconsistent, actor_id="agent", commit_sha="a" * 40
+            )
+        bad_duration = EngineeringWorkflowResult(
+            result.workflow_id, result.inspection_report, result.change_result,
+            TestRunResult("test_app", 1, False, float("nan"), "", ""),
+            "tests_failed",
+        )
+        with self.assertRaises(EvidenceCollectionError):
+            collect_engineering_evidence(
+                bad_duration, actor_id="agent", commit_sha="a" * 40
+            )
+
     def test_actor_mismatch_and_invalid_commit_are_rejected(self):
         with self.assertRaises(EvidenceCollectionError):
             collect_engineering_evidence(
