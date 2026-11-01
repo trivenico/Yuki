@@ -10,10 +10,15 @@ from typing import Any
 
 
 def _build_services():
-    from core.auth import BuiltInAuthService
+    from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
     from core.portable_paths import data_root
     from providers.factory import create_provider
+    from companion.memory_consent import CompanionMemory
+    from companion.conversation import ConversationSession
+    from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+    from automation.task_runtime import TaskRuntime
+    from automation.workflow_store import WorkflowRunStore
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
 
     root = data_root() / ".yuki"
@@ -25,7 +30,25 @@ def _build_services():
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, load_os_keyring())
     provider = create_provider(load_config())
-    return auth, sessions, provider
+    permission_check = task_permission_authorizer(
+        auth,
+        session_token_provider=lambda: (
+            sessions.current_identity().session_id
+            if sessions.current_identity() is not None else ""
+        ),
+    )
+    task_db = str(root / "tasks.sqlite3")
+    runtime = TaskRuntime(WorkflowRunStore(task_db), authorize=permission_check)
+    built_in_agents = (
+        SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
+        SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
+        SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
+        SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
+    )
+    coordinator = SpecialistAgentCoordinator(
+        runtime, task_db, built_in_agents, authorize=permission_check,
+    )
+    return auth, sessions, provider, coordinator, runtime
 
 
 def run() -> int:
@@ -145,7 +168,10 @@ def run() -> int:
 
         def _initialize(self):
             try:
-                self.auth, self.sessions, self.provider = _build_services()
+                (
+                    self.auth, self.sessions, self.provider,
+                    self.coordinator, self.runtime,
+                ) = _build_services()
                 identity = self.sessions.current_identity()
                 if identity is not None:
                     self._open_session(identity)
@@ -184,6 +210,10 @@ def run() -> int:
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
+                memory=CompanionMemory(),
+                session=ConversationSession(self.provider),
+                agent_coordinator=self.coordinator,
+                task_runtime=self.runtime,
             )
             if context.identity != identity:
                 raise DesktopStartupError("The authenticated desktop session changed.")
