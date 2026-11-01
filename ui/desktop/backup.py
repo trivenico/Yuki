@@ -72,6 +72,21 @@ def _inventory(root: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.relative_to(root).as_posix())
 
 
+def _safe_archive_path(raw_name: str) -> PurePosixPath:
+    if (
+        not isinstance(raw_name, str)
+        or not raw_name
+        or "\\" in raw_name
+        or "\x00" in raw_name
+        or ":" in raw_name
+    ):
+        raise BackupError("Backup contains an unsafe cross-platform path.")
+    path = PurePosixPath(raw_name)
+    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+        raise BackupError("Backup contains an unsafe path.")
+    return path
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -215,9 +230,7 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                 if len(members) > MAX_FILES + 1:
                     raise BackupError("Backup contains too many archive entries.")
                 for member in members:
-                    name = PurePosixPath(member.name)
-                    if name.is_absolute() or not name.parts or any(part in {"", ".", ".."} for part in name.parts):
-                        raise BackupError("Backup contains an unsafe path.")
+                    name = _safe_archive_path(member.name)
                     if member.name in seen:
                         raise BackupError("Backup contains duplicate paths.")
                     seen.add(member.name)
