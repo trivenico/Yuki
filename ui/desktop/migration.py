@@ -46,8 +46,14 @@ def _inventory(source: Path) -> list[Path]:
 
 
 def preview_migration(source: Path, destination: Path) -> MigrationPreview:
-    root = source.expanduser().resolve(strict=True)
-    target = destination.expanduser().resolve()
+    source_path = source.expanduser()
+    destination_path = destination.expanduser()
+    if source_path.is_symlink():
+        raise MigrationError("Migration source must not be a symbolic link.")
+    if destination_path.is_symlink():
+        raise MigrationError("Migration destination must not be a symbolic link.")
+    root = source_path.resolve(strict=True)
+    target = destination_path.resolve()
     if root == target or root in target.parents or target in root.parents:
         raise MigrationError("Source and destination must be separate directories.")
     if target.exists() and any(target.iterdir()):
@@ -70,7 +76,8 @@ def _sha256(path: Path) -> str:
 
 
 def _copy_sqlite(source: Path, destination: Path) -> None:
-    src = sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True)
+    # Path.as_uri() correctly escapes spaces, '#', '?', and other URI characters.
+    src = sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)
     dst = sqlite3.connect(destination)
     try:
         src.backup(dst)
