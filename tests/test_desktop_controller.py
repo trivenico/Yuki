@@ -108,6 +108,42 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(updates[0].task_id, tasks[0].task_id)
         self.assertTrue(updates[0].message.startswith("Started task:"))
 
+    def test_task_definition_can_be_reviewed_and_approved_for_exact_version(self):
+        task = self.runtime.enqueue(
+            actor_id=self.identity.actor_id,
+            idempotency_key="desktop-review-test",
+            name="reviewable workflow",
+            steps=[{
+                "name": "inspect",
+                "action": "emit",
+                "argument": "target=staging; operation=read-only",
+                "requires_approval": True,
+                "required_permissions": ["workspace.read"],
+            }],
+        )
+        self.assertEqual(task.state, "waiting_approval")
+        reviewed = self.controller.get_task(task.task_id)
+        self.assertEqual(reviewed.state, "waiting_approval")
+        self.assertEqual(reviewed.steps[0]["action"], "emit")
+        self.assertEqual(reviewed.steps[0]["argument"], "target=staging; operation=read-only")
+        self.assertEqual(reviewed.steps[0]["required_permissions"], ["workspace.read"])
+        approved = self.controller.approve_task(
+            task.task_id, expected_version=reviewed.version
+        )
+        self.assertEqual(approved.state, "queued")
+        self.assertEqual(approved.version, reviewed.version + 1)
+
+    def test_task_definition_read_is_denied_after_session_expiry(self):
+        task = self.runtime.enqueue(
+            actor_id=self.identity.actor_id,
+            idempotency_key="desktop-review-expiry",
+            name="private workflow",
+            steps=[{"name": "inspect", "action": "emit", "argument": "private", "requires_approval": True}],
+        )
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.get_task(task.task_id)
+
     def test_task_progress_is_denied_after_session_expiry(self):
         plan = self.controller.propose_agent_plan("Research this topic")
         dispatched = self.controller.dispatch_agent_plan(plan.plan_id)
