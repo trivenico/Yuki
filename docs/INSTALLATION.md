@@ -47,6 +47,26 @@ Use the exact current version reported by `tasks inspect`; stale versions are re
 
 The CLI currently opens its local task journal at `$YUKI_HOME/.yuki/tasks.sqlite3` (or the repository data root when `YUKI_HOME` is unset). Set `YUKI_TASK_DB` to use a shared journal path deliberately. The authenticated CLI commands do not yet create agent plans, dispatch workers, or expose arbitrary tool execution. Worker identities and execution remain separate from interactive user permissions. Keep the data directory and backups private.
 
+## Specialist-agent companion workflow (early access)
+
+After signing in, Yuki can list its built-in specialists and create a bounded plan for review:
+
+```bash
+yuki agents list
+yuki agents plan "Research the topic, implement a prototype, and test it"
+yuki agents inspect PLAN_ID
+yuki agents dispatch PLAN_ID
+yuki tasks list --state waiting_approval
+yuki tasks inspect TASK_ID
+yuki tasks approve TASK_ID --version VERSION
+```
+
+Planning uses the configured provider's structured chat interface. Model output is treated as untrusted proposal data: capability routing is deterministic against the configured specialist registry, permissions are not model-controlled, and generated subtasks require approval. Planning does not run tools or execute code.
+
+`agents dispatch` creates durable task records for dependency-ready subtasks; it does not itself execute a worker. Each task remains in the task runtime's approval state until an authorized user approves it. Workers are separate services and must be started/configured independently. The built-in specialist handlers are text-only proposal/research/QA/reporting handlers, not shell or workspace execution.
+
+The initial built-in registry includes research, coding, testing and reporting specialists. Existing registry entries are preserved in the local task database. Use the same `YUKI_HOME` and `YUKI_TASK_DB` values across CLI and desktop deployments that intentionally share state; do not point unrelated users at the same local SQLite database.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
