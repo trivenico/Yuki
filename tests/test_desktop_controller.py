@@ -5,6 +5,9 @@ from pathlib import Path
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationReply
 from companion.memory_consent import CompanionMemory
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 from core.auth import BuiltInAuthService
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
@@ -24,6 +27,8 @@ class FakeKeyring:
 
 class FakeProvider:
     def generate_chat(self, system, messages):
+        if "tasks" in system.lower() or "plan" in system.lower():
+            return '{"tasks":[{"task_id":"research","description":"Research the requested topic","required_capabilities":["research"],"depends_on":[]}]}'
         return "Yuki reply"
 
 
@@ -36,7 +41,20 @@ class ControllerTests(unittest.TestCase):
         self.sessions = DesktopSessionManager(self.auth, FakeKeyring())
         self.identity = self.sessions.login("desktop.admin", "A strong desktop password 4!")
         self.memory = CompanionMemory()
-        self.app = CompanionApplicationService(FakeProvider(), memory=self.memory)
+        self.provider = FakeProvider()
+        self.runtime = TaskRuntime(
+            WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3")),
+            authorize=lambda actor, action, resource: actor == self.identity.actor_id,
+        )
+        self.coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.temp.name) / "tasks.sqlite3"),
+            [SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit")],
+            authorize=lambda actor, action, resource: actor == self.identity.actor_id,
+        )
+        self.app = CompanionApplicationService(
+            self.provider, memory=self.memory,
+            agent_coordinator=self.coordinator, task_runtime=self.runtime,
+        )
         self.controller = DesktopCompanionController(self.app, self.identity, self.sessions)
 
     def test_chat_uses_shared_application_service(self):
@@ -58,6 +76,31 @@ class ControllerTests(unittest.TestCase):
             self.controller.set_memory_context(True)
         with self.assertRaises(PermissionError):
             self.controller.memory_context_enabled()
+
+    def test_specialist_catalog_is_exposed_only_for_live_authenticated_actor(self):
+        agents = self.controller.list_specialists()
+        self.assertEqual(agents[0]["agent_id"], "research")
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.list_specialists()
+
+    def test_plan_proposal_is_separate_from_dispatch(self):
+        plan = self.controller.propose_agent_plan("Research this topic")
+        self.assertEqual(len(plan.subtasks), 1)
+        self.assertEqual(plan.subtasks[0].status, "pending")
+        self.assertIsNone(plan.subtasks[0].task_id)
+        inspected = self.controller.get_agent_plan(plan.plan_id)
+        self.assertEqual(inspected.plan_id, plan.plan_id)
+        dispatched = self.controller.dispatch_agent_plan(plan.plan_id)
+        self.assertEqual(dispatched.subtasks[0].status, "queued")
+        self.assertIsNotNone(dispatched.subtasks[0].task_id)
+
+    def test_task_listing_uses_authenticated_actor(self):
+        plan = self.controller.propose_agent_plan("Research this topic")
+        dispatched = self.controller.dispatch_agent_plan(plan.plan_id)
+        tasks = self.controller.list_tasks()
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].task_id, dispatched.subtasks[0].task_id)
 
     def test_logout_clears_session_conversation_and_memory_context(self):
         self.controller.set_memory_context(True)
