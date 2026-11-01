@@ -68,6 +68,9 @@ def collect_engineering_evidence(
     stdout = _text(test.stdout or "(empty)", "test stdout", 2000)
     stderr = _text(test.stderr or "(empty)", "test stderr", 2000)
     tests_passed = test.exit_code == 0 and not test.timed_out
+    expected_outcome = "succeeded" if tests_passed else "tests_failed"
+    if result.outcome != expected_outcome:
+        raise EvidenceCollectionError("workflow outcome does not match the actual test result.")
     artifact = {
         "workflow_id": workflow_id,
         "commit_sha": commit_sha,
