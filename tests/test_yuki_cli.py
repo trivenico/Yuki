@@ -295,6 +295,57 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
 
+    def test_authenticated_worker_cycle_executes_only_approved_specialist_tasks(self):
+        class WorkerProvider:
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                return "bounded specialist result"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            user = auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
+            runtime = TaskRuntime(
+                WorkflowRunStore(str(root / ".yuki" / "tasks.sqlite3")),
+                authorize=lambda actor, action, _task: (
+                    actor == user.user_id and action in {"task:create", "task:approve", "task:read", "task:list"}
+                    or actor == "yuki-worker-service" and action in {"task:complete", "task:fail", "task:recover"}
+                ),
+            )
+            task = runtime.enqueue(
+                actor_id=user.user_id, idempotency_key="worker-cli-approved",
+                name="agent-coding-implementation",
+                steps=[{"name": "coding", "action": "emit", "argument": "Review the supplied change", "requires_approval": True}],
+            )
+            approved = runtime.approve(
+                actor_id=user.user_id, task_id=task.task_id, session_id=issued.token,
+                expected_version=task.version,
+            )
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(
+                    ["workers", "run-cycle", "--max-tasks", "2"],
+                    config_loader=lambda: {},
+                    provider_factory=lambda config: WorkerProvider(),
+                    output_fn=outputs.append,
+                )
+            self.assertEqual(code, 0)
+            self.assertIn('"succeeded_count": 1', outputs[-1])
+            self.assertEqual(runtime.get(actor_id=user.user_id, task_id=task.task_id).state, "succeeded")
+
+    def test_worker_cycle_requires_sign_in(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+                code = run_cli(["workers", "run-cycle"], output_fn=outputs.append)
+            self.assertEqual(code, 1)
+            self.assertIn("Sign in first", outputs[-1])
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
