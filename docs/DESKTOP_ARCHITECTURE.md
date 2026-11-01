@@ -1,6 +1,6 @@
 # Desktop application architecture
 
-**Status:** accepted direction for the first desktop vertical slice; implementation has not started.
+**Status:** architecture accepted; D1 import-safe package, dependency manifest, launcher stub, and injected composition boundary are implemented. Authentication adapter, service authorization wiring, interactive UI, and packaging are not implemented.
 **Parent work:** companion service and structured provider chat on `feat/structured-provider-chat`.
 **Decision owner:** Yuki maintainers.
 
