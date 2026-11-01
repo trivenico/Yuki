@@ -190,11 +190,18 @@ def discard_evolution(repository: Path, identifier: str, force: bool = False) ->
     if dirty and not force:
         raise EvolutionError("worktree has uncommitted changes; review or rerun with --force to discard them")
 
+    branch_tip = _git(repository, "rev-parse", state["branch"])
     _git(repository, "worktree", "remove", *(["--force"] if force else []), str(worktree))
-    _git(repository, "branch", "-D", state["branch"])
+    # Never destroy commits created by an agent. If the branch advanced beyond
+    # its checkpoint, preserve the branch for review even when the worktree is
+    # explicitly force-discarded.
+    branch_preserved = branch_tip != state["base_commit"]
+    if not branch_preserved:
+        _git(repository, "branch", "-D", state["branch"])
     state_path.unlink()
     return {"branch": state["branch"], "worktree": str(worktree),
-            "checkpoint_tag": state["checkpoint_tag"], "discarded": True}
+            "checkpoint_tag": state["checkpoint_tag"], "discarded": True,
+            "branch_preserved": branch_preserved}
 
 
 def main(argv: list[str] | None = None) -> int:
