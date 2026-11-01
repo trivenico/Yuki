@@ -41,7 +41,7 @@ class PortablePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.dict(os.environ, {"HOME": directory}, clear=True), patch.object(
                 sys, "platform", "darwin"
-            ):
+            ), patch.object(Path, "home", return_value=Path(directory)):
                 self.assertEqual(
                     desktop_data_root(),
                     (Path(directory) / "Library" / "Application Support" / "Yuki").resolve(),
