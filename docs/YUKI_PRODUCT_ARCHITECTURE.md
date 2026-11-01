@@ -64,3 +64,7 @@ Support both local and cloud model hosting. Start with local Ollama for privacy 
 
 ## Specialist permission propagation
 The coordinator copies each validated specialist subtask's `required_permissions` into the durable workflow step at dispatch. This keeps the requested permission scope attached to the approved task and visible through the redacted pre-approval summary; the model cannot author or modify this field.
+
+## Companion task update adapter
+
+`companion.task_updates.CompanionTaskUpdates` translates authorized durable task events into bounded, presentation-safe companion updates. It delegates authorization and incremental pagination to `TaskRuntime.events`, strips control characters from display text, limits page size and message length, and omits task arguments, artifact references, model prompts, and result payloads. It is a service adapter, not a transport: desktop/CLI clients still need to subscribe or poll through their application-service boundary.
