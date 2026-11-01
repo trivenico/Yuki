@@ -223,6 +223,7 @@ def run() -> int:
             self.message.clear()
             self.send_button.setEnabled(False)
             self.message.setEnabled(False)
+            self.memory_toggle.setEnabled(False)
             self.transcript.appendPlainText("You: " + prompt)
             self.chat_status.setText("Yuki is thinking…")
             worker = ChatWorker(self.controller, prompt)
@@ -234,6 +235,7 @@ def run() -> int:
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
+            self.memory_toggle.setEnabled(True)
             if error is not None:
                 self.chat_status.setText("Request failed (" + type(error).__name__ + ").")
                 if isinstance(error, PermissionError):
