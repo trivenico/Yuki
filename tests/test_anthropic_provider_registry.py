@@ -8,7 +8,7 @@ class AnthropicRegistryTests(unittest.TestCase):
     def test_manager_selects_fable_provider(self):
         manager = ProviderManager(environ={
             "ANTHROPIC_API_KEY": "test-only-key",
-            "YUKI_ANTHROPIC_MODEL": "claude-fable-5-1",
+            "YUKI_ANTHROPIC_MODEL": "claude-fable-5",
         })
         self.assertIn("anthropic", {item["name"] for item in manager.list_providers()})
         self.assertEqual(manager.select("anthropic"), "Selected provider: anthropic")
@@ -18,12 +18,12 @@ class AnthropicRegistryTests(unittest.TestCase):
         secret = "sensitive-anthropic-test-key"
         manager = ProviderManager(environ={
             "ANTHROPIC_API_KEY": secret,
-            "YUKI_ANTHROPIC_MODEL": "claude-fable-5-1",
+            "YUKI_ANTHROPIC_MODEL": "claude-fable-5",
         })
         item = next(x for x in manager.catalog() if x["name"] == "anthropic")
         self.assertTrue(item["implemented"])
         self.assertTrue(item["ready"])
-        self.assertEqual(item["configured_model"], "claude-fable-5-1")
+        self.assertEqual(item["configured_model"], "claude-fable-5")
         self.assertNotIn(secret, repr(item))
 
     def test_unconfigured_anthropic_is_not_routable(self):
