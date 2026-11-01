@@ -554,6 +554,7 @@ class SpecialistAgentCoordinator:
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
                     "requires_approval": bool(row["requires_approval"]),
+                    "required_permissions": json.loads(row["permissions_json"]),
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
