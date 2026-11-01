@@ -7,10 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import math
 import json
 import re
 from typing import Any
 
+from automation.approved_workspace_changes import ChangeResult, TestRunResult
 from automation.engineering_workflow import EngineeringWorkflowResult
 
 
@@ -50,6 +52,8 @@ def collect_engineering_evidence(
         raise EvidenceCollectionError("commit_sha must be a 40-64 character lowercase Git SHA.")
     if result.outcome not in {"succeeded", "tests_failed"}:
         raise EvidenceCollectionError("unsupported engineering workflow outcome.")
+    if not isinstance(result.change_result, ChangeResult) or not isinstance(result.test_result, TestRunResult):
+        raise EvidenceCollectionError("workflow result is missing trusted change/test result types.")
     changed_paths = result.change_result.changed_paths
     if not isinstance(changed_paths, tuple) or len(changed_paths) > 80:
         raise EvidenceCollectionError("changed paths must be a bounded tuple.")
@@ -63,7 +67,12 @@ def collect_engineering_evidence(
     test = result.test_result
     if type(test.exit_code) is not int or type(test.timed_out) is not bool:
         raise EvidenceCollectionError("test result status fields are invalid.")
-    if not isinstance(test.duration_seconds, (int, float)) or test.duration_seconds < 0:
+    if (
+        isinstance(test.duration_seconds, bool)
+        or not isinstance(test.duration_seconds, (int, float))
+        or not math.isfinite(test.duration_seconds)
+        or test.duration_seconds < 0
+    ):
         raise EvidenceCollectionError("test duration is invalid.")
     stdout = _text(test.stdout or "(empty)", "test stdout", 2000)
     stderr = _text(test.stderr or "(empty)", "test stderr", 2000)
