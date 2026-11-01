@@ -12,7 +12,6 @@ from typing import Callable, Mapping
 
 from automation.evolution_review_verifier import (
     CheckResult,
-    EvolutionReviewError,
     VerificationReport,
 )
 
@@ -51,8 +50,8 @@ class GitHubActionsEvidenceAdapter:
                 raise ValueError("each category must map to a non-empty tuple of exact workflow names.")
             if any(not isinstance(name, str) or not name.strip() or len(name) > 200 for name in names):
                 raise ValueError("workflow names must be bounded non-empty strings.")
-            if len(set(names)) != len(names):
-                raise ValueError("duplicate workflow names are not allowed.")
+            if len(set(names)) != len(names) or len(names) > 4:
+                raise ValueError("workflow names must be unique and no more than four per category.")
             normalized[category] = names
         if not isinstance(allowed_events, tuple) or not allowed_events or any(
             not isinstance(x, str) or not x for x in allowed_events
@@ -131,8 +130,4 @@ class GitHubActionsEvidenceAdapter:
             ))
 
         report = VerificationReport(commit_sha=expected_commit, checks=tuple(checks))
-        try:
-            EvolutionReviewError  # Keep import explicit for API consumers.
-        except NameError:  # pragma: no cover
-            raise GitHubEvidenceError("verification contract unavailable.")
         return report
