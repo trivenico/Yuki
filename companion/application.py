@@ -13,6 +13,7 @@ from companion.conversation import ConversationError, ConversationReply, Convers
 from companion.memory_consent import CompanionMemory
 from automation.agent_coordinator import AgentPlan, SpecialistAgentCoordinator
 from automation.task_runtime import TaskRecord, TaskRuntime, TaskSummary
+from automation.workflow_store import WorkflowConflict
 from companion.task_updates import CompanionTaskUpdate, CompanionTaskUpdates
 
 
@@ -165,7 +166,7 @@ class CompanionApplicationService:
                 actor_id=actor_id, task_id=task_id,
                 expected_version=expected_version,
             )
-        except (PermissionError, ValueError, KeyError):
+        except (PermissionError, ValueError, KeyError, WorkflowConflict):
             raise
         except Exception as exc:
             raise ConversationError("Yuki could not safely retry this task.") from exc
