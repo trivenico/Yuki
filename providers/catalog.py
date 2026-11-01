@@ -68,6 +68,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
         elif item["name"] == "openai_responses":
             model = _model(env.get("YUKI_OPENAI_RESPONSES_MODEL", cfg.get("openai_responses_model", "")))
+        elif item["name"] == "anthropic":
+            model = _model(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", "")))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
