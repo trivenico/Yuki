@@ -14,6 +14,37 @@ class WorkflowApprovalService:
         if not callable(principal_resolver) or (authorize is not None and not callable(authorize)):
             raise ValueError("Resolver and optional authorizer must be callable.")
         self.store, self.principal_resolver, self.authorize = store, principal_resolver, authorize
+    def approval_requirements(self, run_id: str, *, request_context: Any) -> dict[str, Any]:
+        """Return a redacted permission summary before an operator approves a run."""
+        principal = self.principal_resolver(request_context)
+        if not isinstance(principal, AuthenticatedPrincipal):
+            raise PermissionError("No trusted principal was resolved.")
+        if (
+            not isinstance(principal.actor_id, str) or not principal.actor_id.strip()
+            or not isinstance(principal.session_id, str) or not principal.session_id.strip()
+            or not isinstance(principal.permissions, frozenset)
+        ):
+            raise PermissionError("Authenticated principal is incomplete.")
+        if not ({"workflow:read", self.APPROVE_PERMISSION} & principal.permissions):
+            raise PermissionError("Missing workflow read or approval permission.")
+        run = self.store.get(run_id)
+        if run is None:
+            raise KeyError("Workflow run not found.")
+        return {
+            "run_id": run.run_id,
+            "state": run.state,
+            "version": run.version,
+            "steps": [
+                {
+                    "name": step["name"],
+                    "action": step["action"],
+                    "requires_approval": step["requires_approval"],
+                    "required_permissions": tuple(step.get("required_permissions", ())),
+                }
+                for step in run.definition
+            ],
+        }
+
     def approve(self, run_id: str, *, request_context: Any, expected_version: int) -> WorkflowRun:
         principal = self.principal_resolver(request_context)
         if not isinstance(principal, AuthenticatedPrincipal):
