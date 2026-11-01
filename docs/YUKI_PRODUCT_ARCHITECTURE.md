@@ -78,3 +78,8 @@ The coordinator copies each validated specialist subtask's `required_permissions
 ## Companion-to-agent task interface
 
 `CompanionApplicationService.propose_agent_task` sends a user goal to the configured provider for a bounded model-generated plan and submits it to the authenticated specialist coordinator. This operation creates a proposal only: it does not enqueue worker tasks. A separate explicit client action calls `dispatch_agent_plan`, which advances dependency-ready subtasks into the durable task runtime. Each subtask retains its approval requirement and permission metadata; the worker remains gated by workflow approval and authorization. The conversation model itself cannot silently dispatch work.
+
+
+## Companion task controls
+
+The shared companion application service exposes `task_progress` and `cancel_task`. Progress reads use the existing task-level read authorization and return only bounded, redacted event summaries through `CompanionTaskUpdates`. Cancellation requires the caller's task-cancel authorization and the current task version, preventing stale UI actions from silently changing task state. When a specialist coordinator is configured, the companion automatically reuses its exact `TaskRuntime` instance for progress and cancellation; a separately supplied runtime must match it.
