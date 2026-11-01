@@ -254,6 +254,42 @@ class _Connection:
         return False
 
 
+def task_permission_authorizer(auth_service, session_token_provider):
+    """Build a fail-closed TaskRuntime authorizer from the current trusted session.
+
+    The provider must read the opaque token from the local secure session store
+    (or a trusted request context); it must never use model output or a
+    caller-supplied actor ID as proof of identity.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+    permission_map = {
+        "task:create": "workflow:approve",
+        "task:list": "workflow:read",
+        "task:read": "workflow:read",
+        "task:approve": "workflow:approve",
+        "task:cancel": "workflow:approve",
+        "task:retry": "workflow:approve",
+    }
+
+    def authorize(actor_id, action, task_id):
+        required = permission_map.get(action)
+        if required is None:
+            # Worker lifecycle mutations are reserved for dedicated worker
+            # identities and must not inherit interactive user permissions.
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        return user is not None and user.user_id == actor_id and required in user.permissions
+
+    return authorize
+
+
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
     from automation.workflow_approval import AuthenticatedPrincipal
