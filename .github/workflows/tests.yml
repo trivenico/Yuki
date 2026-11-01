@@ -91,6 +91,10 @@ jobs:
         run: python -c "from pathlib import Path; Path('release-evidence').mkdir(exist_ok=True)"
       - name: Generate build-environment CycloneDX SBOM
         run: cyclonedx-py environment --output-file release-evidence/sbom.cdx.json --output-format JSON
+      - name: Run packaged Qt runtime smoke test
+        run: python -m tools.desktop_smoke_test dist/Yuki
+        env:
+          QT_QPA_PLATFORM: offscreen
       - name: Generate bundle SHA-256 manifest
         run: python -m tools.desktop_artifact_manifest dist/Yuki --output release-evidence/manifest.json
       - name: Upload unsigned developer bundle and release evidence
