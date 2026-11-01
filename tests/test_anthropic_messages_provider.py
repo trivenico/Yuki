@@ -58,6 +58,8 @@ class AnthropicMessagesProviderTests(unittest.TestCase):
     def test_rejects_untrusted_endpoint(self):
         with self.assertRaisesRegex(ValueError, "trusted"):
             AnthropicMessagesProvider("claude-fable-5-1", base_url="https://attacker.example")
+        with self.assertRaisesRegex(ValueError, "only be sent"):
+            AnthropicMessagesProvider("claude-fable-5-1", base_url="https://api.openai.com/v1")
 
     def test_empty_prompt_and_incomplete_response_fail_closed(self):
         with self.assertRaises(ValueError):
