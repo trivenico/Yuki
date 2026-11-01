@@ -84,6 +84,27 @@ class EngineeringWorkflowTests(unittest.TestCase):
         stages = [event.get("stage") for event in self.events if "stage" in event]
         self.assertEqual(stages, ["started", "inspection_completed", "changes_applied", "succeeded"])
 
+    def test_mismatched_session_principal_stops_before_inspection_or_edits(self):
+        other = ToolPrincipal(
+            "different-actor",
+            frozenset({"workspace:read", "workspace:write", "tests:execute"}),
+        )
+        change = FileChange(
+            "README.md", hashlib.sha256(self.readme.read_bytes()).hexdigest(),
+            "must not be applied\n",
+        )
+        with self.assertRaises(PermissionError):
+            self.workflow.run(
+                principal=other,
+                task="Inspect and edit.",
+                inspection_calls=[{"name": "workspace.read", "arguments": {"path": "README.md"}}],
+                proposed_changes=[change],
+                test_module="test_sample",
+            )
+        self.assertEqual(self.provider.prompts, [])
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\n")
+        self.assertEqual([event.get("stage") for event in self.events if "stage" in event], [])
+
     def test_inspection_permission_failure_stops_before_edit(self):
         read_only = ToolPrincipal("engineering-worker", frozenset({"workspace:read"}))
         change = FileChange(
