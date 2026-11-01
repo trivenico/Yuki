@@ -70,6 +70,10 @@ class EvolutionLedgerTests(unittest.TestCase):
             self.append(details={"failed_count": -1})
         with self.assertRaises(ValueError):
             self.append(details={"component": ["unexpected", "object"]})
+        with self.assertRaises(ValueError):
+            self.append(details={"component": True})
+        with self.assertRaises(ValueError):
+            self.append(details={"test_count": True})
         self.assertEqual(self.ledger.head()["sequence"], 0)
 
     def test_event_type_and_request_identifier_are_validated(self):
