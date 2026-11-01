@@ -12,7 +12,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -155,6 +155,38 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
 
+
+    def test_approval_is_authorized_versioned_and_session_bound(self):
+        protected_steps = [{"name": "write", "action": "emit", "argument": "payload",
+                            "requires_approval": True}]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-boundary",
+            name="protected task", steps=protected_steps,
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.approve(
+                actor_id="supervisor", task_id=task.task_id,
+                session_id="session-a", expected_version=task.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.approve(
+                actor_id="alice", task_id=task.task_id,
+                session_id="session-a", expected_version=task.version + 1,
+            )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id,
+            session_id="session-a", expected_version=task.version,
+        )
+        self.assertEqual(approved.version, task.version + 1)
+        self.assertEqual(approved.state, "queued")
+        self.assertIsNotNone(approved)
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, task.task_id)
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.approve(
+                task.task_id, actor_id="alice", session_id="session-b",
+                expected_version=approved.version,
+            )
 
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
