@@ -150,3 +150,26 @@ class ProviderManager:
                 f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
             )
         return adapter
+
+    def create_task_routed_adapter(self, profile):
+        """Route a task under its privacy policy and return (decision, adapter).
+
+        No fallback is attempted. Provider-specific reasoning effort is applied
+        only when the adapter explicitly exposes the corresponding setting.
+        """
+        from providers.task_routing import TaskRoutingPolicy
+        decision = TaskRoutingPolicy().route(self.routing_registry(), profile)
+        adapter = self._build_adapter(decision.provider)
+        try:
+            available = adapter.is_available()
+        except Exception:
+            available = False
+        if available is not True:
+            raise RuntimeError(
+                f"Routed provider '{decision.provider}' is unavailable; no fallback was attempted."
+            )
+        if hasattr(adapter, "reasoning_effort"):
+            adapter.reasoning_effort = decision.reasoning_effort
+        elif hasattr(adapter, "effort"):
+            adapter.effort = decision.reasoning_effort
+        return decision, adapter
