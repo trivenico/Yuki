@@ -60,3 +60,7 @@ Yuki is not production-ready solely because unit tests pass or a capability exis
 ## Deployment direction
 
 Support both local and cloud model hosting. Start with local Ollama for privacy and cost control, use cloud models only for explicitly configured tasks, and keep OCI deployment optional and resource-budget-aware. The first cloud deployment should host the Yuki application/control plane; GPU model hosting is a separate capacity and cost decision, not assumed to fit Oracle Cloud Free Tier.
+
+
+## Specialist permission propagation
+The coordinator copies each validated specialist subtask's `required_permissions` into the durable workflow step at dispatch. This keeps the requested permission scope attached to the approved task and visible through the redacted pre-approval summary; the model cannot author or modify this field.
