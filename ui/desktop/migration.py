@@ -106,7 +106,7 @@ def migrate_data(source: Path, destination: Path) -> dict:
                 raise MigrationError(f"Verification failed for {relative}.")
         manifest = {
             "schema_version": 1,
-            "source": str(preview.source),
+            "source_kind": "user-selected-local-directory",
             "files": [
                 {"path": rel, "size": (stage / rel).stat().st_size, "sha256": _sha256(stage / rel)}
                 for rel in preview.files
