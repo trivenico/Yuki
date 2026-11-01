@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Portable, integrity-checked Yuki continuity snapshots (standard library only).
 
-Snapshots are local private backups. They are never pushed to GitHub.
+Archives contain private runtime state. They are not encrypted and must be
+stored on encrypted media. Never upload them to GitHub.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,13 +20,18 @@ from datetime import datetime, timezone
 from zipfile import ZIP_DEFLATED, ZipFile, BadZipFile
 
 SCHEMA_VERSION = 1
+MAX_FILES = 100_000
+MAX_FILE_BYTES = 256 * 1024 * 1024
+MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 SECRET_NAMES = {
     ".env", "credentials.json", "token.json", "google_oauth_client.json",
     "google_token.json", "id_rsa", "id_ed25519",
 }
-SECRET_PATTERNS = (".env.*", "*.pem", "*.key", "*.p12", "*.pfx")
+SECRET_PATTERNS = (".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.kdbx")
 SECRET_DIRS = {".ssh", ".gnupg", "credentials", "secrets"}
+EXCLUDED_DIRS = {".git", ".venv", "venv", "__pycache__", "node_modules"}
 MANIFEST_NAME = "yuki-continuity-manifest.json"
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def sha256_file(path: Path) -> str:
@@ -35,11 +42,26 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _safe_relative(name: str) -> PurePosixPath:
+    if not isinstance(name, str) or not name or "\x00" in name or "\\" in name:
+        raise ValueError("snapshot contains an invalid path")
+    pure = PurePosixPath(name)
+    if pure.is_absolute() or any(part in ("", ".", "..") for part in pure.parts):
+        raise ValueError("snapshot contains an unsafe path")
+    if pure.parts and re.match(r"^[a-zA-Z]:", pure.parts[0]):
+        raise ValueError("snapshot contains a drive-qualified path")
+    if pure.as_posix() != name or name == MANIFEST_NAME:
+        raise ValueError("snapshot contains a non-canonical path")
+    return pure
+
+
 def is_secret(relative: Path) -> bool:
-    parts = relative.parts
-    if any(part.lower() in SECRET_DIRS for part in parts):
+    parts = {part.casefold() for part in relative.parts}
+    if parts & SECRET_DIRS:
         return True
-    name = relative.name.lower()
+    if parts & EXCLUDED_DIRS:
+        return True
+    name = relative.name.casefold()
     return name in SECRET_NAMES or any(fnmatch.fnmatch(name, pattern) for pattern in SECRET_PATTERNS)
 
 
@@ -63,7 +85,14 @@ def collect_files(source: Path) -> list[tuple[Path, str]]:
         relative = path.relative_to(source)
         if path.is_symlink() or is_secret(relative) or not path.is_file():
             continue
+        size = path.stat().st_size
+        if size > MAX_FILE_BYTES:
+            raise ValueError(f"snapshot file exceeds size limit: {relative.as_posix()}")
         files.append((path, relative.as_posix()))
+        if len(files) > MAX_FILES:
+            raise ValueError("snapshot contains too many files")
+    if sum(path.stat().st_size for path, _ in files) > MAX_TOTAL_BYTES:
+        raise ValueError("snapshot exceeds total uncompressed size limit")
     return files
 
 
@@ -76,7 +105,7 @@ def create_snapshot(source: Path, destination: Path, repository: Path) -> Path:
         raise ValueError("snapshot destination and source must be separate directories")
     destination.mkdir(parents=True, exist_ok=True)
     files = collect_files(source)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     target = destination / f"yuki-continuity-{stamp}.zip"
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -85,7 +114,7 @@ def create_snapshot(source: Path, destination: Path, repository: Path) -> Path:
         "source_label": source.name,
         "file_count": len(files),
         "files": {name: sha256_file(path) for path, name in files},
-        "excluded": "symlinks and known credential/key files are deliberately omitted",
+        "excluded": "symlinks, known credential/key files, VCS and dependency caches",
     }
     fd, temporary_name = tempfile.mkstemp(prefix=".yuki-continuity-", suffix=".tmp", dir=destination)
     os.close(fd)
@@ -112,6 +141,13 @@ def read_manifest(archive: ZipFile) -> dict:
     files = manifest.get("files")
     if not isinstance(files, dict) or manifest.get("file_count") != len(files):
         raise ValueError("snapshot file manifest is invalid")
+    if len(files) > MAX_FILES:
+        raise ValueError("snapshot contains too many files")
+    total = 0
+    for relative, digest in files.items():
+        _safe_relative(relative)
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ValueError("snapshot contains an invalid file digest")
     return manifest
 
 
@@ -119,17 +155,23 @@ def verify_snapshot(snapshot: Path) -> dict:
     try:
         with ZipFile(snapshot, "r") as archive:
             manifest = read_manifest(archive)
-            names = set(archive.namelist())
+            infos = archive.infolist()
+            names = [item.filename for item in infos]
+            if len(names) != len(set(names)):
+                raise ValueError("snapshot contains duplicate archive entries")
             expected = {f"data/{name}" for name in manifest["files"]}
-            if names != expected | {MANIFEST_NAME}:
+            if set(names) != expected | {MANIFEST_NAME}:
                 raise ValueError("snapshot contains missing or unexpected archive entries")
+            total = 0
             for relative, expected_hash in manifest["files"].items():
-                pure = PurePosixPath(relative)
-                if pure.is_absolute() or ".." in pure.parts or "\\" in relative:
-                    raise ValueError("snapshot contains an unsafe path")
-                if not isinstance(expected_hash, str) or len(expected_hash) != 64:
-                    raise ValueError("snapshot contains an invalid file digest")
-                if hashlib.sha256(archive.read(f"data/{relative}")).hexdigest() != expected_hash:
+                info = archive.getinfo(f"data/{relative}")
+                if info.file_size > MAX_FILE_BYTES:
+                    raise ValueError("snapshot file exceeds size limit")
+                total += info.file_size
+                if total > MAX_TOTAL_BYTES:
+                    raise ValueError("snapshot exceeds total uncompressed size limit")
+                digest = hashlib.sha256(archive.read(info)).hexdigest()
+                if digest != expected_hash:
                     raise ValueError(f"snapshot integrity check failed: {relative}")
             return manifest
     except BadZipFile as exc:
@@ -137,21 +179,37 @@ def verify_snapshot(snapshot: Path) -> dict:
 
 
 def restore_snapshot(snapshot: Path, destination: Path) -> dict:
+    # Validate the entire archive before creating any restored user files.
     manifest = verify_snapshot(snapshot)
-    destination = destination.expanduser().resolve()
+    destination = destination.expanduser().absolute()
+    if destination.is_symlink():
+        raise ValueError("restore destination cannot be a symlink")
     if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
         raise ValueError("restore destination must be absent or an empty directory")
-    destination.mkdir(parents=True, exist_ok=True)
-    with ZipFile(snapshot, "r") as archive:
-        for relative in manifest["files"]:
-            target = (destination / Path(*PurePosixPath(relative).parts)).resolve()
-            if destination != target and destination not in target.parents:
-                raise ValueError("snapshot path escapes restore destination")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(f"data/{relative}") as source, target.open("wb") as output:
-                while chunk := source.read(1024 * 1024):
-                    output.write(chunk)
-    return manifest
+    parent = destination.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".yuki-restore-", dir=parent))
+    try:
+        with ZipFile(snapshot, "r") as archive:
+            for relative in manifest["files"]:
+                pure = _safe_relative(relative)
+                target = staging.joinpath(*pure.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(f"data/{relative}") as source, target.open("xb") as output:
+                    while chunk := source.read(1024 * 1024):
+                        output.write(chunk)
+        # Re-check the staged files before making the restored directory visible.
+        for relative, expected_hash in manifest["files"].items():
+            if sha256_file(staging.joinpath(*_safe_relative(relative).parts)) != expected_hash:
+                raise ValueError(f"staged restore integrity check failed: {relative}")
+        if destination.exists():
+            destination.rmdir()
+        os.replace(staging, destination)
+        return manifest
+    finally:
+        if staging.exists():
+            import shutil
+            shutil.rmtree(staging, ignore_errors=True)
 
 
 def default_source(repository: Path) -> Path:
