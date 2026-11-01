@@ -229,12 +229,20 @@ def run() -> int:
             tasks_layout.addWidget(QLabel("Durable task summaries — no worker is started from this screen."))
             self.task_list = QListWidget()
             tasks_layout.addWidget(self.task_list, 1)
+            self.task_progress_view = QTextEdit()
+            self.task_progress_view.setReadOnly(True)
+            self.task_progress_view.setMaximumHeight(160)
+            self.task_progress_view.setPlaceholderText("Select a task and view its redacted progress history.")
+            tasks_layout.addWidget(self.task_progress_view)
             task_actions = QHBoxLayout()
             task_refresh = QPushButton("Refresh tasks")
             task_refresh.clicked.connect(self._refresh_tasks)
             self.task_cancel_button = QPushButton("Cancel selected task")
             self.task_cancel_button.clicked.connect(self._cancel_selected_task)
+            task_progress = QPushButton("View progress")
+            task_progress.clicked.connect(self._show_selected_progress)
             task_actions.addWidget(task_refresh)
+            task_actions.addWidget(task_progress)
             task_actions.addWidget(self.task_cancel_button)
             tasks_layout.addLayout(task_actions)
             tabs.addTab(tasks_page, "Tasks")
@@ -439,6 +447,31 @@ def run() -> int:
                 if isinstance(exc, PermissionError):
                     self._return_to_login()
 
+        def _show_selected_progress(self):
+            if self.controller is None:
+                return
+            item = self.task_list.currentItem()
+            if item is None:
+                return
+            task_id, name, state, version = item.data(256)
+            try:
+                updates = self.controller.task_progress(task_id, after_sequence=0, limit=50)
+                if not updates:
+                    self.task_progress_view.setPlainText("No progress events recorded yet.")
+                    return
+                lines = [
+                    f"{update.sequence}. {update.kind}: {update.message}"
+                    + (f" ({update.percent}%)" if update.percent is not None else "")
+                    for update in updates
+                ]
+                self.task_progress_view.setPlainText("\\n".join(lines))
+            except Exception as exc:
+                self.task_progress_view.setPlainText(
+                    "Task progress unavailable (" + type(exc).__name__ + ")."
+                )
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
+
         def _cancel_selected_task(self):
             if self.controller is None:
                 return
@@ -525,6 +558,7 @@ def run() -> int:
             self.transcript.clear()
             self.specialist_list.clear()
             self.task_list.clear()
+            self.task_progress_view.clear()
             self.current_plan = None
             self.plan_details.clear()
             self.plan_dispatch_button.setEnabled(False)
