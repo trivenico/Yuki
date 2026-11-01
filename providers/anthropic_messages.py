@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 from providers.openai_compatible import _RejectRedirects, _trusted_https_endpoint
 
@@ -40,7 +41,13 @@ class AnthropicMessagesProvider:
             raise ValueError("effort must be low, medium, high, xhigh, or max.")
         if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or not 1 <= max_output_tokens <= 128000:
             raise ValueError("max_output_tokens must be between 1 and 128000.")
-        self.base_url = _trusted_https_endpoint(base_url, {"api.anthropic.com"})
+        trusted_url = _trusted_https_endpoint(base_url, {"api.anthropic.com"})
+        parsed_endpoint = urlsplit(trusted_url)
+        if (parsed_endpoint.hostname != "api.anthropic.com"
+                or parsed_endpoint.port not in (None, 443)
+                or parsed_endpoint.path):
+            raise ValueError("Anthropic credentials may only be sent to https://api.anthropic.com.")
+        self.base_url = trusted_url
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
