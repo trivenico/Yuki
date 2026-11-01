@@ -97,6 +97,17 @@ class CompanionApplicationService:
         except Exception as exc:
             raise ConversationError("Yuki could not safely retrieve the task list.") from exc
 
+    def list_specialists(self, *, actor_id: str) -> tuple[dict, ...]:
+        """Return the coordinator's sanitized specialist catalog."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.list_agents(actor_id=actor_id)
+        except PermissionError:
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the specialist catalog.") from exc
+
     def get_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Read a persisted agent plan for user review before dispatch."""
         if self.agent_coordinator is None:
