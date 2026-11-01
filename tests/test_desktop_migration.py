@@ -87,7 +87,8 @@ class DesktopMigrationTests(unittest.TestCase):
             root = Path(directory)
             source = root / "old"
             source.mkdir()
-            db_path = source / "tasks #1?.sqlite3"
+            filename = "tasks #1.sqlite3" if __import__("os").name == "nt" else "tasks #1?.sqlite3"
+            db_path = source / filename
             db = sqlite3.connect(db_path)
             db.execute("CREATE TABLE tasks (name TEXT)")
             db.execute("INSERT INTO tasks VALUES ('safe')")
