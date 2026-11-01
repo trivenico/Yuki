@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
+
+from ui.desktop.backup import create_encrypted_backup, restore_encrypted_backup
+from core.portable_paths import desktop_data_root
 
 from companion.application import CompanionApplicationService
 from ui.desktop.auth import DesktopSessionManager
@@ -109,6 +113,18 @@ class DesktopCompanionController:
             actor_id=self._require_live_session(), task_id=task_id,
             expected_version=expected_version,
         )
+
+    def create_backup(self, destination: Path, passphrase: str) -> dict:
+        self._require_live_session()
+        return create_encrypted_backup(desktop_data_root(), Path(destination), passphrase)
+
+    def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> dict:
+        self._require_live_session()
+        target = Path(destination).expanduser().resolve()
+        live_data = desktop_data_root().resolve()
+        if target == live_data or live_data in target.parents or target in live_data.parents:
+            raise ValueError("Restore destination must be separate from the active Yuki profile.")
+        return restore_encrypted_backup(Path(backup), target, passphrase)
 
     def logout(self) -> bool:
         self.application.reset_conversation()
