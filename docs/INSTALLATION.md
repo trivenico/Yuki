@@ -19,6 +19,24 @@ Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\pytho
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
 
+## Encrypted companion memory (optional)
+
+The default local memory backend stores plaintext JSON and is intended only for non-sensitive preferences. For encrypted storage, install the optional dependencies:
+
+```bash
+python -m pip install -r requirements-memory-security.txt
+```
+
+Then configure Yuki before starting the CLI:
+
+```bash
+YUKI_MEMORY_ENCRYPTION=1
+```
+
+On PowerShell, use `$env:YUKI_MEMORY_ENCRYPTION = "1"`. Yuki stores a random 256-bit AES-GCM key in the operating-system keyring and writes authenticated ciphertext to `yuki_memory.enc.json`. The key is not written to the repository or memory file. If a usable OS keyring is unavailable, encrypted mode fails closed; it does not fall back to plaintext. Set `YUKI_MEMORY_PATH` to choose a different data-file location.
+
+This is local-device encryption, not cloud sync or a backup system. Anyone with access to the logged-in OS account and its unlocked keyring may be able to access the data. Back up the keyring and encrypted file together using a separately secured process; deleting the keyring entry makes the ciphertext unrecoverable. Key rotation, cross-device migration, and managed backup/restore are not yet implemented. On Windows, file ACLs inherit from the parent directory; POSIX temporary files are created with owner-only permissions.
+
 ## Google Gemini providers
 
 Yuki supports two separate Google integrations. Set `YUKI_PROVIDER=gemini` to use the official Gemini CLI installed and authenticated on your machine. This adapter checks for the CLI executable; it does not claim to verify account authentication until a real request is made.
