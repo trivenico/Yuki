@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - "providers/capabilities.py"
+      - "providers/openai_responses.py"
+      - "providers/factory.py"
+      - "providers/catalog.py"
+      - "tests/test_openai_responses_*.py"
+      - "tests/test_provider_factory.py"
       - "yuki_providers.py"
       - "tests/test_provider_capabilities.py"
       - "docs/PHASE68_PROVIDER_CAPABILITY_REGISTRY.md"
@@ -22,4 +27,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run capability registry tests
-        run: python -m unittest discover -s tests -p 'test_provider_capabilities.py'
+        run: |
+          python -m unittest discover -s tests -p 'test_provider_capabilities.py'
+          python -m unittest tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_provider_factory -v
