@@ -231,6 +231,13 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertIsNotNone(dispatched.subtasks[0].task_id)
         self.assertEqual(dispatched.subtasks[0].status, "queued")
+        dispatched_task = self.runtime.get(
+            actor_id="alice", task_id=dispatched.subtasks[0].task_id,
+        )
+        self.assertEqual(
+            dispatched_task.steps[0]["required_permissions"], ["web:read"],
+        )
+        self.assertTrue(dispatched_task.steps[0]["requires_approval"])
 
     def test_dependency_prevents_early_dispatch(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-1", subtasks=[
