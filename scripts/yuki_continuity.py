@@ -75,8 +75,10 @@ def git_metadata(repository: Path) -> dict[str, str | None]:
             return result.stdout.strip() or None
         except (OSError, subprocess.SubprocessError):
             return None
-    return {"commit": run("rev-parse", "HEAD"), "branch": run("branch", "--show-current"),
-            "remote": run("remote", "get-url", "origin")}
+    # Do not capture origin URLs: HTTPS remotes may embed access tokens or
+    # credentials in user-info/query components. A commit and branch are enough
+    # to identify the source revision without copying remote authentication data.
+    return {"commit": run("rev-parse", "HEAD"), "branch": run("branch", "--show-current")}
 
 
 def collect_files(source: Path) -> list[tuple[Path, str]]:
