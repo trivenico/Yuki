@@ -58,4 +58,6 @@ jobs:
       - name: Validate dependency consistency
         run: python -m pip check
       - name: Run encrypted memory tests
-        run: python -m unittest tests.test_companion_secure_memory tests.test_companion_memory_consent -v
+        run: python -m unittest discover -s tests -p "test_companion_secure_memory.py" -v
+      - name: Run memory-consent integration tests
+        run: python -m unittest discover -s tests -p "test_companion_memory_consent.py" -v
