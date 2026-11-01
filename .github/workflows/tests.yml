@@ -95,6 +95,11 @@ jobs:
         run: python -c "from pathlib import Path; Path('release-evidence').mkdir(exist_ok=True)"
       - name: Generate build-environment CycloneDX SBOM
         run: cyclonedx-py environment --output-file release-evidence/sbom.cdx.json --output-format JSON
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0
       - name: Run packaged Qt runtime smoke test
         run: python -m tools.desktop_smoke_test dist/Yuki
         env:
