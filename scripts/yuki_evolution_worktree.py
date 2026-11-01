@@ -126,6 +126,8 @@ def start_evolution(repository: Path, worktree_root: Path | None = None) -> dict
     worktree_root = worktree_root.expanduser().resolve()
     worktree = worktree_root / (repository.name + "-" + identifier)
     state_path = _state_dir(repository) / (identifier + ".json")
+    if worktree == repository or repository in worktree.parents:
+        raise EvolutionError("evolution worktree must be outside the source repository")
 
     worktree_root.mkdir(parents=True, exist_ok=True)
     if worktree.exists() or worktree.is_symlink():
