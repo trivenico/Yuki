@@ -67,6 +67,18 @@ Planning uses the configured provider's structured chat interface. Model output 
 
 The initial built-in registry includes research, coding, testing and reporting specialists. Existing registry entries are preserved in the local task database. Use the same `YUKI_HOME` and `YUKI_TASK_DB` values across CLI and desktop deployments that intentionally share state; do not point unrelated users at the same local SQLite database.
 
+## Explicit specialist worker cycles (early access)
+
+After signing in as an account with the approval capability, run one finite worker cycle:
+
+```bash
+yuki workers run-cycle --max-tasks 3 --max-workers 1
+```
+
+The command uses the same local task journal as `yuki tasks` and `yuki agents` (or the same explicit `YUKI_TASK_DB` path). It resolves the configured provider once for the cycle, runs only tasks already approved in the durable journal, and records results through a separate worker service identity. It does not start a daemon, schedule recurring work, or automatically approve tasks.
+
+The default limits are three tasks and one worker. You can request up to ten tasks and four workers per cycle. Provider routing is the currently selected configured provider; per-specialist local/cloud preferences are not yet exposed by this CLI command. Worker calls are text-only specialist handlers and do not execute generated code, shell commands, or arbitrary tools. Keep provider credentials and task data private.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
