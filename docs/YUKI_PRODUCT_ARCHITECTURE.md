@@ -73,3 +73,8 @@ The coordinator copies each validated specialist subtask's `required_permissions
 ## Shared companion application service
 
 `companion.application.CompanionApplicationService` is the shared frontend-facing boundary for companion conversation, role selection, session reset, and consent-gated memory context. The CLI now uses this service instead of independently assembling memory context and calling the conversation session. Desktop clients should use the same service contract. It does not execute tools or dispatch specialist workers; those remain behind the separate authenticated agent coordinator and workflow approval boundary.
+
+
+## Companion-to-agent task interface
+
+`CompanionApplicationService.propose_agent_task` sends a user goal to the configured provider for a bounded model-generated plan and submits it to the authenticated specialist coordinator. This operation creates a proposal only: it does not enqueue worker tasks. A separate explicit client action calls `dispatch_agent_plan`, which advances dependency-ready subtasks into the durable task runtime. Each subtask retains its approval requirement and permission metadata; the worker remains gated by workflow approval and authorization. The conversation model itself cannot silently dispatch work.
