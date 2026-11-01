@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -25,7 +26,12 @@ class DesktopArtifactManifestTests(unittest.TestCase):
                 [entry["path"] for entry in manifest["files"]],
                 ["Yuki.exe", "runtime/config.json"],
             )
-            self.assertEqual(len(manifest["files"][0]["sha256"]), 64)
+            self.assertEqual(
+                manifest["files"][0]["sha256"],
+                hashlib.sha256(b"desktop-binary").hexdigest(),
+            )
+            self.assertEqual(manifest["files"][0]["size"], len(b"desktop-binary"))
+            self.assertIn("mode", manifest["files"][0])
             self.assertNotIn(str(root), json.dumps(manifest))
 
     def test_manifest_rejects_missing_or_empty_bundle(self):
