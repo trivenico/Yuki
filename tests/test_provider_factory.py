@@ -6,6 +6,7 @@ from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.openai_responses import OpenAIResponsesProvider
+from providers.anthropic_messages import AnthropicMessagesProvider
 from providers.ollama import OllamaProvider
 
 
@@ -21,6 +22,15 @@ class ProviderFactoryTests(unittest.TestCase):
         })
         self.assertIsInstance(adapter, OpenAIResponsesProvider)
         self.assertEqual(adapter.model, "gpt-6-astra")
+
+    def test_anthropic_requires_explicit_model_and_constructs_provider(self):
+        with self.assertRaisesRegex(ValueError, "YUKI_ANTHROPIC_MODEL"):
+            create_provider({"provider": "anthropic"}, environ={"ANTHROPIC_API_KEY": "test"})
+        adapter = create_provider({"provider": "anthropic"}, environ={
+            "ANTHROPIC_API_KEY": "test-only-key", "YUKI_ANTHROPIC_MODEL": "claude-fable-5-1"
+        })
+        self.assertIsInstance(adapter, AnthropicMessagesProvider)
+        self.assertEqual(adapter.model, "claude-fable-5-1")
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
