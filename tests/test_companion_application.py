@@ -214,6 +214,37 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             app.list_tasks(actor_id="alice")
 
+    def test_companion_approval_requires_identity_session_and_current_version(self):
+        db_path = str(Path(self.temp.name) / "companion-approval.sqlite3")
+        runtime = TaskRuntime(
+            WorkflowRunStore(db_path),
+            authorize=lambda actor, action, task: actor == "alice" and action in {
+                "task:create", "task:approve", "task:read",
+            },
+        )
+        task = runtime.enqueue(
+            actor_id="alice", idempotency_key="companion-approval",
+            name="protected task", steps=[{
+                "name": "write", "action": "emit", "argument": "work",
+                "requires_approval": True,
+            }],
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        with self.assertRaises(WorkflowConflict):
+            app.approve_task(
+                actor_id="alice", task_id=task.task_id,
+                session_id="session-a", expected_version=task.version + 1,
+            )
+        approved = app.approve_task(
+            actor_id="alice", task_id=task.task_id,
+            session_id="session-a", expected_version=task.version,
+        )
+        self.assertEqual(approved.version, task.version + 1)
+        self.assertEqual(approved.state, "queued")
+        self.assertIsNotNone(runtime.store.get(task.task_id).approved_by)
+
     def test_companion_retry_creates_fresh_task_after_failure(self):
         db_path = str(Path(self.temp.name) / "companion-task-retry.sqlite3")
         store = WorkflowRunStore(db_path)
