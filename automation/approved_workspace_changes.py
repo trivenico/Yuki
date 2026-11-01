@@ -275,6 +275,16 @@ class ApprovedTestRunner:
         if not approved:
             self._record(principal.actor_id, "tests.run", "denied", run_digest, test_module)
             raise ToolAuthorizationError("explicit approval for this test target and source digest is required.")
+        # Approval is bound to the exact source bytes. Re-read immediately before
+        # execution so a file changed during the approval round-trip cannot run.
+        try:
+            current_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+        except OSError as exc:
+            self._record(principal.actor_id, "tests.run", "stale", run_digest, test_module)
+            raise WorkspaceChangeError("test source became unavailable after approval.") from exc
+        if current_digest != source_digest:
+            self._record(principal.actor_id, "tests.run", "stale", run_digest, test_module)
+            raise WorkspaceChangeError("test source changed after approval; refresh and reapprove.")
         self._record(principal.actor_id, "tests.run", "started", run_digest, test_module)
         env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root),
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
