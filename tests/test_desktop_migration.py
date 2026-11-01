@@ -74,6 +74,24 @@ class DesktopMigrationTests(unittest.TestCase):
                 with self.assertRaises(MigrationError):
                     preview_migration(source, root / "new")
 
+    def test_migration_does_not_copy_stale_sqlite_sidecars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            db = sqlite3.connect(source / "tasks.sqlite3")
+            db.execute("CREATE TABLE tasks (name TEXT)")
+            db.execute("INSERT INTO tasks VALUES ('preserved')")
+            db.commit()
+            db.close()
+            (source / "tasks.sqlite3-wal").write_bytes(b"stale-wal")
+            destination = root / "new"
+            migrate_data(source, destination)
+            copied = sqlite3.connect(destination / "tasks.sqlite3")
+            self.assertEqual(copied.execute("SELECT name FROM tasks").fetchone()[0], "preserved")
+            copied.close()
+            self.assertFalse((destination / "tasks.sqlite3-wal").exists())
+
     def test_nonempty_destination_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
