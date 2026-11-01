@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.anthropic_messages import AnthropicMessagesProvider
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -21,16 +22,19 @@ class ProviderManager:
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
+            "openai_responses": lambda: create_provider({**self._config, "provider": "openai_responses"}, environ=self._environ),
+            "anthropic": lambda: create_provider({**self._config, "provider": "anthropic"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
+            ProviderInfo("openai_responses", ("OPENAI_API_KEY", "YUKI_OPENAI_RESPONSES_MODEL"), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
+            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY", "YUKI_ANTHROPIC_MODEL"), True),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
             ProviderInfo("minimax", ("official_api_key_flow_planned",)),
@@ -146,3 +150,26 @@ class ProviderManager:
                 f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
             )
         return adapter
+
+    def create_task_routed_adapter(self, profile):
+        """Route a task under its privacy policy and return (decision, adapter).
+
+        No fallback is attempted. Provider-specific reasoning effort is applied
+        only when the adapter explicitly exposes the corresponding setting.
+        """
+        from providers.task_routing import TaskRoutingPolicy
+        decision = TaskRoutingPolicy().route(self.routing_registry(), profile)
+        adapter = self._build_adapter(decision.provider)
+        try:
+            available = adapter.is_available()
+        except Exception:
+            available = False
+        if available is not True:
+            raise RuntimeError(
+                f"Routed provider '{decision.provider}' is unavailable; no fallback was attempted."
+            )
+        if hasattr(adapter, "reasoning_effort"):
+            adapter.reasoning_effort = decision.reasoning_effort
+        elif hasattr(adapter, "effort"):
+            adapter.effort = decision.reasoning_effort
+        return decision, adapter

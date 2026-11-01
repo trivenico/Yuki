@@ -145,6 +145,14 @@ class SpecialistAgentCoordinator:
                     updated_at TEXT NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS specialist_agent_heartbeats (
+                    agent_id TEXT PRIMARY KEY REFERENCES specialist_agents(agent_id) ON DELETE CASCADE,
+                    instance_id TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+            """)
             now = datetime.now(timezone.utc).isoformat()
             for agent in agent_map.values():
                 db.execute("""
@@ -335,6 +343,54 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("agent ID is already registered.") from exc
             self.agents[agent.agent_id] = agent
 
+    def heartbeat_agent(
+        self, *, actor_id: str, agent_id: str, instance_id: str, ttl_seconds: int = 90,
+    ) -> dict[str, str]:
+        """Refresh an agent instance heartbeat; expired instances stop receiving new work."""
+        if not isinstance(agent_id, str) or not _ID.fullmatch(agent_id):
+            raise ValueError("agent_id must be a bounded identifier.")
+        if (
+            not isinstance(instance_id, str) or not instance_id.strip()
+            or len(instance_id) > 120 or "\\x00" in instance_id
+        ):
+            raise ValueError("instance_id must be bounded non-empty text.")
+        if type(ttl_seconds) is not int or not 15 <= ttl_seconds <= 3600:
+            raise ValueError("ttl_seconds must be an integer from 15 to 3600.")
+        if not self._allowed(actor_id, "agent:heartbeat", agent_id):
+            raise PermissionError("agent heartbeat is not authorized.")
+        now = datetime.now(timezone.utc)
+        last_seen = now.isoformat()
+        expires = datetime.fromtimestamp(now.timestamp() + ttl_seconds, timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            agent = db.execute(
+                "SELECT enabled FROM specialist_agents WHERE agent_id=?", (agent_id,)
+            ).fetchone()
+            if agent is None:
+                raise KeyError("specialist agent is not registered.")
+            if agent["enabled"] != 1:
+                raise AgentPlanError("disabled agents cannot renew heartbeats.")
+            db.execute("""
+                INSERT INTO specialist_agent_heartbeats(agent_id, instance_id, last_seen_at, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                    instance_id=excluded.instance_id,
+                    last_seen_at=excluded.last_seen_at,
+                    expires_at=excluded.expires_at
+            """, (agent_id, instance_id.strip(), last_seen, expires))
+        return {"agent_id": agent_id, "instance_id": instance_id.strip(),
+                "last_seen_at": last_seen, "expires_at": expires}
+
+    def _live_heartbeat_agent_ids(self) -> set[str]:
+        """Return IDs with a currently valid heartbeat; agents never heartbeated remain static."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT agent_id FROM specialist_agent_heartbeats WHERE expires_at > ?",
+                (now,),
+            ).fetchall()
+            return {row["agent_id"] for row in rows}
+
     def set_agent_enabled(self, *, actor_id: str, agent_id: str, enabled: bool) -> SpecialistAgent:
         """Enable or disable a registered specialist with separate authorization."""
         if type(enabled) is not bool:
@@ -375,19 +431,51 @@ class SpecialistAgentCoordinator:
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
 
-    def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
+    def _agent_loads(self) -> dict[str, int]:
+        """Count non-terminal assignments as a best-effort routing load signal."""
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT agent_id, COUNT(*) AS active_count
+                FROM agent_plan_subtasks
+                WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'blocked')
+                GROUP BY agent_id
+            """).fetchall()
+        return {row["agent_id"]: int(row["active_count"]) for row in rows}
+
+    def _route(
+        self, subtask: SubtaskSpec, *, reserved_load: dict[str, int] | None = None,
+    ) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
         needed_permissions = set(subtask.required_permissions)
+        loads = self._agent_loads()
+        live_heartbeats = self._live_heartbeat_agent_ids()
+        with self._connect() as db:
+            heartbeat_rows = db.execute(
+                "SELECT agent_id FROM specialist_agent_heartbeats"
+            ).fetchall()
+        heartbeat_managed = {row["agent_id"] for row in heartbeat_rows}
+        unavailable = heartbeat_managed - live_heartbeats
+        if reserved_load:
+            for agent_id, count in reserved_load.items():
+                loads[agent_id] = loads.get(agent_id, 0) + count
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
-                if agent.enabled and needed <= agent.capabilities
+                if agent.enabled and agent.agent_id not in unavailable
+                and needed <= agent.capabilities
                 and needed_permissions <= agent.permissions
             ]
             if not candidates:
                 raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
-            # Deterministic least-overprovisioned match, then stable ID tie-break.
-            return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+            # Hard-match capabilities/permissions, prefer fewer excess capabilities,
+            # then lower active load, then stable ID for deterministic tie-breaking.
+            return sorted(
+                candidates,
+                key=lambda agent: (
+                    len(agent.capabilities - needed), loads.get(agent.agent_id, 0),
+                    agent.agent_id,
+                ),
+            )[0]
 
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
@@ -397,7 +485,14 @@ class SpecialistAgentCoordinator:
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
-        assignments = {item.subtask_id: self._route(item) for item in items}
+        # Reserve in-plan assignments locally so a batch is spread across
+        # equally qualified agents instead of sending every subtask to one.
+        reserved_load: dict[str, int] = {}
+        assignments = {}
+        for item in items:
+            agent = self._route(item, reserved_load=reserved_load)
+            assignments[item.subtask_id] = agent
+            reserved_load[agent.agent_id] = reserved_load.get(agent.agent_id, 0) + 1
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),

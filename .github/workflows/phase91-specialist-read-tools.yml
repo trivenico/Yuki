@@ -27,13 +27,15 @@ jobs:
       - name: Check dependency consistency
         run: python -m pip check
       - name: Compile specialist tool adapter and tests
-        run: python -m compileall -q automation/specialist_read_tool_adapter.py automation/authorized_read_tools.py automation/specialist_worker.py tests/test_specialist_read_tool_adapter.py
+        run: python -m compileall -q automation/specialist_read_tool_adapter.py automation/authorized_read_tools.py automation/specialist_worker.py providers/task_routing.py tests/test_specialist_read_tool_adapter.py tests/test_local_worker_runtime.py
       - name: Test specialist read-tool adapter
         run: python -m unittest discover -s tests -p 'test_specialist_read_tool_adapter.py' -v
       - name: Test authorized workspace tools
         run: python -m unittest discover -s tests -p 'test_authorized_read_tools.py' -v
       - name: Test specialist worker
         run: python -m unittest discover -s tests -p 'test_specialist_worker.py' -v
+      - name: Test local worker runtime and adaptive specialist routing
+        run: python -m unittest discover -s tests -p 'test_local_worker_runtime.py' -v
       - name: Test task runtime
         run: python -m unittest discover -s tests -p 'test_task_runtime.py' -v
       - name: Test workflow safety

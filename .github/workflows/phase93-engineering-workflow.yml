@@ -27,12 +27,20 @@ jobs:
       - name: Check dependency consistency
         run: python -m pip check
       - name: Compile workflow and tests
-        run: python -m compileall -q automation/engineering_workflow.py automation/approved_workspace_changes.py automation/specialist_read_tool_adapter.py tests/test_engineering_workflow.py
+        run: python -m compileall -q automation/engineering_workflow.py automation/approved_workspace_changes.py automation/specialist_read_tool_adapter.py automation/independent_verification.py automation/evidence_collector.py automation/verification_report_store.py skills/github_lifecycle.py tests/test_github_lifecycle_skill.py tests/test_engineering_workflow.py tests/test_independent_verification.py tests/test_evidence_collector.py tests/test_verification_report_store.py
+      - name: Test commit-bound GitHub CI evidence
+        run: python -m unittest discover -s tests -p 'test_github_lifecycle_skill.py' -v
       - name: Test engineering workflow
         run: python -m unittest discover -s tests -p 'test_engineering_workflow.py' -v
       - name: Test approved workspace changes
         run: python -m unittest discover -s tests -p 'test_approved_workspace_changes.py' -v
       - name: Test specialist read tools
         run: python -m unittest discover -s tests -p 'test_specialist_read_tool_adapter.py' -v
+      - name: Test independent verification engine
+        run: python -m unittest discover -s tests -p 'test_independent_verification.py' -v
+      - name: Test evidence collector
+        run: python -m unittest discover -s tests -p 'test_evidence_collector.py' -v
+      - name: Test persistent verification reports
+        run: python -m unittest discover -s tests -p 'test_verification_report_store.py' -v
       - name: Test workflow safety
         run: python -m unittest discover -s tests -p 'test_workflow_engine.py' -v

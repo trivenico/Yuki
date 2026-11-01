@@ -12,7 +12,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
-        self.assertFalse(entries["anthropic"]["implemented"])
+        self.assertTrue(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
@@ -34,10 +34,10 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
-    def test_unimplemented_provider_does_not_change_selection(self):
+    def test_anthropic_requires_configuration_and_failed_selection_is_atomic(self):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
-        self.assertIn("not implemented", message)
+        self.assertIn("Cannot select anthropic", message)
         self.assertEqual(manager.current().name, "openai")
 
     def test_custom_factory_must_return_provider_contract(self):

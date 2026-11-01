@@ -35,5 +35,22 @@ jobs:
         run: python -m pip check
       - name: Compile Python sources
         run: python -m compileall -q .
+      - name: Run defensive security auditor regression tests
+        run: |
+          python -m unittest tests.test_defensive_code_audit tests.test_secret_audit -v
+      - name: Generate static security triage report
+        run: python -m tools.defensive_code_audit . --format json --fail-on critical > defensive-code-audit.json
+      - name: Generate redacted secret triage report
+        run: python -m tools.secret_audit . --format json > secret-audit.json
+      - name: Upload defensive security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-defensive-security-reports-${{ matrix.os }}
+          path: |
+            defensive-code-audit.json
+            secret-audit.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Run unit tests
         run: python -m unittest discover -s tests -v

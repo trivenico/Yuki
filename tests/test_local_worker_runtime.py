@@ -63,6 +63,35 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 (("text",), ("openai",), True),
             ])
 
+    def test_local_runtime_uses_task_aware_router_for_each_specialist(self):
+        class TaskRoutedManager:
+            def __init__(self):
+                self.calls = []
+            def current(self):
+                return type("Info", (), {"name": "ollama"})()
+            def create_selected_adapter(self):
+                return FakeProvider()
+            def create_task_routed_adapter(self, profile):
+                self.calls.append(profile)
+                return (
+                    type("Decision", (), {"provider": "ollama"})(),
+                    FakeProvider(),
+                )
+
+        manager = TaskRoutedManager()
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, provider_manager=manager)
+            self.assertEqual(
+                set(built.supervisor.worker.handlers),
+                {"research", "coding", "testing", "reporting"},
+            )
+        self.assertEqual(
+            [profile.task_type for profile in manager.calls],
+            ["complex_reasoning", "engineering", "routine", "long_horizon"],
+        )
+        self.assertTrue(all(profile.privacy == "local_only" for profile in manager.calls))
+        self.assertTrue(all(profile.preferred_providers == ("ollama",) for profile in manager.calls))
+
     def test_local_runtime_requires_cloud_opt_in_for_selected_cloud_provider(self):
         from yuki_providers import ProviderManager
         manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-key"})

@@ -70,12 +70,12 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
-    def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
+    def test_real_provider_is_default_and_unconfigured_anthropic_is_rejected(self):
         manager = ProviderManager(environ={})
         self.assertEqual(manager.current().name, "openai")
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
-        self.assertIn("not implemented", result)
+        self.assertIn("Cannot select anthropic", result)
         self.assertEqual(manager.current().name, "openai")
 
     def test_selected_adapter_is_created(self):
@@ -109,12 +109,12 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIs(agent.provider, created[0])
         self.assertIs(manager.create_selected_adapter(), created[0])
 
-    def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
+    def test_terminal_provider_selection_does_not_claim_unconfigured_anthropic_provider(self):
         manager = ProviderManager()
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("not implemented", result)
+        self.assertIn("Cannot select anthropic", result)
         from providers.openai_compatible import OpenAICompatibleProvider
         self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
 

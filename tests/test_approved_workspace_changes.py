@@ -155,6 +155,20 @@ class ApprovedTestRunnerTests(unittest.TestCase):
         self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertNotEqual(self.calls[0][2], self.calls[1][2])
 
+    def test_source_change_during_approval_is_rejected_before_execution(self):
+        runner = self.runner()
+        original_approve = runner.approve_run
+        def mutate_after_approval(actor, run_id, digest):
+            approved = original_approve(actor, run_id, digest)
+            (self.root / "test_sample.py").write_text(
+                "raise RuntimeError('must not execute')\\n", encoding="utf-8"
+            )
+            return approved
+        runner.approve_run = mutate_after_approval
+        with self.assertRaises(WorkspaceChangeError):
+            runner.run(principal=self.principal, test_module="test_sample")
+        self.assertFalse(any(event["outcome"] == "started" for event in self.audit_events))
+
     def test_timeout_is_bounded(self):
         (self.root / "test_sample.py").write_text(
             "import time, unittest\nclass T(unittest.TestCase):\n"

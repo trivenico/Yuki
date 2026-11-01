@@ -33,6 +33,10 @@ jobs:
         run: python -m pip check
       - name: Compile coordinator and task runtime
         run: python -m compileall -q automation/agent_coordinator.py automation/task_runtime.py automation/workflow_store.py tests/test_agent_coordinator.py
+      - name: Compile continuity tooling
+        run: python -m compileall -q scripts/yuki_continuity.py tests/test_yuki_continuity.py
+      - name: Test continuity snapshot and restore
+        run: python -m unittest discover -s tests -p 'test_yuki_continuity.py' -v
       - name: Test specialist coordinator
         run: python -m unittest discover -s tests -p 'test_agent_coordinator.py' -v
       - name: Test task runtime regressions
