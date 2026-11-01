@@ -108,8 +108,6 @@ class EvolutionLedger:
                     raise ValueError(f"details value has the wrong type for {key}.")
             else:
                 raise ValueError(f"details key is not allowlisted: {key}")
-            else:
-                raise ValueError(f"details value has the wrong type for {key}.")
             sanitized[key] = value
         encoded = json.dumps(sanitized, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         if len(encoded.encode("utf-8")) > _MAX_DETAILS_BYTES:
