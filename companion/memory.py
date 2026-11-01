@@ -31,6 +31,9 @@ class MemoryStore:
             return []
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError("Memory file is unreadable; no data was overwritten.") from exc
+        return self._validate_entries(raw)
+
+    def _validate_entries(self, raw: object) -> list[dict]:
         if not isinstance(raw, list) or len(raw) > self.MAX_ENTRIES:
             raise RuntimeError("Memory file has an invalid structure or exceeds limits.")
         for item in raw:
