@@ -7,6 +7,7 @@ Disabling memory prevents future writes but does not silently erase existing dat
 from __future__ import annotations
 
 import os
+import re
 
 from companion.memory import MemoryStore
 
@@ -58,11 +59,26 @@ class CompanionMemory:
         """Stop adding saved notes to chat context for this session."""
         self._context_enabled = False
 
-    def context_entries(self, *, limit: int = 10) -> list[dict]:
-        """Return bounded saved notes only after explicit session-scoped context consent."""
+    def context_entries(self, *, query: str = "", limit: int = 10) -> list[dict]:
+        """Return bounded, relevance-ranked notes only after session-scoped consent."""
         if not self._context_enabled:
             return []
-        return self._store.list(limit=limit)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 10:
+            raise ValueError("context limit must be between 1 and 10.")
+        if not isinstance(query, str) or len(query) > 4000:
+            raise ValueError("memory retrieval query must be a string up to 4000 characters.")
+        entries = self._store.list(limit=200)
+        tokens = {token.casefold() for token in re.findall(r"[^\W_]{2,}", query, flags=re.UNICODE)}
+        if not tokens:
+            return entries[-limit:]
+        ranked = []
+        for index, entry in enumerate(entries):
+            text_tokens = {token.casefold() for token in re.findall(r"[^\W_]{2,}", entry.get("text", ""), flags=re.UNICODE)}
+            overlap = len(tokens.intersection(text_tokens))
+            if overlap:
+                ranked.append((overlap, index, entry))
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [entry for _, _, entry in ranked[:limit]]
 
     def remember(self, text: str, *, category: str = "note") -> dict:
         if not self._enabled:
