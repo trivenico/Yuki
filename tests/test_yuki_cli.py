@@ -1,5 +1,8 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from yuki_cli import run_cli
 
@@ -160,6 +163,38 @@ class YukiCliTests(unittest.TestCase):
         self.assertIn("Current interaction role: developer", provider.prompts[0])
         self.assertIn("Permissions are unchanged", " ".join(output))
 
+    def test_local_auth_cli_bootstrap_login_status_and_logout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            root = Path(temp_dir)
+            with patch("yuki_cli.data_root", return_value=root):
+                bootstrap_passwords = iter(["Correct horse battery staple 9!", "Correct horse battery staple 9!"])
+                code = run_cli(["auth", "bootstrap-admin"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(bootstrap_passwords), output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertTrue((root / ".yuki" / "auth.sqlite3").exists())
+                login_passwords = iter(["Correct horse battery staple 9!"])
+                code = run_cli(["auth", "login"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(login_passwords), output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                session_path = root / ".yuki" / "session.token"
+                self.assertTrue(session_path.exists())
+                self.assertEqual(session_path.stat().st_mode & 0o777, 0o600)
+                code = run_cli(["auth", "status"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn("root.user", outputs[-1])
+                code = run_cli(["auth", "logout"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertFalse(session_path.exists())
+                code = run_cli(["auth", "status"], output_fn=outputs.append)
+                self.assertEqual(code, 1)
+
+    def test_auth_cli_rejects_mismatched_bootstrap_passwords(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            passwords = iter(["first secure password 3!", "second secure password 4!"])
+            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+                code = run_cli(["auth", "bootstrap-admin"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(passwords), output_fn=outputs.append)
+            self.assertEqual(code, 2)
+            self.assertIn("do not match", outputs[-1])
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
