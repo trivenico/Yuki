@@ -39,6 +39,55 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_model_plan_flows_through_authorized_specialist_routing(self):
+        import json
+
+        class Provider:
+            def is_available(self):
+                return True
+
+            def generate_chat(self, system, messages):
+                return json.dumps({"tasks": [
+                    {"task_id": "collect", "description": "Collect relevant research",
+                     "required_capabilities": ["research"], "depends_on": []},
+                    {"task_id": "summarize", "description": "Summarize collected findings",
+                     "required_capabilities": ["summarize"], "depends_on": ["collect"]},
+                ]})
+
+        plan = self.coordinator.submit_model_plan(
+            provider=Provider(),
+            actor_id="alice",
+            idempotency_key="model-planned-research",
+            goal="Research the topic and summarize findings",
+        )
+        self.assertEqual(len(plan.subtasks), 2)
+        self.assertEqual(plan.subtasks[0].agent_id, "research")
+        self.assertEqual(plan.subtasks[1].agent_id, "research")
+        self.assertTrue(all(item.requires_approval for item in plan.subtasks))
+        self.assertTrue(all(item.status == "pending" for item in plan.subtasks))
+        self.assertTrue(all(item.task_id is None for item in plan.subtasks))
+
+    def test_model_plan_cannot_bypass_coordinator_authorization(self):
+        import json
+
+        class Provider:
+            def is_available(self):
+                return True
+
+            def generate_chat(self, system, messages):
+                return json.dumps({"tasks": [
+                    {"task_id": "collect", "description": "Collect research",
+                     "required_capabilities": ["research"], "depends_on": []},
+                ]})
+
+        with self.assertRaises(PermissionError):
+            self.coordinator.submit_model_plan(
+                provider=Provider(),
+                actor_id="mallory",
+                idempotency_key="unauthorized-model-plan",
+                goal="Research a topic",
+            )
+
     def test_privileged_subtasks_cannot_disable_human_approval(self):
         with self.assertRaisesRegex(AgentPlanError, "cannot disable explicit approval"):
             self.coordinator.submit(
