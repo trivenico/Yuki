@@ -20,6 +20,23 @@ class CompanionMemoryConsentTests(unittest.TestCase):
             self.assertIsInstance(manager._store, FakeEncryptedStore)
             self.assertEqual(manager._store.path, path.resolve())
 
+    def test_saved_memory_context_requires_separate_session_consent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CompanionMemory(MemoryStore(Path(directory) / "memory.json"))
+            manager.enable()
+            manager.remember("Prefer concise answers", category="preference")
+            self.assertFalse(manager.context_enabled)
+            self.assertEqual(manager.context_entries(), [])
+            manager.enable_context()
+            self.assertTrue(manager.context_enabled)
+            self.assertEqual(manager.context_entries()[0]["text"], "Prefer concise answers")
+            manager.disable_context()
+            self.assertEqual(manager.context_entries(), [])
+            manager.enable_context()
+            manager.disable()
+            self.assertFalse(manager.context_enabled)
+            self.assertEqual(manager.context_entries(), [])
+
     def test_memory_is_disabled_by_default_and_writes_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CompanionMemory(MemoryStore(Path(directory) / "memory.json"))
