@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
 
-    sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+    chat = sub.add_parser("chat", help="Start an interactive companion chat (no tools executed)")
+    chat.add_argument("--conversation-id", help="Resume and persist a saved conversation")
 
     conversations = sub.add_parser("conversations", help="Manage private persistent companion conversations")
     conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True)
@@ -543,6 +544,40 @@ def run_cli(
 
     if args.command == "chat":
         session = ConversationSession(provider)
+        conversation_store = None
+        conversation_version = None
+        conversation_owner = None
+        if args.conversation_id:
+            root = data_root() / ".yuki"
+            session_path = root / "session.token"
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+                user = auth_service.resolve_session(token)
+                if user is None:
+                    output_fn("Yuki: Sign in first with yuki auth login.")
+                    return 1
+                permission_check = task_permission_authorizer(
+                    auth_service,
+                    session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+                )
+                if not permission_check(user.user_id, "conversation:read", args.conversation_id) or not permission_check(user.user_id, "conversation:write", args.conversation_id):
+                    output_fn("Yuki: Your account is not authorized to resume this conversation.")
+                    return 3
+                conversation_store = ConversationStore(str(root / "conversations.sqlite3"))
+                saved = conversation_store.get(owner_id=user.user_id, conversation_id=args.conversation_id)
+                session.restore_history(list(saved.messages[-session.max_history_messages:]))
+                conversation_version = saved.version
+                conversation_owner = user.user_id
+            except FileNotFoundError:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            except KeyError:
+                output_fn("Yuki: Conversation not found.")
+                return 4
+            except Exception as exc:
+                output_fn("Yuki conversation could not be resumed (" + type(exc).__name__ + ").")
+                return 5
         try:
             memory = memory_factory()
         except Exception as exc:
@@ -553,7 +588,7 @@ def run_cli(
             )
             return 5
         app = CompanionApplicationService(provider, memory=memory, session=session)
-        output_fn("Yuki companion chat. Memory is off by default. Use /memory on to enable explicit saves. Tool execution is disabled.")
+        output_fn("Yuki companion chat. Memory is off by default. Use /memory on to enable explicit saves. Tool execution is disabled." + (" Saved conversation: " + args.conversation_id + "." if conversation_store else " This chat is temporary."))
         while True:
             try:
                 message = input_fn("You> ")
@@ -657,6 +692,19 @@ def run_cli(
             except ConversationError as exc:
                 output_fn("Yuki> " + str(exc))
                 continue
+            if conversation_store is not None:
+                try:
+                    saved = conversation_store.append_turn(
+                        owner_id=conversation_owner,
+                        conversation_id=args.conversation_id,
+                        user_message=message.strip(),
+                        assistant_message=reply.message,
+                        expected_version=conversation_version,
+                    )
+                    conversation_version = saved.version
+                except Exception as exc:
+                    output_fn("Yuki> I generated a reply but could not safely save this turn (" + type(exc).__name__ + "). The saved conversation was not updated; close this session and reload before continuing.")
+                    return 5
             output_fn("Yuki> " + reply.message)
 
 
