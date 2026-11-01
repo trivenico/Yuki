@@ -147,7 +147,6 @@ def discard_evolution(repository: Path, identifier: str, force: bool = False) ->
         raise EvolutionError("evolution state belongs to a different repository")
 
     worktree = Path(state.get("worktree", "")).resolve()
-    expected_root = (Path(tempfile.gettempdir()) / "yuki-evolution-worktrees").resolve()
     # The default location is used unless a custom worktree root was supplied.
     # In either case require the destination to be outside the source repository
     # and to have the exact generated repository-name/identifier suffix.
