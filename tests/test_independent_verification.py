@@ -59,6 +59,24 @@ class IndependentVerificationTests(unittest.TestCase):
         self.assertEqual(report.status, "changes_requested")
         self.assertIn("tests did not pass", report.summary)
 
+    def test_critical_or_high_finding_blocks_reviewer_approval(self):
+        reviewer = FakeReviewer(response(findings=[{
+            "severity": "high",
+            "title": "Missing authorization check",
+            "evidence": "The supplied diff omits the authorization guard.",
+            "recommendation": "Add an authorization check and regression test.",
+        }]))
+        engine = IndependentVerificationEngine(
+            reviewer, reviewer_id="reviewer", author_id="builder"
+        )
+        report = engine.review(
+            requirements=["Enforce authorization."],
+            artifact={"change": "new endpoint"},
+            evidence=[{"kind": "test", "result": "passed"}],
+            tests_passed=True,
+        )
+        self.assertEqual(report.status, "changes_requested")
+
     def test_approval_without_evidence_becomes_inconclusive(self):
         report = self.engine.review(
             requirements=["Implement feature."], artifact={"change": "done"},
