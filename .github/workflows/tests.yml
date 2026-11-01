@@ -83,12 +83,20 @@ jobs:
         run: python -m pip check
       - name: Verify import-safe desktop package
         run: python -c "import ui.desktop; import ui.desktop.launch; print('desktop imports without starting Qt')"
+      - name: Install SBOM generator
+        run: python -m pip install "cyclonedx-bom>=4.0,<6"
       - name: Build native desktop bundle
         run: python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --paths . --collect-all PySide6 --collect-all shiboken6 --collect-all keyring --collect-submodules keyring.backends ui/desktop/launch.py
-      - name: Upload unsigned developer bundle
+      - name: Generate build-environment CycloneDX SBOM
+        run: cyclonedx-py environment --output-file release-evidence/sbom.cdx.json --output-format JSON
+      - name: Generate bundle SHA-256 manifest
+        run: python -m tools.desktop_artifact_manifest dist/Yuki --output release-evidence/manifest.json
+      - name: Upload unsigned developer bundle and release evidence
         uses: actions/upload-artifact@v7
         with:
           name: yuki-desktop-${{ matrix.os }}
-          path: dist/Yuki*
+          path: |
+            dist/Yuki*
+            release-evidence/
           if-no-files-found: error
           retention-days: 7
