@@ -11,7 +11,7 @@ from typing import Any
 from companion.conversation import ConversationError, ConversationReply, ConversationSession
 from companion.memory_consent import CompanionMemory
 from automation.agent_coordinator import AgentPlan, SpecialistAgentCoordinator
-from automation.task_runtime import TaskRecord, TaskRuntime
+from automation.task_runtime import TaskRecord, TaskRuntime, TaskSummary
 from companion.task_updates import CompanionTaskUpdate, CompanionTaskUpdates
 
 
@@ -80,6 +80,32 @@ class CompanionApplicationService:
         if self.agent_coordinator is None:
             raise ConversationError("Yuki's supervised agent coordinator is not configured.")
         return self.agent_coordinator.advance(actor_id=actor_id, plan_id=plan_id)
+
+    def list_tasks(
+        self, *, actor_id: str, state: str | None = None, limit: int = 50,
+    ) -> list[TaskSummary]:
+        """Return bounded, redacted task summaries for the companion activity view."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.list_task_summaries(
+                actor_id=actor_id, state=state, limit=limit,
+            )
+        except (PermissionError, ValueError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the task list.") from exc
+
+    def get_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Read a persisted agent plan for user review before dispatch."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.get_plan(actor_id=actor_id, plan_id=plan_id)
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the agent plan.") from exc
 
     def task_progress(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0,
