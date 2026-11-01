@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -65,6 +66,20 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         self.assertTrue(result["discarded"])
         self.assertFalse(worktree.exists())
         self.assertEqual(self.git("rev-parse", state["checkpoint_tag"] + "^{commit}"), state["base_commit"])
+
+    def test_tampered_state_cannot_authorize_deleting_another_branch(self):
+        state = start_evolution(self.root)
+        identifier = state["branch"].removeprefix("yuki/evolution/")
+        common_dir = Path(self.git("rev-parse", "--git-common-dir"))
+        state_path = (self.root / common_dir / "yuki-evolution" / (identifier + ".json"))
+        metadata = json.loads(state_path.read_text(encoding="utf-8"))
+        metadata["branch"] = "yuki/evolution/20260101T000000Z-deadbeef"
+        state_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+        with self.assertRaisesRegex(EvolutionError, "unexpected branch"):
+            discard_evolution(self.root, identifier)
+        self.assertTrue(Path(state["worktree"]).is_dir())
+        self.assertTrue(self.git("show-ref", "--verify", "--quiet", "refs/heads/" + state["branch"]) == "")
 
     def test_invalid_identifier_is_rejected(self):
         with self.assertRaisesRegex(EvolutionError, "invalid evolution identifier"):
