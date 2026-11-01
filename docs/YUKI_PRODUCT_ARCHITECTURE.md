@@ -88,3 +88,5 @@ The shared companion application service exposes `task_progress` and `cancel_tas
 ## Companion activity and plan review APIs
 
 `CompanionApplicationService.list_tasks()` exposes bounded `TaskSummary` records through the dedicated `task:list` authorization capability. The summary type intentionally omits task step definitions and result payloads. `get_agent_plan()` exposes persisted plan data through the coordinator's `agent:read` authorization for a review-before-dispatch UI. These APIs allow CLI and desktop clients to render a consistent activity feed and plan review screen without querying SQLite or bypassing service authorization.
+
+`CompanionApplicationService.list_specialists()` exposes the coordinator's sanitized specialist catalog through the separate `agent:read` permission. It returns agent identifiers, display names, declared capabilities and enabled state, but not internal permission grants. This supports a desktop/CLI capability browser without exposing registry authorization metadata.
