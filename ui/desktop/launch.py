@@ -12,7 +12,7 @@ from typing import Any
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
     from core.config import load_config
-    from core.portable_paths import data_root
+    from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
     from companion.memory_consent import CompanionMemory
     from companion.conversation import ConversationSession
@@ -21,7 +21,7 @@ def _build_services():
     from automation.workflow_store import WorkflowRunStore
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
 
-    root = data_root() / ".yuki"
+    root = desktop_data_root()
     root.mkdir(parents=True, exist_ok=True)
     try:
         root.chmod(0o700)
