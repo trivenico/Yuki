@@ -47,7 +47,7 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
                            check=True, capture_output=True, text=True).stdout.strip(),
             state["branch"],
         )
-        self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), "baseline\\n")
+        self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), "baseline\n")
 
     def test_start_rejects_dirty_source_repository(self):
         (self.root / "README.md").write_text("uncommitted\n", encoding="utf-8")
