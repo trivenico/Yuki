@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError
@@ -21,8 +23,10 @@ class FakeProvider:
 
 class CompanionApplicationServiceTests(unittest.TestCase):
     def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
         self.provider = FakeProvider()
-        self.memory = CompanionMemory(MemoryStore(":memory:"))
+        self.memory = CompanionMemory(MemoryStore(str(Path(self.temp.name) / "memory.json")))
         self.app = CompanionApplicationService(self.provider, memory=self.memory)
 
     def test_memory_is_not_injected_until_session_context_consent(self):
@@ -39,7 +43,7 @@ class CompanionApplicationServiceTests(unittest.TestCase):
             def context_entries(self, *, query="", limit=10):
                 raise OSError("private database details")
 
-        memory = BrokenMemory(MemoryStore(":memory:"))
+        memory = BrokenMemory(MemoryStore(str(Path(self.temp.name) / "broken-memory.json")))
         app = CompanionApplicationService(self.provider, memory=memory)
         with self.assertRaises(OSError):
             app.respond("hello")
