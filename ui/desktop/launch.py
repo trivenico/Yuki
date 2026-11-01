@@ -58,7 +58,8 @@ def run() -> int:
             from PySide6.QtWidgets import QApplication, QLabel
         except ImportError as exc:
             raise RuntimeError(
-                "Yuki Desktop requires PySide6. Install requirements-desktop.txt."
+                "Yuki Desktop could not load PySide6 or its native Qt runtime libraries. "
+                "Install requirements-desktop.txt and the platform's Qt system dependencies."
             ) from exc
         app = QApplication.instance() or QApplication([sys.argv[0]])
         probe = QLabel("Yuki Desktop runtime OK")
