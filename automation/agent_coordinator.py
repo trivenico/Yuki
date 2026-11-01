@@ -557,9 +557,13 @@ class SpecialistAgentCoordinator:
                     "required_permissions": json.loads(row["permissions_json"]),
                 }],
             )
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            # Coordinator dispatch state is separate from TaskRuntime approval state.
+            # A dispatched subtask remains queued in the plan until execution starts;
+            # TaskRuntime independently exposes waiting_approval and gates workers.
+            plan_status = "queued" if task.state == "waiting_approval" else task.state
+            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=plan_status)
             row["task_id"] = task.task_id
-            row["status"] = task.state
+            row["status"] = plan_status
 
         # Refresh runtime states outside coordinator DB transactions.
         with self._connect() as db:
@@ -574,6 +578,8 @@ class SpecialistAgentCoordinator:
                 state = "succeeded"
             elif task.state in {"failed", "cancelled", "interrupted"}:
                 state = "cancelled" if task.state == "cancelled" else "failed"
+            elif task.state == "waiting_approval":
+                state = "queued"
             else:
                 state = task.state
             if state != row["status"]:
