@@ -107,6 +107,26 @@ class YukiContinuityTests(unittest.TestCase):
                 restore_snapshot(archive, link)
             self.assertEqual(list(actual.iterdir()), [])
 
+    def test_git_metadata_never_records_authenticated_remote_url(self):
+        from scripts.yuki_continuity import git_metadata
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch("scripts.yuki_continuity.subprocess.run") as run:
+                def fake_run(command, **kwargs):
+                    from subprocess import CompletedProcess
+                    if command[-1] == "HEAD":
+                        return CompletedProcess(command, 0, "abc123\\n", "")
+                    if command[-1] == "--show-current":
+                        return CompletedProcess(command, 0, "main\\n", "")
+                    if command[-1] == "origin":
+                        return CompletedProcess(command, 0, "https://user:token@example.com/org/repo.git\\n", "")
+                    raise AssertionError(command)
+                run.side_effect = fake_run
+                metadata = git_metadata(root)
+        self.assertNotIn("remote", metadata)
+        self.assertEqual(metadata["commit"], "abc123")
+        self.assertEqual(metadata["branch"], "main")
+
     def test_snapshot_rejects_nested_backup_destination(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
