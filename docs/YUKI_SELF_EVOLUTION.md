@@ -38,7 +38,10 @@ python scripts/yuki_evolution_worktree.py discard <session-id>
 ```
 
 A worktree containing changes is not removed by default. The explicit
-`--force` option discards uncommitted work in that isolated worktree:
+`--force` option discards uncommitted work in that isolated worktree. If the
+evolution branch contains commits beyond the checkpoint, cleanup removes the
+worktree but deliberately preserves the branch so committed agent work cannot
+be silently destroyed:
 
 ```bash
 python scripts/yuki_evolution_worktree.py discard <session-id> --force
