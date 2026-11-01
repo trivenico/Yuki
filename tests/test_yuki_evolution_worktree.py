@@ -50,6 +50,11 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         )
         self.assertEqual((self.root / "README.md").read_text(encoding="utf-8"), "baseline\n")
 
+    def test_start_rejects_worktree_root_inside_source_checkout(self):
+        with self.assertRaisesRegex(EvolutionError, "outside the source repository"):
+            start_evolution(self.root, self.root / "nested-worktrees")
+        self.assertFalse((self.root / "nested-worktrees").exists())
+
     def test_start_rejects_dirty_source_repository(self):
         (self.root / "README.md").write_text("uncommitted\n", encoding="utf-8")
         with self.assertRaisesRegex(EvolutionError, "working tree must be clean"):
