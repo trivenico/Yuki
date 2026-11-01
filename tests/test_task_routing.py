@@ -68,6 +68,14 @@ class TaskRoutingTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises((TypeError, ValueError)):
                 TaskProfile(**kwargs)
 
+    def test_profile_rejects_unbounded_or_malformed_preferences(self):
+        with self.assertRaises(ValueError):
+            TaskProfile("routine", required_capabilities=("text",) * 7)
+        with self.assertRaises(ValueError):
+            TaskProfile("routine", preferred_providers=("ollama",) * 33)
+        with self.assertRaises(ValueError):
+            TaskProfile("routine", required_capabilities=["text"])
+
     def test_decision_is_explainable_and_does_not_claim_cost_or_quality(self):
         decision = route_task(self.registry, TaskProfile("routine"))
         self.assertIn("cloud excluded", decision.rationale)
