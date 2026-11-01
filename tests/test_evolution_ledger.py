@@ -4,7 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from automation.evolution_ledger import EvolutionLedger, EvolutionLedgerError
+from automation.evolution_ledger import EvolutionLedger
 
 
 class EvolutionLedgerTests(unittest.TestCase):
@@ -59,8 +59,12 @@ class EvolutionLedgerTests(unittest.TestCase):
 
     def test_tampered_event_is_detected(self):
         self.append(details={"status": "proposed"})
-        with sqlite3.connect(self.db_path) as db:
+        db = sqlite3.connect(self.db_path)
+        try:
             db.execute("UPDATE evolution_events SET event_type='execution_completed' WHERE sequence=1")
+            db.commit()
+        finally:
+            db.close()
         self.assertFalse(self.ledger.verify_chain())
 
     def test_details_are_strictly_allowlisted(self):
