@@ -1,6 +1,7 @@
 """Append-only SQLite persistence for independent verification reports."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
@@ -43,6 +44,7 @@ class VerificationReportStore:
                 "ON verification_reports(workflow_id, created_at)"
             )
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.row_factory = sqlite3.Row
@@ -60,6 +62,14 @@ class VerificationReportStore:
     def _serialize(report: VerificationReport) -> str:
         if not isinstance(report, VerificationReport):
             raise TypeError("report must be a VerificationReport.")
+        if (
+            not isinstance(report.artifact_sha256, str)
+            or len(report.artifact_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in report.artifact_sha256)
+            or report.human_approval_required is not True
+            or report.advisory_only is not True
+        ):
+            raise ValueError("report must be digest-bound, advisory and human-approval-required.")
         payload = asdict(report)
         payload["findings"] = [asdict(item) for item in report.findings]
         encoded = json.dumps(
