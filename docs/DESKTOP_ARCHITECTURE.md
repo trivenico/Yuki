@@ -1,6 +1,6 @@
 # Desktop application architecture
 
-**Status:** architecture accepted; D1 import-safe package, dependency manifest, launcher stub, and injected composition boundary are implemented. Authentication adapter, service authorization wiring, interactive UI, and packaging are not implemented.
+**Status:** architecture accepted; D1 import-safe package, optional dependency manifest, launcher stub, injected composition boundary, and D2 OS-keyring session manager are implemented. The session manager reuses the existing SQLite account service, stores only opaque tokens in the OS credential store, verifies stored tokens, and revokes newly issued sessions if secure storage fails. Interactive login/chat UI, identity-bound task authorization composition, and packaging are not implemented.
 **Parent work:** companion service and structured provider chat on `feat/structured-provider-chat`.
 **Decision owner:** Yuki maintainers.
 
