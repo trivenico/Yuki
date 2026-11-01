@@ -62,6 +62,8 @@ class DesktopBackupTests(unittest.TestCase):
             db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)")
             db.execute("INSERT INTO tasks(name) VALUES ('preserved')")
             db.commit()
+            # A stale WAL sidecar must not be restored beside the SQLite backup snapshot.
+            (source / "tasks.sqlite3-wal").write_bytes(b"stale-wal")
             db.close()
             backup = root / "backup"
             create_encrypted_backup(source, backup, "a sufficiently long passphrase")
@@ -71,6 +73,7 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(restored.execute("SELECT name FROM tasks").fetchone()[0], "preserved")
             restored.close()
+            self.assertFalse((destination / "tasks.sqlite3-wal").exists())
 
     def test_rejects_cross_platform_archive_path_traversal(self):
         from ui.desktop.backup import _safe_archive_path
