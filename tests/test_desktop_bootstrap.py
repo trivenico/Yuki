@@ -64,7 +64,7 @@ class DesktopBootstrapTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AuthenticatedDesktopIdentity("x" * 129, "session")
         with self.assertRaises(ValueError):
-            AuthenticatedDesktopIdentity("operator\\nforged", "session")
+            AuthenticatedDesktopIdentity("operator\nforged", "session")
 
     def test_authentication_is_required_and_fails_closed(self):
         with self.assertRaises(DesktopStartupError):
