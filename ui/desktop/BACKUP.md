@@ -21,9 +21,5 @@ Install `requirements-memory-security.txt` (or the desktop extra) to provide
 the cryptography package. This is a portable passphrase-encrypted archive; it
 does not depend on the source computer's OS keyring.
 
-The first implementation is a tested service module, not yet a desktop wizard.
-Before exposing it in the UI, add passphrase confirmation, strength guidance,
-confirmation before restore, cancellation/progress reporting, and a warning
-that the passphrase cannot be recovered. Do not log passphrases or archive
-contents. Production qualification still requires large-dataset, interrupted
-write, and clean-device restore tests.
+The native desktop client now exposes a Backup & Restore tab. Backup creation asks for a passphrase twice and runs off the UI thread. Restore requires a selected backup, passphrase, and a user-selected destination folder; the active Yuki profile and its parent directories are rejected, and the destination must be empty. The passphrase fields are cleared before work begins and are not logged or persisted.
+Remaining UI work: add passphrase strength guidance, cancellable progress reporting, and an end-to-end clean-device restore walkthrough. The current worker prevents window close/sign-out while an operation is running. Do not log passphrases or archive contents. Production qualification still requires large-dataset, interrupted-write, and clean-device restore tests. Restore currently writes to a separate folder and does not activate or hot-swap the restored profile.
