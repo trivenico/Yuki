@@ -17,6 +17,14 @@ class MemoryStoreValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid entry"):
                 MemoryStore(path).list()
 
+    def test_add_rejects_non_string_categories_with_value_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = MemoryStore(Path(directory) / "memory.json")
+            for category in ([], {}, 1, None):
+                with self.subTest(category=category):
+                    with self.assertRaisesRegex(ValueError, "category must be a string"):
+                        store.add("remembered text", category=category)
+
     def test_rejects_entries_over_text_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "memory.json"
