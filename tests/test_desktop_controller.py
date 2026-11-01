@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from companion.application import CompanionApplicationService
@@ -151,6 +152,45 @@ class ControllerTests(unittest.TestCase):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
             self.controller.task_progress(task_id)
+
+
+    def test_backup_and_restore_are_bound_to_live_session(self):
+        from ui.desktop.backup import BackupError
+        from ui.desktop.controller import desktop_data_root
+        profile = Path(self.temp.name) / "active-profile"
+        profile.mkdir()
+        (profile / "settings.json").write_text('{"theme":"dark"}', encoding="utf-8")
+        backup = Path(self.temp.name) / "profile.yukibak"
+        restored = Path(self.temp.name) / "restored-profile"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            created = self.controller.create_backup(backup, "a secure backup passphrase")
+            self.assertEqual(created["file_count"], 1)
+            result = self.controller.restore_backup(
+                backup, restored, "a secure backup passphrase"
+            )
+        self.assertEqual(result["file_count"], 1)
+        self.assertEqual((restored / "settings.json").read_text(), '{"theme":"dark"}')
+        self.assertTrue((profile / "settings.json").exists())
+
+    def test_restore_refuses_active_profile_and_parent_directory(self):
+        profile = Path(self.temp.name) / "active-profile"
+        profile.mkdir()
+        backup = Path(self.temp.name) / "backup.yukibak"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaises(ValueError):
+                self.controller.restore_backup(backup, profile, "a secure backup passphrase")
+            with self.assertRaises(ValueError):
+                self.controller.restore_backup(backup, profile.parent, "a secure backup passphrase")
+
+    def test_backup_operations_require_live_session(self):
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.create_backup(Path(self.temp.name) / "backup", "a secure backup passphrase")
+        with self.assertRaises(PermissionError):
+            self.controller.restore_backup(
+                Path(self.temp.name) / "backup", Path(self.temp.name) / "restore",
+                "a secure backup passphrase",
+            )
 
     def test_logout_clears_session_conversation_and_memory_context(self):
         self.controller.set_memory_context(True)
