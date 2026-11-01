@@ -1,7 +1,10 @@
 # Yuki Desktop packaging
 
 Yuki Desktop is an optional PySide6 client. Core and CLI installations do not
-need Qt, PyInstaller, or keyring.
+need Qt, PyInstaller, or keyring. Installed desktop data is stored under the
+current user's platform application-data directory (Windows LocalAppData,
+macOS Application Support, or Linux XDG data home). An explicit `YUKI_HOME`
+overrides that location and places desktop state under `$YUKI_HOME/.yuki`.
 
 ## Local source run
 
@@ -53,7 +56,7 @@ Before distributing a production installer, complete and review:
 - macOS code signing and notarization; Windows signing; Linux package strategy.
 - OS credential-store behavior on clean user profiles and supported Linux
   desktop environments.
-- User-data migration, backup/restore, crash recovery, and safe uninstall.
+- Migration of data from earlier repository-local desktop installs, backup/restore, crash recovery, and safe uninstall.
 - Artifact provenance, checksum publication, vulnerability and secret scans.
 - GUI tests for provider failure, stale approvals, keyboard accessibility,
   shutdown, and in-flight work.
