@@ -22,7 +22,7 @@ from core.sandbox_policy import SandboxPolicy
 from core.sandbox_runtime import build_docker_argv
 
 
-_PINNED_IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/: -]{0,200}@sha256:[a-f0-9]{64}$")
+_PINNED_IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,200}@sha256:[a-f0-9]{64}$")
 
 
 class EvolutionSandboxError(RuntimeError):
