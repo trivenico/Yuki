@@ -34,5 +34,6 @@ jobs:
           python-version: "3.11"
       - name: Run capability registry tests
         run: |
-          python -m unittest tests.test_task_routing tests.test_provider_manager_task_routing discover -s tests -p 'test_provider_capabilities.py'
+          python -m unittest tests.test_task_routing tests.test_provider_manager_task_routing -v
+          python -m unittest discover -s tests -p 'test_provider_capabilities.py' -v
           python -m unittest tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_anthropic_messages_provider tests.test_anthropic_provider_registry tests.test_provider_factory tests.test_provider_catalog -v
