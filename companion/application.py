@@ -1,0 +1,217 @@
+"""Shared application service for Yuki's companion clients.
+
+CLI and desktop frontends should call this service rather than implement their own
+conversation/memory policy. This layer owns the conversation session and the
+session-scoped consent facade. Agent plans and task controls delegate to the
+existing authorized coordinators; this layer never executes worker tools.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from companion.conversation import ConversationError, ConversationReply, ConversationSession
+from companion.memory_consent import CompanionMemory
+from automation.agent_coordinator import AgentPlan, SpecialistAgentCoordinator
+from automation.task_runtime import TaskRecord, TaskRuntime, TaskSummary
+from automation.workflow_store import WorkflowConflict
+from companion.task_updates import CompanionTaskUpdate, CompanionTaskUpdates
+
+
+class CompanionApplicationService:
+    """One companion session API shared by terminal and graphical clients."""
+
+    def __init__(
+        self, provider: Any, *, memory: CompanionMemory | None = None,
+        session: ConversationSession | None = None,
+        agent_coordinator: SpecialistAgentCoordinator | None = None,
+        task_runtime: TaskRuntime | None = None,
+    ) -> None:
+        if memory is not None and not isinstance(memory, CompanionMemory):
+            raise TypeError("memory must be a CompanionMemory instance.")
+        if session is not None and not isinstance(session, ConversationSession):
+            raise TypeError("session must be a ConversationSession instance.")
+        if agent_coordinator is not None and not isinstance(agent_coordinator, SpecialistAgentCoordinator):
+            raise TypeError("agent_coordinator must be a SpecialistAgentCoordinator instance.")
+        if task_runtime is not None and not isinstance(task_runtime, TaskRuntime):
+            raise TypeError("task_runtime must be a TaskRuntime instance.")
+        if session is not None and session.provider is not provider:
+            raise ValueError("session and application service must use the same provider.")
+        if (
+            agent_coordinator is not None and task_runtime is not None
+            and agent_coordinator.runtime is not task_runtime
+        ):
+            raise ValueError("agent coordinator and companion service must share the same task runtime.")
+        self.memory = memory or CompanionMemory()
+        self.session = session or ConversationSession(provider)
+        self.agent_coordinator = agent_coordinator
+        self.task_runtime = task_runtime or (
+            agent_coordinator.runtime if agent_coordinator is not None else None
+        )
+        self.task_updates = (
+            CompanionTaskUpdates(self.task_runtime)
+            if self.task_runtime is not None else None
+        )
+
+    def respond(self, message: str) -> ConversationReply:
+        """Respond using only explicitly enabled, relevant saved-memory context."""
+        try:
+            context = self.memory.context_entries(query=message)
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely read saved-memory context; no request was sent.") from exc
+        return self.session.respond(message, memory_context=context)
+
+    def propose_agent_task(
+        self, *, actor_id: str, idempotency_key: str, goal: str,
+    ) -> AgentPlan:
+        """Create a model-assisted proposal without enqueueing or executing tasks."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        return self.agent_coordinator.submit_model_plan(
+            provider=self.session.provider,
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+            goal=goal,
+        )
+
+    def dispatch_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Queue ready subtasks after an explicit client dispatch action.
+
+        Dispatch only creates durable workflow tasks. Subtask execution remains
+        behind the workflow engine's own approval and worker authorization gates.
+        """
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        return self.agent_coordinator.advance(actor_id=actor_id, plan_id=plan_id)
+
+    def list_tasks(
+        self, *, actor_id: str, state: str | None = None, limit: int = 50,
+    ) -> list[TaskSummary]:
+        """Return bounded, redacted task summaries for the companion activity view."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.list_task_summaries(
+                actor_id=actor_id, state=state, limit=limit,
+            )
+        except (PermissionError, ValueError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the task list.") from exc
+
+    def list_specialists(self, *, actor_id: str) -> tuple[dict, ...]:
+        """Return the coordinator's sanitized specialist catalog."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.list_agents(actor_id=actor_id)
+        except PermissionError:
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the specialist catalog.") from exc
+
+    def get_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Read a persisted agent plan for user review before dispatch."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.get_plan(actor_id=actor_id, plan_id=plan_id)
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve the agent plan.") from exc
+
+    def task_progress(
+        self, *, actor_id: str, task_id: str, after_sequence: int = 0,
+        limit: int = 50,
+    ) -> list[CompanionTaskUpdate]:
+        """Read privacy-filtered incremental updates for an authorized task."""
+        if self.task_updates is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_updates.updates(
+                actor_id=actor_id, task_id=task_id,
+                after_sequence=after_sequence, limit=limit,
+            )
+        except PermissionError:
+            raise
+        except (ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retrieve task progress.") from exc
+
+    def cancel_task(
+        self, *, actor_id: str, task_id: str, expected_version: int,
+    ) -> TaskRecord:
+        """Request version-checked cancellation through the authorized task runtime."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.cancel(
+                actor_id=actor_id, task_id=task_id,
+                expected_version=expected_version,
+            )
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely cancel this task.") from exc
+
+    def approve_task(
+        self, *, actor_id: str, task_id: str, session_id: str,
+        expected_version: int,
+    ) -> TaskRecord:
+        """Approve the exact queued task definition for this authenticated session."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.approve(
+                actor_id=actor_id, task_id=task_id, session_id=session_id,
+                expected_version=expected_version,
+            )
+        except (PermissionError, ValueError, KeyError, WorkflowConflict):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely approve this task.") from exc
+
+    def retry_task(
+        self, *, actor_id: str, task_id: str, expected_version: int,
+    ) -> TaskRecord:
+        """Create a fresh, approval-reset retry for failed/interrupted work."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.retry_failed(
+                actor_id=actor_id, task_id=task_id,
+                expected_version=expected_version,
+            )
+        except (PermissionError, ValueError, KeyError, WorkflowConflict):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retry this task.") from exc
+
+    def cancel_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Cancel pending and dispatched work through the authorized coordinator."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.cancel_plan(
+                actor_id=actor_id, plan_id=plan_id,
+            )
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely cancel this agent plan.") from exc
+
+    def set_role(self, name: str) -> dict:
+        return self.session.set_role(name)
+
+    def current_role(self) -> dict:
+        return self.session.current_role()
+
+    def reset_conversation(self) -> None:
+        self.session.reset()
+
+    def memory_status(self) -> dict[str, bool]:
+        return {
+            "saving_enabled": self.memory.enabled,
+            "context_enabled": self.memory.context_enabled,
+        }

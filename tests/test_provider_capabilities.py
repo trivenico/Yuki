@@ -20,6 +20,19 @@ class CapabilityRegistryTests(unittest.TestCase):
         selected = registry.route(required=("text",), preference=("ollama", "mock"))
         self.assertEqual(selected.provider, "ollama")
 
+    def test_structured_chat_requirement_routes_only_to_capable_provider(self):
+        registry = CapabilityRegistry([
+            provider("gemini", caps=("text",), privacy="cloud_provider"),
+            provider("ollama", caps=("text", "structured_chat", "local_inference")),
+        ])
+        self.assertEqual(
+            registry.route(required=("text", "structured_chat")).provider,
+            "ollama",
+        )
+        with self.assertRaises(LookupError):
+            registry.route(required=("text", "structured_chat"), preference=("gemini",),
+                           strict_preference=True, allow_cloud=True)
+
     def test_cloud_is_excluded_unless_explicitly_allowed(self):
         registry = CapabilityRegistry([
             provider("gemini", privacy="cloud_provider"),

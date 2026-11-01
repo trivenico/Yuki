@@ -4,7 +4,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer, workflow_principal_resolver
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -59,6 +59,26 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             self.auth.create_account("ab", "too short")
         with self.assertRaises(ValueError):
             BuiltInAuthService(str(Path(self.tmp.name) / "bad.sqlite3"), password_iterations=1)
+
+    def test_task_runtime_authorizer_maps_permissions_from_trusted_session(self):
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        admin_session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        normal = self.auth.create_account("normal.user", "Another secure password 4!")
+        normal_session = self.auth.authenticate("normal.user", "Another secure password 4!")
+        current_token = [admin_session.token]
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: current_token[0],
+        )
+        self.assertTrue(authorize(admin.user_id, "task:list", "task-1"))
+        self.assertTrue(authorize(admin.user_id, "task:approve", "task-1"))
+        self.assertFalse(authorize("forged-user", "task:approve", "task-1"))
+        self.assertFalse(authorize(admin.user_id, "task:complete", "task-1"))
+        current_token[0] = normal_session.token
+        self.assertTrue(authorize(normal.user_id, "task:read", "task-1"))
+        self.assertFalse(authorize(normal.user_id, "task:approve", "task-1"))
+        self.assertFalse(authorize(admin.user_id, "task:list", "task-1"))
+        current_token[0] = "invalid-token"
+        self.assertFalse(authorize(admin.user_id, "task:list", "task-1"))
 
     def test_workflow_approval_uses_authenticated_identity_not_request_claims(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")

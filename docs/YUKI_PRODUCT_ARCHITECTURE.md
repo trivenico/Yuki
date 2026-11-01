@@ -20,12 +20,12 @@ For ordinary conversation, the path ends after the model response. Tool executio
 ## Trust boundaries
 
 - Retrieved documents, skill descriptions, conversation history, and model output are untrusted input.
-- **Important current gap:** the existing provider contract accepts a single prompt string, and the OpenAI-compatible adapter currently sends that whole prompt as a user message. A JSON field named `system` inside that string is not a privileged system message. Prompt-injection resistance is therefore not established by prompt wording alone. Before enabling broad autonomous execution, introduce a structured chat-message provider contract with distinct system/developer/user/tool roles for supported adapters, and retain deterministic policy enforcement outside the model.
+- **Structured chat implementation in progress:** the provider contract now has a `generate_chat(system, messages)` method and strict validation for bounded, alternating user/assistant history. OpenAI-compatible adapters send a distinct provider-level `system` message; Ollama uses `/api/chat`; the direct Gemini API adapter uses Gemini `systemInstruction` and maps assistant history to the provider's `model` role. Gemini CLI remains a separate integration and does not implement structured chat, so companion chat fails closed for that provider. Hybrid mode keeps companion chat local and fails closed rather than flattening roles or silently routing to cloud. Legacy `generate(prompt)` remains for non-companion one-shot calls. This separation is an important defense-in-depth improvement, not a guarantee against prompt injection; deterministic policy and approval checks remain mandatory.
 - Only capabilities registered by trusted application code are eligible for invocation.
 - Role profiles (companion, tutor, interviewer, developer, security, marketing) change response guidance only. They do not grant tools, permissions, or access.
-- Every action requiring approval must pass the existing PermissionGate/approval workflow. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
+- Every action requiring approval must pass the existing PermissionGate/approval workflow. Specialist subtasks declaring privileged permissions cannot opt out of explicit approval; model-generated plans cannot lower that requirement. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
 - Local inference is the default privacy route in hybrid mode. Cloud routing is explicit and allow-listed; there is no implicit cloud fallback when local inference fails.
-- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature and requires explicit user controls.
+- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature: it is off by default, session-scoped consent is required before `/remember`, existing entries are never silently erased by disabling memory, and `/forget`, `/memory export`, and `/memory clear confirm` provide user controls. Saved entries are not automatically injected into model context; a separate session-scoped `/memory use on` opt-in is required. Context is bounded and labeled untrusted, and `/memory off` disables both save and context consent. The default JSON store remains local plaintext and is suitable only for non-sensitive preferences. An opt-in AES-256-GCM backend stores its random key in the operating-system keyring and fails closed when a secure keyring is unavailable; this is local-device encryption, not cross-device sync or managed backup. Key rotation, cross-device migration, and managed backup/restore remain unfinished. Both memory files are git-ignored.
 
 ## Client strategy
 
@@ -52,11 +52,51 @@ Yuki is not production-ready solely because unit tests pass or a capability exis
 ## Current implementation boundaries (October 2026)
 
 - The repository contains Python provider adapters, a local/cloud hybrid router, guarded skill execution, a bounded model-guided task loop, durable task/workflow foundations, companion persona and local memory primitives, reminders, and role profiles.
-- The companion conversation session and CLI integration are being delivered in draft PR #423; safe role selection is stacked in draft PR #424.
+- The companion conversation session and CLI integration are in draft PR #423; safe role selection is stacked in draft PR #424; structured provider chat, explicit CLI memory consent, and the direct Gemini API adapter are in draft PR #425. The memory store remains plaintext and is not yet suitable for secrets or sensitive personal data.
 - The 100 specialist role catalog is metadata only in draft PR #422.
-- Native desktop packaging, production cloud deployment, end-to-end persistent companion memory consent UX, and full release qualification remain unfinished.
+- Native desktop packaging, production cloud deployment, desktop memory-consent UX, retention scheduling, secure key migration/rotation, managed backup/restore, and full release qualification remain unfinished. The encrypted local memory backend is optional and requires separate installation.
 - Do not advertise these unfinished capabilities as production features.
 
 ## Deployment direction
 
 Support both local and cloud model hosting. Start with local Ollama for privacy and cost control, use cloud models only for explicitly configured tasks, and keep OCI deployment optional and resource-budget-aware. The first cloud deployment should host the Yuki application/control plane; GPU model hosting is a separate capacity and cost decision, not assumed to fit Oracle Cloud Free Tier.
+
+
+## Specialist permission propagation
+The coordinator copies each validated specialist subtask's `required_permissions` into the durable workflow step at dispatch. This keeps the requested permission scope attached to the approved task and visible through the redacted pre-approval summary; the model cannot author or modify this field.
+
+## Companion task update adapter
+
+`companion.task_updates.CompanionTaskUpdates` translates authorized durable task events into bounded, presentation-safe companion updates. It delegates authorization and incremental pagination to `TaskRuntime.events`, strips control characters from display text, limits page size and message length, and omits task arguments, artifact references, model prompts, and result payloads. It is a service adapter, not a transport: desktop/CLI clients still need to subscribe or poll through their application-service boundary.
+
+
+## Shared companion application service
+
+`companion.application.CompanionApplicationService` is the shared frontend-facing boundary for companion conversation, role selection, session reset, and consent-gated memory context. The CLI now uses this service instead of independently assembling memory context and calling the conversation session. Desktop clients should use the same service contract. It does not execute tools or dispatch specialist workers; those remain behind the separate authenticated agent coordinator and workflow approval boundary.
+
+
+## Companion-to-agent task interface
+
+`CompanionApplicationService.propose_agent_task` sends a user goal to the configured provider for a bounded model-generated plan and submits it to the authenticated specialist coordinator. This operation creates a proposal only: it does not enqueue worker tasks. A separate explicit client action calls `dispatch_agent_plan`, which advances dependency-ready subtasks into the durable task runtime. Each subtask retains its approval requirement and permission metadata; the worker remains gated by workflow approval and authorization. The conversation model itself cannot silently dispatch work.
+
+
+## Companion task controls
+
+The shared companion application service exposes `task_progress` and `cancel_task`. Progress reads use the existing task-level read authorization and return only bounded, redacted event summaries through `CompanionTaskUpdates`. Cancellation requires the caller's task-cancel authorization and the current task version, preventing stale UI actions from silently changing task state. When a specialist coordinator is configured, the companion automatically reuses its exact `TaskRuntime` instance for progress and cancellation; a separately supplied runtime must match it.
+
+
+## Companion activity and plan review APIs
+
+`CompanionApplicationService.list_tasks()` exposes bounded `TaskSummary` records through the dedicated `task:list` authorization capability. The summary type intentionally omits task step definitions and result payloads. `get_agent_plan()` exposes persisted plan data through the coordinator's `agent:read` authorization for a review-before-dispatch UI. These APIs allow CLI and desktop clients to render a consistent activity feed and plan review screen without querying SQLite or bypassing service authorization.
+
+`CompanionApplicationService.list_specialists()` exposes the coordinator's sanitized specialist catalog through the separate `agent:read` permission. It returns agent identifiers, display names, declared capabilities and enabled state, but not internal permission grants. This supports a desktop/CLI capability browser without exposing registry authorization metadata.
+
+
+## Retry and plan cancellation controls
+
+`CompanionApplicationService.retry_task()` delegates to `TaskRuntime.retry_failed()`, which creates a new durable task from failed/interrupted work using a distinct idempotency key and fresh approval state. It never replays or mutates the failed run in place. `cancel_agent_plan()` delegates to the coordinator's plan-wide cancellation path, which cancels pending subtasks without creating tasks and cancels dispatched work through the versioned task runtime. Both operations require their dedicated authorization capabilities; stale task versions are surfaced as conflicts for client refresh, and terminal-state races are not silently overwritten.
+
+
+## Explicit companion task approval
+
+`CompanionApplicationService.approve_task()` delegates to `TaskRuntime.approve()`. Approval requires the caller's `task:approve` authorization, a non-empty authenticated actor ID, the authenticated session ID, and the current task version. The workflow store binds approval to the exact queued workflow definition digest and session hash; workers cannot claim approval-required work until that durable approval exists. A stale version is returned as a conflict for the client to refresh. The caller must obtain `actor_id` and `session_id` from the authenticated application session, never from untrusted model output or a free-form chat message. Approval is an explicit client action, separate from plan generation and dispatch.

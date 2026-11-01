@@ -1,5 +1,6 @@
 import unittest
 from providers.hybrid import HybridProvider
+from providers.gemini_api import GeminiAPIProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from yuki_providers import ProviderManager
@@ -14,12 +15,20 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
+        self.assertTrue(entries["gemini-api"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
         from providers.openai_compatible import OpenAICompatibleProvider
         adapter = ProviderManager(environ={}).create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
+
+    def test_gemini_api_is_selectable_and_uses_structured_adapter(self):
+        manager = ProviderManager(environ={"GEMINI_API_KEY": "test-key"})
+        self.assertEqual(manager.select("gemini-api"), "Selected provider: gemini-api")
+        adapter = manager.create_selected_adapter()
+        self.assertIsInstance(adapter, GeminiAPIProvider)
+        self.assertTrue(adapter.is_available())
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
         manager = ProviderManager(environ={})

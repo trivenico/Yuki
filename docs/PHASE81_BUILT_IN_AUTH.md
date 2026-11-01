@@ -26,3 +26,10 @@ Use workflow_principal_resolver(auth_service) as the principal_resolver passed t
 - No HTTP framework/server exists in the current terminal-first runtime; this phase deliberately avoids introducing an unrequested web framework.
 - Password change/reset, MFA, account recovery, session listing, and audit-event integration remain future work.
 - The module supports both deployment modes at the service layer, but a hosted web/API must supply the transport security boundary described above.
+
+
+## CLI session to task capability mapping
+
+The local CLI's opaque session token can now be resolved by `task_permission_authorizer()`. The adapter checks the resolved session on each authorization decision and verifies that the authenticated user ID matches the actor ID passed to the task runtime. It maps `workflow:read` to task listing/reading and `workflow:approve` to task creation, approval, cancellation and retry. Worker lifecycle mutations (progress, artifacts, complete, fail, recovery) are deliberately denied by this interactive-user adapter and must use a separate worker/service identity.
+
+The session-token provider is trusted application plumbing: for the local CLI it should read the protected session file; for a hosted application it should read a token already extracted by trusted transport middleware. Never accept a token, actor ID, or session ID from model-generated content or a free-form task payload. The adapter is a reusable authorization seam; it does not by itself configure the CLI task store or expose task commands.

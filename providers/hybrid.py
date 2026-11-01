@@ -36,6 +36,18 @@ class HybridProvider:
         except Exception:
             return False
 
+    def generate_chat(self, system: str, messages: list[dict]) -> str:
+        """Use structured roles on the local provider; never flatten system prompts."""
+        chat = getattr(self.local_provider, "generate_chat", None)
+        if not callable(chat):
+            raise RuntimeError("Configured local provider does not support structured chat.")
+        try:
+            if self.local_provider.is_available() is not True:
+                raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
+        except Exception as exc:
+            raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
+        return chat(system, messages)
+
     def generate(self, prompt: str) -> str:
         """Default route is local; callers must opt in to a named cloud task."""
         return self.generate_for("general", prompt)

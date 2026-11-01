@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -26,6 +27,22 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_approval_required_task_is_reported_as_waiting_until_approved(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-state",
+            name="approval-state-task",
+            steps=[{"name": "protected", "action": "emit", "argument": "x",
+                    "requires_approval": True}],
+        )
+        self.assertEqual(task.state, "waiting_approval")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="session-a",
+            expected_version=task.version,
+        )
+        self.assertEqual(approved.state, "queued")
+        self.assertEqual(self.store.claim_next(worker_id="worker-a").run_id, task.task_id)
 
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
@@ -155,6 +172,45 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
 
+
+    def test_approval_is_authorized_versioned_and_session_bound(self):
+        protected_steps = [{"name": "write", "action": "emit", "argument": "payload",
+                            "requires_approval": True}]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-boundary",
+            name="protected task", steps=protected_steps,
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.approve(
+                actor_id="supervisor", task_id=task.task_id,
+                session_id="session-a", expected_version=task.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.approve(
+                actor_id="alice", task_id=task.task_id,
+                session_id="session-a", expected_version=task.version + 1,
+            )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id,
+            session_id="session-a", expected_version=task.version,
+        )
+        self.assertEqual(approved.version, task.version + 1)
+        self.assertEqual(approved.state, "queued")
+        self.assertIsNotNone(approved)
+        with self.store._connect() as db:
+            approval = db.execute(
+                "SELECT approved_by, approved_session_hash, approval_digest, request_digest "
+                "FROM workflow_runs WHERE run_id=?",
+                (task.task_id,),
+            ).fetchone()
+        self.assertEqual(approval["approved_by"], "alice")
+        self.assertEqual(
+            approval["approved_session_hash"],
+            hashlib.sha256(b"session-a").hexdigest(),
+        )
+        self.assertEqual(approval["approval_digest"], approval["request_digest"])
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, task.task_id)
 
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")

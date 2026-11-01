@@ -16,6 +16,7 @@ from uuid import uuid4
 class MemoryStore:
     MAX_ENTRIES = 2000
     MAX_TEXT = 4000
+    MAX_FILE_BYTES = 10_000_000
 
     def __init__(self, path: str | Path = "yuki_memory.json"):
         self.path = Path(path).expanduser().resolve()
@@ -23,15 +24,29 @@ class MemoryStore:
 
     def _load(self) -> list[dict]:
         try:
+            if self.path.stat().st_size > self.MAX_FILE_BYTES:
+                raise RuntimeError("Memory file exceeds the 10 MB safety limit.")
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return []
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError("Memory file is unreadable; no data was overwritten.") from exc
+        return self._validate_entries(raw)
+
+    def _validate_entries(self, raw: object) -> list[dict]:
         if not isinstance(raw, list) or len(raw) > self.MAX_ENTRIES:
             raise RuntimeError("Memory file has an invalid structure or exceeds limits.")
         for item in raw:
             if not isinstance(item, dict) or not all(k in item for k in ("id", "created_at", "text")):
+                raise RuntimeError("Memory file contains an invalid entry.")
+            if (
+                not isinstance(item["id"], str) or not item["id"] or len(item["id"]) > 64
+                or not isinstance(item["created_at"], str) or not item["created_at"] or len(item["created_at"]) > 80
+                or not isinstance(item["text"], str) or not item["text"].strip()
+                or len(item["text"]) > self.MAX_TEXT
+                or not isinstance(item.get("category", "note"), str)
+                or item.get("category", "note") not in {"note", "preference", "lesson"}
+            ):
                 raise RuntimeError("Memory file contains an invalid entry.")
         return raw
 
@@ -53,8 +68,8 @@ class MemoryStore:
     def add(self, text: str, *, category: str = "note") -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Memory text must be 1-{self.MAX_TEXT} characters.")
-        if category not in {"note", "preference", "lesson"}:
-            raise ValueError("category must be note, preference, or lesson.")
+        if not isinstance(category, str) or category not in {"note", "preference", "lesson"}:
+            raise ValueError("category must be a string: note, preference, or lesson.")
         with self._lock:
             entries = self._load()
             item = {"id": uuid4().hex, "created_at": datetime.now(timezone.utc).isoformat(),

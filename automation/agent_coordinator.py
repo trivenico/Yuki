@@ -17,6 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.task_runtime import TaskRecord, TaskRuntime
+from core.planner import Planner
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
 
@@ -234,6 +235,10 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("self-dependencies and duplicate dependencies are not allowed.")
             if type(item.requires_approval) is not bool:
                 raise AgentPlanError("requires_approval must be a boolean.")
+            if item.required_permissions and not item.requires_approval:
+                raise AgentPlanError(
+                    "subtasks requiring privileged permissions cannot disable explicit approval."
+                )
             if not isinstance(item.required_permissions, tuple) or any(
                 not isinstance(p, str) or not _PERMISSION.fullmatch(p)
                 for p in item.required_permissions
@@ -389,6 +394,34 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
+    def submit_model_plan(
+        self, *, provider, actor_id: str, idempotency_key: str, goal: str,
+    ) -> AgentPlan:
+        """Generate a bounded proposal, then route it through normal authorization.
+
+        Model output is untrusted planning data. It cannot declare permissions or
+        turn off approval; every generated subtask requires approval by default.
+        Existing capability routing, agent authorization, idempotency and durable
+        plan validation remain the enforcement boundary.
+        """
+        planner = Planner(max_steps=min(self.max_subtasks, 10), max_goal_chars=4_000)
+        proposed = planner.propose_with_provider(provider, goal)
+        subtasks = tuple(
+            SubtaskSpec(
+                subtask_id=item.task_id,
+                description=item.description,
+                required_capabilities=item.required_capabilities,
+                depends_on=item.depends_on,
+                requires_approval=True,
+            )
+            for item in proposed
+        )
+        return self.submit(
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+            subtasks=subtasks,
+        )
+
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
@@ -521,11 +554,16 @@ class SpecialistAgentCoordinator:
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
                     "requires_approval": bool(row["requires_approval"]),
+                    "required_permissions": json.loads(row["permissions_json"]),
                 }],
             )
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            # Coordinator dispatch state is separate from TaskRuntime approval state.
+            # A dispatched subtask remains queued in the plan until execution starts;
+            # TaskRuntime independently exposes waiting_approval and gates workers.
+            plan_status = "queued" if task.state == "waiting_approval" else task.state
+            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=plan_status)
             row["task_id"] = task.task_id
-            row["status"] = task.state
+            row["status"] = plan_status
 
         # Refresh runtime states outside coordinator DB transactions.
         with self._connect() as db:
@@ -540,6 +578,8 @@ class SpecialistAgentCoordinator:
                 state = "succeeded"
             elif task.state in {"failed", "cancelled", "interrupted"}:
                 state = "cancelled" if task.state == "cancelled" else "failed"
+            elif task.state == "waiting_approval":
+                state = "queued"
             else:
                 state = task.state
             if state != row["status"]:

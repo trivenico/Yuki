@@ -5,6 +5,70 @@ from core.planner import PlanTask, Planner
 
 class PlannerTests(unittest.TestCase):
 
+    def test_provider_proposes_validated_plan_with_approval_defaults(self):
+        import json
+
+        class Provider:
+            def is_available(self):
+                return True
+
+            def generate_chat(self, system, messages):
+                self.system = system
+                self.messages = messages
+                return json.dumps({"tasks": [
+                    {"task_id": "research", "description": "Gather relevant evidence",
+                     "required_capabilities": ["research"], "depends_on": []},
+                    {"task_id": "summary", "description": "Summarize verified findings",
+                     "required_capabilities": ["reporting"], "depends_on": ["research"]},
+                ]})
+
+        provider = Provider()
+        tasks = Planner().propose_with_provider(provider, "Research and summarize the topic")
+        self.assertEqual([task.task_id for task in tasks], ["research", "summary"])
+        self.assertTrue(all(task.requires_approval for task in tasks))
+        self.assertIn("Planning only", provider.system)
+        self.assertEqual(provider.messages[0]["content"], "Research and summarize the topic")
+
+    def test_provider_plan_rejects_extra_fields_malformed_json_and_cycles(self):
+        class Provider:
+            def __init__(self, response):
+                self.response = response
+
+            def is_available(self):
+                return True
+
+            def generate_chat(self, system, messages):
+                return self.response
+
+        planner = Planner()
+        responses = (
+            '{"tasks":[{"task_id":"one","description":"Do work","required_capabilities":["research"],"depends_on":[],"requires_approval":false}]}',
+            '{"tasks":[{"task_id":"one","description":"Do work","required_capabilities":["research"],"depends_on":["one"]}]}',
+            'not json',
+            '{"tasks":[]}',
+        )
+        for response in responses:
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                planner.propose_with_provider(Provider(response), "Review this request")
+
+    def test_provider_planner_requires_structured_chat_and_available_provider(self):
+        class LegacyProvider:
+            def generate(self, prompt):
+                return "[]"
+
+        with self.assertRaises(TypeError):
+            Planner().propose_with_provider(LegacyProvider(), "Review request")
+
+        class OfflineProvider:
+            def is_available(self):
+                return False
+
+            def generate_chat(self, system, messages):
+                raise AssertionError("offline provider must not be called")
+
+        with self.assertRaises(RuntimeError):
+            Planner().propose_with_provider(OfflineProvider(), "Review request")
+
     def test_decomposes_build_goal_into_dependency_gated_specialists(self):
         tasks = Planner().decompose("Research and build a secure app, then test and report results")
         by_id = {task.task_id: task for task in tasks}

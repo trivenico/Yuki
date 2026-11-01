@@ -41,6 +41,38 @@ class WorkflowEngineTests(unittest.TestCase):
         self.assertEqual(result[-1]["status"], "approval_denied")
         self.assertEqual(len(result), 2)
 
+    def test_privileged_workflow_steps_require_approval_and_preserve_permissions(self):
+        from automation.workflow_store import WorkflowRunStore
+        import tempfile
+        from pathlib import Path
+
+        with self.assertRaisesRegex(ValueError, "must require explicit approval"):
+            WorkflowEngine().run([{
+                "name": "read-private", "action": "emit", "argument": "read",
+                "requires_approval": False, "required_permissions": ["workspace:read"],
+            }])
+        with tempfile.TemporaryDirectory() as directory:
+            store = WorkflowRunStore(str(Path(directory) / "workflow.sqlite3"))
+            run = store.create(
+                idempotency_key="permission-metadata",
+                workflow_name="approved-read",
+                definition=[{
+                    "name": "read-private", "action": "emit", "argument": "read",
+                    "requires_approval": True, "required_permissions": ["workspace:read"],
+                }],
+            )
+            self.assertEqual(run.definition[0]["required_permissions"], ["workspace:read"])
+            self.assertTrue(run.definition[0]["requires_approval"])
+
+    def test_invalid_permission_metadata_is_rejected(self):
+        for permissions in (["workspace:read", "workspace:read"], ["bad permission"], [1], list(range(33))):
+            with self.subTest(permissions=permissions):
+                with self.assertRaises(ValueError):
+                    WorkflowEngine().run([{
+                        "name": "step", "action": "emit", "argument": "data",
+                        "required_permissions": permissions,
+                    }])
+
     def test_wait_for_approval_cannot_disable_approval(self):
         with self.assertRaises(ValueError):
             WorkflowEngine().run([WorkflowStep("gate", "wait_for_approval", requires_approval=False)])

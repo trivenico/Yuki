@@ -7,10 +7,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable, Sequence
+from uuid import uuid4
+from getpass import getpass
+from pathlib import Path
 
+from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
+from companion.conversation_store import ConversationStore, ConversationStoreError
+from companion.memory_consent import CompanionMemory, MemoryConsentError
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.specialist_worker import SpecialistTaskWorker, build_provider_specialist_handlers
+from automation.worker_supervisor import WorkerSupervisor
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowConflict, WorkflowRunStore
+from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
 from core.config import load_config
+from core.portable_paths import data_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -25,7 +39,59 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
 
-    sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+    chat = sub.add_parser("chat", help="Start an interactive companion chat (no tools executed)")
+    chat.add_argument("--conversation-id", help="Resume and persist a saved conversation")
+
+    conversations = sub.add_parser("conversations", help="Manage private persistent companion conversations")
+    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True)
+    conversation_sub.add_parser("list", help="List your saved conversations")
+    conversation_create = conversation_sub.add_parser("create", help="Create a saved conversation")
+    conversation_create.add_argument("--title", default="New conversation")
+    conversation_show = conversation_sub.add_parser("show", help="Show a saved conversation")
+    conversation_show.add_argument("conversation_id")
+    conversation_delete = conversation_sub.add_parser("delete", help="Delete a saved conversation and its messages")
+    conversation_delete.add_argument("conversation_id")
+
+    tasks = sub.add_parser("tasks", help="Inspect and supervise durable Yuki tasks")
+    task_sub = tasks.add_subparsers(dest="task_command", required=True)
+    task_list = task_sub.add_parser("list", help="List authorized task summaries")
+    task_list.add_argument("--state", choices=["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"])
+    task_list.add_argument("--limit", type=int, default=50)
+    task_events = task_sub.add_parser("events", help="Read a bounded page of task progress events")
+    task_events.add_argument("task_id")
+    task_events.add_argument("--after-sequence", type=int, default=0)
+    task_events.add_argument("--limit", type=int, default=100)
+    task_inspect = task_sub.add_parser("inspect", help="Inspect an authorized task")
+    task_inspect.add_argument("task_id")
+    for action in ("approve", "cancel", "retry"):
+        task_action = task_sub.add_parser(action, help=f"{action.capitalize()} an authorized task")
+        task_action.add_argument("task_id")
+        task_action.add_argument("--version", type=int, required=True,
+                                 help="Current task version shown by yuki tasks inspect")
+
+    workers = sub.add_parser("workers", help="Run explicitly supervised specialist worker cycles")
+    worker_sub = workers.add_subparsers(dest="worker_command", required=True)
+    worker_cycle = worker_sub.add_parser("run-cycle", help="Process a finite batch of approved tasks")
+    worker_cycle.add_argument("--max-tasks", type=int, default=3)
+    worker_cycle.add_argument("--max-workers", type=int, default=1)
+
+    agents = sub.add_parser("agents", help="Discover and supervise specialist agents")
+    agent_sub = agents.add_subparsers(dest="agent_command", required=True)
+    agent_sub.add_parser("list", help="List configured specialist agents")
+    agent_plan = agent_sub.add_parser("plan", help="Generate a bounded agent plan for review")
+    agent_plan.add_argument("goal", help="Goal to decompose into specialist subtasks")
+    agent_plan.add_argument("--idempotency-key", help="Stable request key; generated when omitted")
+    agent_show = agent_sub.add_parser("inspect", help="Inspect a saved agent plan")
+    agent_show.add_argument("plan_id")
+    agent_dispatch = agent_sub.add_parser("dispatch", help="Create approval-gated tasks from a reviewed plan")
+    agent_dispatch.add_argument("plan_id")
+
+    auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub.add_parser("bootstrap-admin", help="Create the first local Yuki administrator")
+    auth_sub.add_parser("login", help="Sign in and store a protected local session")
+    auth_sub.add_parser("status", help="Show the current authenticated identity")
+    auth_sub.add_parser("logout", help="Revoke and remove the current local session")
     return parser
 
 
@@ -56,8 +122,395 @@ def run_cli(
     readiness_builder: Callable = build_readiness_report,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
+    memory_factory: Callable = CompanionMemory,
+    password_input: Callable[[str], str] = getpass,
 ) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "auth":
+        root = data_root() / ".yuki"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            try:
+                root.chmod(0o700)
+            except OSError:
+                pass
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+        except Exception as exc:
+            output_fn("Yuki authentication could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        session_path = root / "session.token"
+
+        if args.auth_command == "bootstrap-admin":
+            try:
+                username = input_fn("Administrator username: ").strip()
+                password = password_input("Administrator password (12+ characters): ")
+                confirm = password_input("Confirm administrator password: ")
+                if password != confirm:
+                    output_fn("Yuki: Passwords do not match.")
+                    return 2
+                user = auth_service.bootstrap_admin(username, password)
+            except (ValueError, PermissionError):
+                output_fn("Yuki: Administrator bootstrap was rejected. Check the username/password policy and whether an administrator already exists.")
+                return 2
+            except Exception as exc:
+                output_fn("Yuki authentication failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Initial administrator created for " + user.username + ". Run yuki auth login to sign in.")
+            return 0
+
+        if args.auth_command == "login":
+            try:
+                username = input_fn("Username: ").strip()
+                password = password_input("Password: ")
+                issued = auth_service.authenticate(username, password)
+                temp_path = session_path.with_name("session.token.tmp")
+                descriptor = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.write(issued.token)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp_path, session_path)
+                try:
+                    session_path.chmod(0o600)
+                except OSError:
+                    pass
+            except AuthenticationError:
+                output_fn("Yuki: Invalid username or password.")
+                return 2
+            except Exception as exc:
+                output_fn("Yuki login failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Signed in as " + issued.user.username + " (" + issued.user.role + ").")
+            return 0
+
+        if args.auth_command == "status":
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                user = auth_service.resolve_session(token)
+            except FileNotFoundError:
+                user = None
+            except Exception as exc:
+                output_fn("Yuki session could not be checked (" + type(exc).__name__ + ").")
+                return 5
+            if user is None:
+                output_fn("Yuki: Not signed in.")
+                return 1
+            _write_json({"authenticated": True, "user_id": user.user_id, "username": user.username, "role": user.role, "permissions": sorted(user.permissions)}, output_fn)
+            return 0
+
+        if args.auth_command == "logout":
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                revoked = auth_service.revoke_session(token)
+                session_path.unlink()
+            except FileNotFoundError:
+                revoked = False
+            except Exception as exc:
+                output_fn("Yuki logout failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Session revoked." if revoked else "Yuki: No active local session.")
+            return 0
+
+    if args.command == "conversations":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            store = ConversationStore(str(root / "conversations.sqlite3"))
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki conversation service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        try:
+            if args.conversation_command == "list":
+                if not permission_check(actor_id, "conversation:read", ""):
+                    raise PermissionError
+                _write_json(store.list(owner_id=actor_id), output_fn)
+                return 0
+            if args.conversation_command == "create":
+                if not permission_check(actor_id, "conversation:write", ""):
+                    raise PermissionError
+                item = store.create(owner_id=actor_id, title=args.title)
+            elif args.conversation_command == "show":
+                if not permission_check(actor_id, "conversation:read", args.conversation_id):
+                    raise PermissionError
+                item = store.get(owner_id=actor_id, conversation_id=args.conversation_id)
+            else:
+                if not permission_check(actor_id, "conversation:delete", args.conversation_id):
+                    raise PermissionError
+                deleted = store.delete(owner_id=actor_id, conversation_id=args.conversation_id)
+                _write_json({"deleted": deleted}, output_fn)
+                return 0
+            _write_json({
+                "conversation_id": item.conversation_id,
+                "title": item.title,
+                "version": item.version,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+                "messages": list(item.messages),
+            }, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this conversation action.")
+            return 3
+        except KeyError:
+            output_fn("Yuki: Conversation not found.")
+            return 4
+        except (ValueError, ConversationStoreError) as exc:
+            output_fn("Yuki: Conversation was not changed (" + type(exc).__name__ + ").")
+            return 2
+        except Exception as exc:
+            output_fn("Yuki conversation operation failed (" + type(exc).__name__ + ").")
+            return 5
+
+    if args.command == "tasks":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            runtime = TaskRuntime(
+                WorkflowRunStore(database_path),
+                authorize=task_permission_authorizer(
+                    auth_service, session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+                ),
+            )
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki task service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+
+        try:
+            if args.task_command == "list":
+                if not 1 <= args.limit <= 100:
+                    output_fn("Yuki: --limit must be between 1 and 100.")
+                    return 2
+                records = runtime.list_task_summaries(
+                    actor_id=actor_id, state=args.state, limit=args.limit,
+                )
+                _write_json([{
+                    "task_id": item.task_id, "name": item.name, "state": item.state,
+                    "version": item.version, "attempts": item.attempts,
+                    "created_at": item.created_at, "updated_at": item.updated_at,
+                } for item in records], output_fn)
+                return 0
+            if args.task_command == "events":
+                if args.after_sequence < 0 or not 1 <= args.limit <= 500:
+                    output_fn("Yuki: --after-sequence must be non-negative and --limit must be 1-500.")
+                    return 2
+                events = runtime.events(
+                    actor_id=actor_id, task_id=args.task_id,
+                    after_sequence=args.after_sequence, limit=args.limit,
+                )
+                _write_json([{
+                    "event_id": event.event_id,
+                    "task_id": event.task_id,
+                    "sequence": event.sequence,
+                    "kind": event.kind,
+                    "actor_id": event.actor_id,
+                    "payload": event.payload,
+                    "created_at": event.created_at,
+                } for event in events], output_fn)
+                return 0
+            if args.task_command == "inspect":
+                record = runtime.get(actor_id=actor_id, task_id=args.task_id)
+                _write_json({
+                    "task_id": record.task_id, "name": record.name, "state": record.state,
+                    "steps": record.steps, "result": record.result, "error_code": record.error_code,
+                    "version": record.version, "attempts": record.attempts,
+                    "created_at": record.created_at, "updated_at": record.updated_at,
+                    "lease_owner": record.lease_owner, "lease_expires_at": record.lease_expires_at,
+                }, output_fn)
+                return 0
+            if args.task_command == "approve":
+                record = runtime.approve(
+                    actor_id=actor_id, task_id=args.task_id, session_id=token,
+                    expected_version=args.version,
+                )
+            elif args.task_command == "cancel":
+                record = runtime.cancel(
+                    actor_id=actor_id, task_id=args.task_id, expected_version=args.version,
+                )
+            else:
+                record = runtime.retry_failed(
+                    actor_id=actor_id, task_id=args.task_id, expected_version=args.version,
+                )
+            _write_json({"task_id": record.task_id, "state": record.state, "version": record.version}, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this task action.")
+            return 3
+        except (WorkflowConflict, ValueError) as exc:
+            output_fn("Yuki: Task was not changed. Refresh its details and try again (" + type(exc).__name__ + ").")
+            return 2
+        except KeyError:
+            output_fn("Yuki: Task not found.")
+            return 4
+        except Exception as exc:
+            output_fn("Yuki task operation failed (" + type(exc).__name__ + ").")
+            return 5
+
+    if args.command == "workers":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        service_actor_id = "yuki-worker-service"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            if not permission_check(user.user_id, "worker:run", ""):
+                output_fn("Yuki: Your account is not authorized to run specialist workers.")
+                return 3
+            if not 1 <= args.max_tasks <= 10 or not 1 <= args.max_workers <= 4:
+                output_fn("Yuki: --max-tasks must be 1-10 and --max-workers must be 1-4.")
+                return 2
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            def authorize(actor_id, action, task_id):
+                if actor_id == service_actor_id:
+                    return action in {"task:complete", "task:fail", "task:recover"}
+                return permission_check(actor_id, action, task_id)
+            runtime = TaskRuntime(WorkflowRunStore(database_path), authorize=authorize)
+            config = config_loader()
+            provider = provider_factory(config)
+            handlers = build_provider_specialist_handlers(provider)
+            worker = SpecialistTaskWorker(
+                runtime, worker_id="yuki-cli-worker",
+                service_actor_id=service_actor_id, handlers=handlers,
+            )
+            supervisor = WorkerSupervisor(
+                runtime, worker, max_tasks_per_cycle=args.max_tasks,
+                recovery_limit=10, max_workers=args.max_workers,
+            )
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki worker service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        try:
+            report = supervisor.run_cycle()
+            _write_json({
+                "processed_count": report.processed_count,
+                "succeeded_count": report.succeeded_count,
+                "failed_count": report.failed_count,
+                "recovered_task_ids": list(report.recovered_task_ids),
+                "idle": report.idle,
+            }, output_fn)
+            return 0 if report.failed_count == 0 else 4
+        except Exception as exc:
+            output_fn("Yuki worker cycle failed (" + type(exc).__name__ + ").")
+            return 5
+
+    if args.command == "agents":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            runtime = TaskRuntime(WorkflowRunStore(database_path), authorize=permission_check)
+            built_in_agents = (
+                SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit"),
+                SpecialistAgent("coding", "Software engineering specialist", frozenset({"coding"}), "emit"),
+                SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
+                SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
+            )
+            coordinator = SpecialistAgentCoordinator(
+                runtime, database_path, built_in_agents, authorize=permission_check,
+            )
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki agent service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+
+        try:
+            if args.agent_command == "list":
+                records = coordinator.list_agents(actor_id=actor_id)
+                _write_json(list(records), output_fn)
+                return 0
+            if args.agent_command == "plan":
+                key = args.idempotency_key or uuid4().hex
+                try:
+                    config = config_loader()
+                    provider = provider_factory(config)
+                except Exception as exc:
+                    output_fn("Yuki could not initialize the planning provider (" + type(exc).__name__ + ").")
+                    return 5
+                plan = coordinator.submit_model_plan(
+                    provider=provider, actor_id=actor_id,
+                    idempotency_key=key, goal=args.goal,
+                )
+            elif args.agent_command == "inspect":
+                plan = coordinator.get_plan(actor_id=actor_id, plan_id=args.plan_id)
+            else:
+                plan = coordinator.advance(actor_id=actor_id, plan_id=args.plan_id)
+            _write_json({
+                "plan_id": plan.plan_id,
+                "idempotency_key": plan.idempotency_key,
+                "created_at": plan.created_at,
+                "subtasks": [{
+                    "subtask_id": item.subtask_id,
+                    "agent_id": item.agent_id,
+                    "description": item.description,
+                    "required_capabilities": list(item.required_capabilities),
+                    "depends_on": list(item.depends_on),
+                    "requires_approval": item.requires_approval,
+                    "task_id": item.task_id,
+                    "status": item.status,
+                } for item in plan.subtasks],
+            }, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this agent action.")
+            return 3
+        except (WorkflowConflict, ValueError, RuntimeError) as exc:
+            output_fn("Yuki: Agent operation was not completed (" + type(exc).__name__ + ").")
+            return 2
+        except KeyError:
+            output_fn("Yuki: Agent plan not found.")
+            return 4
+        except Exception as exc:
+            output_fn("Yuki agent operation failed (" + type(exc).__name__ + ").")
+            return 5
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
@@ -91,7 +544,51 @@ def run_cli(
 
     if args.command == "chat":
         session = ConversationSession(provider)
-        output_fn("Yuki companion chat. Type /reset to clear this session or /quit to exit. Tool execution is disabled.")
+        conversation_store = None
+        conversation_version = None
+        conversation_owner = None
+        if args.conversation_id:
+            root = data_root() / ".yuki"
+            session_path = root / "session.token"
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+                user = auth_service.resolve_session(token)
+                if user is None:
+                    output_fn("Yuki: Sign in first with yuki auth login.")
+                    return 1
+                permission_check = task_permission_authorizer(
+                    auth_service,
+                    session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+                )
+                if not permission_check(user.user_id, "conversation:read", args.conversation_id) or not permission_check(user.user_id, "conversation:write", args.conversation_id):
+                    output_fn("Yuki: Your account is not authorized to resume this conversation.")
+                    return 3
+                conversation_store = ConversationStore(str(root / "conversations.sqlite3"))
+                saved = conversation_store.get(owner_id=user.user_id, conversation_id=args.conversation_id)
+                session.restore_history(list(saved.messages[-session.max_history_messages:]))
+                conversation_version = saved.version
+                conversation_owner = user.user_id
+            except FileNotFoundError:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            except KeyError:
+                output_fn("Yuki: Conversation not found.")
+                return 4
+            except Exception as exc:
+                output_fn("Yuki conversation could not be resumed (" + type(exc).__name__ + ").")
+                return 5
+        try:
+            memory = memory_factory()
+        except Exception as exc:
+            output_fn(
+                "Yuki could not initialize companion memory ("
+                + type(exc).__name__
+                + "). No plaintext fallback was used."
+            )
+            return 5
+        app = CompanionApplicationService(provider, memory=memory, session=session)
+        output_fn("Yuki companion chat. Memory is off by default. Use /memory on to enable explicit saves. Tool execution is disabled." + (" Saved conversation: " + args.conversation_id + "." if conversation_store else " This chat is temporary."))
         while True:
             try:
                 message = input_fn("You> ")
@@ -107,29 +604,107 @@ def run_cli(
             if command.startswith("/role "):
                 role_name = command.split(None, 1)[1]
                 try:
-                    role = session.set_role(role_name)
+                    role = app.set_role(role_name)
                 except ValueError:
                     output_fn("Yuki> Unknown role. Available: companion, tutor, interviewer, developer, security, marketing.")
                 else:
                     output_fn("Yuki> Interaction style changed to " + role["name"] + ". Permissions are unchanged.")
                 continue
+            if command in {"/memory", "/memory status"}:
+                output_fn(
+                    "Yuki> Memory saving is " + ("on." if memory.enabled else "off.")
+                    + " Saved-memory context is " + ("on for this session." if memory.context_enabled else "off.")
+                )
+                continue
+            if command == "/memory on":
+                memory.enable()
+                output_fn("Yuki> Memory enabled. I will only save information when you explicitly use /remember.")
+                continue
+            if command == "/memory off":
+                memory.disable()
+                output_fn("Yuki> Memory saving and context use disabled. Existing saved entries remain until you explicitly delete them.")
+                continue
+            if command == "/memory use on":
+                memory.enable_context()
+                output_fn("Yuki> Saved-memory context enabled for this session. Saved notes are treated as untrusted context, not instructions.")
+                continue
+            if command == "/memory use off":
+                memory.disable_context()
+                output_fn("Yuki> Saved-memory context disabled for this session.")
+                continue
+            if command.startswith("/remember "):
+                try:
+                    saved = memory.remember(message.strip()[len("/remember "):])
+                except (MemoryConsentError, ValueError):
+                    output_fn("Yuki> Memory is off or the entry is invalid. Use /memory on first; entries are limited to 4000 characters.")
+                else:
+                    output_fn("Yuki> Saved memory " + saved["id"] + ".")
+                continue
+            if command == "/memories":
+                try:
+                    entries = memory.list_memories()
+                except Exception:
+                    output_fn("Yuki> I could not read the local memory store.")
+                else:
+                    if not entries:
+                        output_fn("Yuki> No saved memories.")
+                    for item in entries:
+                        output_fn("Yuki> [" + item["id"] + "] (" + item.get("category", "note") + ") " + item["text"])
+                continue
+            if command.startswith("/forget "):
+                memory_id = message.strip().split(None, 1)[1]
+                try:
+                    deleted = memory.forget(memory_id)
+                except Exception:
+                    deleted = False
+                output_fn("Yuki> " + ("Memory deleted." if deleted else "No matching memory was deleted."))
+                continue
+            if command == "/memory export":
+                try:
+                    _write_json(memory.list_memories(limit=200), output_fn)
+                except Exception:
+                    output_fn("Yuki> I could not export the local memory store.")
+                continue
+            if command == "/memory clear confirm":
+                try:
+                    count = memory.clear()
+                    output_fn("Yuki> Deleted " + str(count) + " saved memories.")
+                except Exception:
+                    output_fn("Yuki> I could not clear the local memory store.")
+                continue
+            if command.startswith("/memory clear"):
+                output_fn("Yuki> To delete all saved memories, type exactly /memory clear confirm.")
+                continue
             if command == "/reset":
-                session.reset()
+                app.reset_conversation()
                 output_fn("Yuki> This conversation has been cleared.")
                 continue
             if command in {"/help", "/?"}:
-                output_fn("Yuki> I can chat with context during this session. Commands: /role NAME, /reset, /quit.")
+                output_fn("Yuki> I can chat with context during this session. Commands: /role NAME, /memory on|off, /memory use on|off, /remember TEXT, /memories, /forget ID, /memory export, /memory clear CONFIRM, /reset, /quit.")
                 continue
             if not message.strip():
                 continue
             try:
-                reply = session.respond(message)
+                reply = app.respond(message)
             except ValueError:
                 output_fn("Yuki> Please send a message of up to 4000 characters.")
                 continue
             except ConversationError as exc:
                 output_fn("Yuki> " + str(exc))
                 continue
+            if conversation_store is not None:
+                try:
+                    saved = conversation_store.append_turn(
+                        owner_id=conversation_owner,
+                        conversation_id=args.conversation_id,
+                        user_message=message.strip(),
+                        assistant_message=reply.message,
+                        expected_version=conversation_version,
+                    )
+                    conversation_version = saved.version
+                except Exception as exc:
+                    output_fn("Yuki> I generated a reply but could not safely save this turn (" + type(exc).__name__ + "). The saved conversation was not updated; close this session and reload before continuing.")
+                    return 5
             output_fn("Yuki> " + reply.message)
 
 

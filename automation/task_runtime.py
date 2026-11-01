@@ -84,7 +84,21 @@ class TaskRuntime:
 
     @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
-        return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
+        # Keep storage state as "queued" so the existing atomic approval
+        # transaction can authorize it, but expose a distinct waiting state to
+        # supervisors and companion clients until approval is bound to the
+        # current workflow definition and authenticated session.
+        state = run.state
+        if (
+            state == "queued"
+            and WorkflowRunStore._requires_approval(run.definition)
+            and not (
+                run.approved_by and run.approved_at and run.approved_session_hash
+                and run.approval_digest == run.request_digest
+            )
+        ):
+            state = "waiting_approval"
+        return TaskRecord(run.run_id, run.workflow_name, state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at)
 
@@ -247,6 +261,26 @@ class TaskRuntime:
         return self._record(self.store.get(task_id))
 
 
+
+    def approve(
+        self, *, actor_id: str, task_id: str, session_id: str,
+        expected_version: int,
+    ) -> TaskRecord:
+        """Approve the exact queued workflow definition for an authenticated session."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:approve", task_id):
+            raise PermissionError("task approval is not authorized.")
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        approved = self.store.approve(
+            task_id, actor_id=actor, session_id=session_id,
+            expected_version=expected_version,
+        )
+        return self._record(approved)
 
     def retry_failed(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         """Explicitly enqueue a fresh task from failed/interrupted work; never replay in place.

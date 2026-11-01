@@ -160,13 +160,16 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             task = built.runtime.get(
                 actor_id=LOCAL_OPERATOR_ACTOR, task_id=subtask.task_id,
             )
-            self.assertEqual(task.state, "queued")
+            # Coordinator status is "queued", while the authoritative task
+            # remains approval-gated in TaskRuntime until an operator approves it.
+            self.assertEqual(subtask.status, "queued")
+            self.assertEqual(task.state, "waiting_approval")
             self.assertIsNone(built.supervisor.worker.run_once())
             self.assertEqual(
                 built.runtime.get(
                     actor_id=LOCAL_OPERATOR_ACTOR, task_id=subtask.task_id,
                 ).state,
-                "queued",
+                "waiting_approval",
             )
 
 
