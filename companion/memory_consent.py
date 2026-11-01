@@ -6,6 +6,8 @@ Disabling memory prevents future writes but does not silently erase existing dat
 """
 from __future__ import annotations
 
+import os
+
 from companion.memory import MemoryStore
 
 
@@ -19,7 +21,13 @@ class CompanionMemory:
     def __init__(self, store: MemoryStore | None = None) -> None:
         if store is not None and not isinstance(store, MemoryStore):
             raise TypeError("store must be a MemoryStore instance.")
-        self._store = store or MemoryStore()
+        if store is not None:
+            self._store = store
+        elif os.environ.get("YUKI_MEMORY_ENCRYPTION", "").strip().lower() in {"1", "true", "yes", "on"}:
+            from companion.secure_memory import EncryptedMemoryStore
+            self._store = EncryptedMemoryStore(os.environ.get("YUKI_MEMORY_PATH", "yuki_memory.enc.json"))
+        else:
+            self._store = MemoryStore(os.environ.get("YUKI_MEMORY_PATH", "yuki_memory.json"))
         self._enabled = False
 
     @property
