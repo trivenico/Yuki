@@ -8,6 +8,7 @@ of uncompressed backup data to keep memory use predictable.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -69,6 +70,14 @@ def _inventory(root: Path) -> list[Path]:
     if len(files) > MAX_FILES:
         raise BackupError("Backup contains too many files.")
     return sorted(files, key=lambda p: p.relative_to(root).as_posix())
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def create_encrypted_backup(source: Path, destination: Path, passphrase: str) -> dict:
@@ -232,13 +241,35 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
                         shutil.copyfileobj(source_stream, destination_stream, length=1024 * 1024)
             if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
                 raise BackupError("Backup manifest is missing or unsupported.")
-            expected = {entry.get("path"): entry for entry in manifest.get("files", [])}
+            entries = manifest.get("files")
+            if not isinstance(entries, list) or len(entries) > MAX_FILES:
+                raise BackupError("Backup manifest file inventory is invalid.")
+            expected = {}
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise BackupError("Backup manifest entry is invalid.")
+                rel = entry.get("path")
+                digest = entry.get("sha256")
+                size = entry.get("size")
+                if (
+                    not isinstance(rel, str)
+                    or not rel
+                    or not isinstance(digest, str)
+                    or len(digest) != 64
+                    or any(ch not in "0123456789abcdef" for ch in digest)
+                    or isinstance(size, bool)
+                    or not isinstance(size, int)
+                    or size < 0
+                    or rel in expected
+                ):
+                    raise BackupError("Backup manifest entry is invalid or duplicated.")
+                expected[rel] = entry
             actual = {p.relative_to(stage).as_posix(): p for p in stage.rglob("*") if p.is_file()}
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
             for rel, path in actual.items():
                 entry = expected[rel]
-                if path.stat().st_size != entry.get("size") or hashlib.sha256(path.read_bytes()).hexdigest() != entry.get("sha256"):
+                if path.stat().st_size != entry["size"] or not hmac.compare_digest(_sha256_file(path), entry["sha256"]):
                     raise BackupError(f"Backup integrity check failed: {rel}")
                 if path.suffix.lower() in SQLITE_SUFFIXES:
                     db = sqlite3.connect(path)
