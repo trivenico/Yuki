@@ -155,6 +155,23 @@ class ControllerTests(unittest.TestCase):
             self.controller.task_progress(task_id)
 
 
+    def test_migration_preview_and_execution_require_live_session(self):
+        source = Path(self.temp.name) / "legacy"
+        destination = Path(self.temp.name) / "migrated"
+        source.mkdir()
+        (source / "notes.txt").write_text("legacy")
+        preview = self.controller.preview_migration(source, destination)
+        self.assertEqual(preview.files, ("notes.txt",))
+        result = self.controller.migrate_data(source, destination)
+        self.assertEqual(result["files"][0]["path"], "notes.txt")
+        self.assertEqual((destination / "notes.txt").read_text(), "legacy")
+        self.assertTrue((source / "notes.txt").exists())
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.preview_migration(source, destination)
+        with self.assertRaises(PermissionError):
+            self.controller.migrate_data(source, destination)
+
     @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_backup_and_restore_are_bound_to_live_session(self):
         profile = Path(self.temp.name) / "active-profile"
