@@ -26,6 +26,26 @@ class DesktopBootstrapTests(unittest.TestCase):
             self.assertTrue(callable(module.build_desktop_context))
             self.assertNotIn("PySide6.QtWidgets", sys.modules)
 
+    def test_launcher_module_import_does_not_load_qt(self):
+        with patch.dict(sys.modules, {"PySide6": None}):
+            module = importlib.import_module("ui.desktop.launch")
+            self.assertTrue(callable(module.run))
+            self.assertNotIn("PySide6.QtWidgets", sys.modules)
+
+    def test_launcher_reports_missing_optional_dependency(self):
+        from ui.desktop.launch import run
+
+        with patch.dict(sys.modules, {"PySide6": None}):
+            with self.assertRaisesRegex(RuntimeError, "requirements-desktop.txt"):
+                run()
+
+    def test_core_requirements_do_not_include_qt(self):
+        from pathlib import Path
+
+        requirements = Path("requirements.txt").read_text(encoding="utf-8").casefold()
+        self.assertNotIn("pyside6", requirements)
+        self.assertNotIn("pyqt", requirements)
+
     def test_context_uses_shared_companion_service_and_authenticated_identity(self):
         identity = AuthenticatedDesktopIdentity("local-operator", "desktop-session")
         context = build_desktop_context(
