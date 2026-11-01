@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import tarfile
 import tempfile
@@ -94,28 +95,27 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
             for item in files:
                 rel = item.relative_to(root).as_posix()
                 if item.suffix.lower() in SQLITE_SUFFIXES:
-                    with tempfile.TemporaryFile() as snapshot:
-                        src_db = sqlite3.connect(item.resolve().as_uri() + "?mode=ro", uri=True)
-                        dst_db = sqlite3.connect("file:/proc/self/fd/0?mode=memory&cache=shared", uri=True) if False else None
-                        try:
-                            # SQLite backup API writes to a named temporary DB for portable tar input.
-                            with tempfile.NamedTemporaryFile(suffix=".sqlite3") as db_file:
-                                target_db = sqlite3.connect(db_file.name)
-                                try:
-                                    src_db.backup(target_db)
-                                    check = target_db.execute("PRAGMA integrity_check").fetchone()
-                                    if not check or check[0] != "ok":
-                                        raise BackupError(f"SQLite integrity check failed: {rel}")
-                                    target_db.commit()
-                                finally:
-                                    target_db.close()
-                                db_file.seek(0)
-                                data = db_file.read()
-                        finally:
-                            src_db.close()
-                    payload = data
+                    src_db = sqlite3.connect(item.resolve().as_uri() + "?mode=ro", uri=True)
+                    try:
+                        # Close the temporary file handle before SQLite opens it (required on Windows).
+                        with tempfile.TemporaryDirectory() as snapshot_dir:
+                            snapshot_path = Path(snapshot_dir) / "snapshot.sqlite3"
+                            target_db = sqlite3.connect(snapshot_path)
+                            try:
+                                src_db.backup(target_db)
+                                check = target_db.execute("PRAGMA integrity_check").fetchone()
+                                if not check or check[0] != "ok":
+                                    raise BackupError(f"SQLite integrity check failed: {rel}")
+                                target_db.commit()
+                            finally:
+                                target_db.close()
+                            payload = snapshot_path.read_bytes()
+                    finally:
+                        src_db.close()
                 else:
                     payload = item.read_bytes()
+                if rel == "YUKI_BACKUP_MANIFEST.json":
+                    raise BackupError("Source contains a reserved backup manifest filename.")
                 digest = hashlib.sha256(payload).hexdigest()
                 manifest_files.append({"path": rel, "size": len(payload), "sha256": digest})
                 info = tarfile.TarInfo(name=rel)
@@ -148,9 +148,11 @@ def create_encrypted_backup(source: Path, destination: Path, passphrase: str) ->
             stream.write(MAGIC + salt + nonce + encrypted)
             stream.flush()
             os.fsync(stream.fileno())
-        if output.exists():
-            raise BackupError("Backup output appeared during creation; refusing to overwrite it.")
-        os.replace(temporary, output)
+        try:
+            # Hard-link publication is atomic and fails if another process created the target.
+            os.link(temporary, output)
+        except FileExistsError as exc:
+            raise BackupError("Backup output appeared during creation; refusing to overwrite it.") from exc
     except Exception:
         try:
             os.close(fd)
@@ -191,7 +193,8 @@ def restore_encrypted_backup(backup: Path, destination: Path, passphrase: str) -
     target = target_path.resolve()
     if target.exists() and (not target.is_dir() or any(target.iterdir())):
         raise BackupError("Restore destination must be empty; no existing data will be overwritten.")
-    with tempfile.TemporaryDirectory(prefix=".yuki-restore-", dir=str(target.parent if target.parent.exists() else Path.cwd())) as tmp:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".yuki-restore-", dir=str(target.parent)) as tmp:
         stage = Path(tmp) / "data"
         stage.mkdir(mode=0o700)
         manifest = None
