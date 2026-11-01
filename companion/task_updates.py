@@ -12,7 +12,7 @@ from typing import Any
 
 from automation.task_runtime import TaskRuntime
 
-_CONTROL = re.compile(r"[\\x00-\\x1f\\x7f]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 @dataclass(frozen=True)
