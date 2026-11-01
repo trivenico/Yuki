@@ -52,7 +52,24 @@ def _build_services():
 
 
 def run() -> int:
-    """Start the desktop login/chat UI, requiring the optional desktop extra."""
+    """Start Yuki Desktop, or run a display-independent packaged-runtime smoke test."""
+    if "--smoke-test" in sys.argv[1:]:
+        try:
+            from PySide6.QtWidgets import QApplication, QLabel
+        except ImportError as exc:
+            raise RuntimeError(
+                "Yuki Desktop requires PySide6. Install requirements-desktop.txt."
+            ) from exc
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        probe = QLabel("Yuki Desktop runtime OK")
+        probe.show()
+        app.processEvents()
+        if not probe.isVisible():
+            raise RuntimeError("Qt could not initialize a visible desktop widget.")
+        probe.close()
+        app.processEvents()
+        return 0
+
     try:
         from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
         from PySide6.QtWidgets import (
