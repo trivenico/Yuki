@@ -183,7 +183,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(approved)
         with self.store._connect() as db:
             approval = db.execute(
-                "SELECT approved_by, approved_session_hash, approval_digest "
+                "SELECT approved_by, approved_session_hash, approval_digest, request_digest "
                 "FROM workflow_runs WHERE run_id=?",
                 (task.task_id,),
             ).fetchone()
@@ -192,7 +192,7 @@ class TaskRuntimeTests(unittest.TestCase):
             approval["approved_session_hash"],
             hashlib.sha256(b"session-a").hexdigest(),
         )
-        self.assertEqual(approval["approval_digest"], task.request_digest)
+        self.assertEqual(approval["approval_digest"], approval["request_digest"])
         claimed = self.store.claim_next(worker_id="worker-a")
         self.assertEqual(claimed.run_id, task.task_id)
 
