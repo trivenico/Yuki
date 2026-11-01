@@ -2,7 +2,8 @@
 
 CLI and desktop frontends should call this service rather than implement their own
 conversation/memory policy. This layer owns the conversation session and the
-session-scoped consent facade; it does not execute tools or dispatch tasks.
+session-scoped consent facade. Agent plans and task controls delegate to the
+existing authorized coordinators; this layer never executes worker tools.
 """
 from __future__ import annotations
 
