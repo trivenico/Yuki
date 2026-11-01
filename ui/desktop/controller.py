@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ui.desktop.backup import create_encrypted_backup, restore_encrypted_backup
 from core.portable_paths import desktop_data_root
+from ui.desktop.migration import migrate_data, preview_migration
 
 from companion.application import CompanionApplicationService
 from ui.desktop.auth import DesktopSessionManager
@@ -113,6 +114,14 @@ class DesktopCompanionController:
             actor_id=self._require_live_session(), task_id=task_id,
             expected_version=expected_version,
         )
+
+    def preview_migration(self, source: Path, destination: Path):
+        self._require_live_session()
+        return preview_migration(Path(source), Path(destination))
+
+    def migrate_data(self, source: Path, destination: Path) -> dict:
+        self._require_live_session()
+        return migrate_data(Path(source), Path(destination))
 
     def create_backup(self, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
