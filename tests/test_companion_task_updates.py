@@ -72,7 +72,7 @@ class CompanionTaskUpdatesTests(unittest.TestCase):
         self.assertLessEqual(len(update.message), 300)
         self.assertNotIn("\n", update.message)
 
-    def test_all_rendered_status_messages_obey_total_length_limit(self):
+    def test_maximum_valid_task_name_is_rendered_within_message_limit(self):
         store = WorkflowRunStore(str(Path(self.temp.name) / "long-name.sqlite3"))
         runtime = TaskRuntime(
             store,
@@ -80,12 +80,13 @@ class CompanionTaskUpdatesTests(unittest.TestCase):
         )
         runtime.enqueue(
             actor_id="alice", idempotency_key="long-name",
-            name="n" * 1000,
+            name="n" * 100,
             steps=[{"name": "step", "action": "emit", "argument": "x", "requires_approval": False}],
         )
         update = CompanionTaskUpdates(runtime).updates(
             actor_id="alice", task_id=store.list_runs(limit=1)[0].run_id,
         )[0]
+        self.assertEqual(update.message, "Started task: " + ("n" * 100))
         self.assertLessEqual(len(update.message), CompanionTaskUpdates.MAX_MESSAGE_CHARS)
 
     def test_invalid_pagination_is_rejected(self):
