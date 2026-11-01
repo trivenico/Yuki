@@ -1,6 +1,8 @@
 """Testable desktop companion controller; deliberately independent of Qt."""
 from __future__ import annotations
 
+import uuid
+
 from companion.application import CompanionApplicationService
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
@@ -45,6 +47,63 @@ class DesktopCompanionController:
         if self.sessions.current_identity() != self.identity:
             raise PermissionError("The desktop session expired. Sign in again.")
         return self.application.memory.context_enabled
+
+    def _require_live_session(self) -> str:
+        current = self.sessions.current_identity()
+        if current != self.identity:
+            raise PermissionError("The desktop session expired. Sign in again.")
+        return self.identity.actor_id
+
+    def list_specialists(self) -> tuple[dict, ...]:
+        return self.application.list_specialists(actor_id=self._require_live_session())
+
+    def propose_agent_plan(self, goal: str):
+        actor_id = self._require_live_session()
+        if not isinstance(goal, str) or not goal.strip() or len(goal) > 4000:
+            raise ValueError("Plan goal must contain 1-4000 characters.")
+        return self.application.propose_agent_task(
+            actor_id=actor_id,
+            idempotency_key="desktop-" + uuid.uuid4().hex,
+            goal=goal.strip(),
+        )
+
+    def get_agent_plan(self, plan_id: str):
+        return self.application.get_agent_plan(
+            actor_id=self._require_live_session(), plan_id=plan_id
+        )
+
+    def dispatch_agent_plan(self, plan_id: str):
+        return self.application.dispatch_agent_plan(
+            actor_id=self._require_live_session(), plan_id=plan_id
+        )
+
+    def cancel_agent_plan(self, plan_id: str):
+        return self.application.cancel_agent_plan(
+            actor_id=self._require_live_session(), plan_id=plan_id
+        )
+
+    def list_tasks(self, *, state: str | None = None, limit: int = 50):
+        return self.application.list_tasks(
+            actor_id=self._require_live_session(), state=state, limit=limit
+        )
+
+    def task_progress(self, task_id: str, *, after_sequence: int = 0, limit: int = 50):
+        return self.application.task_progress(
+            actor_id=self._require_live_session(), task_id=task_id,
+            after_sequence=after_sequence, limit=limit,
+        )
+
+    def approve_task(self, task_id: str, *, expected_version: int):
+        return self.application.approve_task(
+            actor_id=self._require_live_session(), task_id=task_id,
+            session_id=self.identity.session_id, expected_version=expected_version,
+        )
+
+    def cancel_task(self, task_id: str, *, expected_version: int):
+        return self.application.cancel_task(
+            actor_id=self._require_live_session(), task_id=task_id,
+            expected_version=expected_version,
+        )
 
     def logout(self) -> bool:
         self.application.reset_conversation()
