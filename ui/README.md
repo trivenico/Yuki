@@ -10,7 +10,7 @@
 
 The first native desktop vertical slice is implemented in source as an optional PySide6 client. It uses the existing local Yuki account database, stores its opaque session token in the OS credential store, and calls the shared `CompanionApplicationService` through a Qt-independent controller. Provider requests run in a window-scoped background worker. The architecture, security invariants, packaging gates, and test plan are documented in [Desktop application architecture](../docs/DESKTOP_ARCHITECTURE.md).
 
-The PySide6 UI has not yet been exercised in a real desktop runtime or clean OS image. There is no native installer or cross-platform packaged release. Do not treat the Textual dashboard or a design mockup as a desktop release.
+The desktop source includes Chat, Specialists, Plans, and Tasks tabs. Plan proposals run in a background worker; dispatch requires an explicit confirmation. Task progress is shown through the redacted companion task-update adapter, and cancellation uses an expected task version. Task approval is intentionally not exposed in the UI until the exact workflow action can be rendered safely for confirmation. The PySide6 UI has not yet been exercised in a real desktop runtime or clean OS image. There is no native installer or cross-platform packaged release. Do not treat the Textual dashboard or a design mockup as a desktop release.
 
 ### Run the desktop from source
 
