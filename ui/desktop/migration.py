@@ -19,6 +19,10 @@ class MigrationError(RuntimeError):
     """Raised when migration cannot safely complete."""
 
 
+MAX_MIGRATION_FILES = 20_000
+MAX_MIGRATION_BYTES = 2 * 1024 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class MigrationPreview:
     source: Path
@@ -32,6 +36,7 @@ def _inventory(source: Path) -> list[Path]:
     if not root.is_dir():
         raise MigrationError("The selected migration source must be a directory.")
     found: list[Path] = []
+    total_bytes = 0
     for current, dirs, names in os.walk(root, followlinks=False):
         current_path = Path(current)
         for name in dirs:
@@ -41,6 +46,18 @@ def _inventory(source: Path) -> list[Path]:
             item = current_path / name
             if item.is_symlink() or not item.is_file():
                 raise MigrationError("Migration source contains an unsupported file.")
+            try:
+                total_bytes += item.stat().st_size
+            except OSError as exc:
+                raise MigrationError("Migration source changed during inventory.") from exc
+            if len(found) >= MAX_MIGRATION_FILES:
+                raise MigrationError(
+                    f"Migration exceeds the {MAX_MIGRATION_FILES:,}-file safety limit."
+                )
+            if total_bytes > MAX_MIGRATION_BYTES:
+                raise MigrationError(
+                    "Migration exceeds the 2 GiB initial safety limit."
+                )
             found.append(item)
     return sorted(found, key=lambda item: item.relative_to(root).as_posix())
 
