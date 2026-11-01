@@ -182,6 +182,23 @@ class ControllerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.controller.restore_backup(backup, profile.parent, "a secure backup passphrase")
 
+    def test_restore_rejects_symlinked_destination(self):
+        profile = Path(self.temp.name) / "active-profile"
+        profile.mkdir()
+        destination = Path(self.temp.name) / "linked-restore"
+        actual = Path(self.temp.name) / "actual-restore"
+        actual.mkdir()
+        try:
+            destination.symlink_to(actual, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaises(ValueError):
+                self.controller.restore_backup(
+                    Path(self.temp.name) / "backup", destination,
+                    "a secure backup passphrase",
+                )
+
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
