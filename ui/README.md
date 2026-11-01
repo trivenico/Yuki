@@ -16,6 +16,8 @@ Desktop requirements:
 
 - Keep PySide6 optional; CLI-only installation must not import it.
 - Use one authenticated composition root and the shared `CompanionApplicationService`.
+- Store desktop session tokens only in a supported OS credential store through `DesktopSessionManager`; never persist passwords or tokens in Qt settings or plaintext files.
+- Reuse `BuiltInAuthService` for account/session validation. A local identity object alone is not proof of authentication.
 - Never call provider SDKs or task stores from widgets.
 - Keep plan proposal, dispatch, approval, and worker execution as separate explicit actions.
 - Preserve memory consent, authorization, audit, and redaction boundaries.
