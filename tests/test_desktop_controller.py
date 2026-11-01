@@ -56,6 +56,8 @@ class ControllerTests(unittest.TestCase):
             self.controller.respond("hello")
         with self.assertRaises(PermissionError):
             self.controller.set_memory_context(True)
+        with self.assertRaises(PermissionError):
+            self.controller.memory_context_enabled()
 
     def test_logout_clears_session_conversation_and_memory_context(self):
         self.controller.set_memory_context(True)
