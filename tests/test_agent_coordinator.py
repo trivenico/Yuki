@@ -158,6 +158,48 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIsNotNone(dispatched.subtasks[0].task_id)
         self.assertEqual(dispatched.subtasks[0].status, "queued")
 
+    def test_load_aware_routing_balances_equivalent_specialists(self):
+        self.coordinator.register_agent(
+            actor_id="alice",
+            agent=SpecialistAgent("balanced-a", "Balanced A", frozenset({"balanced"}), "emit"),
+        )
+        self.coordinator.register_agent(
+            actor_id="alice",
+            agent=SpecialistAgent("balanced-b", "Balanced B", frozenset({"balanced"}), "emit"),
+        )
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="balanced-batch",
+            subtasks=[
+                SubtaskSpec("one", "Task one", ("balanced",)),
+                SubtaskSpec("two", "Task two", ("balanced",)),
+                SubtaskSpec("three", "Task three", ("balanced",)),
+                SubtaskSpec("four", "Task four", ("balanced",)),
+            ],
+        )
+        assignments = [item.agent_id for item in plan.subtasks]
+        self.assertEqual(assignments.count("balanced-a"), 2)
+        self.assertEqual(assignments.count("balanced-b"), 2)
+
+    def test_load_aware_routing_prefers_less_loaded_equivalent_agent(self):
+        self.coordinator.register_agent(
+            actor_id="alice",
+            agent=SpecialistAgent("load-a", "Load A", frozenset({"load-test"}), "emit"),
+        )
+        self.coordinator.register_agent(
+            actor_id="alice",
+            agent=SpecialistAgent("load-b", "Load B", frozenset({"load-test"}), "emit"),
+        )
+        first = self.coordinator.submit(
+            actor_id="alice", idempotency_key="load-first",
+            subtasks=[SubtaskSpec("first", "First", ("load-test",))],
+        )
+        second = self.coordinator.submit(
+            actor_id="alice", idempotency_key="load-second",
+            subtasks=[SubtaskSpec("second", "Second", ("load-test",))],
+        )
+        self.assertEqual(first.subtasks[0].agent_id, "load-a")
+        self.assertEqual(second.subtasks[0].agent_id, "load-b")
+
     def test_dependency_prevents_early_dispatch(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-1", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",), requires_approval=False),
