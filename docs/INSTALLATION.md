@@ -30,6 +30,23 @@ The first administrator can only be bootstrapped once. Passwords are entered thr
 
 This is a local CLI sign-in foundation, not yet end-to-end authorization for every companion task, skill, or agent command. The CLI session has not yet been composed into the task-runtime principal resolver or shared with a desktop client. Do not treat local login as a production hosted identity service. The built-in auth module remains framework-independent; hosted deployments still require HTTPS, trusted middleware, CSRF/origin controls where applicable, edge rate limits, account recovery/MFA policy, and secure secret storage. Protect the Yuki data directory and its backups.
 
+## Supervised task CLI (early access)
+
+After creating the initial administrator and signing in, you can inspect and supervise durable tasks:
+
+```bash
+yuki tasks list
+yuki tasks list --state waiting_approval
+yuki tasks inspect TASK_ID
+yuki tasks approve TASK_ID --version 3
+yuki tasks cancel TASK_ID --version 3
+yuki tasks retry TASK_ID --version 5
+```
+
+Use the exact current version reported by `tasks inspect`; stale versions are rejected instead of silently overwriting newer task state. Approval is bound to the current authenticated session. Listing returns redacted summaries; inspection requires the separate task-read capability.
+
+The CLI currently opens its local task journal at `$YUKI_HOME/.yuki/tasks.sqlite3` (or the repository data root when `YUKI_HOME` is unset). Set `YUKI_TASK_DB` to use a shared journal path deliberately. The authenticated CLI commands do not yet create agent plans, dispatch workers, or expose arbitrary tool execution. Worker identities and execution remain separate from interactive user permissions. Keep the data directory and backups private.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
