@@ -67,6 +67,15 @@ def _inventory(root: Path) -> list[Path]:
             if item.is_symlink() or not item.is_file():
                 raise BackupError("Backup source contains an unsupported file.")
             files.append(item)
+    database_paths = {
+        item for item in files if item.suffix.lower() in SQLITE_SUFFIXES
+    }
+    sqlite_sidecars = {
+        Path(str(database) + suffix)
+        for database in database_paths
+        for suffix in ("-wal", "-shm", "-journal")
+    }
+    files = [item for item in files if item not in sqlite_sidecars]
     if len(files) > MAX_FILES:
         raise BackupError("Backup contains too many files.")
     return sorted(files, key=lambda p: p.relative_to(root).as_posix())
