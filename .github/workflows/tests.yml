@@ -89,6 +89,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: yuki-desktop-${{ matrix.os }}
-          path: dist/Yuki/
+          path: dist/Yuki*
           if-no-files-found: error
           retention-days: 7
