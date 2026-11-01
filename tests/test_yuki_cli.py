@@ -346,6 +346,53 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
 
+    def test_authenticated_task_event_history_is_bounded_and_incremental(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            user = auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
+            runtime = TaskRuntime(
+                WorkflowRunStore(str(root / ".yuki" / "tasks.sqlite3")),
+                authorize=task_permission_authorizer(auth, lambda: issued.token),
+            )
+            task = runtime.enqueue(
+                actor_id=user.user_id, idempotency_key="cli-event-history",
+                name="Event history task",
+                steps=[{"name": "work", "action": "emit", "argument": "bounded payload"}],
+            )
+            events = runtime.events(actor_id=user.user_id, task_id=task.task_id)
+            self.assertEqual([event.sequence for event in events], [1])
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(["tasks", "events", task.task_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                payload = json.loads(outputs[-1])
+                self.assertEqual(payload[0]["kind"], "task.created")
+                self.assertEqual(payload[0]["sequence"], 1)
+                code = run_cli(
+                    ["tasks", "events", task.task_id, "--after-sequence", "1"],
+                    output_fn=outputs.append,
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(outputs[-1]), [])
+                code = run_cli(
+                    ["tasks", "events", task.task_id, "--limit", "501"],
+                    output_fn=outputs.append,
+                )
+                self.assertEqual(code, 2)
+
+    def test_task_event_history_requires_authentication(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+                code = run_cli(["tasks", "events", "unknown"], output_fn=outputs.append)
+            self.assertEqual(code, 1)
+            self.assertIn("Sign in first", outputs[-1])
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
