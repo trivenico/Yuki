@@ -37,6 +37,19 @@ On PowerShell, use `$env:YUKI_MEMORY_ENCRYPTION = "1"`. Yuki stores a random 256
 
 This is local-device encryption, not cloud sync or a backup system. Anyone with access to the logged-in OS account and its unlocked keyring may be able to access the data. Back up the keyring and encrypted file together using a separately secured process; deleting the keyring entry makes the ciphertext unrecoverable. Key rotation, cross-device migration, and managed backup/restore are not yet implemented. On Windows, file ACLs inherit from the parent directory; POSIX temporary files are created with owner-only permissions.
 
+## Companion memory controls
+
+In `yuki_cli.py chat`, memory saving and context use are separate session-scoped choices:
+
+- `/memory on`: allow explicit `/remember TEXT` saves for this session.
+- `/memory off`: stop saving and stop memory-context use for this session.
+- `/memory use on`: separately allow the latest saved notes to inform chat context for this session.
+- `/memory use off`: stop including saved notes in chat context.
+- `/memory status`: show both consent states.
+- `/memories`, `/forget ID`, `/memory export`, `/memory clear confirm`: inspect, delete, export, or clear saved entries.
+
+Both choices default to off after every application restart. Saved notes are bounded and passed as untrusted data, never as policy or tool instructions. A corrupted or unreadable store prevents a context-enabled request from being sent.
+
 ## Google Gemini providers
 
 Yuki supports two separate Google integrations. Set `YUKI_PROVIDER=gemini` to use the official Gemini CLI installed and authenticated on your machine. This adapter checks for the CLI executable; it does not claim to verify account authentication until a real request is made.
