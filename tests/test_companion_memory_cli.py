@@ -54,7 +54,7 @@ class CompanionMemoryCliTests(unittest.TestCase):
             self.assertIn("Memory is off or the entry is invalid", rendered)
             self.assertIn("Memory enabled", rendered)
             self.assertIn("I prefer short answers", rendered)
-            self.assertIn("Memory disabled", rendered)
+            self.assertIn("context use disabled", rendered)
             self.assertIn("To delete all saved memories", rendered)
             self.assertIn("Deleted 1 saved memories", rendered)
             self.assertIn("No saved memories", rendered)
