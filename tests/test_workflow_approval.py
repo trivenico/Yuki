@@ -28,6 +28,10 @@ class WorkflowApprovalServiceTests(unittest.TestCase):
                 actor_id="user-42", session_id="server-session-abc",
                 permissions=frozenset({"workflow:read"}),
             ),
+            "no-access-request": AuthenticatedPrincipal(
+                actor_id="user-42", session_id="server-session-abc",
+                permissions=frozenset({"workflow:write"}),
+            ),
         }
         self.service = WorkflowApprovalService(
             self.store, principal_resolver=lambda ctx: self.contexts[ctx],
@@ -41,7 +45,7 @@ class WorkflowApprovalServiceTests(unittest.TestCase):
         self.assertNotIn("argument", summary["steps"][0])
         with self.assertRaises(PermissionError):
             self.service.approval_requirements(
-                self.run.run_id, request_context="read-only-request",
+                self.run.run_id, request_context="no-access-request",
             )
 
     def test_approval_uses_principal_from_trusted_resolver(self):
