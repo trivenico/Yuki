@@ -8,9 +8,18 @@
 
 ## Native desktop direction
 
-The first native desktop vertical slice is planned as an optional PySide6 client that composes the existing Python application services in-process. The architecture, security invariants, first-slice scope, packaging gates, and test plan are documented in [Desktop application architecture](../docs/DESKTOP_ARCHITECTURE.md).
+The first native desktop vertical slice is implemented in source as an optional PySide6 client. It uses the existing local Yuki account database, stores its opaque session token in the OS credential store, and calls the shared `CompanionApplicationService` through a Qt-independent controller. Provider requests run in a window-scoped background worker. The architecture, security invariants, packaging gates, and test plan are documented in [Desktop application architecture](../docs/DESKTOP_ARCHITECTURE.md).
 
-No graphical desktop application, native installer, or cross-platform packaged release is implemented yet. Do not treat the Textual dashboard or a design mockup as a desktop release.
+The PySide6 UI has not yet been exercised in a real desktop runtime or clean OS image. There is no native installer or cross-platform packaged release. Do not treat the Textual dashboard or a design mockup as a desktop release.
+
+### Run the desktop from source
+
+1. Create the first local account once: `yuki auth bootstrap-admin`.
+2. Install the optional desktop dependencies: `python -m pip install -r requirements-desktop.txt`.
+3. Configure Yuki's provider using the same `config.yaml` and environment variables as the CLI.
+4. Start the UI: `python -m ui.desktop.launch`.
+
+A supported OS credential store must be available (Windows Credential Locker, macOS Keychain, or Linux Secret Service). The desktop does not provide a plaintext token fallback. If your configured provider needs an API key, set it in the environment before launch.
 
 Desktop requirements:
 
