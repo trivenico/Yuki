@@ -188,7 +188,9 @@ class EvolutionOrchestrator:
 
         try:
             review = self.reviewer(plan, execution)
+            self._assert_plan_integrity(plan)
             report = self.verification_provider(plan, execution)
+            self._assert_plan_integrity(plan)
             decision = self.review_verifier.decide(review, report,
                                                    expected_commit=execution.commit_sha)
         except Exception as exc:
