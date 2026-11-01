@@ -358,17 +358,17 @@ def run() -> int:
             self.migration_source.setReadOnly(True)
             source_row = QHBoxLayout()
             source_row.addWidget(self.migration_source, 1)
-            choose_source = QPushButton("Choose old data folder…")
-            choose_source.clicked.connect(self._choose_migration_source)
-            source_row.addWidget(choose_source)
+            self.migration_source_button = QPushButton("Choose old data folder…")
+            self.migration_source_button.clicked.connect(self._choose_migration_source)
+            source_row.addWidget(self.migration_source_button)
             migration_layout.addLayout(source_row)
             self.migration_destination = QLineEdit()
             self.migration_destination.setReadOnly(True)
             destination_row = QHBoxLayout()
             destination_row.addWidget(self.migration_destination, 1)
-            choose_migration_destination = QPushButton("Choose new empty folder…")
-            choose_migration_destination.clicked.connect(self._choose_migration_destination)
-            destination_row.addWidget(choose_migration_destination)
+            self.migration_destination_button = QPushButton("Choose new empty folder…")
+            self.migration_destination_button.clicked.connect(self._choose_migration_destination)
+            destination_row.addWidget(self.migration_destination_button)
             migration_layout.addLayout(destination_row)
             migration_actions = QHBoxLayout()
             self.migration_preview_button = QPushButton("Preview migration")
@@ -421,6 +421,8 @@ def run() -> int:
             self.busy = True
             self.migration_preview_button.setEnabled(False)
             self.migration_execute_button.setEnabled(False)
+            self.migration_source_button.setEnabled(False)
+            self.migration_destination_button.setEnabled(False)
             self.migration_status.setText("Inspecting source files without modifying them…")
             controller = self.controller
             worker = BackupWorker(
@@ -433,6 +435,8 @@ def run() -> int:
         def _migration_preview_finished(self, preview: Any, error: Any):
             self.busy = False
             self.migration_preview_button.setEnabled(True)
+            self.migration_source_button.setEnabled(True)
+            self.migration_destination_button.setEnabled(True)
             if error is not None:
                 self.migration_preview = None
                 self.migration_status.setText(
@@ -494,6 +498,8 @@ def run() -> int:
             self.busy = True
             self.migration_preview_button.setEnabled(False)
             self.migration_execute_button.setEnabled(False)
+            self.migration_source_button.setEnabled(False)
+            self.migration_destination_button.setEnabled(False)
             self.migration_status.setText("Copying, verifying and publishing migrated data…")
             worker = BackupWorker(
                 lambda: controller.migrate_data(source, destination)
@@ -505,6 +511,8 @@ def run() -> int:
         def _migration_finished(self, result: Any, error: Any):
             self.busy = False
             self.migration_preview_button.setEnabled(True)
+            self.migration_source_button.setEnabled(True)
+            self.migration_destination_button.setEnabled(True)
             self.migration_execute_button.setEnabled(False)
             if error is not None:
                 self.migration_preview = None
@@ -1028,7 +1036,11 @@ def run() -> int:
             self.backup_passphrase.clear()
             self.backup_confirmation.clear()
             self.restore_passphrase.clear()
+            self.migration_source.clear()
+            self.migration_destination.clear()
             self._clear_migration_preview()
+            self.migration_source_button.setEnabled(True)
+            self.migration_destination_button.setEnabled(True)
             self.migration_status.setText("Sign in to use migration.")
             self.backup_status.setText("Sign in to use backup and restore.")
             self.task_approve_button.setEnabled(False)
