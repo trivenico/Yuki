@@ -62,9 +62,9 @@ class DesktopBackupTests(unittest.TestCase):
             db.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY, name TEXT)")
             db.execute("INSERT INTO tasks(name) VALUES ('preserved')")
             db.commit()
+            db.close()
             # A stale WAL sidecar must not be restored beside the SQLite backup snapshot.
             (source / "tasks.sqlite3-wal").write_bytes(b"stale-wal")
-            db.close()
             backup = root / "backup"
             create_encrypted_backup(source, backup, "a sufficiently long passphrase")
             destination = root / "restore"
