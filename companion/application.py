@@ -155,6 +155,23 @@ class CompanionApplicationService:
         except Exception as exc:
             raise ConversationError("Yuki could not safely cancel this task.") from exc
 
+    def approve_task(
+        self, *, actor_id: str, task_id: str, session_id: str,
+        expected_version: int,
+    ) -> TaskRecord:
+        """Approve the exact queued task definition for this authenticated session."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.approve(
+                actor_id=actor_id, task_id=task_id, session_id=session_id,
+                expected_version=expected_version,
+            )
+        except (PermissionError, ValueError, KeyError, WorkflowConflict):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely approve this task.") from exc
+
     def retry_task(
         self, *, actor_id: str, task_id: str, expected_version: int,
     ) -> TaskRecord:
