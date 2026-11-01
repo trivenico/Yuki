@@ -1,6 +1,6 @@
 # Desktop application architecture
 
-**Status:** architecture accepted; D1 import-safe package and D2 source implementation are present. The desktop now has an OS-keyring session manager, authenticated controller, login/chat window, and a window-scoped background provider worker using the shared companion service. Controller/session tests are included. The PySide6 UI has not yet been exercised in a real desktop runtime or on clean OS images; identity-bound task authorization, agent/task views, and packaging remain unfinished.
+**Status:** architecture accepted; D1 import-safe package and D2 source implementation are present. The desktop now has an OS-keyring session manager, authenticated controller, login/chat window, and a window-scoped background provider worker using the shared companion service. The controller now exposes identity-bound specialist listing, plan proposal/inspection/dispatch/cancellation, task summaries/progress, and version-bound task approval/cancellation methods. The launcher composes the existing authorized task runtime and specialist coordinator. Controller/session tests cover proposal-versus-dispatch and actor-scoped task access. The graphical specialist/task views are not yet wired; the PySide6 UI has not been exercised in a real desktop runtime or clean OS images; packaging remains unfinished.
 **Parent work:** companion service and structured provider chat on `feat/structured-provider-chat`.
 **Decision owner:** Yuki maintainers.
 
@@ -106,7 +106,7 @@ The UI thread must never perform provider calls, filesystem indexing, or worker 
 |---|---|---|
 | D1 | Optional desktop package and composition root | Imports cleanly without PySide6 installed; fails with a clear install hint when launched without it |
 | D2 | Chat and consent UX | Uses shared companion service; provider calls stay off the UI thread |
-| D3 | Specialist and plan review | Proposal and dispatch remain distinct; no automatic execution |
+| D3 | Specialist and plan review | Controller APIs and authorized service composition implemented; graphical review/dispatch views still pending |
 | D4 | Task activity and approval UX | Redacted progress; version-bound authenticated approval |
 | D5 | Native packaging | Clean-install smoke tests on each supported OS |
 | D6 | Release qualification | Security, privacy, accessibility, upgrade, rollback and license gates pass |
