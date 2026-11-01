@@ -178,8 +178,8 @@ class WorkflowRunStore:
         if len(set(names)) != len(names):
             raise ValueError("workflow step names must be unique.")
         canonical = [
-            {"name": name, "action": action, "argument": argument, "requires_approval": approval,
-             "required_permissions": list(permissions)}
+            ({"name": name, "action": action, "argument": argument, "requires_approval": approval}
+             | ({"required_permissions": list(permissions)} if permissions else {}))
             for name, action, argument, approval, permissions in validated
         ]
         _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
