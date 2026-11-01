@@ -72,6 +72,13 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(restored.execute("SELECT name FROM tasks").fetchone()[0], "preserved")
             restored.close()
 
+    def test_rejects_cross_platform_archive_path_traversal(self):
+        from ui.desktop.backup import _safe_archive_path
+        for name in ("../escape", "..\\\\escape", "C:/Windows/system.ini", "/absolute/path"):
+            with self.subTest(name=name):
+                with self.assertRaises(BackupError):
+                    _safe_archive_path(name)
+
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
