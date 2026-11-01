@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "providers/capabilities.py"
+      - "providers/task_routing.py"
       - "providers/openai_responses.py"
       - "providers/anthropic_messages.py"
       - "providers/factory.py"
@@ -11,6 +12,8 @@ on:
       - "tests/test_openai_responses_*.py"
       - "tests/test_anthropic_*.py"
       - "tests/test_provider_catalog.py"
+      - "tests/test_task_routing.py"
+      - "tests/test_provider_manager_task_routing.py"
       - "tests/test_provider_factory.py"
       - "yuki_providers.py"
       - "tests/test_provider_capabilities.py"
@@ -31,5 +34,5 @@ jobs:
           python-version: "3.11"
       - name: Run capability registry tests
         run: |
-          python -m unittest discover -s tests -p 'test_provider_capabilities.py'
+          python -m unittest tests.test_task_routing tests.test_provider_manager_task_routing discover -s tests -p 'test_provider_capabilities.py'
           python -m unittest tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_anthropic_messages_provider tests.test_anthropic_provider_registry tests.test_provider_factory tests.test_provider_catalog -v
