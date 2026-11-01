@@ -24,11 +24,14 @@ Run:
 
     python -m tools.secret_audit . --format text
     python -m tools.secret_audit . --format json
+    python -m tools.secret_audit . --format json --fail-on-findings
 
 This bounded heuristic scanner checks text files up to 1 MB, skips common
 generated/vendor directories and symlinks, and emits only a rule, path, line,
 and short SHA-256 fingerprint. It never prints matched credential values.
-A finding should be treated as sensitive: inspect it only in an authorized
+The default is report-only because heuristic matches can be false positives;
+use `--fail-on-findings` only after establishing and reviewing a baseline. A finding
+should be treated as sensitive: inspect it only in an authorized
 environment, rotate confirmed exposed credentials, and remove them from source
 history according to the organization's incident process.
 
