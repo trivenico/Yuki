@@ -102,7 +102,7 @@ class ConversationSession:
                     raise ConversationError("Saved memory context has an invalid entry.")
                 category = item.get("category", "note")
                 note = item.get("text")
-                if category not in {"note", "preference", "lesson"} or not isinstance(note, str) or not note.strip() or len(note) > 4000:
+                if not isinstance(category, str) or category not in {"note", "preference", "lesson"} or not isinstance(note, str) or not note.strip() or len(note) > 4000:
                     raise ConversationError("Saved memory context has an invalid entry.")
                 total_note_chars += len(note)
                 if total_note_chars > 4000:
