@@ -393,6 +393,40 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
 
+    def test_authenticated_cli_manages_owner_scoped_conversations(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(["conversations", "create", "--title", "Yuki project"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                created = json.loads(outputs[-1])
+                self.assertEqual(created["title"], "Yuki project")
+                conversation_id = created["conversation_id"]
+                code = run_cli(["conversations", "list"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn(conversation_id, outputs[-1])
+                code = run_cli(["conversations", "show", conversation_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(outputs[-1])["messages"], [])
+                code = run_cli(["conversations", "delete", conversation_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(outputs[-1])["deleted"], True)
+
+    def test_conversation_cli_requires_authentication(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=Path(temp_dir)):
+                code = run_cli(["conversations", "list"], output_fn=outputs.append)
+            self.assertEqual(code, 1)
+            self.assertIn("Sign in first", outputs[-1])
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
