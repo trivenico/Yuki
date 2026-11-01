@@ -1,4 +1,0 @@
-# Optional encrypted companion-memory backend.
-# Keys are stored in the OS keyring, not in this repository or beside memory data.
-cryptography>=44.0,<47.0
-keyring>=25.6,<27.0
