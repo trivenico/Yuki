@@ -97,15 +97,23 @@ class EncryptedMemoryStore(MemoryStore):
             "nonce": base64.b64encode(nonce).decode("ascii"),
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
         }, separators=(",", ":"))
+        if len(envelope.encode("utf-8")) > self.MAX_FILE_BYTES:
+            raise RuntimeError("Encrypted memory file would exceed the 10 MB safety limit.")
         fd, temp_name = tempfile.mkstemp(prefix=".yuki-memory-", suffix=".tmp", dir=str(self.path.parent))
         try:
             if os.name == "posix":
-                os.chmod(temp_name, 0o600)
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(envelope)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, self.path)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
         finally:
             try:
                 os.unlink(temp_name)
