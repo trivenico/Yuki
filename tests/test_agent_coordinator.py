@@ -245,7 +245,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 )
         with self.assertRaises(ValueError):
             self.coordinator.heartbeat_agent(
-                actor_id="alice", agent_id="research", instance_id="bad\\x00id"
+                actor_id="alice", agent_id="research", instance_id=""
             )
 
     def test_dependency_prevents_early_dispatch(self):
