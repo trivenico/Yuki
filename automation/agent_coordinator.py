@@ -17,6 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.task_runtime import TaskRecord, TaskRuntime
+from core.planner import Planner
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
 
@@ -392,6 +393,34 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+
+    def submit_model_plan(
+        self, *, provider, actor_id: str, idempotency_key: str, goal: str,
+    ) -> AgentPlan:
+        """Generate a bounded proposal, then route it through normal authorization.
+
+        Model output is untrusted planning data. It cannot declare permissions or
+        turn off approval; every generated subtask requires approval by default.
+        Existing capability routing, agent authorization, idempotency and durable
+        plan validation remain the enforcement boundary.
+        """
+        planner = Planner(max_steps=min(self.max_subtasks, 10), max_goal_chars=4_000)
+        proposed = planner.propose_with_provider(provider, goal)
+        subtasks = tuple(
+            SubtaskSpec(
+                subtask_id=item.task_id,
+                description=item.description,
+                required_capabilities=item.required_capabilities,
+                depends_on=item.depends_on,
+                requires_approval=True,
+            )
+            for item in proposed
+        )
+        return self.submit(
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+            subtasks=subtasks,
+        )
 
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
