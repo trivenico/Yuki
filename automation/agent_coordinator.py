@@ -375,9 +375,26 @@ class SpecialistAgentCoordinator:
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
 
-    def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
+    def _agent_loads(self) -> dict[str, int]:
+        """Count non-terminal assignments as a best-effort routing load signal."""
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT agent_id, COUNT(*) AS active_count
+                FROM agent_plan_subtasks
+                WHERE status NOT IN ('succeeded', 'failed', 'cancelled', 'blocked')
+                GROUP BY agent_id
+            """).fetchall()
+        return {row["agent_id"]: int(row["active_count"]) for row in rows}
+
+    def _route(
+        self, subtask: SubtaskSpec, *, reserved_load: dict[str, int] | None = None,
+    ) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
         needed_permissions = set(subtask.required_permissions)
+        loads = self._agent_loads()
+        if reserved_load:
+            for agent_id, count in reserved_load.items():
+                loads[agent_id] = loads.get(agent_id, 0) + count
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
@@ -386,8 +403,15 @@ class SpecialistAgentCoordinator:
             ]
             if not candidates:
                 raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
-            # Deterministic least-overprovisioned match, then stable ID tie-break.
-            return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+            # Hard-match capabilities/permissions, prefer fewer excess capabilities,
+            # then lower active load, then stable ID for deterministic tie-breaking.
+            return sorted(
+                candidates,
+                key=lambda agent: (
+                    len(agent.capabilities - needed), loads.get(agent.agent_id, 0),
+                    agent.agent_id,
+                ),
+            )[0]
 
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
@@ -397,7 +421,14 @@ class SpecialistAgentCoordinator:
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
-        assignments = {item.subtask_id: self._route(item) for item in items}
+        # Reserve in-plan assignments locally so a batch is spread across
+        # equally qualified agents instead of sending every subtask to one.
+        reserved_load: dict[str, int] = {}
+        assignments = {}
+        for item in items:
+            agent = self._route(item, reserved_load=reserved_load)
+            assignments[item.subtask_id] = agent
+            reserved_load[agent.agent_id] = reserved_load.get(agent.agent_id, 0) + 1
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
