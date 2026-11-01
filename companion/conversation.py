@@ -68,6 +68,22 @@ class ConversationSession:
     def current_role(self) -> dict:
         return self.role_engine.current()
 
+    def restore_history(self, messages: list[dict[str, str]]) -> None:
+        """Restore a validated user/assistant transcript from an authorized store."""
+        if not isinstance(messages, list) or len(messages) > self.max_history_messages or len(messages) % 2:
+            raise ValueError("messages must contain complete bounded user/assistant pairs.")
+        restored: list[dict[str, str]] = []
+        for index, item in enumerate(messages):
+            expected_role = "user" if index % 2 == 0 else "assistant"
+            if not isinstance(item, dict) or set(item) != {"role", "content"}:
+                raise ValueError("conversation history contains an invalid message.")
+            if item["role"] != expected_role or not isinstance(item["content"], str):
+                raise ValueError("conversation history must alternate user and assistant messages.")
+            if not item["content"].strip() or len(item["content"]) > self.MAX_REPLY_CHARS or "\\x00" in item["content"]:
+                raise ValueError("conversation history contains invalid message content.")
+            restored.append({"role": expected_role, "content": item["content"]})
+        self._history = restored
+
     def reset(self) -> None:
         """Clear this session's in-memory history."""
         self._history.clear()
