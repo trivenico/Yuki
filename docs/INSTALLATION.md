@@ -47,6 +47,22 @@ Use the exact current version reported by `tasks inspect`; stale versions are re
 
 The CLI currently opens its local task journal at `$YUKI_HOME/.yuki/tasks.sqlite3` (or the repository data root when `YUKI_HOME` is unset). Set `YUKI_TASK_DB` to use a shared journal path deliberately. The authenticated CLI commands do not yet create agent plans, dispatch workers, or expose arbitrary tool execution. Worker identities and execution remain separate from interactive user permissions. Keep the data directory and backups private.
 
+## Persistent companion conversations (early access)
+
+Sign in and create a private conversation:
+
+```bash
+yuki auth login
+yuki conversations create --title "Project planning"
+yuki conversations list
+yuki conversations show CONVERSATION_ID
+yuki chat --conversation-id CONVERSATION_ID
+```
+
+Each successful chat turn is saved to the local owner-scoped SQLite conversation store. The transcript is restored when the same conversation is reopened. Deleting a conversation deletes its messages. Conversation access is checked against the authenticated user and the existing workflow read/approval grants; another account cannot list or read the owner's conversation by ID.
+
+The store is located at `$YUKI_HOME/.yuki/conversations.sqlite3` when `YUKI_HOME` is configured, otherwise under the repository data root. It applies restrictive local file permissions where supported, bounded transcript size, and optimistic version checks to prevent concurrent sessions from silently overwriting each other. This is local persistence, not yet encrypted-at-rest or cloud-synchronized. Back up the file securely; desktop synchronization, retention/export controls, and server-side multi-device conflict resolution are future work. Ordinary `yuki chat` without `--conversation-id` remains temporary.
+
 ## Specialist-agent companion workflow (early access)
 
 After signing in, Yuki can list its built-in specialists and create a bounded plan for review:
