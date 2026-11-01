@@ -275,6 +275,7 @@ def task_permission_authorizer(auth_service, session_token_provider):
         "agent:read": "workflow:read",
         "agent:plan": "workflow:approve",
         "agent:dispatch": "workflow:approve",
+        "worker:run": "workflow:approve",
     }
 
     def authorize(actor_id, action, task_id):
