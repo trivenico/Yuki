@@ -1,0 +1,33 @@
+name: Unified frontier provider tests
+
+on:
+  pull_request:
+    paths:
+      - "providers/anthropic_messages.py"
+      - "providers/openai_responses.py"
+      - "providers/factory.py"
+      - "providers/catalog.py"
+      - "providers/__init__.py"
+      - "yuki_providers.py"
+      - "tests/test_anthropic_*.py"
+      - "tests/test_openai_responses_*.py"
+      - "tests/test_provider_factory.py"
+      - "tests/test_provider_catalog.py"
+      - "docs/FRONTIER_INTELLIGENCE_ARCHITECTURE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Run mocked, network-free provider tests
+        run: |
+          python -m unittest tests.test_anthropic_messages_provider tests.test_anthropic_provider_registry tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_provider_factory tests.test_provider_catalog -v
