@@ -77,7 +77,7 @@ def run() -> int:
             QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
             QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
             QStackedWidget, QVBoxLayout, QWidget, QTabWidget,
-            QListWidget, QListWidgetItem, QTextEdit,
+            QListWidget, QListWidgetItem, QTextEdit, QFileDialog,
         )
     except ImportError as exc:
         raise RuntimeError(
@@ -123,6 +123,22 @@ def run() -> int:
                 self.signals.finished.emit(
                     self.controller.propose_agent_plan(self.goal), None
                 )
+            except Exception as exc:
+                self.signals.finished.emit(None, exc)
+
+    class BackupWorkerSignals(QObject):
+        finished = Signal(object, object)
+
+    class BackupWorker(QRunnable):
+        def __init__(self, operation):
+            super().__init__()
+            self.operation = operation
+            self.signals = BackupWorkerSignals()
+
+        @Slot()
+        def run(self):
+            try:
+                self.signals.finished.emit(self.operation(), None)
             except Exception as exc:
                 self.signals.finished.emit(None, exc)
 
@@ -271,7 +287,174 @@ def run() -> int:
             tasks_layout.addLayout(task_actions)
             tabs.addTab(tasks_page, "Tasks")
 
+            backup_page = QWidget()
+            backup_layout = QVBoxLayout(backup_page)
+            backup_layout.addWidget(QLabel("Create a portable encrypted backup of your Yuki profile."))
+            backup_layout.addWidget(QLabel(
+                "Choose a new backup file and a passphrase of at least 12 characters. "
+                "Yuki cannot recover a lost passphrase."
+            ))
+            self.backup_path = QLineEdit()
+            self.backup_path.setReadOnly(True)
+            backup_path_row = QHBoxLayout()
+            backup_path_row.addWidget(self.backup_path, 1)
+            choose_backup = QPushButton("Choose backup file…")
+            choose_backup.clicked.connect(self._choose_backup_path)
+            backup_path_row.addWidget(choose_backup)
+            backup_layout.addLayout(backup_path_row)
+            self.backup_passphrase = QLineEdit()
+            self.backup_passphrase.setEchoMode(QLineEdit.Password)
+            self.backup_passphrase.setPlaceholderText("Backup passphrase")
+            self.backup_confirmation = QLineEdit()
+            self.backup_confirmation.setEchoMode(QLineEdit.Password)
+            self.backup_confirmation.setPlaceholderText("Confirm backup passphrase")
+            backup_layout.addWidget(self.backup_passphrase)
+            backup_layout.addWidget(self.backup_confirmation)
+            self.backup_create_button = QPushButton("Create encrypted backup")
+            self.backup_create_button.clicked.connect(self._create_backup)
+            backup_layout.addWidget(self.backup_create_button)
+            backup_layout.addWidget(QLabel("Restore into a separate, empty folder. The active Yuki profile is never overwritten."))
+            self.restore_path = QLineEdit()
+            self.restore_path.setReadOnly(True)
+            restore_file_row = QHBoxLayout()
+            restore_file_row.addWidget(self.restore_path, 1)
+            choose_restore = QPushButton("Choose backup…")
+            choose_restore.clicked.connect(self._choose_restore_path)
+            restore_file_row.addWidget(choose_restore)
+            backup_layout.addLayout(restore_file_row)
+            self.restore_destination = QLineEdit()
+            self.restore_destination.setReadOnly(True)
+            restore_destination_row = QHBoxLayout()
+            restore_destination_row.addWidget(self.restore_destination, 1)
+            choose_destination = QPushButton("Choose empty destination…")
+            choose_destination.clicked.connect(self._choose_restore_destination)
+            restore_destination_row.addWidget(choose_destination)
+            backup_layout.addLayout(restore_destination_row)
+            self.restore_passphrase = QLineEdit()
+            self.restore_passphrase.setEchoMode(QLineEdit.Password)
+            self.restore_passphrase.setPlaceholderText("Backup passphrase")
+            backup_layout.addWidget(self.restore_passphrase)
+            self.backup_restore_button = QPushButton("Restore into selected folder")
+            self.backup_restore_button.clicked.connect(self._restore_backup)
+            backup_layout.addWidget(self.backup_restore_button)
+            self.backup_status = QLabel("Backup and restore are available after signing in.")
+            self.backup_status.setWordWrap(True)
+            backup_layout.addWidget(self.backup_status)
+            backup_layout.addStretch(1)
+            tabs.addTab(backup_page, "Backup & Restore")
+
             self.pages.addWidget(tabs)
+
+        def _choose_backup_path(self):
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Create Yuki backup", "Yuki-backup.yukibak",
+                "Yuki encrypted backup (*.yukibak);;All files (*)",
+            )
+            if path:
+                self.backup_path.setText(path)
+
+        def _choose_restore_path(self):
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Yuki backup", "",
+                "Yuki encrypted backup (*.yukibak);;All files (*)",
+            )
+            if path:
+                self.restore_path.setText(path)
+
+        def _choose_restore_destination(self):
+            path = QFileDialog.getExistingDirectory(self, "Choose an empty restore folder")
+            if path:
+                self.restore_destination.setText(path)
+
+        def _run_backup_operation(self, operation, label):
+            if self.controller is None or self.busy:
+                return
+            self.busy = True
+            self.backup_create_button.setEnabled(False)
+            self.backup_restore_button.setEnabled(False)
+            self.backup_status.setText(label)
+            worker = BackupWorker(operation)
+            worker.signals.finished.connect(self._backup_finished)
+            self.pool.start(worker)
+
+        def _create_backup(self):
+            if self.controller is None:
+                return
+            destination = self.backup_path.text().strip()
+            passphrase = self.backup_passphrase.text()
+            confirmation = self.backup_confirmation.text()
+            self.backup_passphrase.clear()
+            self.backup_confirmation.clear()
+            if not destination:
+                self.backup_status.setText("Choose a new backup file first.")
+                return
+            if len(passphrase) < 12 or len(passphrase) > 1024:
+                self.backup_status.setText("Passphrase must contain 12-1024 characters.")
+                return
+            if passphrase != confirmation:
+                self.backup_status.setText("Passphrases do not match. Nothing was written.")
+                return
+            answer = QMessageBox.question(
+                self, "Create encrypted backup",
+                "Yuki will create an encrypted copy of its local profile. "
+                "Keep the passphrase safe; it cannot be recovered. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            controller = self.controller
+            self._run_backup_operation(
+                lambda: controller.create_backup(destination, passphrase),
+                "Creating and verifying encrypted backup…",
+            )
+
+        def _restore_backup(self):
+            if self.controller is None:
+                return
+            backup = self.restore_path.text().strip()
+            destination = self.restore_destination.text().strip()
+            passphrase = self.restore_passphrase.text()
+            self.restore_passphrase.clear()
+            if not backup or not destination or not passphrase:
+                self.backup_status.setText("Choose a backup, an empty destination, and its passphrase.")
+                return
+            answer = QMessageBox.warning(
+                self, "Restore backup",
+                "Restore will create a separate data directory. Existing files are never overwritten. "
+                "This will not replace the currently running Yuki profile. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+            controller = self.controller
+            self._run_backup_operation(
+                lambda: controller.restore_backup(backup, destination, passphrase),
+                "Authenticating and restoring backup into the selected folder…",
+            )
+
+        @Slot(object, object)
+        def _backup_finished(self, result: Any, error: Any):
+            self.busy = False
+            self.backup_create_button.setEnabled(True)
+            self.backup_restore_button.setEnabled(True)
+            if error is not None:
+                self.backup_status.setText(
+                    "Backup operation failed (" + type(error).__name__ + "). "
+                    "No existing profile data was overwritten."
+                )
+                if isinstance(error, PermissionError):
+                    self._return_to_login()
+                return
+            if "path" in result:
+                self.backup_status.setText(
+                    f"Encrypted backup verified: {result['file_count']} files, "
+                    f"{result['size_bytes']} bytes. Output: {result['path']}"
+                )
+            else:
+                self.backup_status.setText(
+                    f"Restore verified: {result['file_count']} files, "
+                    f"{result['size_bytes']} bytes. Destination: {result['destination']}"
+                )
 
         def _initialize(self):
             try:
@@ -662,6 +845,10 @@ def run() -> int:
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
+            self.backup_passphrase.clear()
+            self.backup_confirmation.clear()
+            self.restore_passphrase.clear()
+            self.backup_status.setText("Sign in to use backup and restore.")
             self.task_approve_button.setEnabled(False)
             self.task_cancel_button.setEnabled(False)
             self.current_plan = None
