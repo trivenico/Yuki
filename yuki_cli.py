@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     task_list = task_sub.add_parser("list", help="List authorized task summaries")
     task_list.add_argument("--state", choices=["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"])
     task_list.add_argument("--limit", type=int, default=50)
+    task_events = task_sub.add_parser("events", help="Read a bounded page of task progress events")
+    task_events.add_argument("task_id")
+    task_events.add_argument("--after-sequence", type=int, default=0)
+    task_events.add_argument("--limit", type=int, default=100)
     task_inspect = task_sub.add_parser("inspect", help="Inspect an authorized task")
     task_inspect.add_argument("task_id")
     for action in ("approve", "cancel", "retry"):
@@ -234,6 +238,24 @@ def run_cli(
                     "version": item.version, "attempts": item.attempts,
                     "created_at": item.created_at, "updated_at": item.updated_at,
                 } for item in records], output_fn)
+                return 0
+            if args.task_command == "events":
+                if args.after_sequence < 0 or not 1 <= args.limit <= 500:
+                    output_fn("Yuki: --after-sequence must be non-negative and --limit must be 1-500.")
+                    return 2
+                events = runtime.events(
+                    actor_id=actor_id, task_id=args.task_id,
+                    after_sequence=args.after_sequence, limit=args.limit,
+                )
+                _write_json([{
+                    "event_id": event.event_id,
+                    "task_id": event.task_id,
+                    "sequence": event.sequence,
+                    "kind": event.kind,
+                    "actor_id": event.actor_id,
+                    "payload": event.payload,
+                    "created_at": event.created_at,
+                } for event in events], output_fn)
                 return 0
             if args.task_command == "inspect":
                 record = runtime.get(actor_id=actor_id, task_id=args.task_id)
