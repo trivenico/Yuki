@@ -122,6 +122,13 @@ class EvolutionOrchestrator:
             raise EvolutionOrchestrationError("plan digest does not match canonical plan content.")
         return plan
 
+    @staticmethod
+    def _assert_plan_integrity(plan: EvolutionPlan) -> None:
+        current = plan_digest(plan_id=plan.plan_id, actor_id=plan.actor_id,
+                              summary=plan.summary, changes=plan.changes)
+        if current != plan.plan_digest:
+            raise EvolutionOrchestrationError("plan content changed after approval; execution blocked.")
+
     def _record(self, actor_id: str, plan: EvolutionPlan | None, stage: str,
                 metadata: dict[str, Any] | None = None) -> None:
         event = {
@@ -159,6 +166,7 @@ class EvolutionOrchestrator:
             self._record(actor_id, plan, "approval_denied")
             raise EvolutionOrchestrationError("explicit approval for this exact plan is required.")
         self._record(actor_id, plan, "approved")
+        self._assert_plan_integrity(plan)
 
         try:
             execution = self.executor(plan)
@@ -174,6 +182,7 @@ class EvolutionOrchestrator:
                 or len(execution.result_ref) > 512):
             self._record(actor_id, plan, "execution_invalid")
             raise EvolutionOrchestrationError("execution evidence is malformed.")
+        self._assert_plan_integrity(plan)
         self._record(actor_id, plan, "executed", {"execution_id": execution.execution_id,
                                                   "commit_sha": execution.commit_sha})
 
