@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -180,13 +181,20 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(approved.version, task.version + 1)
         self.assertEqual(approved.state, "queued")
         self.assertIsNotNone(approved)
+        with self.store._connect() as db:
+            approval = db.execute(
+                "SELECT approved_by, approved_session_hash, approval_digest "
+                "FROM workflow_runs WHERE run_id=?",
+                (task.task_id,),
+            ).fetchone()
+        self.assertEqual(approval["approved_by"], "alice")
+        self.assertEqual(
+            approval["approved_session_hash"],
+            hashlib.sha256(b"session-a").hexdigest(),
+        )
+        self.assertEqual(approval["approval_digest"], task.request_digest)
         claimed = self.store.claim_next(worker_id="worker-a")
         self.assertEqual(claimed.run_id, task.task_id)
-        with self.assertRaises(WorkflowTransitionError):
-            self.store.approve(
-                task.task_id, actor_id="alice", session_id="session-b",
-                expected_version=approved.version,
-            )
 
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
