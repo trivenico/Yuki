@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import sqlite3
 from typing import Callable, Iterable
+from contextlib import contextmanager
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
 _MAX_BODY = 8_000
@@ -81,13 +82,21 @@ class AgentMessageBus:
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_inbox ON agent_messages(recipient_id, message_id)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_messages_thread ON agent_messages(thread_id, message_id)")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA synchronous=FULL")
-        return db
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         try:
