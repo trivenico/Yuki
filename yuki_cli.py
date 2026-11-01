@@ -199,7 +199,7 @@ def run_cli(
             if not message.strip():
                 continue
             try:
-                memory_context = memory.context_entries()
+                memory_context = memory.context_entries(query=message)
             except Exception:
                 output_fn("Yuki> I could not safely read saved-memory context; no request was sent.")
                 continue
