@@ -68,7 +68,7 @@ def run() -> int:
             super().__init__()
             self.setWindowTitle("Yuki")
             self.setMinimumSize(820, 620)
-            self.pool = QThreadPool.globalInstance()
+            self.pool = QThreadPool(self)
             self.pool.setMaxThreadCount(1)
             self.auth = None
             self.sessions = None
