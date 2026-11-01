@@ -21,7 +21,7 @@ _CATALOG = (
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
     {"name":"openai_responses","label":"OpenAI Responses API","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text"],"model_env":"YUKI_OPENAI_RESPONSES_MODEL","key_env":"OPENAI_API_KEY"},
-    {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
+    {"name":"anthropic","label":"Anthropic Messages API","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
     {"name":"deepseek","label":"DeepSeek API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text"],"model_env":"YUKI_DEEPSEEK_MODEL","key_env":"DEEPSEEK_API_KEY"},
@@ -77,12 +77,12 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
                                   and str(env.get(key_name, "")).strip())
         status = manager.get(item["name"], {})
         implemented = bool(status.get("implemented", item["implemented"]))
-        if item["name"] in {"anthropic","deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
+        if item["name"] in {"deepseek","kimi","minimax","openrouter","tokenrouter","huggingface"}:
             implemented = False
         if item["name"] == "mock":
             ready = False
             reason = "test_only_adapter_not_exposed"
-        elif item["name"] in {"openai", "openai_responses"}:
+        elif item["name"] in {"openai", "openai_responses", "anthropic"}:
             ready = bool(model and configured_key)
             reason = "api_key_and_model_configured" if ready else (
                 "api_key_not_configured" if not configured_key else "model_not_configured"
