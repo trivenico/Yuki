@@ -34,11 +34,21 @@ class CompanionApplicationService:
             raise TypeError("task_runtime must be a TaskRuntime instance.")
         if session is not None and session.provider is not provider:
             raise ValueError("session and application service must use the same provider.")
+        if (
+            agent_coordinator is not None and task_runtime is not None
+            and agent_coordinator.runtime is not task_runtime
+        ):
+            raise ValueError("agent coordinator and companion service must share the same task runtime.")
         self.memory = memory or CompanionMemory()
         self.session = session or ConversationSession(provider)
         self.agent_coordinator = agent_coordinator
-        self.task_runtime = task_runtime
-        self.task_updates = CompanionTaskUpdates(task_runtime) if task_runtime is not None else None
+        self.task_runtime = task_runtime or (
+            agent_coordinator.runtime if agent_coordinator is not None else None
+        )
+        self.task_updates = (
+            CompanionTaskUpdates(self.task_runtime)
+            if self.task_runtime is not None else None
+        )
 
     def respond(self, message: str) -> ConversationReply:
         """Respond using only explicitly enabled, relevant saved-memory context."""
