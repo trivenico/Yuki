@@ -6,6 +6,9 @@ from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError
 from companion.memory import MemoryStore
 from companion.memory_consent import CompanionMemory
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 
 
 class FakeProvider:
@@ -55,6 +58,64 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         self.assertIn("Current interaction role: developer", self.provider.prompts[0][0])
         self.app.reset_conversation()
         self.assertEqual(self.app.session.history(), ())
+
+    def test_agent_proposal_is_separate_from_dispatch_and_execution(self):
+        import json
+
+        class PlanningProvider(FakeProvider):
+            def generate_chat(self, system, messages):
+                self.prompts.append((system, messages))
+                return json.dumps({"tasks": [{
+                    "task_id": "research",
+                    "description": "Research the requested topic",
+                    "required_capabilities": ["research"],
+                    "depends_on": [],
+                }]})
+
+        provider = PlanningProvider()
+        db_path = str(Path(self.temp.name) / "agent-tasks.sqlite3")
+        store = WorkflowRunStore(db_path)
+        runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task: actor == "alice" and action in {
+                "task:create", "task:read",
+            },
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime, db_path,
+            [SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit")],
+            authorize=lambda actor, action, plan: actor == "alice" and action in {
+                "agent:plan", "agent:dispatch", "agent:read",
+            },
+        )
+        memory = CompanionMemory(MemoryStore(str(Path(self.temp.name) / "agent-memory.json")))
+        app = CompanionApplicationService(
+            provider, memory=memory, agent_coordinator=coordinator,
+        )
+
+        proposed = app.propose_agent_task(
+            actor_id="alice", idempotency_key="companion-research",
+            goal="Research the requested topic",
+        )
+        self.assertIsNone(proposed.subtasks[0].task_id)
+        self.assertEqual(proposed.subtasks[0].status, "pending")
+        self.assertTrue(proposed.subtasks[0].requires_approval)
+        self.assertEqual(store.list_runs(limit=10), [])
+
+        queued = app.dispatch_agent_plan(actor_id="alice", plan_id=proposed.plan_id)
+        self.assertIsNotNone(queued.subtasks[0].task_id)
+        task = runtime.get(actor_id="alice", task_id=queued.subtasks[0].task_id)
+        self.assertTrue(task.steps[0]["requires_approval"])
+        self.assertNotEqual(task.state, "succeeded")
+
+    def test_agent_operations_fail_closed_when_coordinator_missing(self):
+        with self.assertRaises(ConversationError):
+            self.app.propose_agent_task(
+                actor_id="alice", idempotency_key="no-coordinator",
+                goal="Research this",
+            )
+        with self.assertRaises(ConversationError):
+            self.app.dispatch_agent_plan(actor_id="alice", plan_id="unknown")
 
     def test_service_rejects_mismatched_provider_session(self):
         from companion.conversation import ConversationSession
