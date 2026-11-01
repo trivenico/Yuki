@@ -39,6 +39,31 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_privileged_subtasks_cannot_disable_human_approval(self):
+        with self.assertRaisesRegex(AgentPlanError, "cannot disable explicit approval"):
+            self.coordinator.submit(
+                actor_id="alice",
+                idempotency_key="privileged-without-approval",
+                subtasks=[
+                    SubtaskSpec(
+                        "collect", "Read approved web sources", ("research",),
+                        requires_approval=False, required_permissions=("web:read",),
+                    ),
+                ],
+            )
+        # Non-privileged internal tasks may still opt out when explicitly planned.
+        plan = self.coordinator.submit(
+            actor_id="alice",
+            idempotency_key="internal-no-approval",
+            subtasks=[
+                SubtaskSpec(
+                    "summarize", "Summarize supplied text", ("summarize",),
+                    requires_approval=False,
+                ),
+            ],
+        )
+        self.assertFalse(plan.subtasks[0].requires_approval)
+
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
             "translator", "Translation specialist", frozenset({"translate"}), "emit",
