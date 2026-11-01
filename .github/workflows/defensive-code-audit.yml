@@ -1,0 +1,36 @@
+name: Defensive code auditor
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: defensive-code-auditor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Test defensive code auditor
+        run: python -m unittest tests.test_defensive_code_audit -v
+      - name: Generate static security triage report
+        run: python -m tools.defensive_code_audit . --format json --fail-on critical > defensive-code-audit.json
+      - name: Upload security triage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-defensive-code-audit
+          path: defensive-code-audit.json
+          if-no-files-found: error
+          retention-days: 14
