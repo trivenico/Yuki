@@ -93,6 +93,7 @@ class CompanionApplicationServiceTests(unittest.TestCase):
             provider, memory=memory, agent_coordinator=coordinator,
         )
         self.assertIs(app.task_runtime, runtime)
+        self.assertEqual(app.list_specialists(actor_id="alice")[0]["agent_id"], "research")
 
         proposed = app.propose_agent_task(
             actor_id="alice", idempotency_key="companion-research",
@@ -110,6 +111,21 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         task = runtime.get(actor_id="alice", task_id=queued.subtasks[0].task_id)
         self.assertTrue(task.steps[0]["requires_approval"])
         self.assertNotEqual(task.state, "succeeded")
+
+    def test_specialist_catalog_requires_coordinator_and_registry_permission(self):
+        with self.assertRaises(ConversationError):
+            self.app.list_specialists(actor_id="alice")
+
+        db_path = str(Path(self.temp.name) / "specialist-list.sqlite3")
+        runtime = TaskRuntime(WorkflowRunStore(db_path))
+        coordinator = SpecialistAgentCoordinator(
+            runtime, db_path,
+            [SpecialistAgent("research", "Research", frozenset({"research"}), "emit")],
+            authorize=lambda actor, action, plan: actor == "alice" and action == "agent:plan",
+        )
+        app = CompanionApplicationService(self.provider, agent_coordinator=coordinator)
+        with self.assertRaises(PermissionError):
+            app.list_specialists(actor_id="alice")
 
     def test_agent_operations_fail_closed_when_coordinator_missing(self):
         with self.assertRaises(ConversationError):
