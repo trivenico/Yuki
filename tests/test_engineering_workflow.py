@@ -107,6 +107,9 @@ class EngineeringWorkflowTests(unittest.TestCase):
 
     def test_inspection_permission_failure_stops_before_edit(self):
         read_only = ToolPrincipal("engineering-worker", frozenset({"workspace:read"}))
+        # The authenticated session itself is read-only. This reaches the inspection
+        # tool's permission check instead of failing the workflow identity check first.
+        self.workflow.principal_resolver = lambda: read_only
         change = FileChange(
             "README.md", hashlib.sha256(self.readme.read_bytes()).hexdigest(),
             "should not apply\n",
