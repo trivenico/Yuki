@@ -30,15 +30,17 @@ python -m pip check
 python -m PyInstaller --noconfirm --clean --windowed --onedir --name Yuki --paths . --collect-all PySide6 --collect-all shiboken6 --collect-all keyring --collect-submodules keyring.backends ui/desktop/launch.py
 ```
 
-The output is under `dist/Yuki/` (`Yuki.exe` on Windows). Keep the complete
-directory; the executable depends on its bundled support files.
+The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS. Keep the complete directory or app bundle; the executable depends on its bundled support files.
 
 ## CI artifacts
 
-The `Yuki desktop build` workflow builds on native Windows, macOS, and Linux
-runners and uploads short-lived unsigned developer bundles. These artifacts
-are for smoke testing, not public release. The workflow does not sign, notarize,
-publish, or auto-update the application.
+The `Yuki quality gates` workflow builds on native Windows, macOS, and Linux
+runners and uploads short-lived unsigned developer bundles together with a
+CycloneDX SBOM for the build environment and a portable SHA-256 manifest for
+every regular bundle file. The manifest records relative paths, sizes, file
+modes, hashes, source commit/ref, and platform metadata; it does not contain
+absolute build paths. These artifacts are for smoke testing, not public release.
+The workflow does not sign, notarize, publish, or auto-update the application.
 
 ## Release blockers
 
