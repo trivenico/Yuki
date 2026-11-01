@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 def executable_for(bundle: Path) -> Path:
+    if not bundle.exists() and Path(str(bundle) + ".app").is_dir():
+        bundle = Path(str(bundle) + ".app")
     if sys.platform == "darwin":
         candidates = [bundle / "Contents" / "MacOS" / "Yuki"]
     elif sys.platform == "win32":
