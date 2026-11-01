@@ -26,7 +26,7 @@ class FakeStream:
 class FakeProcess:
     def __init__(self, code=0, stdout=(), stderr=()):
         self.pid = 987654
-        self.returncode = None
+        self.returncode = code
         self.stdout = FakeStream(stdout)
         self.stderr = FakeStream(stderr)
         self._code = code
@@ -120,6 +120,7 @@ class SupervisorTests(unittest.TestCase):
     def test_output_is_capped_across_both_streams(self):
         self.process.stdout = FakeStream([b"x" * 48])
         self.process.stderr = FakeStream([b"y" * 48])
+        self.process.returncode = None
         self.process.poll = lambda: None
         def wait(timeout=None):
             self.process.returncode = 0
@@ -132,6 +133,7 @@ class SupervisorTests(unittest.TestCase):
     def test_cancel_signal_is_observed(self):
         event = threading.Event()
         event.set()
+        self.process.returncode = None
         self.process.poll = lambda: None
         def wait(timeout=None):
             self.process.returncode = -15
