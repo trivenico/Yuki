@@ -41,7 +41,7 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         state = start_evolution(self.root)
         worktree = Path(state["worktree"])
         self.assertTrue(worktree.is_dir())
-        self.assertEqual(self.git("rev-parse", state["checkpoint_tag"]), state["base_commit"])
+        self.assertEqual(self.git("rev-parse", state["checkpoint_tag"] + "^{commit}"), state["base_commit"])
         self.assertEqual(
             subprocess.run(["git", "-C", str(worktree), "branch", "--show-current"],
                            check=True, capture_output=True, text=True).stdout.strip(),
@@ -64,7 +64,7 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         result = discard_evolution(self.root, identifier, force=True)
         self.assertTrue(result["discarded"])
         self.assertFalse(worktree.exists())
-        self.assertEqual(self.git("rev-parse", state["checkpoint_tag"]), state["base_commit"])
+        self.assertEqual(self.git("rev-parse", state["checkpoint_tag"] + "^{commit}"), state["base_commit"])
 
     def test_invalid_identifier_is_rejected(self):
         with self.assertRaisesRegex(EvolutionError, "invalid evolution identifier"):
