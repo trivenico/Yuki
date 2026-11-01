@@ -459,16 +459,22 @@ def run() -> int:
             ]
             lines.extend(f"  • {name}" for name in preview.files[:200])
             if len(preview.files) > 200:
-                lines.append(f"  … and {len(preview.files) - 200} more files")
+                lines.append(
+                    f"  … {len(preview.files) - 200} additional files are not listed in this preview"
+                )
             lines.extend([
                 "",
                 "SQLite databases are snapshotted and integrity-checked.",
                 "Other files are SHA-256 verified.",
                 "The original source is retained.",
                 "The destination must remain empty until migration starts.",
+                "Initial safety limits: 20,000 files and 2 GiB total.",
+                "For more than 200 files, only the first 200 paths are displayed.",
             ])
             self.migration_preview_view.setPlainText("\\n".join(lines))
-            self.migration_status.setText("Preview complete. Review every path before proceeding.")
+            self.migration_status.setText(
+                "Preview complete. Review the source, destination, size, file count and displayed paths."
+            )
             self.migration_execute_button.setEnabled(True)
 
         def _execute_migration(self):
