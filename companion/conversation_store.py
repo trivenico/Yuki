@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import re
@@ -127,7 +126,7 @@ class ConversationStore:
         conversation_id = uuid.uuid4().hex
         now = self._now()
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 db.execute(
                     "INSERT INTO companion_conversations(conversation_id,owner_id,title,created_at,updated_at) VALUES(?,?,?,?,?)",
                     (conversation_id, owner, title.strip(), now, now),
