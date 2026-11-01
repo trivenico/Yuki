@@ -154,6 +154,35 @@ class CompanionApplicationService:
         except Exception as exc:
             raise ConversationError("Yuki could not safely cancel this task.") from exc
 
+    def retry_task(
+        self, *, actor_id: str, task_id: str, expected_version: int,
+    ) -> TaskRecord:
+        """Create a fresh, approval-reset retry for failed/interrupted work."""
+        if self.task_runtime is None:
+            raise ConversationError("Yuki's supervised task runtime is not configured.")
+        try:
+            return self.task_runtime.retry_failed(
+                actor_id=actor_id, task_id=task_id,
+                expected_version=expected_version,
+            )
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely retry this task.") from exc
+
+    def cancel_agent_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Cancel pending and dispatched work through the authorized coordinator."""
+        if self.agent_coordinator is None:
+            raise ConversationError("Yuki's supervised agent coordinator is not configured.")
+        try:
+            return self.agent_coordinator.cancel_plan(
+                actor_id=actor_id, plan_id=plan_id,
+            )
+        except (PermissionError, ValueError, KeyError):
+            raise
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely cancel this agent plan.") from exc
+
     def set_role(self, name: str) -> dict:
         return self.session.set_role(name)
 
