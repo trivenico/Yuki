@@ -78,7 +78,7 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         runtime = TaskRuntime(
             store,
             authorize=lambda actor, action, task: actor == "alice" and action in {
-                "task:create", "task:read",
+                "task:create", "task:read", "task:list",
             },
         )
         coordinator = SpecialistAgentCoordinator(
@@ -101,6 +101,8 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         self.assertIsNone(proposed.subtasks[0].task_id)
         self.assertEqual(proposed.subtasks[0].status, "pending")
         self.assertTrue(proposed.subtasks[0].requires_approval)
+        reviewed = app.get_agent_plan(actor_id="alice", plan_id=proposed.plan_id)
+        self.assertEqual(reviewed.plan_id, proposed.plan_id)
         self.assertEqual(store.list_runs(limit=10), [])
 
         queued = app.dispatch_agent_plan(actor_id="alice", plan_id=proposed.plan_id)
@@ -154,6 +156,42 @@ class CompanionApplicationServiceTests(unittest.TestCase):
             after_sequence=updates[-1].sequence,
         )
         self.assertEqual([item.kind for item in final_updates], ["task.cancelled"])
+
+    def test_companion_lists_only_redacted_task_summaries(self):
+        db_path = str(Path(self.temp.name) / "companion-task-list.sqlite3")
+        store = WorkflowRunStore(db_path)
+        runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task: actor == "alice" and action in {
+                "task:create", "task:read", "task:list",
+            },
+        )
+        runtime.enqueue(
+            actor_id="alice", idempotency_key="list-task",
+            name="private workflow title",
+            steps=[{"name": "step", "action": "emit", "argument": "private input",
+                    "requires_approval": False}],
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        summaries = app.list_tasks(actor_id="alice", limit=10)
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].name, "private workflow title")
+        self.assertFalse(hasattr(summaries[0], "steps"))
+        self.assertFalse(hasattr(summaries[0], "result"))
+
+    def test_companion_task_list_requires_task_list_permission(self):
+        db_path = str(Path(self.temp.name) / "companion-task-list-denied.sqlite3")
+        runtime = TaskRuntime(
+            WorkflowRunStore(db_path),
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:read",
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        with self.assertRaises(PermissionError):
+            app.list_tasks(actor_id="alice")
 
     def test_companion_task_controls_fail_closed_without_runtime(self):
         with self.assertRaises(ConversationError):
