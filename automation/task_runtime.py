@@ -84,7 +84,21 @@ class TaskRuntime:
 
     @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
-        return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
+        # Keep storage state as "queued" so the existing atomic approval
+        # transaction can authorize it, but expose a distinct waiting state to
+        # supervisors and companion clients until approval is bound to the
+        # current workflow definition and authenticated session.
+        state = run.state
+        if (
+            state == "queued"
+            and WorkflowRunStore._requires_approval(run.definition)
+            and not (
+                run.approved_by and run.approved_at and run.approved_session_hash
+                and run.approval_digest == run.request_digest
+            )
+        ):
+            state = "waiting_approval"
+        return TaskRecord(run.run_id, run.workflow_name, state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at)
 
