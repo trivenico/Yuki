@@ -1,12 +1,23 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from companion.memory import MemoryStore
 from companion.memory_consent import CompanionMemory, MemoryConsentError
+from companion.secure_memory import EncryptedMemoryStore
 
 
 class CompanionMemoryConsentTests(unittest.TestCase):
+    def test_encrypted_memory_can_be_selected_explicitly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.enc.json"
+            with patch.dict("os.environ", {"YUKI_MEMORY_ENCRYPTION": "1", "YUKI_MEMORY_PATH": str(path)}):
+                with patch("companion.secure_memory.EncryptedMemoryStore.__init__", return_value=None):
+                    manager = CompanionMemory()
+            self.assertIsInstance(manager._store, EncryptedMemoryStore)
+            self.assertEqual(manager._store.path, path.resolve())
+
     def test_memory_is_disabled_by_default_and_writes_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CompanionMemory(MemoryStore(Path(directory) / "memory.json"))
