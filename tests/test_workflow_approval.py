@@ -14,7 +14,10 @@ class WorkflowApprovalServiceTests(unittest.TestCase):
         self.run = self.store.create(
             idempotency_key="approval-service",
             workflow_name="release",
-            definition=[{"name": "publish", "action": "emit", "argument": "release", "requires_approval": True}],
+            definition=[{
+                "name": "publish", "action": "emit", "argument": "release",
+                "requires_approval": True, "required_permissions": ["release:publish"],
+            }],
         )
         self.contexts = {
             "valid-request": AuthenticatedPrincipal(
@@ -29,6 +32,17 @@ class WorkflowApprovalServiceTests(unittest.TestCase):
         self.service = WorkflowApprovalService(
             self.store, principal_resolver=lambda ctx: self.contexts[ctx],
         )
+
+    def test_approval_requirements_show_permissions_without_exposing_arguments(self):
+        summary = self.service.approval_requirements(
+            self.run.run_id, request_context="valid-request",
+        )
+        self.assertEqual(summary["steps"][0]["required_permissions"], ("release:publish",))
+        self.assertNotIn("argument", summary["steps"][0])
+        with self.assertRaises(PermissionError):
+            self.service.approval_requirements(
+                self.run.run_id, request_context="read-only-request",
+            )
 
     def test_approval_uses_principal_from_trusted_resolver(self):
         approved = self.service.approve(
