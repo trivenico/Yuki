@@ -657,6 +657,16 @@ def run() -> int:
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
+            self.transcript.clear()
+            self.specialist_list.clear()
+            self.task_list.clear()
+            self.task_progress_view.clear()
+            self.task_approve_button.setEnabled(False)
+            self.task_cancel_button.setEnabled(False)
+            self.current_plan = None
+            self.plan_details.clear()
+            self.plan_dispatch_button.setEnabled(False)
+            self.plan_cancel_button.setEnabled(False)
             self.pages.setCurrentIndex(0)
 
         def _logout(self):
