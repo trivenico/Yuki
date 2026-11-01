@@ -31,12 +31,12 @@ class ProviderCatalogTests(unittest.TestCase):
     def test_anthropic_is_ready_only_with_model_and_api_key(self):
         catalog = build_provider_catalog(environ={
             "ANTHROPIC_API_KEY": "secret-test-key",
-            "YUKI_ANTHROPIC_MODEL": "claude-fable-5-1",
+            "YUKI_ANTHROPIC_MODEL": "claude-fable-5",
         })
         item = next(x for x in catalog if x["name"] == "anthropic")
         self.assertTrue(item["implemented"])
         self.assertTrue(item["ready"])
-        self.assertEqual(item["configured_model"], "claude-fable-5-1")
+        self.assertEqual(item["configured_model"], "claude-fable-5")
         self.assertNotIn("secret-test-key", repr(item))
 
     def test_ollama_requires_model_configuration(self):
