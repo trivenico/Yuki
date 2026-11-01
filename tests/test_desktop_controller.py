@@ -172,6 +172,32 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.controller.migrate_data(source, destination)
 
+    def test_migration_rejects_active_profile_and_its_parent(self):
+        source = Path(self.temp.name) / "legacy"
+        source.mkdir()
+        (source / "notes.txt").write_text("legacy")
+        active = Path(self.temp.name) / "active-profile"
+        active.mkdir()
+        with patch("ui.desktop.controller.desktop_data_root", return_value=active):
+            with self.assertRaises(ValueError):
+                self.controller.preview_migration(source, active)
+            with self.assertRaises(ValueError):
+                self.controller.migrate_data(source, active.parent)
+
+    def test_migration_rejects_symlink_destination(self):
+        source = Path(self.temp.name) / "legacy"
+        source.mkdir()
+        (source / "notes.txt").write_text("legacy")
+        actual = Path(self.temp.name) / "actual"
+        actual.mkdir()
+        link = Path(self.temp.name) / "linked"
+        try:
+            link.symlink_to(actual, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        with self.assertRaises(ValueError):
+            self.controller.preview_migration(source, link)
+
     @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_backup_and_restore_are_bound_to_live_session(self):
         profile = Path(self.temp.name) / "active-profile"
