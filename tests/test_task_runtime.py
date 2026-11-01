@@ -28,6 +28,22 @@ class TaskRuntimeTests(unittest.TestCase):
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
 
+    def test_approval_required_task_is_reported_as_waiting_until_approved(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-state",
+            name="approval-state-task",
+            steps=[{"name": "protected", "action": "emit", "argument": "x",
+                    "requires_approval": True}],
+        )
+        self.assertEqual(task.state, "waiting_approval")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="session-a",
+            expected_version=task.version,
+        )
+        self.assertEqual(approved.state, "queued")
+        self.assertEqual(self.store.claim_next(worker_id="worker-a").run_id, task.task_id)
+
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
         second = self.create()
