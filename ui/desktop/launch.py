@@ -87,12 +87,15 @@ def run() -> int:
             except Exception as exc:
                 self.signals.finished.emit("", exc)
 
+    class PlanWorkerSignals(QObject):
+        finished = Signal(object, object)
+
     class PlanWorker(QRunnable):
         def __init__(self, controller: DesktopCompanionController, goal: str):
             super().__init__()
             self.controller = controller
             self.goal = goal
-            self.signals = WorkerSignals()
+            self.signals = PlanWorkerSignals()
 
         @Slot()
         def run(self):
