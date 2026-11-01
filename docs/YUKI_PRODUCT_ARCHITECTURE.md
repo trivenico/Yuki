@@ -25,7 +25,7 @@ For ordinary conversation, the path ends after the model response. Tool executio
 - Role profiles (companion, tutor, interviewer, developer, security, marketing) change response guidance only. They do not grant tools, permissions, or access.
 - Every action requiring approval must pass the existing PermissionGate/approval workflow. Denial, missing approval, provider failure, malformed model output, or exhausted budgets fail closed.
 - Local inference is the default privacy route in hybrid mode. Cloud routing is explicit and allow-listed; there is no implicit cloud fallback when local inference fails.
-- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature: it is off by default, session-scoped consent is required before `/remember`, existing entries are never silently erased by disabling memory, and `/forget`, `/memory export`, and `/memory clear confirm` provide user controls. Saved entries are not automatically injected into model context. The current JSON store is local plaintext (filesystem permissions only); do not store secrets or sensitive personal data until encryption-at-rest and key-management are implemented. The data file is git-ignored.
+- Companion chat history in the CLI conversation session is ephemeral and is cleared when the session exits or the user resets it. Persistent memory is a separate opt-in feature: it is off by default, session-scoped consent is required before `/remember`, existing entries are never silently erased by disabling memory, and `/forget`, `/memory export`, and `/memory clear confirm` provide user controls. Saved entries are not automatically injected into model context. The default JSON store remains local plaintext and is suitable only for non-sensitive preferences. An opt-in AES-256-GCM backend stores its random key in the operating-system keyring and fails closed when a secure keyring is unavailable; this is local-device encryption, not cross-device sync or managed backup. Key rotation, cross-device migration, and managed backup/restore remain unfinished. Both memory files are git-ignored.
 
 ## Client strategy
 
@@ -54,7 +54,7 @@ Yuki is not production-ready solely because unit tests pass or a capability exis
 - The repository contains Python provider adapters, a local/cloud hybrid router, guarded skill execution, a bounded model-guided task loop, durable task/workflow foundations, companion persona and local memory primitives, reminders, and role profiles.
 - The companion conversation session and CLI integration are in draft PR #423; safe role selection is stacked in draft PR #424; structured provider chat, explicit CLI memory consent, and the direct Gemini API adapter are in draft PR #425. The memory store remains plaintext and is not yet suitable for secrets or sensitive personal data.
 - The 100 specialist role catalog is metadata only in draft PR #422.
-- Native desktop packaging, production cloud deployment, encrypted-at-rest memory, desktop memory-consent UX, retention scheduling, and full release qualification remain unfinished.
+- Native desktop packaging, production cloud deployment, desktop memory-consent UX, retention scheduling, secure key migration/rotation, managed backup/restore, and full release qualification remain unfinished. The encrypted local memory backend is optional and requires separate installation.
 - Do not advertise these unfinished capabilities as production features.
 
 ## Deployment direction
