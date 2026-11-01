@@ -115,11 +115,11 @@ class YukiContinuityTests(unittest.TestCase):
                 def fake_run(command, **kwargs):
                     from subprocess import CompletedProcess
                     if command[-1] == "HEAD":
-                        return CompletedProcess(command, 0, "abc123\\n", "")
+                        return CompletedProcess(command, 0, "abc123\n", "")
                     if command[-1] == "--show-current":
-                        return CompletedProcess(command, 0, "main\\n", "")
+                        return CompletedProcess(command, 0, "main\n", "")
                     if command[-1] == "origin":
-                        return CompletedProcess(command, 0, "https://user:token@example.com/org/repo.git\\n", "")
+                        return CompletedProcess(command, 0, "https://user:token@example.com/org/repo.git\n", "")
                     raise AssertionError(command)
                 run.side_effect = fake_run
                 metadata = git_metadata(root)
