@@ -188,6 +188,42 @@ class CapabilityRegistryTests(unittest.TestCase):
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertTrue(adapter.is_available())
 
+    def test_task_router_keeps_cloud_out_of_local_only_tasks(self):
+        from providers.task_routing import TaskProfile, route_task
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-key",
+            "YUKI_OPENAI_RESPONSES_MODEL": "gpt-test",
+        })
+        with self.assertRaises(LookupError):
+            route_task(manager.routing_registry(), TaskProfile("complex_reasoning"))
+
+    def test_task_router_requires_explicit_cloud_consent_and_sets_effort(self):
+        from providers.task_routing import TaskProfile
+        manager = ProviderManager(environ={
+            "OPENAI_API_KEY": "test-key",
+            "YUKI_OPENAI_RESPONSES_MODEL": "gpt-test",
+        })
+        decision, adapter = manager.create_task_routed_adapter(TaskProfile(
+            "complex_reasoning", privacy="cloud_allowed",
+            preferred_providers=("openai_responses",),
+        ))
+        self.assertEqual(decision.provider, "openai_responses")
+        self.assertEqual(decision.reasoning_effort, "xhigh")
+        self.assertEqual(adapter.reasoning_effort, "xhigh")
+
+    def test_security_task_route_marks_human_review_required(self):
+        from providers.task_routing import TaskProfile
+        manager = ProviderManager(environ={
+            "ANTHROPIC_API_KEY": "test-key",
+            "YUKI_ANTHROPIC_MODEL": "claude-test",
+        })
+        decision, adapter = manager.create_task_routed_adapter(TaskProfile(
+            "security", privacy="cloud_allowed",
+            preferred_providers=("anthropic",),
+        ))
+        self.assertTrue(decision.require_human_review)
+        self.assertEqual(adapter.effort, "high")
+
     def test_create_routed_adapter_fails_without_fallback_when_selected_adapter_unavailable(self):
         class Unavailable:
             def is_available(self):
