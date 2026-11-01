@@ -35,11 +35,12 @@ The output is under `dist/Yuki/` on Windows/Linux and `dist/Yuki.app/` on macOS.
 ## CI artifacts
 
 The `Yuki quality gates` workflow builds on native Windows, macOS, and Linux
-runners and uploads short-lived unsigned developer bundles together with a
-CycloneDX SBOM for the build environment and a portable SHA-256 manifest for
+runners, executes the packaged binary in Qt offscreen smoke-test mode, and
+uploads short-lived unsigned developer bundles together with a CycloneDX SBOM
+for the build environment and a portable SHA-256 manifest for
 every regular bundle file. The manifest records relative paths, sizes, file
 modes, hashes, source commit/ref, and platform metadata; it does not contain
-absolute build paths. These artifacts are for smoke testing, not public release.
+absolute build paths. These artifacts are for developer validation, not public release.
 The workflow does not sign, notarize, publish, or auto-update the application.
 
 ## Release blockers
