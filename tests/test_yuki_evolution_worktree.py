@@ -67,6 +67,25 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         self.assertFalse(worktree.exists())
         self.assertEqual(self.git("rev-parse", state["checkpoint_tag"] + "^{commit}"), state["base_commit"])
 
+    def test_discard_preserves_branch_when_it_contains_commits(self):
+        state = start_evolution(self.root)
+        worktree = Path(state["worktree"])
+        (worktree / "agent-change.txt").write_text("review me\\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(worktree), "add", "agent-change.txt"],
+                       check=True, capture_output=True, text=True, env=self.env)
+        subprocess.run(["git", "-C", str(worktree), "commit", "-m", "agent change"],
+                       check=True, capture_output=True, text=True, env=self.env)
+        committed_tip = subprocess.run(
+            ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, env=self.env,
+        ).stdout.strip()
+
+        identifier = state["branch"].removeprefix("yuki/evolution/")
+        result = discard_evolution(self.root, identifier)
+        self.assertTrue(result["branch_preserved"])
+        self.assertFalse(worktree.exists())
+        self.assertEqual(self.git("rev-parse", state["branch"]), committed_tip)
+
     def test_tampered_state_cannot_authorize_deleting_another_branch(self):
         state = start_evolution(self.root)
         identifier = state["branch"].removeprefix("yuki/evolution/")
