@@ -160,6 +160,9 @@ class IndependentVerificationEngine:
         if not tests_passed:
             status = "changes_requested"
             summary = "Automated tests did not pass; independent review cannot approve this deliverable. " + summary
+        if any(item.severity in {"critical", "high"} for item in findings) and status == "approved":
+            status = "changes_requested"
+            summary = "Critical or high-severity findings prevent approval. " + summary
         if not normalized_evidence and status == "approved":
             status = "inconclusive"
             summary = "No supporting evidence was supplied; approval is not justified. " + summary
