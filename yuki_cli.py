@@ -15,6 +15,7 @@ from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
+from companion.conversation_store import ConversationStore, ConversationStoreError
 from companion.memory_consent import CompanionMemory, MemoryConsentError
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.specialist_worker import SpecialistTaskWorker, build_provider_specialist_handlers
@@ -39,6 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+
+    conversations = sub.add_parser("conversations", help="Manage private persistent companion conversations")
+    conversation_sub = conversations.add_subparsers(dest="conversation_command", required=True)
+    conversation_sub.add_parser("list", help="List your saved conversations")
+    conversation_create = conversation_sub.add_parser("create", help="Create a saved conversation")
+    conversation_create.add_argument("--title", default="New conversation")
+    conversation_show = conversation_sub.add_parser("show", help="Show a saved conversation")
+    conversation_show.add_argument("conversation_id")
+    conversation_delete = conversation_sub.add_parser("delete", help="Delete a saved conversation and its messages")
+    conversation_delete.add_argument("conversation_id")
 
     tasks = sub.add_parser("tasks", help="Inspect and supervise durable Yuki tasks")
     task_sub = tasks.add_subparsers(dest="task_command", required=True)
@@ -199,6 +210,70 @@ def run_cli(
                 return 5
             output_fn("Yuki: Session revoked." if revoked else "Yuki: No active local session.")
             return 0
+
+    if args.command == "conversations":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            store = ConversationStore(str(root / "conversations.sqlite3"))
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki conversation service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        try:
+            if args.conversation_command == "list":
+                if not permission_check(actor_id, "conversation:read", ""):
+                    raise PermissionError
+                _write_json(store.list(owner_id=actor_id), output_fn)
+                return 0
+            if args.conversation_command == "create":
+                if not permission_check(actor_id, "conversation:write", ""):
+                    raise PermissionError
+                item = store.create(owner_id=actor_id, title=args.title)
+            elif args.conversation_command == "show":
+                if not permission_check(actor_id, "conversation:read", args.conversation_id):
+                    raise PermissionError
+                item = store.get(owner_id=actor_id, conversation_id=args.conversation_id)
+            else:
+                if not permission_check(actor_id, "conversation:delete", args.conversation_id):
+                    raise PermissionError
+                deleted = store.delete(owner_id=actor_id, conversation_id=args.conversation_id)
+                _write_json({"deleted": deleted}, output_fn)
+                return 0
+            _write_json({
+                "conversation_id": item.conversation_id,
+                "title": item.title,
+                "version": item.version,
+                "created_at": item.created_at,
+                "updated_at": item.updated_at,
+                "messages": list(item.messages),
+            }, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this conversation action.")
+            return 3
+        except KeyError:
+            output_fn("Yuki: Conversation not found.")
+            return 4
+        except (ValueError, ConversationStoreError) as exc:
+            output_fn("Yuki: Conversation was not changed (" + type(exc).__name__ + ").")
+            return 2
+        except Exception as exc:
+            output_fn("Yuki conversation operation failed (" + type(exc).__name__ + ").")
+            return 5
 
     if args.command == "tasks":
         root = data_root() / ".yuki"
