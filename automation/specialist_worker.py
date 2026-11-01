@@ -114,31 +114,56 @@ def build_handlers_from_provider_manager(
     if not callable(selected_factory):
         raise TypeError("provider_manager must expose create_selected_adapter().")
     routed_factory = getattr(provider_manager, "create_routed_adapter", None)
+    task_routed_factory = getattr(provider_manager, "create_task_routed_adapter", None)
+    current_factory = getattr(provider_manager, "current", None)
+    current_info = current_factory() if callable(current_factory) else None
+    selected_name = getattr(current_info, "name", None)
+    task_types = {
+        "research": "complex_reasoning",
+        "coding": "engineering",
+        "testing": "routine",
+        "reporting": "long_horizon",
+    }
     cache = {}
     handlers = {}
     for agent_id, role in agent_roles.items():
         preferences = normalized_preferences.get(agent_id)
-        cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
-        if cache_key not in cache:
-            if preferences:
-                if not callable(routed_factory):
-                    raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
-                cache[cache_key] = routed_factory(
-                    required=("text",), preference=preferences, allow_cloud=allow_cloud,
+        # Prefer the task-aware router where available. The selected provider is
+        # pinned when no per-agent preference is supplied, preserving operator
+        # intent while enforcing local-only defaults and explicit cloud consent.
+        if callable(task_routed_factory):
+            preference = preferences
+            if preference is None and isinstance(selected_name, str) and selected_name:
+                preference = (selected_name,)
+            cache_key = ("task", role, preference, allow_cloud)
+            if cache_key not in cache:
+                from providers.task_routing import TaskProfile
+                profile = TaskProfile(
+                    task_type=task_types[role],
+                    privacy="cloud_allowed" if allow_cloud else "local_only",
+                    required_capabilities=("text",),
+                    preferred_providers=preference or (),
                 )
-            else:
-                current_factory = getattr(provider_manager, "current", None)
-                current_info = current_factory() if callable(current_factory) else None
-                selected_name = getattr(current_info, "name", None)
-                if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                _decision, adapter = task_routed_factory(profile)
+                cache[cache_key] = adapter
+        else:
+            cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
+            if cache_key not in cache:
+                if preferences:
+                    if not callable(routed_factory):
+                        raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
+                    cache[cache_key] = routed_factory(
+                        required=("text",), preference=preferences, allow_cloud=allow_cloud,
+                    )
+                elif callable(routed_factory) and isinstance(selected_name, str) and selected_name:
                     cache[cache_key] = routed_factory(
                         required=("text",), preference=(selected_name,),
                         allow_cloud=allow_cloud,
                     )
                 else:
                     cache[cache_key] = selected_factory()
-            if cache[cache_key] is None:
-                raise RuntimeError("no provider is available for a specialist agent.")
+        if cache[cache_key] is None:
+            raise RuntimeError("no provider is available for a specialist agent.")
         role_handlers = build_provider_specialist_handlers(cache[cache_key])
         handlers[agent_id] = role_handlers[role]
     return handlers
