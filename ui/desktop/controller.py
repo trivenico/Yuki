@@ -115,13 +115,25 @@ class DesktopCompanionController:
             expected_version=expected_version,
         )
 
+    def _validate_migration_destination(self, destination: Path) -> Path:
+        raw = Path(destination).expanduser()
+        if raw.is_symlink():
+            raise ValueError("Migration destination must not be a symbolic link.")
+        target = raw.resolve()
+        live_data = desktop_data_root().resolve()
+        if target == live_data or target in live_data.parents or live_data in target.parents:
+            raise ValueError("Migration destination must be separate from the active Yuki profile.")
+        return target
+
     def preview_migration(self, source: Path, destination: Path):
         self._require_live_session()
-        return preview_migration(Path(source), Path(destination))
+        target = self._validate_migration_destination(destination)
+        return preview_migration(Path(source), target)
 
     def migrate_data(self, source: Path, destination: Path) -> dict:
         self._require_live_session()
-        return migrate_data(Path(source), Path(destination))
+        target = self._validate_migration_destination(destination)
+        return migrate_data(Path(source), target)
 
     def create_backup(self, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
