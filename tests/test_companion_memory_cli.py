@@ -81,7 +81,7 @@ class CompanionMemoryCliTests(unittest.TestCase):
                 "/memory on",
                 "/remember I prefer concise replies",
                 "/memory use on",
-                "hello",
+                "Please keep the reply concise",
                 "/memory use off",
                 "hello again",
                 "/quit",
