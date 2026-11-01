@@ -40,7 +40,7 @@ class OpenAIResponsesProviderTests(unittest.TestCase):
             build.return_value.open.return_value = FakeResponse(response_body)
             provider = self.provider(reasoning_effort="high")
             self.assertEqual(provider.generate("Review this change"), "Verified answer.")
-            request = build.call_args.args[0]
+            request = build.return_value.open.call_args.args[0]
             self.assertTrue(request.full_url.endswith("/v1/responses"))
             payload = json.loads(request.data)
             self.assertEqual(payload["model"], "gpt-6-astra")
