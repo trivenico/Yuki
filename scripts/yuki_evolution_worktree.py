@@ -71,17 +71,42 @@ def _write_state(path: Path, state: dict) -> None:
         Path(temporary_name).unlink(missing_ok=True)
 
 
-def _read_state(path: Path) -> dict:
+def _read_state(path: Path, identifier: str) -> dict:
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise EvolutionError(f"cannot read evolution state: {path}") from exc
     if not isinstance(state, dict) or state.get("schema_version") != STATE_SCHEMA:
         raise EvolutionError("unsupported or invalid evolution state")
-    branch = state.get("branch")
-    if not isinstance(branch, str) or not branch.startswith(BRANCH_PREFIX):
-        raise EvolutionError("evolution state contains an invalid branch")
+    # Bind every destructive identifier to the validated session ID. Local
+    # recovery JSON is mutable and must never authorize deletion by prefix alone.
+    if state.get("branch") != BRANCH_PREFIX + identifier:
+        raise EvolutionError("evolution state contains an unexpected branch")
+    if state.get("checkpoint_tag") != "yuki/checkpoint/" + identifier:
+        raise EvolutionError("evolution state contains an unexpected checkpoint")
+    if not isinstance(state.get("repository"), str) or not isinstance(state.get("worktree"), str):
+        raise EvolutionError("evolution state is missing repository/worktree paths")
+    if not isinstance(state.get("base_commit"), str) or not re.fullmatch(r"[0-9a-f]{40,64}", state["base_commit"]):
+        raise EvolutionError("evolution state contains an invalid base commit")
     return state
+
+
+def _registered_worktree(repository: Path, worktree: Path, branch: str) -> bool:
+    output = _git(repository, "worktree", "list", "--porcelain")
+    current_path = None
+    current_branch = None
+    for line in output.splitlines() + [""]:
+        if line.startswith("worktree "):
+            current_path = Path(line[len("worktree "):]).resolve()
+            current_branch = None
+        elif line.startswith("branch "):
+            current_branch = line[len("branch "):]
+        elif not line:
+            if current_path == worktree and current_branch == "refs/heads/" + branch:
+                return True
+            current_path = None
+            current_branch = None
+    return False
 
 
 def start_evolution(repository: Path, worktree_root: Path | None = None) -> dict:
@@ -142,7 +167,7 @@ def discard_evolution(repository: Path, identifier: str, force: bool = False) ->
     if not re.fullmatch(r"\d{8}T\d{6}Z-[0-9a-f]{8}", identifier):
         raise EvolutionError("invalid evolution identifier")
     state_path = _state_dir(repository) / (identifier + ".json")
-    state = _read_state(state_path)
+    state = _read_state(state_path, identifier)
     if Path(state.get("repository", "")).resolve() != repository:
         raise EvolutionError("evolution state belongs to a different repository")
 
@@ -156,6 +181,10 @@ def discard_evolution(repository: Path, identifier: str, force: bool = False) ->
         raise EvolutionError("evolution state contains an unexpected worktree path")
     if not worktree.exists():
         raise EvolutionError("evolution worktree is missing")
+    if not _registered_worktree(repository, worktree, state["branch"]):
+        raise EvolutionError("saved path/branch is not a registered worktree of this repository")
+    if _git(repository, "rev-parse", state["checkpoint_tag"] + "^{commit}") != state["base_commit"]:
+        raise EvolutionError("checkpoint does not resolve to the recorded base commit")
 
     dirty = _git(worktree, "status", "--porcelain", "--untracked-files=all")
     if dirty and not force:
