@@ -65,6 +65,40 @@ class DesktopMigrationTests(unittest.TestCase):
                 migrate_data(source, destination)
             self.assertEqual((destination / "keep.txt").read_text(), "destination")
 
+    def test_symlink_destination_is_rejected_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "notes.txt").write_text("keep")
+            real_destination = root / "real-destination"
+            real_destination.mkdir()
+            link = root / "new"
+            try:
+                link.symlink_to(real_destination, target_is_directory=True)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            with self.assertRaises(MigrationError):
+                preview_migration(source, link)
+            self.assertTrue(real_destination.is_dir())
+
+    def test_sqlite_filename_with_uri_special_characters_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            db_path = source / "tasks #1?.sqlite3"
+            db = sqlite3.connect(db_path)
+            db.execute("CREATE TABLE tasks (name TEXT)")
+            db.execute("INSERT INTO tasks VALUES ('safe')")
+            db.commit()
+            db.close()
+            destination = root / "new"
+            migrate_data(source, destination)
+            copied = sqlite3.connect(destination / db_path.name)
+            self.assertEqual(copied.execute("SELECT name FROM tasks").fetchone()[0], "safe")
+            copied.close()
+
     def test_symlink_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
