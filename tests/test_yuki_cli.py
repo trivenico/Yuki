@@ -427,6 +427,38 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("Sign in first", outputs[-1])
 
+    def test_saved_companion_chat_restores_and_persists_each_turn(self):
+        from companion.conversation_store import ConversationStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            user = auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            (root / ".yuki" / "session.token").write_text(issued.token, encoding="utf-8")
+            store = ConversationStore(str(root / ".yuki" / "conversations.sqlite3"))
+            saved = store.create(owner_id=user.user_id, title="Persistent chat")
+            provider = FakeProvider(answer="Hello, I am Yuki.")
+            inputs = iter(["Hello Yuki", "/quit"])
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(
+                    ["chat", "--conversation-id", saved.conversation_id],
+                    config_loader=lambda: {},
+                    provider_factory=lambda config: provider,
+                    input_fn=lambda prompt: next(inputs),
+                    output_fn=outputs.append,
+                )
+            self.assertEqual(code, 0)
+            restored = store.get(owner_id=user.user_id, conversation_id=saved.conversation_id)
+            self.assertEqual(restored.version, 1)
+            self.assertEqual(restored.messages, (
+                {"role": "user", "content": "Hello Yuki"},
+                {"role": "assistant", "content": "Hello, I am Yuki."},
+            ))
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
