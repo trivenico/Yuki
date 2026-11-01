@@ -149,7 +149,7 @@ class ConversationStore:
                 raise ValueError(f"{role} message must be bounded non-empty text.")
         now = self._now()
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
                     "SELECT version FROM companion_conversations WHERE conversation_id=? AND owner_id=?",
@@ -187,7 +187,7 @@ class ConversationStore:
         owner = self._owner(owner_id)
         cid = self._id(conversation_id)
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 row = db.execute(
                     "SELECT * FROM companion_conversations WHERE conversation_id=? AND owner_id=?",
                     (cid, owner),
@@ -213,7 +213,7 @@ class ConversationStore:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100.")
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 rows = db.execute(
                     "SELECT conversation_id,title,version,created_at,updated_at FROM companion_conversations WHERE owner_id=? ORDER BY updated_at DESC LIMIT ?",
                     (owner, limit),
@@ -226,7 +226,7 @@ class ConversationStore:
         owner = self._owner(owner_id)
         cid = self._id(conversation_id)
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 changed = db.execute(
                     "DELETE FROM companion_conversations WHERE conversation_id=? AND owner_id=?",
                     (cid, owner),
