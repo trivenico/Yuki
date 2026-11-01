@@ -27,10 +27,10 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "YUKI_ANTHROPIC_MODEL"):
             create_provider({"provider": "anthropic"}, environ={"ANTHROPIC_API_KEY": "test"})
         adapter = create_provider({"provider": "anthropic"}, environ={
-            "ANTHROPIC_API_KEY": "test-only-key", "YUKI_ANTHROPIC_MODEL": "claude-fable-5-1"
+            "ANTHROPIC_API_KEY": "test-only-key", "YUKI_ANTHROPIC_MODEL": "claude-fable-5"
         })
         self.assertIsInstance(adapter, AnthropicMessagesProvider)
-        self.assertEqual(adapter.model, "claude-fable-5-1")
+        self.assertEqual(adapter.model, "claude-fable-5")
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
