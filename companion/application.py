@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from companion.conversation import ConversationReply, ConversationSession
+from companion.conversation import ConversationError, ConversationReply, ConversationSession
 from companion.memory_consent import CompanionMemory
 
 
@@ -30,7 +30,10 @@ class CompanionApplicationService:
 
     def respond(self, message: str) -> ConversationReply:
         """Respond using only explicitly enabled, relevant saved-memory context."""
-        context = self.memory.context_entries(query=message)
+        try:
+            context = self.memory.context_entries(query=message)
+        except Exception as exc:
+            raise ConversationError("Yuki could not safely read saved-memory context; no request was sent.") from exc
         return self.session.respond(message, memory_context=context)
 
     def set_role(self, name: str) -> dict:
