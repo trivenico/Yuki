@@ -159,7 +159,7 @@ class CollectiveMemoryVault:
         body = self._text(content, "content", _MAX_CONTENT)
         source_type = self._text(source_type, "source_type", 40)
         source_ref = self._text(source_ref, "source_ref", 500)
-        if scope not in _SCOPES or category not in _CATEGORIES:
+        if not isinstance(scope, str) or scope not in _SCOPES or not isinstance(category, str) or category not in _CATEGORIES:
             raise MemoryVaultError("unsupported scope or category.")
         if not _ID.fullmatch(sid):
             raise MemoryVaultError("scope_id must be a bounded identifier.")
@@ -239,7 +239,7 @@ class CollectiveMemoryVault:
             if not isinstance(item, (tuple, list)) or len(item) != 2:
                 raise MemoryVaultError("each scope must be a (scope, scope_id) pair.")
             scope, sid = item
-            if scope not in _SCOPES or not isinstance(sid, str) or not _ID.fullmatch(sid):
+            if not isinstance(scope, str) or scope not in _SCOPES or not isinstance(sid, str) or not _ID.fullmatch(sid):
                 raise MemoryVaultError("invalid search scope.")
             if self._allowed(actor, "memory:read", f"{scope}:{sid}"):
                 allowed.append((scope, sid))
@@ -306,7 +306,13 @@ class CollectiveMemoryVault:
     def export_records(self, *, actor_id: str, scopes: Iterable[tuple[str, str]]) -> bytes:
         actor = self._text(actor_id, "actor_id", 100)
         records = []
-        for scope, sid in tuple(scopes):
+        requested = tuple(scopes)
+        if not requested or len(requested) > 100:
+            raise ValueError("provide between 1 and 100 explicit export scopes.")
+        for item in requested:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise MemoryVaultError("each export scope must be a (scope, scope_id) pair.")
+            scope, sid = item
             if scope not in _SCOPES or not isinstance(sid, str) or not _ID.fullmatch(sid):
                 raise MemoryVaultError("invalid export scope.")
             resource = f"{scope}:{sid}"
