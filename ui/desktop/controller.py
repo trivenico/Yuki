@@ -42,6 +42,8 @@ class DesktopCompanionController:
             self.application.memory.disable_context()
 
     def memory_context_enabled(self) -> bool:
+        if self.sessions.current_identity() != self.identity:
+            raise PermissionError("The desktop session expired. Sign in again.")
         return self.application.memory.context_enabled
 
     def logout(self) -> bool:
