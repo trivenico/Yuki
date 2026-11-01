@@ -27,7 +27,9 @@ jobs:
       - name: Check dependency consistency
         run: python -m pip check
       - name: Compile workflow and tests
-        run: python -m compileall -q automation/engineering_workflow.py automation/approved_workspace_changes.py automation/specialist_read_tool_adapter.py automation/independent_verification.py automation/evidence_collector.py automation/verification_report_store.py tests/test_engineering_workflow.py tests/test_independent_verification.py tests/test_evidence_collector.py tests/test_verification_report_store.py
+        run: python -m compileall -q automation/engineering_workflow.py automation/approved_workspace_changes.py automation/specialist_read_tool_adapter.py automation/independent_verification.py automation/evidence_collector.py automation/verification_report_store.py skills/github_lifecycle.py tests/test_github_lifecycle_skill.py tests/test_engineering_workflow.py tests/test_independent_verification.py tests/test_evidence_collector.py tests/test_verification_report_store.py
+      - name: Test commit-bound GitHub CI evidence
+        run: python -m unittest discover -s tests -p 'test_github_lifecycle_skill.py' -v
       - name: Test engineering workflow
         run: python -m unittest discover -s tests -p 'test_engineering_workflow.py' -v
       - name: Test approved workspace changes
