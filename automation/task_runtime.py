@@ -248,6 +248,26 @@ class TaskRuntime:
 
 
 
+    def approve(
+        self, *, actor_id: str, task_id: str, session_id: str,
+        expected_version: int,
+    ) -> TaskRecord:
+        """Approve the exact queued workflow definition for an authenticated session."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:approve", task_id):
+            raise PermissionError("task approval is not authorized.")
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        approved = self.store.approve(
+            task_id, actor_id=actor, session_id=session_id,
+            expected_version=expected_version,
+        )
+        return self._record(approved)
+
     def retry_failed(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         """Explicitly enqueue a fresh task from failed/interrupted work; never replay in place.
 
