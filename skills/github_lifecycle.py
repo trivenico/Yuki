@@ -145,6 +145,62 @@ class GitHubLifecycleSkill(Skill):
                     raise RuntimeError("Pull request command completed but no valid PR URL was returned.")
                 return SkillResult(True, "Pull request created.", {"repository": slug, "url": url})
 
+            if action == "commit_ci_evidence":
+                path = self._repo(payload.get("repo_path"))
+                slug = self._slug_from_repo(path)
+                commit_sha = payload.get("commit_sha")
+                if not isinstance(commit_sha, str) or not re.fullmatch(r"[0-9a-f]{40,64}", commit_sha):
+                    raise ValueError("commit_sha must be a full lowercase Git commit SHA.")
+                limit = payload.get("limit", 20)
+                if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 30:
+                    raise ValueError("limit must be an integer from 1 to 30.")
+                raw = self._run([
+                    "run", "list", "--repo", slug, "--commit", commit_sha,
+                    "--limit", str(limit),
+                    "--json", "databaseId,name,status,conclusion,headSha,event,url,createdAt,updatedAt",
+                ], cwd=path)
+                data = json.loads(raw)
+                if not isinstance(data, list) or len(data) > limit:
+                    raise RuntimeError("Unexpected commit-scoped workflow response.")
+                runs = []
+                for item in data:
+                    if not isinstance(item, dict) or item.get("headSha") != commit_sha:
+                        raise RuntimeError("GitHub returned a workflow run not bound to the requested commit.")
+                    if item.get("status") not in {"queued", "in_progress", "completed", "requested", "waiting", "pending"}:
+                        raise RuntimeError("GitHub returned an unknown workflow status.")
+                    conclusion = item.get("conclusion")
+                    if conclusion is not None and conclusion not in {
+                        "success", "failure", "cancelled", "skipped", "timed_out",
+                        "action_required", "neutral", "stale", "startup_failure",
+                    }:
+                        raise RuntimeError("GitHub returned an unknown workflow conclusion.")
+                    runs.append({
+                        "id": item.get("databaseId"),
+                        "name": str(item.get("name", ""))[:160],
+                        "status": item.get("status"),
+                        "conclusion": conclusion,
+                        "event": str(item.get("event", ""))[:80],
+                        "url": item.get("url"),
+                        "created_at": item.get("createdAt"),
+                        "updated_at": item.get("updatedAt"),
+                    })
+                all_completed = bool(runs) and all(x["status"] == "completed" for x in runs)
+                all_successful = all_completed and all(x["conclusion"] == "success" for x in runs)
+                return SkillResult(True, "Commit-scoped GitHub Actions evidence retrieved.",
+                    {
+                        "repository": slug,
+                        "commit_sha": commit_sha,
+                        "runs": runs,
+                        "returned_run_count": len(runs),
+                        "all_returned_runs_completed": all_completed,
+                        "all_returned_runs_successful": all_successful,
+                        "provenance": "github_cli_commit_scoped_workflow_runs",
+                        "limitations": [
+                            "A bounded run list is not proof that every required status check was returned.",
+                            "Branch protection and required-check policy must be queried separately before release decisions.",
+                        ],
+                    })
+
             if action == "list_issues":
                 path = self._repo(payload.get("repo_path"))
                 limit = payload.get("limit", 10)
@@ -172,6 +228,6 @@ class GitHubLifecycleSkill(Skill):
                         for x in data if isinstance(x, dict)]
                 return SkillResult(True, "Recent GitHub Actions runs listed.", {"runs": safe})
 
-            raise ValueError("action must be auth_status, create_repo, create_pr, list_issues, or ci_status.")
+            raise ValueError("action must be auth_status, create_repo, create_pr, list_issues, ci_status, or commit_ci_evidence.")
         except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
             return SkillResult(False, str(exc))
