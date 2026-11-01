@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import sys
+import stat
 from pathlib import Path
 
 
@@ -22,7 +23,7 @@ def build_manifest(bundle: Path, *, commit: str = "", ref: str = "") -> dict:
             path = Path(current) / name
             relative = path.relative_to(root).as_posix()
             if path.is_symlink():
-                symlinks.append({"path": relative, "target": os.readlink(path)})
+                symlinks.append({"path": relative, "target_kind": "absolute" if os.path.isabs(os.readlink(path)) else "relative"})
                 continue
             if not path.is_file():
                 continue
@@ -32,7 +33,7 @@ def build_manifest(bundle: Path, *, commit: str = "", ref: str = "") -> dict:
                 for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                     size += len(chunk)
                     digest.update(chunk)
-            files.append({"path": relative, "size": size, "sha256": digest.hexdigest()})
+            files.append({"path": relative, "size": size, "mode": stat.S_IMODE(path.stat().st_mode), "sha256": digest.hexdigest()})
     if not files:
         raise ValueError("bundle contains no regular files")
     return {
@@ -55,7 +56,10 @@ def main() -> int:
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--ref", default=os.environ.get("GITHUB_REF", ""))
     args = parser.parse_args()
-    manifest = build_manifest(args.bundle, commit=args.commit, ref=args.ref)
+    bundle = args.bundle
+    if not bundle.exists() and Path(str(bundle) + ".app").is_dir():
+        bundle = Path(str(bundle) + ".app")
+    manifest = build_manifest(bundle, commit=args.commit, ref=args.ref)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
     print(f"Manifest created for {len(manifest['files'])} files: {args.output}")
