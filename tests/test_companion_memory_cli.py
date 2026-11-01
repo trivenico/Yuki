@@ -23,6 +23,20 @@ class FakeProvider:
 
 
 class CompanionMemoryCliTests(unittest.TestCase):
+    def test_memory_initialization_failure_fails_closed_without_plaintext_fallback(self):
+        output = []
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: FakeProvider(),
+            memory_factory=lambda: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+            input_fn=lambda prompt: "/quit",
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 5)
+        self.assertIn("No plaintext fallback was used", output[0])
+        self.assertNotIn("Yuki companion chat", "\\n".join(output))
+
     def test_memory_commands_require_consent_and_support_export_forget_and_clear(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "memory.json"
