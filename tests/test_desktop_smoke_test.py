@@ -15,7 +15,7 @@ class DesktopSmokeTestTests(unittest.TestCase):
                 binary = root / "Yuki.exe"
             else:
                 binary = root / "Yuki"
-            binary.parent.mkdir(parents=True)
+            binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"test")
             self.assertEqual(executable_for(root), binary)
 
