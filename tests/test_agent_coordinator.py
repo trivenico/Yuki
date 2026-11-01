@@ -69,6 +69,36 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(enabled.enabled)
 
+    def test_plan_idempotency_keys_are_scoped_to_actor(self):
+        runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, _task: (
+                actor in {"alice", "bob"} and action in self.grants
+            ),
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime, self.db_path, self.agents,
+            authorize=lambda actor, action, _plan: (
+                actor in {"alice", "bob"} and action in {
+                    "agent:plan", "agent:dispatch", "agent:read"
+                }
+            ),
+        )
+        alice = coordinator.submit(
+            actor_id="alice", idempotency_key="shared-plan-key",
+            subtasks=[SubtaskSpec("research", "Research topic", ("research",))],
+        )
+        bob = coordinator.submit(
+            actor_id="bob", idempotency_key="shared-plan-key",
+            subtasks=[SubtaskSpec("research", "Research topic", ("research",))],
+        )
+        self.assertNotEqual(alice.plan_id, bob.plan_id)
+        alice_retry = coordinator.submit(
+            actor_id="alice", idempotency_key="shared-plan-key",
+            subtasks=[SubtaskSpec("research", "Research topic", ("research",))],
+        )
+        self.assertEqual(alice.plan_id, alice_retry.plan_id)
+
     def test_dispatch_observes_agent_disabled_by_another_instance(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="external-disable", subtasks=[
             SubtaskSpec("collect", "Collect sources", ("research",)),
