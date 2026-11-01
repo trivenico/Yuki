@@ -103,7 +103,7 @@ class YukiEvolutionWorktreeTests(unittest.TestCase):
         with self.assertRaisesRegex(EvolutionError, "unexpected branch"):
             discard_evolution(self.root, identifier)
         self.assertTrue(Path(state["worktree"]).is_dir())
-        self.assertEqual(self.git("branch", "--list", state["branch"]), state["branch"])
+        self.assertEqual(self.git("rev-parse", "refs/heads/" + state["branch"]), state["base_commit"])
 
     def test_invalid_identifier_is_rejected(self):
         with self.assertRaisesRegex(EvolutionError, "invalid evolution identifier"):
