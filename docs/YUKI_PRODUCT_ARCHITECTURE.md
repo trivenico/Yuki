@@ -95,3 +95,8 @@ The shared companion application service exposes `task_progress` and `cancel_tas
 ## Retry and plan cancellation controls
 
 `CompanionApplicationService.retry_task()` delegates to `TaskRuntime.retry_failed()`, which creates a new durable task from failed/interrupted work using a distinct idempotency key and fresh approval state. It never replays or mutates the failed run in place. `cancel_agent_plan()` delegates to the coordinator's plan-wide cancellation path, which cancels pending subtasks without creating tasks and cancels dispatched work through the versioned task runtime. Both operations require their dedicated authorization capabilities; stale task versions are surfaced as conflicts for client refresh, and terminal-state races are not silently overwritten.
+
+
+## Explicit companion task approval
+
+`CompanionApplicationService.approve_task()` delegates to `TaskRuntime.approve()`. Approval requires the caller's `task:approve` authorization, a non-empty authenticated actor ID, the authenticated session ID, and the current task version. The workflow store binds approval to the exact queued workflow definition digest and session hash; workers cannot claim approval-required work until that durable approval exists. A stale version is returned as a conflict for the client to refresh. The caller must obtain `actor_id` and `session_id` from the authenticated application session, never from untrusted model output or a free-form chat message. Approval is an explicit client action, separate from plan generation and dispatch.
