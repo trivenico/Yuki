@@ -15,8 +15,9 @@ startup and never run automatically. The authenticated user must:
 5. Call `migrate_data` only after confirmation.
 6. Report success only after the verified staging directory is atomically published.
 
-The desktop previews up to 200 file paths at a time in the review pane and
-shows the full count and source byte size. The user must explicitly confirm
+Migration is limited to 20,000 files and 2 GiB per operation. The desktop
+shows the full count and source byte size and lists the first 200 paths in the
+review pane; larger path lists are summarized rather than fully rendered. The user must explicitly confirm
 before the migration worker starts. The controller requires a live session
 and rejects destinations that overlap the active Yuki profile or are symlinks.
 
