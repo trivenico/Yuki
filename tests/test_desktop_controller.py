@@ -101,6 +101,20 @@ class ControllerTests(unittest.TestCase):
         tasks = self.controller.list_tasks()
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].task_id, dispatched.subtasks[0].task_id)
+        updates = self.controller.task_progress(
+            tasks[0].task_id, after_sequence=0, limit=50
+        )
+        self.assertTrue(updates)
+        self.assertEqual(updates[0].task_id, tasks[0].task_id)
+        self.assertTrue(updates[0].message.startswith("Started task:"))
+
+    def test_task_progress_is_denied_after_session_expiry(self):
+        plan = self.controller.propose_agent_plan("Research this topic")
+        dispatched = self.controller.dispatch_agent_plan(plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.task_progress(task_id)
 
     def test_logout_clears_session_conversation_and_memory_context(self):
         self.controller.set_memory_context(True)
