@@ -98,17 +98,16 @@ class EvolutionLedger:
                 raise ValueError("details contain an invalid key.")
             if key not in _ALLOWED_DETAIL_KEYS:
                 raise ValueError(f"details key is not allowlisted: {key}")
-            if isinstance(value, bool) or value is None:
-                if key not in {"status", "reason_code", "component", "model_provider", "model_id", "branch", "review_id", "commit_sha", "artifact_digest"}:
-                    raise ValueError(f"details value has the wrong type for {key}.")
-            elif isinstance(value, int):
-                if key not in {"test_count", "passed_count", "failed_count", "duration_ms"} or value < 0:
-                    raise ValueError(f"details value has the wrong type for {key}.")
-            elif isinstance(value, str):
-                if key not in {"status", "reason_code", "component", "model_provider", "model_id", "branch", "review_id", "commit_sha", "artifact_digest"}:
-                    raise ValueError(f"details value has the wrong type for {key}.")
-                if not value or len(value) > 200 or any(ord(ch) < 32 for ch in value):
+            string_keys = {"status", "reason_code", "component", "model_provider", "model_id", "branch", "review_id", "commit_sha", "artifact_digest"}
+            integer_keys = {"test_count", "passed_count", "failed_count", "duration_ms"}
+            if key in string_keys:
+                if not isinstance(value, str) or not value or len(value) > 200 or any(ord(ch) < 32 for ch in value):
                     raise ValueError(f"details string is invalid for {key}.")
+            elif key in integer_keys:
+                if type(value) is not int or value < 0:
+                    raise ValueError(f"details value has the wrong type for {key}.")
+            else:
+                raise ValueError(f"details key is not allowlisted: {key}")
             else:
                 raise ValueError(f"details value has the wrong type for {key}.")
             sanitized[key] = value
