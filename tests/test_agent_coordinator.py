@@ -200,6 +200,54 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(first.subtasks[0].agent_id, "load-a")
         self.assertEqual(second.subtasks[0].agent_id, "load-b")
 
+    def test_agent_heartbeat_expires_and_prevents_new_routing(self):
+        agent = SpecialistAgent("ephemeral", "Ephemeral", frozenset({"ephemeral"}), "emit")
+        self.coordinator.register_agent(actor_id="alice", agent=agent)
+        with self.assertRaises(PermissionError):
+            self.coordinator.heartbeat_agent(
+                actor_id="mallory", agent_id="ephemeral", instance_id="worker-1"
+            )
+        beat = self.coordinator.heartbeat_agent(
+            actor_id="alice", agent_id="ephemeral", instance_id="worker-1", ttl_seconds=15
+        )
+        self.assertEqual(beat["instance_id"], "worker-1")
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="heartbeat-live",
+            subtasks=[SubtaskSpec("run", "Run live worker", ("ephemeral",))],
+        )
+        self.assertEqual(plan.subtasks[0].agent_id, "ephemeral")
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE specialist_agent_heartbeats SET expires_at=? WHERE agent_id=?",
+                ("2000-01-01T00:00:00+00:00", "ephemeral"),
+            )
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="heartbeat-expired",
+                subtasks=[SubtaskSpec("run", "Run expired worker", ("ephemeral",))],
+            )
+
+    def test_disabled_agent_cannot_heartbeat(self):
+        self.coordinator.register_agent(
+            actor_id="alice",
+            agent=SpecialistAgent("disabled-heartbeat", "Disabled", frozenset({"hb"}), "emit", enabled=False),
+        )
+        with self.assertRaises(AgentPlanError):
+            self.coordinator.heartbeat_agent(
+                actor_id="alice", agent_id="disabled-heartbeat", instance_id="worker"
+            )
+
+    def test_heartbeat_input_validation(self):
+        for ttl in (True, 0, 3601):
+            with self.assertRaises(ValueError):
+                self.coordinator.heartbeat_agent(
+                    actor_id="alice", agent_id="research", instance_id="worker", ttl_seconds=ttl
+                )
+        with self.assertRaises(ValueError):
+            self.coordinator.heartbeat_agent(
+                actor_id="alice", agent_id="research", instance_id="bad\\x00id"
+            )
+
     def test_dependency_prevents_early_dispatch(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-1", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",), requires_approval=False),
