@@ -37,6 +37,21 @@ class CompanionMemoryConsentTests(unittest.TestCase):
             self.assertFalse(manager.context_enabled)
             self.assertEqual(manager.context_entries(), [])
 
+    def test_context_retrieval_prefers_relevant_memories_and_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CompanionMemory(MemoryStore(Path(directory) / "memory.json"))
+            manager.enable()
+            manager.remember("I prefer concise answers", category="preference")
+            manager.remember("My favorite programming language is Python")
+            manager.remember("I am planning a trip to Japan")
+            manager.enable_context()
+            results = manager.context_entries(query="Can you explain Python programming?", limit=2)
+            self.assertEqual(len(results), 1)
+            self.assertIn("Python", results[0]["text"])
+            self.assertEqual(manager.context_entries(query="Japan travel", limit=1)[0]["text"], "I am planning a trip to Japan")
+            with self.assertRaises(ValueError):
+                manager.context_entries(query="hello", limit=11)
+
     def test_memory_is_disabled_by_default_and_writes_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CompanionMemory(MemoryStore(Path(directory) / "memory.json"))
