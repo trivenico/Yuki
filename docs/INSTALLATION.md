@@ -15,6 +15,21 @@ python main.py
 
 Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\python.exe main.py`. macOS/Linux users can use `sh install_unix.sh`.
 
+## Local CLI authentication (early access)
+
+The terminal CLI includes a local account/session foundation:
+
+```bash
+python yuki_cli.py auth bootstrap-admin
+python yuki_cli.py auth login
+python yuki_cli.py auth status
+python yuki_cli.py auth logout
+```
+
+The first administrator can only be bootstrapped once. Passwords are entered through a hidden prompt; do not pass passwords as command-line arguments. Local account data is stored under `$YUKI_HOME/.yuki/auth.sqlite3` (or the repository data root when `YUKI_HOME` is unset), and the opaque session token is stored separately with owner-only POSIX permissions where supported.
+
+This is a local CLI sign-in foundation, not yet end-to-end authorization for every companion task, skill, or agent command. The CLI session has not yet been composed into the task-runtime principal resolver or shared with a desktop client. Do not treat local login as a production hosted identity service. The built-in auth module remains framework-independent; hosted deployments still require HTTPS, trusted middleware, CSRF/origin controls where applicable, edge rate limits, account recovery/MFA policy, and secure secret storage. Protect the Yuki data directory and its backups.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
