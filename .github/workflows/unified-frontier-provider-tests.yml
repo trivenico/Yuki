@@ -13,6 +13,8 @@ on:
       - "tests/test_openai_responses_*.py"
       - "tests/test_provider_factory.py"
       - "tests/test_provider_catalog.py"
+      - "tests/test_task_routing.py"
+      - "tests/test_provider_manager_task_routing.py"
       - "docs/FRONTIER_INTELLIGENCE_ARCHITECTURE.md"
   workflow_dispatch:
 
@@ -30,4 +32,4 @@ jobs:
           python-version: "3.11"
       - name: Run mocked, network-free provider tests
         run: |
-          python -m unittest tests.test_anthropic_messages_provider tests.test_anthropic_provider_registry tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_provider_factory tests.test_provider_catalog -v
+          python -m unittest tests.test_task_routing tests.test_provider_manager_task_routing tests.test_anthropic_messages_provider tests.test_anthropic_provider_registry tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_provider_factory tests.test_provider_catalog -v
