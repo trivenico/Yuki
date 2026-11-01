@@ -78,14 +78,14 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         runtime = TaskRuntime(
             store,
             authorize=lambda actor, action, task: actor == "alice" and action in {
-                "task:create", "task:read", "task:list",
+                "task:create", "task:read", "task:list", "task:cancel",
             },
         )
         coordinator = SpecialistAgentCoordinator(
             runtime, db_path,
             [SpecialistAgent("research", "Research specialist", frozenset({"research"}), "emit")],
             authorize=lambda actor, action, plan: actor == "alice" and action in {
-                "agent:plan", "agent:dispatch", "agent:read",
+                "agent:plan", "agent:dispatch", "agent:read", "agent:cancel",
             },
         )
         memory = CompanionMemory(MemoryStore(str(Path(self.temp.name) / "agent-memory.json")))
@@ -111,6 +111,11 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         task = runtime.get(actor_id="alice", task_id=queued.subtasks[0].task_id)
         self.assertTrue(task.steps[0]["requires_approval"])
         self.assertNotEqual(task.state, "succeeded")
+        cancelled_plan = app.cancel_agent_plan(
+            actor_id="alice", plan_id=queued.plan_id,
+        )
+        self.assertEqual(cancelled_plan.subtasks[0].status, "cancelled")
+        self.assertEqual(runtime.get(actor_id="alice", task_id=task.task_id).state, "cancelled")
 
     def test_specialist_catalog_requires_coordinator_and_registry_permission(self):
         with self.assertRaises(ConversationError):
@@ -208,6 +213,52 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         )
         with self.assertRaises(PermissionError):
             app.list_tasks(actor_id="alice")
+
+    def test_companion_retry_creates_fresh_task_after_failure(self):
+        db_path = str(Path(self.temp.name) / "companion-task-retry.sqlite3")
+        store = WorkflowRunStore(db_path)
+        runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task: actor == "alice" and action in {
+                "task:create", "task:fail", "task:retry", "task:read",
+            },
+        )
+        original = runtime.enqueue(
+            actor_id="alice", idempotency_key="original-failed-task",
+            name="retryable task", steps=[{
+                "name": "run", "action": "emit", "argument": "safe",
+                "requires_approval": False,
+            }],
+        )
+        claimed = store.claim_next(worker_id="test-worker")
+        self.assertIsNotNone(claimed)
+        failed = runtime.fail(
+            actor_id="alice", task_id=original.task_id,
+            expected_version=claimed.version, worker_id="test-worker",
+            error_code="test_failure",
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        retried = app.retry_task(
+            actor_id="alice", task_id=failed.task_id,
+            expected_version=failed.version,
+        )
+        self.assertNotEqual(retried.task_id, failed.task_id)
+        self.assertEqual(retried.state, "queued")
+        self.assertEqual(retried.name, failed.name)
+
+    def test_companion_retry_requires_retry_permission(self):
+        db_path = str(Path(self.temp.name) / "companion-task-retry-denied.sqlite3")
+        runtime = TaskRuntime(
+            WorkflowRunStore(db_path),
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:read",
+        )
+        app = CompanionApplicationService(
+            self.provider, memory=self.memory, task_runtime=runtime,
+        )
+        with self.assertRaises(PermissionError):
+            app.retry_task(actor_id="alice", task_id="missing", expected_version=0)
 
     def test_companion_task_controls_fail_closed_without_runtime(self):
         with self.assertRaises(ConversationError):
