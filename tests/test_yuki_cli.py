@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
+from core.auth import BuiltInAuthService, task_permission_authorizer
 from yuki_cli import run_cli
 
 
@@ -197,6 +200,49 @@ class YukiCliTests(unittest.TestCase):
                 code = run_cli(["auth", "bootstrap-admin"], input_fn=lambda prompt: "root.user", password_input=lambda prompt: next(passwords), output_fn=outputs.append)
             self.assertEqual(code, 2)
             self.assertIn("do not match", outputs[-1])
+    def test_authenticated_cli_lists_inspects_and_approves_tasks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            auth_db = root / ".yuki" / "auth.sqlite3"
+            auth_db.parent.mkdir(parents=True)
+            auth = BuiltInAuthService(str(auth_db))
+            user = auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+            issued = auth.authenticate("root.user", "Correct horse battery staple 9!")
+            session_path = root / ".yuki" / "session.token"
+            session_path.write_text(issued.token, encoding="utf-8")
+            runtime = TaskRuntime(
+                WorkflowRunStore(str(root / ".yuki" / "tasks.sqlite3")),
+                authorize=task_permission_authorizer(auth, lambda: session_path.read_text(encoding="utf-8")),
+            )
+            task = runtime.enqueue(
+                actor_id=user.user_id, idempotency_key="cli-task-approval",
+                name="Protected task", steps=[{
+                    "name": "write", "action": "emit", "argument": "payload",
+                    "requires_approval": True,
+                }],
+            )
+            outputs = []
+            with patch("yuki_cli.data_root", return_value=root):
+                code = run_cli(["tasks", "list"], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn(task.task_id, outputs[-1])
+                code = run_cli(["tasks", "inspect", task.task_id], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn("waiting_approval", outputs[-1])
+                code = run_cli(["tasks", "approve", task.task_id, "--version", str(task.version)], output_fn=outputs.append)
+                self.assertEqual(code, 0)
+                self.assertIn('"state": "queued"', outputs[-1])
+            self.assertEqual(runtime.get(actor_id=user.user_id, task_id=task.task_id).state, "queued")
+
+    def test_authenticated_cli_denies_task_commands_after_logout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch("yuki_cli.data_root", return_value=root):
+                outputs = []
+                code = run_cli(["tasks", "list"], output_fn=outputs.append)
+            self.assertEqual(code, 1)
+            self.assertIn("Sign in first", outputs[-1])
+
     def test_provider_initialization_failure_is_sanitized(self):
         output = []
         code = run_cli(
