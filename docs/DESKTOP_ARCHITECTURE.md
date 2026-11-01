@@ -108,7 +108,7 @@ The UI thread must never perform provider calls, filesystem indexing, or worker 
 | D2 | Chat and consent UX | Uses shared companion service; provider calls stay off the UI thread |
 | D3 | Specialist and plan review | Registered-specialist catalog, background plan proposal, review, explicit dispatch and cancellation views implemented; UI runtime verification pending |
 | D4 | Task activity and approval UX | Redacted progress, version-checked cancellation, exact-definition review dialog, and session-bound approval implemented in source; UI runtime verification pending |
-| D5 | Native packaging | Clean-install smoke tests on each supported OS |
+| D5 | Native packaging | Optional PyInstaller build manifest, packaging instructions, and native Windows/macOS/Linux CI artifacts added; clean-machine installation and launch smoke tests remain pending |
 | D6 | Release qualification | Security, privacy, accessibility, upgrade, rollback and license gates pass |
 
 Keep PySide6 and keyring in the optional desktop manifest; never add them to core requirements or bundle a worker daemon as part of the desktop shell.
