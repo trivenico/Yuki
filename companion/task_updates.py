@@ -62,7 +62,7 @@ class CompanionTaskUpdates:
             percent = None
             if kind == "task.created":
                 name = self._safe_text(payload.get("name"), fallback="task")
-                message = f"Started task: {name}"
+                message = self._safe_text(f"Started task: {name}", fallback="Started task.")
             elif kind == "task.progress":
                 message = self._safe_text(payload.get("message"), fallback="Task progress updated.")
                 candidate = payload.get("percent")
@@ -70,13 +70,13 @@ class CompanionTaskUpdates:
                     percent = candidate
             elif kind == "task.artifact":
                 artifact_type = self._safe_text(payload.get("artifact_type"), fallback="file")
-                message = f"Created a {artifact_type} artifact."
+                message = self._safe_text(f"Created a {artifact_type} artifact.", fallback="Created an artifact.")
             elif kind == "task.completed":
                 message = "Task completed."
                 percent = 100
             elif kind == "task.failed":
                 code = self._safe_text(payload.get("error_code"), fallback="unknown")
-                message = f"Task failed ({code})."
+                message = self._safe_text(f"Task failed ({code}).", fallback="Task failed.")
             elif kind == "task.cancelled":
                 message = "Task cancelled."
             elif kind == "task.interrupted":
