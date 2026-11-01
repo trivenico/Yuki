@@ -75,6 +75,21 @@ class ConversationSessionTests(unittest.TestCase):
         self.assertIn("grants no tools or permissions", provider.prompts[0])
         self.assertEqual(session.current_role()["name"], "developer")
 
+    def test_restore_history_accepts_only_complete_bounded_user_assistant_pairs(self):
+        session = ConversationSession(FakeProvider())
+        session.restore_history([
+            {"role": "user", "content": "Earlier question"},
+            {"role": "assistant", "content": "Earlier answer"},
+        ])
+        self.assertEqual(session.conversation_turns, 1)
+        self.assertIn("Earlier question", session.history()[0]["content"])
+        with self.assertRaises(ValueError):
+            session.restore_history([{"role": "assistant", "content": "orphan"}])
+        with self.assertRaises(ValueError):
+            session.restore_history([{"role": "user", "content": "unpaired"}])
+        with self.assertRaises(ValueError):
+            session.restore_history([{"role": "user", "content": "x", "extra": "field"}, {"role": "assistant", "content": "ok"}])
+
     def test_history_is_session_only_and_resettable(self):
         provider = FakeProvider()
         session = ConversationSession(provider)
