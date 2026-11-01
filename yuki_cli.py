@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable, Sequence
+from getpass import getpass
+from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
 from companion.memory_consent import CompanionMemory, MemoryConsentError
+from core.auth import AuthenticationError, BuiltInAuthService
 from core.config import load_config
+from core.portable_paths import data_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
 
@@ -28,6 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+
+    auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub.add_parser("bootstrap-admin", help="Create the first local Yuki administrator")
+    auth_sub.add_parser("login", help="Sign in and store a protected local session")
+    auth_sub.add_parser("status", help="Show the current authenticated identity")
+    auth_sub.add_parser("logout", help="Revoke and remove the current local session")
     return parser
 
 
@@ -59,8 +71,94 @@ def run_cli(
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
     memory_factory: Callable = CompanionMemory,
+    password_input: Callable[[str], str] = getpass,
 ) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "auth":
+        root = data_root() / ".yuki"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            try:
+                root.chmod(0o700)
+            except OSError:
+                pass
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+        except Exception as exc:
+            output_fn("Yuki authentication could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        session_path = root / "session.token"
+
+        if args.auth_command == "bootstrap-admin":
+            try:
+                username = input_fn("Administrator username: ").strip()
+                password = password_input("Administrator password (12+ characters): ")
+                confirm = password_input("Confirm administrator password: ")
+                if password != confirm:
+                    output_fn("Yuki: Passwords do not match.")
+                    return 2
+                user = auth_service.bootstrap_admin(username, password)
+            except (ValueError, PermissionError):
+                output_fn("Yuki: Administrator bootstrap was rejected. Check the username/password policy and whether an administrator already exists.")
+                return 2
+            except Exception as exc:
+                output_fn("Yuki authentication failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Initial administrator created for " + user.username + ". Run yuki auth login to sign in.")
+            return 0
+
+        if args.auth_command == "login":
+            try:
+                username = input_fn("Username: ").strip()
+                password = password_input("Password: ")
+                issued = auth_service.authenticate(username, password)
+                temp_path = session_path.with_name("session.token.tmp")
+                descriptor = os.open(str(temp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.write(issued.token)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temp_path, session_path)
+                try:
+                    session_path.chmod(0o600)
+                except OSError:
+                    pass
+            except AuthenticationError:
+                output_fn("Yuki: Invalid username or password.")
+                return 2
+            except Exception as exc:
+                output_fn("Yuki login failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Signed in as " + issued.user.username + " (" + issued.user.role + ").")
+            return 0
+
+        if args.auth_command == "status":
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                user = auth_service.resolve_session(token)
+            except FileNotFoundError:
+                user = None
+            except Exception as exc:
+                output_fn("Yuki session could not be checked (" + type(exc).__name__ + ").")
+                return 5
+            if user is None:
+                output_fn("Yuki: Not signed in.")
+                return 1
+            _write_json({"authenticated": True, "user_id": user.user_id, "username": user.username, "role": user.role, "permissions": sorted(user.permissions)}, output_fn)
+            return 0
+
+        if args.auth_command == "logout":
+            try:
+                token = session_path.read_text(encoding="utf-8").strip()
+                revoked = auth_service.revoke_session(token)
+                session_path.unlink()
+            except FileNotFoundError:
+                revoked = False
+            except Exception as exc:
+                output_fn("Yuki logout failed (" + type(exc).__name__ + ").")
+                return 5
+            output_fn("Yuki: Session revoked." if revoked else "Yuki: No active local session.")
+            return 0
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
