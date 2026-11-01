@@ -29,19 +29,40 @@ class CompanionMemory:
         else:
             self._store = MemoryStore(os.environ.get("YUKI_MEMORY_PATH", "yuki_memory.json"))
         self._enabled = False
+        self._context_enabled = False
 
     @property
     def enabled(self) -> bool:
         """Consent is session-scoped; it is never inferred from stored entries."""
         return self._enabled
 
+    @property
+    def context_enabled(self) -> bool:
+        """Whether saved entries may be included in this session's model context."""
+        return self._context_enabled
+
     def enable(self) -> None:
         """Enable explicit remember operations for this running application session."""
         self._enabled = True
 
     def disable(self) -> None:
-        """Stop future writes without deleting existing saved memories."""
+        """Stop future writes and context use without deleting existing saved memories."""
         self._enabled = False
+        self._context_enabled = False
+
+    def enable_context(self) -> None:
+        """Explicitly allow saved notes to be considered in this session's chat context."""
+        self._context_enabled = True
+
+    def disable_context(self) -> None:
+        """Stop adding saved notes to chat context for this session."""
+        self._context_enabled = False
+
+    def context_entries(self, *, limit: int = 10) -> list[dict]:
+        """Return bounded saved notes only after explicit session-scoped context consent."""
+        if not self._context_enabled:
+            return []
+        return self._store.list(limit=limit)
 
     def remember(self, text: str, *, category: str = "note") -> dict:
         if not self._enabled:
