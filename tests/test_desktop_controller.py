@@ -1,3 +1,4 @@
+import importlib.util
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -154,9 +155,8 @@ class ControllerTests(unittest.TestCase):
             self.controller.task_progress(task_id)
 
 
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_backup_and_restore_are_bound_to_live_session(self):
-        from ui.desktop.backup import BackupError
-        from ui.desktop.controller import desktop_data_root
         profile = Path(self.temp.name) / "active-profile"
         profile.mkdir()
         (profile / "settings.json").write_text('{"theme":"dark"}', encoding="utf-8")
