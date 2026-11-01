@@ -12,3 +12,7 @@ __all__ = [
     "MemorySearchResult",
     "MemoryVaultError",
 ]
+
+from memory.hybrid_retrieval import HybridMemoryResult, HybridMemoryRetriever, RetrievalError
+
+__all__ += ["HybridMemoryResult", "HybridMemoryRetriever", "RetrievalError"]
