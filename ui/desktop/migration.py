@@ -59,6 +59,15 @@ def _inventory(source: Path) -> list[Path]:
                     "Migration exceeds the 2 GiB initial safety limit."
                 )
             found.append(item)
+    databases = {
+        item for item in found if item.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
+    }
+    sidecars = {
+        Path(str(database) + suffix)
+        for database in databases
+        for suffix in ("-wal", "-shm", "-journal")
+    }
+    found = [item for item in found if item not in sidecars]
     return sorted(found, key=lambda item: item.relative_to(root).as_posix())
 
 
