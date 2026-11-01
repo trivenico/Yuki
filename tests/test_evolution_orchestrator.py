@@ -74,6 +74,19 @@ class EvolutionOrchestratorTests(unittest.TestCase):
                 orchestrator.run(actor_id=self.actor, task="Check approval")
         self.assertNotIn("executed", [event["stage"] for event in self.events])
 
+    def test_plan_mutation_during_approval_is_detected_before_execution(self):
+        calls = []
+        def mutate(plan):
+            plan.changes[0]["new_sha256"] = "c" * 64
+            return True
+        orchestrator = self.build(
+            approval_verifier=mutate,
+            executor=lambda plan: calls.append("execute"),
+        )
+        with self.assertRaisesRegex(EvolutionOrchestrationError, "changed after approval"):
+            orchestrator.run(actor_id=self.actor, task="Mutation attempt")
+        self.assertEqual(calls, [])
+
     def test_approval_backend_exception_fails_closed(self):
         orchestrator = self.build(approval_verifier=lambda plan: 1 / 0)
         with self.assertRaisesRegex(EvolutionOrchestrationError, "failed closed"):
