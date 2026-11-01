@@ -82,10 +82,10 @@ class TaskRuntime:
             not isinstance(key, str)
             or not key.strip()
             or len(key) > 200
-            or "\\x00" in key
+            or "\x00" in key
         ):
             raise ValueError("idempotency_key must be non-empty bounded text.")
-        digest = hashlib.sha256((actor + "\\0" + key.strip()).encode("utf-8")).hexdigest()
+        digest = hashlib.sha256((actor + "\0" + key.strip()).encode("utf-8")).hexdigest()
         return "actor:" + digest
 
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
