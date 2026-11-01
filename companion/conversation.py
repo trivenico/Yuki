@@ -79,7 +79,7 @@ class ConversationSession:
                 raise ValueError("conversation history contains an invalid message.")
             if item["role"] != expected_role or not isinstance(item["content"], str):
                 raise ValueError("conversation history must alternate user and assistant messages.")
-            if not item["content"].strip() or len(item["content"]) > self.MAX_REPLY_CHARS or "\\x00" in item["content"]:
+            if not item["content"].strip() or len(item["content"]) > self.MAX_REPLY_CHARS or "\x00" in item["content"]:
                 raise ValueError("conversation history contains invalid message content.")
             restored.append({"role": expected_role, "content": item["content"]})
         self._history = restored
