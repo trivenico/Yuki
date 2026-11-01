@@ -228,6 +228,7 @@ def run() -> int:
             tasks_layout = QVBoxLayout(tasks_page)
             tasks_layout.addWidget(QLabel("Durable task summaries — no worker is started from this screen."))
             self.task_list = QListWidget()
+            self.task_list.currentItemChanged.connect(self._update_task_actions)
             tasks_layout.addWidget(self.task_list, 1)
             self.task_progress_view = QTextEdit()
             self.task_progress_view.setReadOnly(True)
@@ -445,11 +446,21 @@ def run() -> int:
                     )
                     item.setData(256, (task.task_id, task.name, task.state, task.version))
                     self.task_list.addItem(item)
-                self.task_approve_button.setEnabled(False)
+                self._update_task_actions()
             except Exception as exc:
                 self.chat_status.setText("Task list unavailable (" + type(exc).__name__ + ").")
                 if isinstance(exc, PermissionError):
                     self._return_to_login()
+
+        def _update_task_actions(self, *_args):
+            item = self.task_list.currentItem()
+            if item is None:
+                self.task_approve_button.setEnabled(False)
+                self.task_cancel_button.setEnabled(False)
+                return
+            _task_id, _name, state, _version = item.data(256)
+            self.task_approve_button.setEnabled(state == "waiting_approval")
+            self.task_cancel_button.setEnabled(state in {"queued", "waiting_approval", "running"})
 
         def _show_selected_progress(self):
             if self.controller is None:
