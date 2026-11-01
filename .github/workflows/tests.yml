@@ -37,3 +37,25 @@ jobs:
         run: python -m compileall -q .
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
+
+  encrypted-memory:
+    name: Encrypted memory / Python 3.11 / ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install optional encryption dependencies
+        run: python -m pip install --requirement requirements.txt --requirement requirements-memory-security.txt
+      - name: Validate dependency consistency
+        run: python -m pip check
+      - name: Run encrypted memory tests
+        run: python -m unittest tests.test_companion_secure_memory tests.test_companion_memory_consent -v
