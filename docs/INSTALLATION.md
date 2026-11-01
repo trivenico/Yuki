@@ -79,6 +79,17 @@ The command uses the same local task journal as `yuki tasks` and `yuki agents` (
 
 The default limits are three tasks and one worker. You can request up to ten tasks and four workers per cycle. Provider routing is the currently selected configured provider; per-specialist local/cloud preferences are not yet exposed by this CLI command. Worker calls are text-only specialist handlers and do not execute generated code, shell commands, or arbitrary tools. Keep provider credentials and task data private.
 
+## Task progress and event history
+
+You can inspect the durable event history of an authorized task:
+
+```bash
+yuki tasks events TASK_ID
+yuki tasks events TASK_ID --after-sequence 12 --limit 100
+```
+
+The event reader requires the same authenticated task-read capability as task inspection. It returns at most 500 events per request and supports incremental polling using the last observed sequence number. Event payloads can contain task progress and artifact metadata; treat output as private project data. This is bounded polling, not a websocket/SSE stream. Desktop live updates, reconnect cursors, event redaction policies and retention controls remain future integration work.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
