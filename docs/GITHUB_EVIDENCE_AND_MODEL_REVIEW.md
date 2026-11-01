@@ -68,3 +68,28 @@ Tests use fake clients and providers. Production readiness still requires
 an authenticated GitHub API implementation, verified workflow coverage,
 model-provider configuration, rate-limit handling, audit persistence, and
 integration tests against a test repository.
+
+
+## Concrete GitHub CLI fetcher
+
+`automation.github_cli_workflow_runs.GitHubCLIWorkflowRunClient` provides a
+concrete authenticated fetcher using the operator's installed `gh` CLI. It
+uses `gh api --paginate`, requests up to 100 runs per page, bounds total
+output and run count, avoids a shell, and never prints CLI stderr or tokens.
+
+```python
+from automation.github_actions_evidence import GitHubActionsEvidenceAdapter
+from automation.github_cli_workflow_runs import GitHubCLIWorkflowRunClient
+
+fetcher = GitHubCLIWorkflowRunClient("owner/repository")
+evidence = GitHubActionsEvidenceAdapter(
+    fetcher,
+    workflow_map=YOUR_EXACT_WORKFLOW_MAP,
+)
+report = evidence.build_report(commit_sha)
+```
+
+The operator must first authenticate `gh` with access to Actions metadata.
+The exact workflow map must reflect workflows actually enabled in the target
+repository. The example is a wiring pattern, not a claim that all six
+verification categories are already covered by Yuki's current workflows.
