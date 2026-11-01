@@ -17,6 +17,8 @@ from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
 from companion.memory_consent import CompanionMemory, MemoryConsentError
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.specialist_worker import SpecialistTaskWorker, build_provider_specialist_handlers
+from automation.worker_supervisor import WorkerSupervisor
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
@@ -50,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         task_action.add_argument("task_id")
         task_action.add_argument("--version", type=int, required=True,
                                  help="Current task version shown by yuki tasks inspect")
+
+    workers = sub.add_parser("workers", help="Run explicitly supervised specialist worker cycles")
+    worker_sub = workers.add_subparsers(dest="worker_command", required=True)
+    worker_cycle = worker_sub.add_parser("run-cycle", help="Process a finite batch of approved tasks")
+    worker_cycle.add_argument("--max-tasks", type=int, default=3)
+    worker_cycle.add_argument("--max-workers", type=int, default=1)
 
     agents = sub.add_parser("agents", help="Discover and supervise specialist agents")
     agent_sub = agents.add_subparsers(dest="agent_command", required=True)
@@ -263,6 +271,64 @@ def run_cli(
             return 4
         except Exception as exc:
             output_fn("Yuki task operation failed (" + type(exc).__name__ + ").")
+            return 5
+
+    if args.command == "workers":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        service_actor_id = "yuki-worker-service"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            permission_check = task_permission_authorizer(
+                auth_service,
+                session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+            )
+            if not permission_check(user.user_id, "worker:run", ""):
+                output_fn("Yuki: Your account is not authorized to run specialist workers.")
+                return 3
+            if not 1 <= args.max_tasks <= 10 or not 1 <= args.max_workers <= 4:
+                output_fn("Yuki: --max-tasks must be 1-10 and --max-workers must be 1-4.")
+                return 2
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            def authorize(actor_id, action, task_id):
+                if actor_id == service_actor_id:
+                    return action in {"task:complete", "task:fail", "task:recover"}
+                return permission_check(actor_id, action, task_id)
+            runtime = TaskRuntime(WorkflowRunStore(database_path), authorize=authorize)
+            config = config_loader()
+            provider = provider_factory(config)
+            handlers = build_provider_specialist_handlers(provider)
+            worker = SpecialistTaskWorker(
+                runtime, worker_id="yuki-cli-worker",
+                service_actor_id=service_actor_id, handlers=handlers,
+            )
+            supervisor = WorkerSupervisor(
+                runtime, worker, max_tasks_per_cycle=args.max_tasks,
+                recovery_limit=10, max_workers=args.max_workers,
+            )
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki worker service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+        try:
+            report = supervisor.run_cycle()
+            _write_json({
+                "processed_count": report.processed_count,
+                "succeeded_count": report.succeeded_count,
+                "failed_count": report.failed_count,
+                "recovered_task_ids": list(report.recovered_task_ids),
+                "idle": report.idle,
+            }, output_fn)
+            return 0 if report.failed_count == 0 else 4
+        except Exception as exc:
+            output_fn("Yuki worker cycle failed (" + type(exc).__name__ + ").")
             return 5
 
     if args.command == "agents":
