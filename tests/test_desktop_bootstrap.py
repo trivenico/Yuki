@@ -57,6 +57,15 @@ class DesktopBootstrapTests(unittest.TestCase):
         self.assertEqual(context.identity.actor_id, "local-operator")
         self.assertEqual(context.identity.session_id, "desktop-session")
 
+    def test_identity_claims_are_normalized_and_bounded(self):
+        identity = AuthenticatedDesktopIdentity(" operator ", " session ")
+        self.assertEqual(identity.actor_id, "operator")
+        self.assertEqual(identity.session_id, "session")
+        with self.assertRaises(ValueError):
+            AuthenticatedDesktopIdentity("x" * 129, "session")
+        with self.assertRaises(ValueError):
+            AuthenticatedDesktopIdentity("operator\\nforged", "session")
+
     def test_authentication_is_required_and_fails_closed(self):
         with self.assertRaises(DesktopStartupError):
             build_desktop_context(authenticate=None, provider=FakeProvider())
