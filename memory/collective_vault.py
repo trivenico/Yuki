@@ -223,6 +223,38 @@ class CollectiveMemoryVault:
             raise PermissionError("memory read is not authorized.")
         return self._record(row)
 
+    def scoped_candidates(
+        self, *, actor_id: str, scopes: Iterable[tuple[str, str]], limit: int = 500,
+    ) -> tuple[MemoryRecord, ...]:
+        """Return bounded candidates only from explicitly authorized scopes."""
+        actor = self._text(actor_id, "actor_id", 100)
+        requested = tuple(scopes)
+        if not requested or len(requested) > 100:
+            raise ValueError("provide between 1 and 100 explicit scopes.")
+        if type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("limit must be between 1 and 5000.")
+        allowed = []
+        for item in requested:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise MemoryVaultError("each scope must be a (scope, scope_id) pair.")
+            scope, sid = item
+            if not isinstance(scope, str) or scope not in _SCOPES or not isinstance(sid, str) or not _ID.fullmatch(sid):
+                raise MemoryVaultError("invalid search scope.")
+            if self._allowed(actor, "memory:read", f"{scope}:{sid}"):
+                allowed.append((scope, sid))
+        if not allowed:
+            return ()
+        placeholders = ",".join("(?, ?)" for _ in allowed)
+        params = [part for pair in allowed for part in pair]
+        params.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""SELECT * FROM memories WHERE deleted_at IS NULL
+                AND (scope, scope_id) IN ({placeholders})
+                ORDER BY updated_at DESC LIMIT ?""", params
+            ).fetchall()
+        return tuple(self._record(row) for row in rows)
+
     def search(
         self, *, actor_id: str, query: str, scopes: Iterable[tuple[str, str]],
         limit: int = 10,
