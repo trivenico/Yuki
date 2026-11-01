@@ -120,7 +120,10 @@ class DesktopCompanionController:
 
     def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> dict:
         self._require_live_session()
-        target = Path(destination).expanduser().resolve()
+        destination_path = Path(destination).expanduser()
+        if destination_path.is_symlink():
+            raise ValueError("Restore destination must not be a symbolic link.")
+        target = destination_path.resolve()
         live_data = desktop_data_root().resolve()
         if target == live_data or live_data in target.parents or target in live_data.parents:
             raise ValueError("Restore destination must be separate from the active Yuki profile.")
