@@ -21,7 +21,7 @@ class FakeResponse:
 class AnthropicMessagesProviderTests(unittest.TestCase):
     def provider(self, **kwargs):
         return AnthropicMessagesProvider(
-            "claude-fable-5-1", environ={"ANTHROPIC_API_KEY": "test-key"}, **kwargs
+            "claude-fable-5", environ={"ANTHROPIC_API_KEY": "test-key"}, **kwargs
         )
 
     def test_builds_messages_payload_and_extracts_text(self):
@@ -37,14 +37,14 @@ class AnthropicMessagesProviderTests(unittest.TestCase):
             request = build.return_value.open.call_args.args[0]
             self.assertTrue(request.full_url.endswith("/v1/messages"))
             payload = json.loads(request.data)
-            self.assertEqual(payload["model"], "claude-fable-5-1")
+            self.assertEqual(payload["model"], "claude-fable-5")
             self.assertEqual(payload["output_config"]["effort"], "xhigh")
             self.assertEqual(payload["messages"][0]["content"], "Review this code")
             self.assertNotIn("tools", payload)
             self.assertEqual(request.get_header("Anthropic-version"), "2023-06-01")
 
     def test_requires_key_before_network(self):
-        provider = AnthropicMessagesProvider("claude-fable-5-1", environ={})
+        provider = AnthropicMessagesProvider("claude-fable-5", environ={})
         self.assertFalse(provider.is_available())
         with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY"):
             provider.generate("hello")
@@ -57,9 +57,9 @@ class AnthropicMessagesProviderTests(unittest.TestCase):
 
     def test_rejects_untrusted_endpoint(self):
         with self.assertRaisesRegex(ValueError, "trusted"):
-            AnthropicMessagesProvider("claude-fable-5-1", base_url="https://attacker.example")
+            AnthropicMessagesProvider("claude-fable-5", base_url="https://attacker.example")
         with self.assertRaisesRegex(ValueError, "only be sent"):
-            AnthropicMessagesProvider("claude-fable-5-1", base_url="https://api.openai.com/v1")
+            AnthropicMessagesProvider("claude-fable-5", base_url="https://api.openai.com/v1")
 
     def test_empty_prompt_and_incomplete_response_fail_closed(self):
         with self.assertRaises(ValueError):
