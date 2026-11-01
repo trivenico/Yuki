@@ -15,7 +15,9 @@ from pathlib import Path
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
 from companion.memory_consent import CompanionMemory, MemoryConsentError
-from core.auth import AuthenticationError, BuiltInAuthService
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowConflict, WorkflowRunStore
+from core.auth import AuthenticationError, BuiltInAuthService, task_permission_authorizer
 from core.config import load_config
 from core.portable_paths import data_root
 from core.readiness import build_readiness_report
@@ -33,6 +35,19 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+
+    tasks = sub.add_parser("tasks", help="Inspect and supervise durable Yuki tasks")
+    task_sub = tasks.add_subparsers(dest="task_command", required=True)
+    task_list = task_sub.add_parser("list", help="List authorized task summaries")
+    task_list.add_argument("--state", choices=["queued", "running", "waiting_approval", "succeeded", "failed", "cancelled", "interrupted"])
+    task_list.add_argument("--limit", type=int, default=50)
+    task_inspect = task_sub.add_parser("inspect", help="Inspect an authorized task")
+    task_inspect.add_argument("task_id")
+    for action in ("approve", "cancel", "retry"):
+        task_action = task_sub.add_parser(action, help=f"{action.capitalize()} an authorized task")
+        task_action.add_argument("task_id")
+        task_action.add_argument("--version", type=int, required=True,
+                                 help="Current task version shown by yuki tasks inspect")
 
     auth = sub.add_parser("auth", help="Manage your local Yuki sign-in session")
     auth_sub = auth.add_subparsers(dest="auth_command", required=True)
@@ -159,6 +174,83 @@ def run_cli(
                 return 5
             output_fn("Yuki: Session revoked." if revoked else "Yuki: No active local session.")
             return 0
+
+    if args.command == "tasks":
+        root = data_root() / ".yuki"
+        session_path = root / "session.token"
+        try:
+            token = session_path.read_text(encoding="utf-8").strip()
+            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            user = auth_service.resolve_session(token)
+            if user is None:
+                output_fn("Yuki: Sign in first with yuki auth login.")
+                return 1
+            database_path = os.environ.get("YUKI_TASK_DB", str(root / "tasks.sqlite3"))
+            runtime = TaskRuntime(
+                WorkflowRunStore(database_path),
+                authorize=task_permission_authorizer(
+                    auth_service, session_token_provider=lambda: session_path.read_text(encoding="utf-8").strip(),
+                ),
+            )
+            actor_id = user.user_id
+        except FileNotFoundError:
+            output_fn("Yuki: Sign in first with yuki auth login.")
+            return 1
+        except Exception as exc:
+            output_fn("Yuki task service could not initialize (" + type(exc).__name__ + ").")
+            return 5
+
+        try:
+            if args.task_command == "list":
+                if not 1 <= args.limit <= 100:
+                    output_fn("Yuki: --limit must be between 1 and 100.")
+                    return 2
+                records = runtime.list_task_summaries(
+                    actor_id=actor_id, state=args.state, limit=args.limit,
+                )
+                _write_json([{
+                    "task_id": item.task_id, "name": item.name, "state": item.state,
+                    "version": item.version, "attempts": item.attempts,
+                    "created_at": item.created_at, "updated_at": item.updated_at,
+                } for item in records], output_fn)
+                return 0
+            if args.task_command == "inspect":
+                record = runtime.get(actor_id=actor_id, task_id=args.task_id)
+                _write_json({
+                    "task_id": record.task_id, "name": record.name, "state": record.state,
+                    "steps": record.steps, "result": record.result, "error_code": record.error_code,
+                    "version": record.version, "attempts": record.attempts,
+                    "created_at": record.created_at, "updated_at": record.updated_at,
+                    "lease_owner": record.lease_owner, "lease_expires_at": record.lease_expires_at,
+                }, output_fn)
+                return 0
+            if args.task_command == "approve":
+                record = runtime.approve(
+                    actor_id=actor_id, task_id=args.task_id, session_id=token,
+                    expected_version=args.version,
+                )
+            elif args.task_command == "cancel":
+                record = runtime.cancel(
+                    actor_id=actor_id, task_id=args.task_id, expected_version=args.version,
+                )
+            else:
+                record = runtime.retry_failed(
+                    actor_id=actor_id, task_id=args.task_id, expected_version=args.version,
+                )
+            _write_json({"task_id": record.task_id, "state": record.state, "version": record.version}, output_fn)
+            return 0
+        except PermissionError:
+            output_fn("Yuki: Your account is not authorized for this task action.")
+            return 3
+        except (WorkflowConflict, ValueError) as exc:
+            output_fn("Yuki: Task was not changed. Refresh its details and try again (" + type(exc).__name__ + ").")
+            return 2
+        except KeyError:
+            output_fn("Yuki: Task not found.")
+            return 4
+        except Exception as exc:
+            output_fn("Yuki task operation failed (" + type(exc).__name__ + ").")
+            return 5
 
     if args.command == "doctor":
         report = readiness_builder().to_dict()
