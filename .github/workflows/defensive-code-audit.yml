@@ -23,14 +23,22 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Test defensive code auditor
-        run: python -m unittest tests.test_defensive_code_audit -v
+      - name: Test defensive security auditors
+        run: |
+          python -m unittest tests.test_defensive_code_audit tests.test_secret_audit -v
       - name: Generate static security triage report
-        run: python -m tools.defensive_code_audit . --format json --fail-on critical > defensive-code-audit.json
-      - name: Upload security triage report
+        run: |
+          python -m tools.defensive_code_audit . --format json --fail-on critical > defensive-code-audit.json
+      - name: Scan for likely exposed secrets (redacted output only)
+        run: |
+          python -m tools.secret_audit . --format json > secret-audit.json
+      - name: Upload security triage reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: yuki-defensive-code-audit
-          path: defensive-code-audit.json
-          if-no-files-found: error
-          retention-days: 14
+          name: yuki-defensive-security-reports
+          path: |
+            defensive-code-audit.json
+            secret-audit.json
+          if-no-files-found: warn
+          retention-days: 7
