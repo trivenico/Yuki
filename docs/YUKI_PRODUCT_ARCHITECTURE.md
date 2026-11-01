@@ -68,3 +68,8 @@ The coordinator copies each validated specialist subtask's `required_permissions
 ## Companion task update adapter
 
 `companion.task_updates.CompanionTaskUpdates` translates authorized durable task events into bounded, presentation-safe companion updates. It delegates authorization and incremental pagination to `TaskRuntime.events`, strips control characters from display text, limits page size and message length, and omits task arguments, artifact references, model prompts, and result payloads. It is a service adapter, not a transport: desktop/CLI clients still need to subscribe or poll through their application-service boundary.
+
+
+## Shared companion application service
+
+`companion.application.CompanionApplicationService` is the shared frontend-facing boundary for companion conversation, role selection, session reset, and consent-gated memory context. The CLI now uses this service instead of independently assembling memory context and calling the conversation session. Desktop clients should use the same service contract. It does not execute tools or dispatch specialist workers; those remain behind the separate authenticated agent coordinator and workflow approval boundary.
