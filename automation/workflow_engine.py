@@ -6,6 +6,7 @@ It never evaluates code, invokes a shell, or performs implicit network access.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Callable
 
 
@@ -15,6 +16,7 @@ class WorkflowStep:
     action: str
     argument: str = ""
     requires_approval: bool = True
+    required_permissions: tuple[str, ...] = ()
 
 
 class WorkflowEngine:
@@ -23,6 +25,8 @@ class WorkflowEngine:
     MAX_NAME_CHARS = 100
     MAX_ARGUMENT_CHARS = 2_000
     MAX_OUTPUT_CHARS = 1_000
+    MAX_PERMISSIONS = 32
+    PERMISSION_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
 
     def __init__(self, handlers: dict[str, Callable[[str], str]] | None = None, approver=None):
         if handlers is not None and not isinstance(handlers, dict):
@@ -37,18 +41,20 @@ class WorkflowEngine:
         self.approver = approver
 
     @staticmethod
-    def _validate_step(index: int, step: Any) -> tuple[str, str, str, bool]:
+    def _validate_step(index: int, step: Any) -> tuple[str, str, str, bool, tuple[str, ...]]:
         if isinstance(step, dict):
-            allowed_keys = {"name", "action", "argument", "requires_approval"}
+            allowed_keys = {"name", "action", "argument", "requires_approval", "required_permissions"}
             if set(step) - allowed_keys:
                 raise ValueError("Workflow step contains unsupported fields.")
             name = step.get("name", f"step-{index + 1}")
             action = step.get("action")
             argument = step.get("argument", "")
             approval = step.get("requires_approval", True)
+            permissions = step.get("required_permissions", ())
         elif isinstance(step, WorkflowStep):
-            name, action, argument, approval = (
-                step.name, step.action, step.argument, step.requires_approval
+            name, action, argument, approval, permissions = (
+                step.name, step.action, step.argument, step.requires_approval,
+                step.required_permissions,
             )
         else:
             raise ValueError("Each workflow step must be a mapping or WorkflowStep.")
@@ -72,7 +78,20 @@ class WorkflowEngine:
             raise ValueError("requires_approval must be a boolean.")
         if action == "wait_for_approval" and not approval:
             raise ValueError("wait_for_approval always requires explicit approval.")
-        return name.strip(), action, argument, approval
+        if (
+            not isinstance(permissions, (tuple, list))
+            or len(permissions) > WorkflowEngine.MAX_PERMISSIONS
+            or any(
+                not isinstance(permission, str)
+                or not WorkflowEngine.PERMISSION_PATTERN.fullmatch(permission)
+                for permission in permissions
+            )
+            or len(set(permissions)) != len(permissions)
+        ):
+            raise ValueError("required_permissions must contain at most 32 unique bounded permission identifiers.")
+        if permissions and not approval:
+            raise ValueError("steps requesting permissions must require explicit approval.")
+        return name.strip(), action, argument, approval, tuple(sorted(permissions))
 
     def run(self, steps: list[WorkflowStep | dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(steps, (list, tuple)) or not 1 <= len(steps) <= self.MAX_STEPS:
@@ -84,7 +103,7 @@ class WorkflowEngine:
             raise ValueError("Workflow step names must be unique.")
 
         results: list[dict[str, Any]] = []
-        for name, action, argument, requires_approval in validated:
+        for name, action, argument, requires_approval, _required_permissions in validated:
             needs_approval = requires_approval or action == "wait_for_approval"
             if needs_approval and (
                 self.approver is None or self.approver(name, action, argument) is not True
