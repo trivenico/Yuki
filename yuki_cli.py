@@ -9,6 +9,7 @@ import argparse
 import json
 from collections.abc import Callable, Sequence
 
+from companion.application import CompanionApplicationService
 from companion.conversation import ConversationError, ConversationSession
 from companion.memory_consent import CompanionMemory, MemoryConsentError
 from core.config import load_config
@@ -102,6 +103,7 @@ def run_cli(
                 + "). No plaintext fallback was used."
             )
             return 5
+        app = CompanionApplicationService(provider, memory=memory, session=session)
         output_fn("Yuki companion chat. Memory is off by default. Use /memory on to enable explicit saves. Tool execution is disabled.")
         while True:
             try:
@@ -118,7 +120,7 @@ def run_cli(
             if command.startswith("/role "):
                 role_name = command.split(None, 1)[1]
                 try:
-                    role = session.set_role(role_name)
+                    role = app.set_role(role_name)
                 except ValueError:
                     output_fn("Yuki> Unknown role. Available: companion, tutor, interviewer, developer, security, marketing.")
                 else:
@@ -190,7 +192,7 @@ def run_cli(
                 output_fn("Yuki> To delete all saved memories, type exactly /memory clear confirm.")
                 continue
             if command == "/reset":
-                session.reset()
+                app.reset_conversation()
                 output_fn("Yuki> This conversation has been cleared.")
                 continue
             if command in {"/help", "/?"}:
@@ -199,12 +201,7 @@ def run_cli(
             if not message.strip():
                 continue
             try:
-                memory_context = memory.context_entries(query=message)
-            except Exception:
-                output_fn("Yuki> I could not safely read saved-memory context; no request was sent.")
-                continue
-            try:
-                reply = session.respond(message, memory_context=memory_context)
+                reply = app.respond(message)
             except ValueError:
                 output_fn("Yuki> Please send a message of up to 4000 characters.")
                 continue
