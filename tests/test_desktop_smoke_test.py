@@ -19,6 +19,16 @@ class DesktopSmokeTestTests(unittest.TestCase):
             binary.write_bytes(b"test")
             self.assertEqual(executable_for(root), binary)
 
+    def test_resolves_macos_app_bundle_from_pyinstaller_base_name(self):
+        if __import__("sys").platform != "darwin":
+            self.skipTest("macOS app bundle path is platform-specific")
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Yuki.app"
+            binary = app / "Contents" / "MacOS" / "Yuki"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"test")
+            self.assertEqual(executable_for(Path(directory) / "Yuki"), binary)
+
     def test_missing_executable_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(FileNotFoundError):
