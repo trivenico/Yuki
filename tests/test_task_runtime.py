@@ -35,6 +35,35 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+    def test_idempotency_keys_are_scoped_to_actor(self):
+        runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, _task: (
+                actor in {"alice", "bob"} and action == "task:create"
+            ),
+        )
+        alice = runtime.enqueue(
+            actor_id="alice", idempotency_key="shared-key",
+            name="same-task", steps=self.steps,
+        )
+        bob = runtime.enqueue(
+            actor_id="bob", idempotency_key="shared-key",
+            name="same-task", steps=self.steps,
+        )
+        self.assertNotEqual(alice.task_id, bob.task_id)
+        alice_retry = runtime.enqueue(
+            actor_id="alice", idempotency_key="shared-key",
+            name="same-task", steps=self.steps,
+        )
+        self.assertEqual(alice.task_id, alice_retry.task_id)
+
+    def test_idempotency_key_rejects_nul_characters(self):
+        with self.assertRaises(ValueError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="invalid\\x00key",
+                name="task", steps=self.steps,
+            )
+
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
         second = self.create("list-second")
