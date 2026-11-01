@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -177,7 +178,8 @@ class YukiCliTests(unittest.TestCase):
                 self.assertEqual(code, 0)
                 session_path = root / ".yuki" / "session.token"
                 self.assertTrue(session_path.exists())
-                self.assertEqual(session_path.stat().st_mode & 0o777, 0o600)
+                if os.name == "posix":
+                    self.assertEqual(session_path.stat().st_mode & 0o777, 0o600)
                 code = run_cli(["auth", "status"], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 self.assertIn("root.user", outputs[-1])
