@@ -8,7 +8,7 @@ from companion.memory import MemoryStore
 from companion.memory_consent import CompanionMemory
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
 class FakeProvider:
@@ -240,6 +240,11 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         app = CompanionApplicationService(
             self.provider, memory=self.memory, task_runtime=runtime,
         )
+        with self.assertRaises(WorkflowConflict):
+            app.retry_task(
+                actor_id="alice", task_id=failed.task_id,
+                expected_version=failed.version - 1,
+            )
         retried = app.retry_task(
             actor_id="alice", task_id=failed.task_id,
             expected_version=failed.version,
