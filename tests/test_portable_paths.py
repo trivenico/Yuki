@@ -1,10 +1,11 @@
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.portable_paths import config_path, data_root, workspace_path
+from core.portable_paths import config_path, data_root, desktop_data_root, workspace_path
 
 
 class PortablePathTests(unittest.TestCase):
@@ -23,6 +24,48 @@ class PortablePathTests(unittest.TestCase):
             absolute = Path(directory).resolve()
             with patch.dict(os.environ, {"YUKI_HOME": "/not-used"}, clear=True):
                 self.assertEqual(workspace_path(str(absolute)), absolute)
+
+    def test_desktop_data_root_uses_linux_xdg_data_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ,
+                {"HOME": directory, "XDG_DATA_HOME": str(Path(directory) / "xdg")},
+                clear=True,
+            ), patch.object(sys, "platform", "linux"):
+                self.assertEqual(
+                    desktop_data_root(),
+                    (Path(directory) / "xdg" / "Yuki").resolve(),
+                )
+
+    def test_desktop_data_root_uses_macos_application_support(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"HOME": directory}, clear=True), patch.object(
+                sys, "platform", "darwin"
+            ), patch.object(Path, "home", return_value=Path(directory)):
+                self.assertEqual(
+                    desktop_data_root(),
+                    (Path(directory) / "Library" / "Application Support" / "Yuki").resolve(),
+                )
+
+    def test_desktop_data_root_uses_windows_local_app_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ,
+                {"HOME": directory, "LOCALAPPDATA": str(Path(directory) / "Local")},
+                clear=True,
+            ), patch.object(sys, "platform", "win32"):
+                self.assertEqual(
+                    desktop_data_root(),
+                    (Path(directory) / "Local" / "Yuki").resolve(),
+                )
+
+    def test_explicit_yuki_home_overrides_desktop_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"YUKI_HOME": directory}, clear=True):
+                self.assertEqual(
+                    desktop_data_root(),
+                    (Path(directory) / ".yuki").resolve(),
+                )
 
     def test_config_override_can_be_absolute(self):
         with tempfile.TemporaryDirectory() as directory:
