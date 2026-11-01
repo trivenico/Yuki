@@ -83,3 +83,8 @@ The coordinator copies each validated specialist subtask's `required_permissions
 ## Companion task controls
 
 The shared companion application service exposes `task_progress` and `cancel_task`. Progress reads use the existing task-level read authorization and return only bounded, redacted event summaries through `CompanionTaskUpdates`. Cancellation requires the caller's task-cancel authorization and the current task version, preventing stale UI actions from silently changing task state. When a specialist coordinator is configured, the companion automatically reuses its exact `TaskRuntime` instance for progress and cancellation; a separately supplied runtime must match it.
+
+
+## Companion activity and plan review APIs
+
+`CompanionApplicationService.list_tasks()` exposes bounded `TaskSummary` records through the dedicated `task:list` authorization capability. The summary type intentionally omits task step definitions and result payloads. `get_agent_plan()` exposes persisted plan data through the coordinator's `agent:read` authorization for a review-before-dispatch UI. These APIs allow CLI and desktop clients to render a consistent activity feed and plan review screen without querying SQLite or bypassing service authorization.
