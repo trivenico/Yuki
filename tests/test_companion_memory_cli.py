@@ -59,6 +59,33 @@ class CompanionMemoryCliTests(unittest.TestCase):
             self.assertIn("Deleted 1 saved memories", rendered)
             self.assertIn("No saved memories", rendered)
 
+    def test_saved_memory_context_is_used_only_after_explicit_session_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = []
+            provider = FakeProvider()
+            messages = iter([
+                "/memory on",
+                "/remember I prefer concise replies",
+                "/memory use on",
+                "hello",
+                "/memory use off",
+                "hello again",
+                "/quit",
+            ])
+            code = run_cli(
+                ["chat"],
+                config_loader=lambda: {},
+                provider_factory=lambda config: provider,
+                memory_factory=lambda: CompanionMemory(MemoryStore(Path(directory) / "memory.json")),
+                input_fn=lambda prompt: next(messages),
+                output_fn=output.append,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(provider.calls), 2)
+            self.assertIn("I prefer concise replies", provider.calls[0][0])
+            self.assertIn("untrusted user-authored data", provider.calls[0][0])
+            self.assertNotIn("I prefer concise replies", provider.calls[1][0])
+
     def test_saved_memory_is_not_silently_injected_into_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "memory.json"
