@@ -284,7 +284,9 @@ class YukiCliTests(unittest.TestCase):
                 code = run_cli(["agents", "dispatch", plan_id], output_fn=outputs.append)
                 self.assertEqual(code, 0)
                 dispatched = json.loads(outputs[-1])
-                self.assertEqual(dispatched["subtasks"][0]["status"], "waiting_approval")
+                # Agent-plan status records dispatch; task approval state is
+                # tracked separately by the durable task runtime.
+                self.assertEqual(dispatched["subtasks"][0]["status"], "queued")
                 self.assertTrue(dispatched["subtasks"][0]["task_id"])
 
     def test_signed_out_user_cannot_list_or_plan_agents(self):
