@@ -117,7 +117,10 @@ def run_cli(
                     output_fn("Yuki> Interaction style changed to " + role["name"] + ". Permissions are unchanged.")
                 continue
             if command in {"/memory", "/memory status"}:
-                output_fn("Yuki> Memory is " + ("on for this session's explicit saves." if memory.enabled else "off.") + " Saved entries are not automatically added to chat context.")
+                output_fn(
+                    "Yuki> Memory saving is " + ("on." if memory.enabled else "off.")
+                    + " Saved-memory context is " + ("on for this session." if memory.context_enabled else "off.")
+                )
                 continue
             if command == "/memory on":
                 memory.enable()
@@ -125,7 +128,15 @@ def run_cli(
                 continue
             if command == "/memory off":
                 memory.disable()
-                output_fn("Yuki> Memory disabled. Existing saved entries remain until you explicitly delete them.")
+                output_fn("Yuki> Memory saving and context use disabled. Existing saved entries remain until you explicitly delete them.")
+                continue
+            if command == "/memory use on":
+                memory.enable_context()
+                output_fn("Yuki> Saved-memory context enabled for this session. Saved notes are treated as untrusted context, not instructions.")
+                continue
+            if command == "/memory use off":
+                memory.disable_context()
+                output_fn("Yuki> Saved-memory context disabled for this session.")
                 continue
             if command.startswith("/remember "):
                 try:
@@ -175,12 +186,17 @@ def run_cli(
                 output_fn("Yuki> This conversation has been cleared.")
                 continue
             if command in {"/help", "/?"}:
-                output_fn("Yuki> I can chat with context during this session. Commands: /role NAME, /memory on|off, /remember TEXT, /memories, /forget ID, /memory export, /memory clear CONFIRM, /reset, /quit.")
+                output_fn("Yuki> I can chat with context during this session. Commands: /role NAME, /memory on|off, /memory use on|off, /remember TEXT, /memories, /forget ID, /memory export, /memory clear CONFIRM, /reset, /quit.")
                 continue
             if not message.strip():
                 continue
             try:
-                reply = session.respond(message)
+                memory_context = memory.context_entries()
+            except Exception:
+                output_fn("Yuki> I could not safely read saved-memory context; no request was sent.")
+                continue
+            try:
+                reply = session.respond(message, memory_context=memory_context)
             except ValueError:
                 output_fn("Yuki> Please send a message of up to 4000 characters.")
                 continue
