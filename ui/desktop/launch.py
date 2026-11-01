@@ -56,7 +56,7 @@ def run() -> int:
     try:
         from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
         from PySide6.QtWidgets import (
-            QApplication, QCheckBox, QFormLayout, QHBoxLayout, QLabel,
+            QApplication, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
             QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
             QStackedWidget, QVBoxLayout, QWidget, QTabWidget,
             QListWidget, QListWidgetItem, QTextEdit,
@@ -239,10 +239,13 @@ def run() -> int:
             task_refresh.clicked.connect(self._refresh_tasks)
             self.task_cancel_button = QPushButton("Cancel selected task")
             self.task_cancel_button.clicked.connect(self._cancel_selected_task)
+            self.task_approve_button = QPushButton("Review & approve")
+            self.task_approve_button.clicked.connect(self._review_and_approve_task)
             task_progress = QPushButton("View progress")
             task_progress.clicked.connect(self._show_selected_progress)
             task_actions.addWidget(task_refresh)
             task_actions.addWidget(task_progress)
+            task_actions.addWidget(self.task_approve_button)
             task_actions.addWidget(self.task_cancel_button)
             tasks_layout.addLayout(task_actions)
             tabs.addTab(tasks_page, "Tasks")
@@ -442,6 +445,7 @@ def run() -> int:
                     )
                     item.setData(256, (task.task_id, task.name, task.state, task.version))
                     self.task_list.addItem(item)
+                self.task_approve_button.setEnabled(False)
             except Exception as exc:
                 self.chat_status.setText("Task list unavailable (" + type(exc).__name__ + ").")
                 if isinstance(exc, PermissionError):
@@ -471,6 +475,96 @@ def run() -> int:
                 )
                 if isinstance(exc, PermissionError):
                     self._return_to_login()
+
+        def _review_and_approve_task(self):
+            if self.controller is None:
+                return
+            item = self.task_list.currentItem()
+            if item is None:
+                return
+            task_id, name, state, version = item.data(256)
+            if state != "waiting_approval":
+                QMessageBox.information(
+                    self, "Approval unavailable",
+                    "Only tasks explicitly waiting for approval can be approved."
+                )
+                return
+            try:
+                task = self.controller.get_task(task_id)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self, "Task review unavailable",
+                    "The task definition could not be loaded (" + type(exc).__name__ + ")."
+                )
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
+                return
+            if task.state != "waiting_approval" or task.version != version:
+                QMessageBox.warning(
+                    self, "Task changed",
+                    "This task changed since the list was loaded. Refresh and review the latest version."
+                )
+                self._refresh_tasks()
+                return
+
+            lines = [
+                "Review the exact stored workflow definition before approving.",
+                "",
+                f"Task: {task.name}",
+                f"Task ID: {task.task_id}",
+                f"State: {task.state}",
+                f"Version: {task.version}",
+                "",
+            ]
+            for index, step in enumerate(task.steps, start=1):
+                lines.extend([
+                    f"STEP {index}: {step.get('name', 'unnamed')}",
+                    f"Action: {step.get('action', 'unspecified')}",
+                    f"Argument: {step.get('argument', '')!r}",
+                    f"Requires approval: {step.get('requires_approval', True)}",
+                    "Required permissions: "
+                    + (", ".join(step.get("required_permissions", ())) or "none declared"),
+                    "",
+                ])
+            lines.extend([
+                "Approval authorizes this exact workflow definition for the current session.",
+                "It does not itself start a worker. A separate authorized worker is required.",
+                "",
+                "Do not approve if an action, argument, target, or permission is unexpected.",
+            ])
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Review task approval")
+            dialog.setMinimumSize(640, 480)
+            layout = QVBoxLayout(dialog)
+            review = QPlainTextEdit()
+            review.setReadOnly(True)
+            review.setPlainText("\\n".join(lines))
+            layout.addWidget(review, 1)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+            )
+            buttons.button(QDialogButtonBox.Ok).setText("Approve exact task")
+            buttons.button(QDialogButtonBox.Ok).setEnabled(True)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            layout.addWidget(buttons)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            try:
+                self.controller.approve_task(task_id, expected_version=version)
+                QMessageBox.information(
+                    self, "Task approved",
+                    "Approval was recorded for this task version and current session. "
+                    "No worker was started."
+                )
+                self._refresh_tasks()
+            except Exception as exc:
+                QMessageBox.warning(
+                    self, "Approval failed",
+                    "The task was not approved (" + type(exc).__name__ + "). "
+                    "It may have changed; refresh and review again."
+                )
+                self._refresh_tasks()
 
         def _cancel_selected_task(self):
             if self.controller is None:
@@ -559,6 +653,7 @@ def run() -> int:
             self.specialist_list.clear()
             self.task_list.clear()
             self.task_progress_view.clear()
+            self.task_approve_button.setEnabled(False)
             self.current_plan = None
             self.plan_details.clear()
             self.plan_dispatch_button.setEnabled(False)
