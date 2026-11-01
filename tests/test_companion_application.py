@@ -45,7 +45,7 @@ class CompanionApplicationServiceTests(unittest.TestCase):
 
         memory = BrokenMemory(MemoryStore(str(Path(self.temp.name) / "broken-memory.json")))
         app = CompanionApplicationService(self.provider, memory=memory)
-        with self.assertRaises(OSError):
+        with self.assertRaises(ConversationError):
             app.respond("hello")
         self.assertEqual(self.provider.prompts, [])
 
