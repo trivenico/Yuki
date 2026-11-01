@@ -92,6 +92,7 @@ class CompanionApplicationServiceTests(unittest.TestCase):
         app = CompanionApplicationService(
             provider, memory=memory, agent_coordinator=coordinator,
         )
+        self.assertIs(app.task_runtime, runtime)
 
         proposed = app.propose_agent_task(
             actor_id="alice", idempotency_key="companion-research",
