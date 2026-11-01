@@ -24,10 +24,16 @@ class AuthenticatedDesktopIdentity:
     session_id: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.actor_id, str) or not self.actor_id.strip():
-            raise ValueError("Authenticated actor identity is required.")
-        if not isinstance(self.session_id, str) or not self.session_id.strip():
-            raise ValueError("Authenticated session identity is required.")
+        for field_name in ("actor_id", "session_id"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value.strip()) > 128
+                or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            ):
+                raise ValueError(f"Authenticated {field_name.replace('_', ' ')} is invalid.")
+            object.__setattr__(self, field_name, value.strip())
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,11 @@ def build_desktop_context(
 
     The authenticator is trusted infrastructure, not a callback supplied by a
     widget. Actor and session IDs are never accepted from presentation inputs.
+
+    This factory does not implement OS authentication itself. Production callers
+    must inject an authenticator backed by a reviewed local login/session provider
+    and compose coordinators/runtimes with authorization callbacks bound to that
+    identity. A caller-created identity object is not, by itself, proof of login.
     """
     if not callable(authenticate):
         raise DesktopStartupError("A trusted local authenticator is required.")
