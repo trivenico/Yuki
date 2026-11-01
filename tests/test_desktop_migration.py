@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from ui.desktop.migration import MigrationError, migrate_data, preview_migration
@@ -51,6 +52,27 @@ class DesktopMigrationTests(unittest.TestCase):
             self.assertEqual(copied.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(copied.execute("SELECT name FROM tasks").fetchone()[0], "keep me")
             copied.close()
+
+    def test_preview_enforces_file_count_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "a.txt").write_text("a")
+            (source / "b.txt").write_text("b")
+            with patch("ui.desktop.migration.MAX_MIGRATION_FILES", 1):
+                with self.assertRaises(MigrationError):
+                    preview_migration(source, root / "new")
+
+    def test_preview_enforces_total_size_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "old"
+            source.mkdir()
+            (source / "large.txt").write_bytes(b"12345")
+            with patch("ui.desktop.migration.MAX_MIGRATION_BYTES", 4):
+                with self.assertRaises(MigrationError):
+                    preview_migration(source, root / "new")
 
     def test_nonempty_destination_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
