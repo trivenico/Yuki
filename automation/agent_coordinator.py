@@ -234,6 +234,10 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("self-dependencies and duplicate dependencies are not allowed.")
             if type(item.requires_approval) is not bool:
                 raise AgentPlanError("requires_approval must be a boolean.")
+            if item.required_permissions and not item.requires_approval:
+                raise AgentPlanError(
+                    "subtasks requiring privileged permissions cannot disable explicit approval."
+                )
             if not isinstance(item.required_permissions, tuple) or any(
                 not isinstance(p, str) or not _PERMISSION.fullmatch(p)
                 for p in item.required_permissions
