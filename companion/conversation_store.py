@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
@@ -59,9 +60,21 @@ class ConversationStore:
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
+    @contextmanager
+    def _connection(self):
+        db = self._connect()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     def _initialize(self) -> None:
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 db.execute("""
                     CREATE TABLE IF NOT EXISTS companion_conversations (
                         conversation_id TEXT PRIMARY KEY,
