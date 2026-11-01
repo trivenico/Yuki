@@ -1,6 +1,6 @@
 # Desktop application architecture
 
-**Status:** architecture accepted; D1 import-safe package, optional dependency manifest, launcher stub, injected composition boundary, and D2 OS-keyring session manager are implemented. The session manager reuses the existing SQLite account service, stores only opaque tokens in the OS credential store, verifies stored tokens, and revokes newly issued sessions if secure storage fails. Interactive login/chat UI, identity-bound task authorization composition, and packaging are not implemented.
+**Status:** architecture accepted; D1 import-safe package and D2 source implementation are present. The desktop now has an OS-keyring session manager, authenticated controller, login/chat window, and a window-scoped background provider worker using the shared companion service. Controller/session tests are included. The PySide6 UI has not yet been exercised in a real desktop runtime or on clean OS images; identity-bound task authorization, agent/task views, and packaging remain unfinished.
 **Parent work:** companion service and structured provider chat on `feat/structured-provider-chat`.
 **Decision owner:** Yuki maintainers.
 
@@ -56,7 +56,7 @@ Existing application and domain services
 
 The composition root is the only place that may assemble dependencies. Widgets receive narrow controller interfaces, not raw stores, provider SDK clients, or unrestricted runtime objects. The same application-service instances must be used for chat, plans, task summaries, approvals, and progress updates within a desktop session.
 
-The UI thread must never perform provider calls, filesystem indexing, or worker cycles synchronously. Use bounded background workers with explicit cancellation and marshal immutable results back to the UI thread. Closing the window cancels UI-owned requests; it must not silently cancel durable tasks or start workers.
+The UI thread must never perform provider calls, filesystem indexing, or worker cycles synchronously. Use a window-scoped bounded background worker pool and marshal results back to the UI thread. The initial chat shell prevents closing or signing out while a provider request is active; cancellation and graceful shutdown are follow-up hardening work. Closing the window must never silently cancel durable tasks or start workers.
 
 ## First vertical slice
 
@@ -111,4 +111,4 @@ The UI thread must never perform provider calls, filesystem indexing, or worker 
 | D5 | Native packaging | Clean-install smoke tests on each supported OS |
 | D6 | Release qualification | Security, privacy, accessibility, upgrade, rollback and license gates pass |
 
-The first implementation PR should deliver D1 only, with import-isolation tests. Do not add a large UI dependency to core requirements or bundle a worker daemon as part of the desktop shell.
+Keep PySide6 and keyring in the optional desktop manifest; never add them to core requirements or bundle a worker daemon as part of the desktop shell.
