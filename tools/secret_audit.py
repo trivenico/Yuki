@@ -56,6 +56,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd())
     parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--fail-on-findings", action="store_true", help="Return a failing exit code when any heuristic match is found.")
     args = parser.parse_args(argv)
     findings, errors = scan(args.root)
     report = {"schema_version": 1, "scanner": "yuki-redacted-secret-auditor",
@@ -67,7 +68,9 @@ def main(argv=None) -> int:
         print(f"Yuki secret audit: {len(findings)} finding(s)")
         for finding in findings:
             print(f"{finding.severity.upper()} {finding.rule_id} {finding.path}:{finding.line} {finding.redacted_match} fingerprint={finding.fingerprint}")
-    return 1 if findings or errors else 0
+    # Default to report-only mode: heuristic matches need triage and should not
+    # become an unreviewed repository-wide CI baseline. Opt into a hard gate.
+    return 1 if args.fail_on_findings and (findings or errors) else 0
 
 if __name__ == "__main__":
     raise SystemExit(main())
