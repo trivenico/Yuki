@@ -111,3 +111,49 @@ from a model name. Keep a manual override and explain the routing decision.
   are provider/account/model dependent and must be verified at runtime.
 - A successful mocked test proves adapter behavior, not live API entitlement,
   model quality, production readiness or security certification.
+
+## Deterministic task-aware routing
+
+Yuki now exposes a deterministic task-routing policy through
+`providers.task_routing` and `ProviderManager.create_task_routed_adapter()`.
+It is a policy layer over the sanitized capability registry, not a learned
+quality predictor.
+
+Supported task profiles:
+
+| Task type | Default reasoning effort | Human review |
+|---|---|---|
+| routine | low | when requested |
+| engineering | high | when requested |
+| complex_reasoning | xhigh | when requested |
+| security | high | always required |
+| long_horizon | high | when requested |
+
+Privacy defaults to `local_only`. A task must explicitly set
+`privacy="cloud_allowed"` before a cloud provider can be considered. A
+provider must be implemented, configured, ready, privacy-compatible and
+capability-compatible. Failed availability checks stop the route; no silent
+fallback is attempted.
+
+Example:
+
+    from providers.task_routing import TaskProfile
+    from yuki_providers import ProviderManager
+
+    manager = ProviderManager()
+    decision, adapter = manager.create_task_routed_adapter(TaskProfile(
+        "engineering",
+        privacy="cloud_allowed",
+        preferred_providers=("openai_responses", "anthropic"),
+    ))
+
+The decision exposes provider, configured model, task type, privacy choice,
+reasoning effort, human-review requirement and a plain-language rationale.
+Provider effort is applied only when the selected adapter exposes an explicit
+effort setting. Other adapters retain their own configured behavior.
+
+This first router does not estimate price, latency, context capacity, benchmark
+quality or actual entitlement. Those require measured, versioned metadata and
+are intentionally not guessed from model names. Long-horizon routing does not
+itself create durable workflows; callers must continue to use Yuki's existing
+workflow store, checkpoints and approval services.
