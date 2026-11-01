@@ -409,7 +409,13 @@ class SpecialistAgentCoordinator:
         ]
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        key = idempotency_key.strip()
+        # Scope the global SQLite uniqueness key to the authenticated actor.
+        # Store only a digest so raw caller-supplied keys are not persisted.
+        actor = actor_id.strip()
+        key_digest = hashlib.sha256(
+            (actor + "\0" + idempotency_key.strip()).encode("utf-8")
+        ).hexdigest()
+        key = "actor:" + key_digest
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
