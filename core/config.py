@@ -106,6 +106,27 @@ def load_config(path=None):
             raise RuntimeError("YUKI_GITHUB_ALLOWED_ROOTS may contain at most 50 paths.")
     else:
         github_roots = _string_list(raw, "github_allowed_roots")
+    storage_backend = os.environ.get("YUKI_STORAGE_BACKEND", str(raw.get("storage_backend", "sqlite"))).strip().lower()
+    if storage_backend not in {"sqlite", "postgres"}:
+        raise RuntimeError("storage_backend must be sqlite or postgres.")
+    database_url = os.environ.get("YUKI_DATABASE_URL", str(raw.get("database_url", ""))).strip()
+    if storage_backend == "postgres":
+        try:
+            database_parsed = urlsplit(database_url)
+            database_host = database_parsed.hostname
+            database_parsed.port
+            if database_parsed.scheme not in {"postgres", "postgresql"} or not database_host or database_parsed.username is None or database_parsed.password is None:
+                raise ValueError("invalid PostgreSQL URL")
+            local_database = database_host in {"localhost", "127.0.0.1", "::1"}
+            query_options = dict(item.split("=", 1) for item in database_parsed.query.split("&") if "=" in item)
+            if not local_database and query_options.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
+                raise ValueError("remote PostgreSQL requires TLS")
+        except ValueError as exc:
+            raise RuntimeError("YUKI_DATABASE_URL must be a valid PostgreSQL URL; remote databases require TLS.") from exc
+    elif database_url:
+        raise RuntimeError("YUKI_DATABASE_URL is only valid when storage_backend is postgres.")
+    database_pool_min = _bounded_int(raw.get("database_pool_min", 1), 1, 50)
+    database_pool_max = _bounded_int(raw.get("database_pool_max", 10), database_pool_min, 50)
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
@@ -116,6 +137,8 @@ def load_config(path=None):
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
     return {
         "name": "Yuki", "workspace": str(workspace.resolve()),
+        "storage_backend": storage_backend, "database_url": database_url,
+        "database_pool_min": database_pool_min, "database_pool_max": database_pool_max,
         "language_behavior": language_behavior, "voice_style": voice_style,
         "spoken_reply_policy": spoken_reply_policy,
         "voice_enabled": _bool_setting("YUKI_VOICE_ENABLED", raw, "voice_enabled", False),
