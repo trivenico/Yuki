@@ -35,6 +35,10 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"Yuki", sent[1]["body"])
         self.assertEqual(api.calls, 0)
 
+    def test_web_shell_contains_provider_status_indicator(self):
+        sent = self.request(YukiWebApplication(_FakeAPI()), "/")
+        self.assertIn(b'id="provider-label"', sent[1]["body"])
+
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
