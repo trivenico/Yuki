@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
 from typing import Any
 
@@ -18,9 +19,18 @@ _ZERO_HASH = "0" * 64
 class SQLiteApprovalAuditLog:
     """Append-only API; bearer pending IDs and actor identifiers are hashed at rest."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, identity_key: str | bytes | None = None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
+        if identity_key is None:
+            identity_key = os.environ.get("YUKI_AUDIT_HMAC_KEY")
+        if isinstance(identity_key, str):
+            identity_key = identity_key.encode("utf-8")
+        if identity_key is not None and (
+            not isinstance(identity_key, bytes) or len(identity_key) < 32
+        ):
+            raise ValueError("identity_key must contain at least 32 bytes.")
+        self._identity_key = identity_key
         self.database_path = prepare_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("""
@@ -87,6 +97,14 @@ class SQLiteApprovalAuditLog:
     def _digest(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+    def _identity_digest(self, value: str) -> str:
+        """Use a deployment secret to prevent offline guessing of actor identities."""
+        encoded = value.encode("utf-8")
+        if self._identity_key is None:
+            # Compatibility mode for local development and pre-key deployments.
+            return hashlib.sha256(encoded).hexdigest()
+        return hmac.new(self._identity_key, encoded, hashlib.sha256).hexdigest()
+
     @classmethod
     def _event_hash(cls, event_type, pending_id_hash, actor_hash, skill_id, created_at, previous_hash):
         event = {
@@ -129,7 +147,7 @@ class SQLiteApprovalAuditLog:
                 raise ValueError(f"{name} must be a non-empty bounded string.")
         created_at = datetime.now(timezone.utc).isoformat()
         pending_id_hash = self._digest(pending_id)
-        actor_hash = self._digest(actor)
+        actor_hash = self._identity_digest(actor)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
