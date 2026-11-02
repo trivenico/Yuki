@@ -61,6 +61,8 @@ class PostgresConversationStore(ConversationStore):
     @staticmethod
     def _postgres_sql(statement: str) -> str:
         statement = statement.replace("BEGIN IMMEDIATE", "BEGIN")
+        statement = statement.replace("archived=1", "archived=TRUE")
+        statement = statement.replace("archived=0", "archived=FALSE")
         # Store SQL uses qmark placeholders and contains no question-mark
         # literals; psycopg uses %s placeholders.
         return statement.replace("?", "%s")
