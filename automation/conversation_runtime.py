@@ -11,7 +11,7 @@ from typing import Any
 from automation.conversation_service import ConversationService
 
 _MAX_HISTORY_EVENTS = 100
-_MAX_PROMPT_CHARS = 100_000
+_MAX_PROMPT_CHARS = 18_000
 _MAX_REPLY_CHARS = 32_000
 
 
