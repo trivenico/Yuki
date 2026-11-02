@@ -105,6 +105,103 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider returned no text response.")
         return text.strip()
 
+    def generate_chat(self, *, messages, tools, tool_choice="auto") -> dict:
+        """Generate from a role-preserving transcript for AgentExecutionLoop."""
+        if not isinstance(messages, (list, tuple)) or not messages or len(messages) > 128:
+            raise ValueError("messages must contain 1 to 128 entries.")
+        normalized_messages = []
+        total_chars = 0
+        for item in messages:
+            if not isinstance(item, dict) or set(item) != {"role", "content"}:
+                raise ValueError("Each message must contain only role and content.")
+            if item["role"] not in {"system", "user", "assistant"} or not isinstance(item["content"], str):
+                raise ValueError("Message role or content is invalid.")
+            total_chars += len(item["content"])
+            if total_chars > 100_000:
+                raise ValueError("Message transcript exceeds the size limit.")
+            normalized_messages.append({"role": item["role"], "content": item["content"]})
+        if not isinstance(tools, list) or len(tools) > 32:
+            raise ValueError("tools must be a list containing at most 32 definitions.")
+        if tool_choice not in ("auto", "none", "required"):
+            raise ValueError("tool_choice must be auto, none, or required.")
+        normalized_tools = []
+        names = set()
+        for item in tools:
+            if not isinstance(item, dict) or set(item) != {"type", "function"} or item["type"] != "function":
+                raise ValueError("Each tool must use the OpenAI function-tool schema.")
+            function = item["function"]
+            if not isinstance(function, dict) or set(function) - {"name", "description", "parameters", "strict"}:
+                raise ValueError("Function tool definition contains unsupported fields.")
+            name = function.get("name")
+            description = function.get("description", "")
+            parameters = function.get("parameters")
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", name)
+                    or name in names or not isinstance(description, str) or len(description) > 1024
+                    or not isinstance(parameters, dict)
+                    or len(json.dumps(parameters, separators=(",", ":"))) > 8_000):
+                raise ValueError("Function tool definition is invalid.")
+            names.add(name)
+            normalized_tools.append({"type": "function", "function": {
+                "name": name, "description": description, "parameters": parameters,
+                "strict": function.get("strict", True) is True,
+            }})
+        if tool_choice == "required" and not normalized_tools:
+            raise ValueError("At least one tool is required.")
+        api_key = self._environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
+        payload = json.dumps({
+            "model": self.model, "messages": normalized_messages,
+            "tools": normalized_tools, "tool_choice": tool_choice, "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json",
+                     "Authorization": "Bearer " + api_key}, method="POST",
+        )
+        try:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Cloud provider chat request failed; redirects are not followed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            choice = body["choices"][0]
+            message = choice["message"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Cloud provider returned an unsupported chat response.") from exc
+        content = message.get("content")
+        if content is not None and not isinstance(content, str):
+            raise RuntimeError("Cloud provider returned invalid message content.")
+        calls = message.get("tool_calls", [])
+        if not isinstance(calls, list) or len(calls) > 5:
+            raise RuntimeError("Cloud provider returned an invalid number of tool calls.")
+        normalized_calls = []
+        seen_ids = set()
+        for call in calls:
+            try:
+                call_id = call["id"]
+                function = call["function"]
+                name = function["name"]
+                arguments = json.loads(function["arguments"])
+            except (TypeError, KeyError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Cloud provider returned malformed tool-call data.") from exc
+            if (not isinstance(call_id, str) or not call_id or len(call_id) > 64
+                    or call_id in seen_ids or name not in names or not isinstance(arguments, dict)):
+                raise RuntimeError("Cloud provider returned an unrecognized tool call.")
+            seen_ids.add(call_id)
+            normalized_calls.append({"id": call_id, "name": name, "arguments": arguments})
+        envelope = {"tool_calls": normalized_calls}
+        from core.structured_tool_protocol import parse_tool_calls
+        try:
+            parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
+        except ValueError as exc:
+            raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
+        return {"text": content or "", "tool_calls": envelope, "finish_reason": choice.get("finish_reason")}
+
     def generate_with_tools(self, prompt: str, tools: list[dict], *, tool_choice="auto") -> dict:
         """Request OpenAI-compatible function calls and normalize them to Yuki's protocol.
 
