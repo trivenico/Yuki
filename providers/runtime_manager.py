@@ -111,7 +111,10 @@ class ProviderRuntimeManager:
             prefix=".provider-selection-", suffix=".tmp", dir=str(self.state_path.parent)
         )
         try:
-            os.fchmod(fd, 0o600)
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            else:
+                os.chmod(temporary, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 stream.write(payload)
                 stream.flush()
