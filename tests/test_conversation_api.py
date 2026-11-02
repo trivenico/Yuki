@@ -65,6 +65,31 @@ class ConversationAPITests(unittest.TestCase):
             return status, data, response_headers
         return asyncio.run(run())
 
+    def test_provider_catalog_requires_authentication_and_projects_safe_fields(self):
+        self.app.provider_catalog = lambda: [{
+            "name": "openai", "label": "OpenAI", "implemented": True,
+            "ready": True, "privacy": "cloud_provider",
+            "configured_model": "gpt-4.1-mini", "credential_configured": True,
+            "selected": True, "status": "api_key_and_model_configured",
+            "key_env": "OPENAI_API_KEY", "secret": "must-never-leak",
+            "endpoint": "https://private.example",
+        }]
+        status, data, _ = self.request("GET", "/v1/providers")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request("GET", "/v1/providers", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["providers"][0]["name"], "openai")
+        self.assertTrue(data["providers"][0]["credential_configured"])
+        self.assertNotIn("secret", data["providers"][0])
+        self.assertNotIn("key_env", data["providers"][0])
+        self.assertNotIn("endpoint", data["providers"][0])
+
+    def test_provider_catalog_failure_is_generic(self):
+        self.app.provider_catalog = lambda: (_ for _ in ()).throw(RuntimeError("private details"))
+        status, data, _ = self.request("GET", "/v1/providers", token=self.issued.token)
+        self.assertEqual(status, 500)
+        self.assertEqual(data, {"error": "provider_catalog_unavailable"})
+
     def test_login_create_send_history_and_logout(self):
         status, data, headers = self.request(
             "POST", "/v1/auth/login",
