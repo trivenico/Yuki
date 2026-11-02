@@ -122,6 +122,22 @@ class ConversationApiTests(unittest.TestCase):
         remaining = self.request("GET", "/v1/memories?q=local", token=self.token)
         self.assertEqual(remaining["items"], [])
 
+    def test_memory_suggestion_preview_does_not_persist(self):
+        result = self.request("POST", "/v1/memory-suggestions/preview",
+            {"text":"I prefer local models. We have decided to use SQLite."},
+            token=self.token)
+        self.assertFalse(result["persisted"])
+        self.assertEqual([item["category"] for item in result["items"]],
+            ["preference", "decision"])
+        memories = self.request("GET", "/v1/memories", token=self.token)
+        self.assertEqual(memories["items"], [])
+
+    def test_memory_suggestion_preview_requires_authentication(self):
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST", "/v1/memory-suggestions/preview",
+                {"text":"I prefer local models"})
+        self.assertEqual(caught.exception.code, 401)
+
     def test_memory_proposal_requires_explicit_approval(self):
         proposal = self.request("POST", "/v1/memory-proposals",
             {"category":"preference","content":"Prefer local inference"}, token=self.token)
