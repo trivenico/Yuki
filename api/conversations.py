@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import queue
+import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
@@ -43,6 +44,8 @@ class YukiConversationAPI:
         self.auth = auth_service
         self.conversations = conversation_service
         self.tools_for_user = tools_for_user or (lambda user: [])
+        self._active_lock = threading.Lock()
+        self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
@@ -98,6 +101,28 @@ class YukiConversationAPI:
                     title=payload.get("title", "New conversation"),
                 )
                 return await self._respond(send, 201, conversation)
+
+
+            cancel_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/cancel", path)
+            if cancel_match and method == "POST":
+                conversation_id = cancel_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                if set(payload) != {"request_id"} or not isinstance(payload.get("request_id"), str) or not payload["request_id"].strip() or len(payload["request_id"]) > 160:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                # Ownership is checked before cancellation; callers cannot cancel
+                # another user's generation by guessing a conversation or request ID.
+                await asyncio.to_thread(
+                    self.conversations.store.get_conversation,
+                    owner_id=user.user_id, conversation_id=conversation_id,
+                )
+                key = (user.user_id, conversation_id, payload["request_id"])
+                with self._active_lock:
+                    cancellation = self._active_generations.get(key)
+                    if cancellation is not None:
+                        cancellation.set()
+                return await self._respond(send, 200, {"cancel_requested": cancellation is not None})
 
             match = re.fullmatch(r"/v1/conversations/([^/]+)/messages", path)
             if match and not _CONVERSATION_ID.fullmatch(match.group(1)):
@@ -174,6 +199,12 @@ class YukiConversationAPI:
         """Run synchronous generation off-loop and emit bounded SSE events."""
         loop = asyncio.get_running_loop()
         events = asyncio.Queue()
+        cancellation = threading.Event()
+        active_key = (owner_id, conversation_id, payload["request_id"])
+        with self._active_lock:
+            if active_key in self._active_generations:
+                return await self._respond(send, 409, {"error": "generation_already_active"})
+            self._active_generations[active_key] = cancellation
         sentinel = object()
 
         def publish(event):
@@ -200,8 +231,9 @@ class YukiConversationAPI:
                     expected_version=payload["expected_version"],
                     tools=tools,
                     on_text_delta=lambda text: publish({"type": "delta", "text": text}),
+                    cancellation_requested=cancellation.is_set,
                 )
-                publish({"type": "completed", "result": result})
+                publish({"type": "cancelled" if result.get("status") == "cancelled" else "completed", "result": result})
             except ConversationNotFound:
                 publish({"type": "error", "error": "not_found"})
             except ConversationConflict:
@@ -209,6 +241,8 @@ class YukiConversationAPI:
             except Exception:
                 publish({"type": "error", "error": "internal_error"})
             finally:
+                with self._active_lock:
+                    self._active_generations.pop(active_key, None)
                 loop.call_soon_threadsafe(events.put_nowait, sentinel)
 
         await send({
