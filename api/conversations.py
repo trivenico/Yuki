@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import queue
+import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
