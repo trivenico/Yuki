@@ -49,7 +49,7 @@ class AnthropicProvider:
             if not isinstance(item, dict) or set(item) != {"role", "content"}:
                 raise ValueError("Each message must contain only role and content.")
             role, content = item["role"], item["content"]
-            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+            if not isinstance(role, str) or role not in {"system", "user", "assistant"} or not isinstance(content, str):
                 raise ValueError("Message role or content is invalid.")
             total_chars += len(content)
             if total_chars > 100_000:
@@ -206,7 +206,7 @@ class AnthropicProvider:
             block = blocks[index]
             call_id, name = block["id"], block["name"]
             if (not isinstance(call_id, str) or not call_id or len(call_id) > 64
-                    or call_id in seen_ids or name not in names):
+                    or call_id in seen_ids or not isinstance(name, str) or name not in names):
                 raise RuntimeError("Anthropic returned an unrecognized tool proposal.")
             seen_ids.add(call_id)
             if block["partial_json"]:
