@@ -38,3 +38,20 @@ The selected provider becomes a strict routing preference; Yuki does not silentl
 switch to a different provider when it is unavailable or blocked by privacy
 policy. Cloud providers remain excluded unless the calling workflow explicitly
 opts in. The current local conversation API opts out of cloud routing. The desktop model selector only permits providers classified as `local_runtime`; cloud and non-loopback endpoints are not selectable through this local UI.
+
+
+## Personal memory API
+
+Memory is stored separately from conversation events in `memories.sqlite3`.
+The HTTP API currently exposes personal memory only; the scope is derived from
+the authenticated user and cannot be supplied by the client.
+
+- `GET /v1/memories` — list personal memories; optional `category`.
+- `GET /v1/memories?q=term` — search personal memory text.
+- `POST /v1/memories` — create a memory with `category`, `content`, and optional `metadata`.
+- `DELETE /v1/memories/{memory_id}` — delete one personal memory.
+
+Supported categories: preference, fact, decision, procedure, project, skill, note.
+Project-scoped storage exists at the store layer, but project memory is not exposed
+over HTTP until project membership and authorization checks are implemented.
+Memory is not automatically injected into model prompts in this phase.
