@@ -61,12 +61,26 @@ def _validate_path(raw: str) -> str:
         raise ProposalRejected("Each changed file must have a valid relative path.")
     if "\\" in raw or raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
         raise ProposalRejected("Absolute paths and platform-specific separators are forbidden.")
-    path = PurePosixPath(raw)
-    if any(part in {"", ".", ".."} for part in path.parts):
+    # Inspect the raw components before PurePosixPath normalizes away "." and
+    # repeated separators. This keeps behavior consistent across host OSes.
+    raw_parts = raw.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
         raise ProposalRejected("Path traversal and ambiguous path segments are forbidden.")
     if any(ord(char) < 32 for char in raw):
         raise ProposalRejected("Control characters are forbidden in paths.")
-    if path.parts[0] == ".git" or path.parts[0] == ".hg":
+    if any(":" in part for part in raw_parts):
+        raise ProposalRejected("Alternate data streams and drive-qualified paths are forbidden.")
+    if any(part.endswith((" ", ".")) for part in raw_parts):
+        raise ProposalRejected("Trailing spaces and dots are not portable across filesystems.")
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    for part in raw_parts:
+        stem = part.split(".", 1)[0].upper()
+        if stem in reserved:
+            raise ProposalRejected("Windows-reserved filesystem names are forbidden.")
+    path = PurePosixPath(raw)
+    if path.parts[0].casefold() in {".git", ".hg"}:
         raise ProposalRejected("Version-control internals cannot be modified.")
     if path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}:
         raise ProposalRejected("Secret and private-key file types cannot be changed.")
