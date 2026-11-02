@@ -15,6 +15,7 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
+from automation.conversation_cli import run_interactive_chat
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -83,6 +84,7 @@ Yuki commands:
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
   /provider select NAME           Select an implemented provider adapter
+  /chat                           Start or resume persistent local streaming chat
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
@@ -143,6 +145,14 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Provider selection failed. The previous provider remains active."
         write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
         return result
+    if command == "/chat":
+        try:
+            session_id = run_interactive_chat(providers, allow_cloud=False)
+            write_audit_event("conversation:cli", "completed")
+            return f"Chat session saved: {session_id}"
+        except Exception as error:
+            write_audit_event("conversation:cli", "failed")
+            return f"Chat unavailable ({type(error).__name__}). Check local Ollama readiness and provider configuration."
     if command == "/dashboard":
         current = providers.current()
         available_tools = ", ".join(policy.allowed_tools())
