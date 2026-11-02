@@ -34,6 +34,7 @@ class YukiConversationAPI:
         conversation_service: ConversationService,
         *,
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
+        provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -44,6 +45,9 @@ class YukiConversationAPI:
         self.auth = auth_service
         self.conversations = conversation_service
         self.tools_for_user = tools_for_user or (lambda user: [])
+        if provider_catalog is not None and not callable(provider_catalog):
+            raise TypeError("provider_catalog must be callable")
+        self.provider_catalog = provider_catalog or (lambda: [])
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -84,6 +88,25 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if method == "GET" and path == "/v1/providers":
+                try:
+                    providers = self.provider_catalog()
+                    if not isinstance(providers, list) or len(providers) > 32:
+                        raise ValueError("invalid provider catalog")
+                    safe = []
+                    for item in providers:
+                        if not isinstance(item, dict):
+                            raise ValueError("invalid provider catalog entry")
+                        safe.append({
+                            key: item[key] for key in (
+                                "name", "label", "implemented", "ready", "privacy",
+                                "configured_model", "credential_configured", "selected", "status",
+                            ) if key in item
+                        })
+                    return await self._respond(send, 200, {"providers": safe})
+                except Exception:
+                    return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
 
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
