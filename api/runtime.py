@@ -8,6 +8,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
+from api.web import YukiWebApplication
 
 
 class ConversationRuntime:
@@ -15,12 +16,13 @@ class ConversationRuntime:
 
     def __init__(self, app: YukiConversationAPI, store: Any):
         self.app = app
+        self.web = YukiWebApplication(app)
         self.store = store
         self._closed = False
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
-            await self.app(scope, receive, send)
+            await self.web(scope, receive, send)
             return
         if scope.get("type") != "lifespan":
             raise RuntimeError("ConversationRuntime supports HTTP and ASGI lifespan scopes.")

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <meta name="description" content="Yuki AI — your private intelligent workspace">
+  <title>Yuki AI</title>
+  <link rel="stylesheet" href="/assets/chat.css">
+  <script src="/assets/chat.js" defer></script>
+</head>
+<body>
+  <main id="app" class="shell">
+    <section id="login-view" class="login-card">
+      <div class="brand-mark">雪</div>
+      <p class="eyebrow">YOUR INTELLIGENT WORKSPACE</p>
+      <h1>Welcome to Yuki</h1>
+      <p class="muted">Sign in to continue your conversations.</p>
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required minlength="3">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="primary full" type="submit">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+      <p class="hint">Account creation is managed by your Yuki administrator.</p>
+    </section>
+
+    <section id="chat-view" class="chat-layout" hidden>
+      <aside class="sidebar">
+        <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
+        <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <p class="section-label">RECENT</p>
+        <nav id="conversation-list" aria-label="Conversations"></nav>
+        <div class="sidebar-bottom">
+          <div id="account-label" class="account-label"></div>
+          <button id="logout" class="quiet-button">Sign out</button>
+        </div>
+      </aside>
+      <section class="main-panel">
+        <header class="topbar">
+          <div><span class="status-dot"></span><span id="connection-label">Connected</span></div>
+          <span class="topbar-brand">YUKI AI</span>
+        </header>
+        <div id="messages" class="messages" aria-live="polite">
+          <div class="welcome">
+            <div class="brand-mark">雪</div>
+            <p class="eyebrow">A NEW WAY TO THINK</p>
+            <h1>What can I help you with?</h1>
+            <p class="muted">Ask a question, explore an idea, or get something done.</p>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="message-input" rows="1" maxlength="20000" placeholder="Message Yuki…" aria-label="Message Yuki" required></textarea>
+            <div class="composer-footer">
+              <span class="composer-note">Yuki can make mistakes. Verify important information.</span>
+              <button id="send-button" class="send-button" type="submit" aria-label="Send message">↑</button>
+              <button id="cancel-button" class="cancel-button" type="button" hidden>Stop</button>
+            </div>
+          </form>
+          <p class="footer-note">Yuki AI · Your workspace, your intelligence</p>
+        </div>
+      </section>
+    </section>
+    <div id="toast" class="toast" role="status"></div>
+  </main>
+</body>
+</html>

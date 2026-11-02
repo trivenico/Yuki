@@ -136,6 +136,18 @@ python -m pip install -r requirements-ui.txt
 python -m pip install -r requirements-email.txt
 ```
 
+To run the authenticated browser chat MVP, install the optional ASGI server and start the local launcher:
+
+```sh
+python -m pip install -r requirements-web.txt
+# First launch only: provide a unique admin username and strong password.
+export YUKI_BOOTSTRAP_ADMIN_USERNAME='your-admin'
+export YUKI_BOOTSTRAP_ADMIN_PASSWORD='use-a-long-unique-password'
+python scripts/run_web.py
+```
+
+Open `http://127.0.0.1:8000`. Configure a real provider (for example `OPENAI_API_KEY`) or a supported local provider first. The web launcher exposes no tools by default. Public binding is disabled unless explicitly enabled and must only be used behind a trusted TLS reverse proxy. See [Phase 159 web chat deployment notes](docs/PHASE159_AUTHENTICATED_WEB_CHAT.md).
+
 Voice needs `YUKI_VOICE_ENABLED=true`, a local Piper executable/model (if using Piper), and a supported audio device. The STT call defaults to automatic language detection; accuracy depends on the installed faster-whisper model and audio quality. Piper voices are model-specific and are not automatically female or natural-sounding. Choose a legally obtained model that matches the desired voice/language and test it locally before treating that language/voice as supported. Wake-word detection also requires `YUKI_WAKEWORD_ENABLED=true` and a local compatible model file configured in `config.yaml`. No continuous listener runs in the background. faster-whisper can download model weights on first use.
 
 Web fetch requires explicit hostnames in `web_allowed_hosts`; an empty list denies all requests.\n\nGmail is disabled by default. To opt in, set `YUKI_GMAIL_ENABLED=true`, create your own OAuth client file locally, and complete Google's OAuth flow. Token files must remain private. The integration is read-only.
