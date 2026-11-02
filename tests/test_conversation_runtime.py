@@ -88,7 +88,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             idempotency_key="latest-question", role="user", content="LATEST QUESTION",
         )
         prompt = self.runtime.build_prompt(actor_id="alice", session_id=self.session.session_id)
-        self.assertLessEqual(len(prompt), 100_000)
+        self.assertLessEqual(len(prompt), 18_000)
         self.assertIn("LATEST QUESTION", prompt)
         self.assertTrue(prompt.endswith("USER: LATEST QUESTION"))
 
