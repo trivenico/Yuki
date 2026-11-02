@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+import re
 from urllib.parse import urlsplit
 
 
@@ -65,6 +66,97 @@ class OllamaProvider:
             if installed == self.model or installed.startswith(self.model + ":"):
                 return True
         return False
+
+
+    def generate_chat(self, *, messages, tools, tool_choice="auto"):
+        """Generate a role-preserving chat response with normalized tool proposals."""
+        if not isinstance(messages, (list, tuple)) or not 1 <= len(messages) <= 128:
+            raise ValueError("messages must contain 1 to 128 entries.")
+        normalized_messages = []
+        total_chars = 0
+        for item in messages:
+            if not isinstance(item, dict) or set(item) != {"role", "content"}:
+                raise ValueError("Each message must contain only role and content.")
+            role, content = item["role"], item["content"]
+            if not isinstance(role, str) or role not in {"system", "user", "assistant"} or not isinstance(content, str):
+                raise ValueError("Message role or content is invalid.")
+            total_chars += len(content)
+            if total_chars > 100_000:
+                raise ValueError("Message transcript exceeds the size limit.")
+            normalized_messages.append({"role": role, "content": content})
+        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
+            raise ValueError("tools must contain at most 32 definitions.")
+        if tool_choice not in {"auto", "none", "required"}:
+            raise ValueError("tool_choice is invalid.")
+        if tool_choice == "required" and not tools:
+            raise ValueError("At least one tool is required.")
+        normalized_tools = []
+        names = set()
+        for item in tools:
+            if not isinstance(item, dict) or set(item) != {"type", "function"} or item["type"] != "function":
+                raise ValueError("Each tool must use the function-tool schema.")
+            function = item["function"]
+            if not isinstance(function, dict) or set(function) - {"name", "description", "parameters", "strict"}:
+                raise ValueError("Function tool definition contains unsupported fields.")
+            name, description, parameters = function.get("name"), function.get("description", ""), function.get("parameters")
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", name)
+                    or name in names or not isinstance(description, str) or len(description) > 1024
+                    or not isinstance(parameters, dict)
+                    or len(json.dumps(parameters, separators=(",", ":"))) > 8_000):
+                raise ValueError("Function tool definition is invalid.")
+            names.add(name)
+            normalized_tools.append({"type": "function", "function": {
+                "name": name, "description": description, "parameters": parameters,
+            }})
+        payload_data = {"model": self.model, "messages": normalized_messages, "stream": False}
+        if tool_choice != "none" and normalized_tools:
+            payload_data["tools"] = normalized_tools
+        payload = json.dumps(payload_data).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/chat", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        class RejectRedirects(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        try:
+            opener = urllib.request.build_opener(RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Local Ollama chat request failed; redirects are not followed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Ollama response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            message = body["message"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise RuntimeError("Ollama returned an unsupported chat response.") from exc
+        if not isinstance(message, dict):
+            raise RuntimeError("Ollama returned an invalid chat message.")
+        content = message.get("content", "")
+        calls = message.get("tool_calls", [])
+        if not isinstance(content, str) or not isinstance(calls, list) or len(calls) > 5:
+            raise RuntimeError("Ollama returned invalid chat content or tool calls.")
+        normalized_calls = []
+        for call in calls:
+            try:
+                function = call["function"]
+                name, arguments = function["name"], function["arguments"]
+            except (TypeError, KeyError) as exc:
+                raise RuntimeError("Ollama returned malformed tool-call data.") from exc
+            if name not in names or not isinstance(arguments, dict):
+                raise RuntimeError("Ollama returned an unrecognized tool call.")
+            normalized_calls.append({"id": "ollama_" + str(len(normalized_calls) + 1),
+                                     "name": name, "arguments": arguments})
+        envelope = {"tool_calls": normalized_calls}
+        from core.structured_tool_protocol import parse_tool_calls
+        try:
+            parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
+        except ValueError as exc:
+            raise RuntimeError("Ollama returned tool calls outside Yuki's protocol limits.") from exc
+        return {"text": content, "tool_calls": envelope, "finish_reason": "tool_calls" if calls else "stop"}
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
