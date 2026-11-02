@@ -89,18 +89,6 @@ def build_application(data_dir, provider_manager):
                     {"memory_id":m.memory_id,"category":m.category,"content":m.content,
                      "source":m.source,"metadata":m.metadata,"created_at":m.created_at,
                      "updated_at":m.updated_at} for m in items]})
-            if path == "/v1/memories":
-                try:
-                    data = self.body()
-                    item = memories.put(actor_id=user.user_id,
-                        scope_id="personal:" + user.user_id,
-                        category=data.get("category"), content=data.get("content"),
-                        source="user", metadata=data.get("metadata"))
-                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                    return self.send_json(400, {"error": "invalid_request"})
-                return self.send_json(201, {"memory_id":item.memory_id,
-                    "category":item.category,"content":item.content,
-                    "created_at":item.created_at,"updated_at":item.updated_at})
             if path == "/v1/conversations":
                 items = conversations.list_sessions(actor_id=user.user_id, limit=50)
                 return self.send_json(200, {"items":[{"session_id":x.session_id,"title":x.title,
@@ -171,6 +159,18 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(400, {"error": "invalid_request"})
                 except Exception:
                     return self.send_json(503, {"error": "provider_selection_unavailable"})
+            if path == "/v1/memories":
+                try:
+                    data = self.body()
+                    item = memories.put(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id,
+                        category=data.get("category"), content=data.get("content"),
+                        source="user", metadata=data.get("metadata"))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error": "invalid_request"})
+                return self.send_json(201, {"memory_id":item.memory_id,
+                    "category":item.category,"content":item.content,
+                    "created_at":item.created_at,"updated_at":item.updated_at})
             if path == "/v1/conversations":
                 try:
                     data = self.body()
