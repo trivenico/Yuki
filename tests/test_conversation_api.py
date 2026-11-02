@@ -153,7 +153,9 @@ class ConversationAPITests(unittest.TestCase):
             events = [{"type": "http.request", "body": body, "more_body": False}]
             sent = []
             async def receive():
-                return events.pop(0) if events else {"type": "http.disconnect"}
+                if events:
+                    return events.pop(0)
+                await asyncio.Future()
             async def send(message):
                 sent.append(message)
             await self.app(
