@@ -178,6 +178,7 @@ class SQLitePendingApprovalStore:
 
     def transition(self, pending_id: str, *, expected: str, new_status: str) -> bool:
         allowed = {
+            "pending": {"denied"},
             "claimed": {"approved", "denied", "recovery_required"},
             "approved": {"executing", "recovery_required"},
             "executing": {"completed", "execution_failed", "recovery_required"},
@@ -220,7 +221,6 @@ class SQLitePendingApprovalStore:
         """Mark a still-pending request denied without deleting its audit snapshot."""
         if not isinstance(pending_id, str) or not pending_id:
             return False
-        now = datetime.now(timezone.utc).isoformat()
         return self.transition(
             pending_id, expected="pending", new_status="denied"
         )
