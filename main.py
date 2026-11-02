@@ -10,6 +10,9 @@ from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.logging_setup import configure_logging, log_event
+import logging
 from core.planner import Planner
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
@@ -60,7 +63,11 @@ def build_agent(config):
         github_allowed_roots=config.get("github_allowed_roots", []),
         mcp_servers=config.get("mcp_servers", []),
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
+    return YukiCoreAgent(
+        registry=registry,
+        permission_gate=PermissionGate(_ask_approval, audit_log=audit_log),
+    )
 
 
 def print_help():
@@ -109,8 +116,10 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 def main():
     config = load_config()
-    workspace = Path(config["workspace"])
+    workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
+    logger = configure_logging(workspace / "logs")
+    log_event(logger, logging.INFO, "runtime_starting", component="runtime")
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
@@ -171,6 +180,7 @@ def main():
         if not command:
             continue
         if command in {"/quit", "/exit"}:
+            log_event(logger, logging.INFO, "runtime_stopped", component="runtime")
             print("Yuki > Goodbye.")
             return
         if command == "/help":
