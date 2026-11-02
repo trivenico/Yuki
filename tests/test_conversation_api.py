@@ -30,7 +30,7 @@ class ConversationAPITests(unittest.TestCase):
             return {"text": "Hello from Yuki", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
-        loop = AgentExecutionLoop(model, protocol)
+        loop = AgentExecutionLoop(model, protocol, stream_model=lambda **kwargs: iter([{'type': 'text_delta', 'text': 'Hello '}, {'type': 'text_delta', 'text': 'from Yuki'}]))
         service = ConversationService(ConversationStore(root / "conversations.sqlite"), loop)
         self.app = YukiConversationAPI(self.auth, service)
 
@@ -140,6 +140,42 @@ class ConversationAPITests(unittest.TestCase):
             return sent[0]["status"]
         self.assertEqual(asyncio.run(run()), 400)
 
+
+    def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        async def run():
+            body = json.dumps({
+                "content": "Stream please", "request_id": "stream-request-1",
+                "expected_version": 0,
+            }).encode()
+            events = [{"type": "http.request", "body": body, "more_body": False}]
+            sent = []
+            async def receive():
+                return events.pop(0) if events else {"type": "http.disconnect"}
+            async def send(message):
+                sent.append(message)
+            await self.app(
+                {"type": "http", "method": "POST",
+                 "path": f"/v1/conversations/{cid}/messages/stream",
+                 "headers": [(b"authorization", f"Bearer {self.issued.token}".encode())],
+                 "query_string": b""},
+                receive, send,
+            )
+            return sent
+        sent = asyncio.run(run())
+        self.assertEqual(sent[0]["status"], 200)
+        headers = dict(sent[0]["headers"])
+        self.assertEqual(headers[b"content-type"], b"text/event-stream; charset=utf-8")
+        stream = b"".join(item.get("body", b"") for item in sent[1:]).decode()
+        self.assertIn("event: delta\n", stream)
+        self.assertIn('"text":"Hello "', stream)
+        self.assertIn("event: completed\n", stream)
+        history = self.app.conversations.history(
+            owner_id=self.user.user_id, conversation_id=cid
+        )
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+        self.assertEqual(history[-1]["content"], "Hello from Yuki")
 
 if __name__ == "__main__":
     unittest.main()

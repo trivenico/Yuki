@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import queue
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
@@ -102,6 +103,23 @@ class YukiConversationAPI:
             if match and not _CONVERSATION_ID.fullmatch(match.group(1)):
                 return await self._respond(send, 404, {"error": "not_found"})
 
+            stream_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/stream", path)
+            if stream_match and method == "POST":
+                conversation_id = stream_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                required = {"content", "request_id", "expected_version"}
+                if set(payload) != required or not isinstance(payload.get("content"), str) or not isinstance(payload.get("request_id"), str) or type(payload.get("expected_version")) is not int:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                tools = self.tools_for_user(user)
+                if not isinstance(tools, list) or len(tools) > 32:
+                    return await self._respond(send, 500, {"error": "tool_configuration_error"})
+                return await self._stream_reply(
+                    send, owner_id=user.user_id, conversation_id=conversation_id,
+                    payload=payload, tools=tools,
+                )
+
             if match and method == "GET":
                 query = self._query(scope)
                 after = query.get("after_sequence")
@@ -151,6 +169,73 @@ class YukiConversationAPI:
         except Exception:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
+
+    async def _stream_reply(self, send, *, owner_id, conversation_id, payload, tools):
+        """Run synchronous generation off-loop and emit bounded SSE events."""
+        loop = asyncio.get_running_loop()
+        events = asyncio.Queue()
+        sentinel = object()
+
+        def publish(event):
+            def enqueue():
+                if events.full():
+                    # A slow client must not stall provider generation forever.
+                    while not events.empty():
+                        try:
+                            events.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    events.put_nowait({"type": "error", "error": "stream_consumer_too_slow"})
+                else:
+                    events.put_nowait(event)
+            loop.call_soon_threadsafe(enqueue)
+
+        def run():
+            try:
+                result = self.conversations.reply(
+                    owner_id=owner_id,
+                    conversation_id=conversation_id,
+                    user_text=payload["content"],
+                    request_id=payload["request_id"],
+                    expected_version=payload["expected_version"],
+                    tools=tools,
+                    on_text_delta=lambda text: publish({"type": "delta", "text": text}),
+                )
+                publish({"type": "completed", "result": result})
+            except ConversationNotFound:
+                publish({"type": "error", "error": "not_found"})
+            except ConversationConflict:
+                publish({"type": "error", "error": "conversation_conflict"})
+            except Exception:
+                publish({"type": "error", "error": "internal_error"})
+            finally:
+                loop.call_soon_threadsafe(events.put_nowait, sentinel)
+
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [
+                (b"content-type", b"text/event-stream; charset=utf-8"),
+                (b"cache-control", b"no-cache, no-store"),
+                (b"x-content-type-options", b"nosniff"),
+                (b"x-accel-buffering", b"no"),
+            ],
+        })
+        worker = asyncio.create_task(asyncio.to_thread(run))
+        try:
+            while True:
+                event = await events.get()
+                if event is sentinel:
+                    break
+                frame = ("event: " + event["type"] + "\n" +
+                         "data: " + json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n\n")
+                await send({"type": "http.response.body", "body": frame.encode("utf-8"), "more_body": True})
+            await worker
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        except Exception:
+            # A disconnected client must not turn the worker into an unobserved task.
+            await worker
+            raise
 
     async def _principal(self, scope):
         headers = {

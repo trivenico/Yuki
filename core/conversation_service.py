@@ -44,11 +44,11 @@ class ConversationService:
             limit=limit, after_sequence=after_sequence,
         )
 
-    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None) -> dict[str, Any]:
+    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None) -> dict[str, Any]:
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text)
+            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta)
         finally:
             self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
 
@@ -56,6 +56,7 @@ class ConversationService:
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
+        on_text_delta=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
             raise ValueError("request_id must be non-empty text of at most 160 characters.")
@@ -114,7 +115,7 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, **kwargs)
+                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
