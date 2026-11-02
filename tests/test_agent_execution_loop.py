@@ -246,5 +246,30 @@ class AgentExecutionLoopTests(unittest.TestCase):
         with self.assertRaises(AgentExecutionError):
             loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
 
+
+    def test_cancellation_during_stream_closes_provider_iterator(self):
+        import threading
+        cancellation = threading.Event()
+        closed = []
+        deltas = []
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "text_delta", "text": "first"}
+                yield {"type": "text_delta", "text": "must not be emitted"}
+            finally:
+                closed.append(True)
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model,
+        )
+        def on_delta(value):
+            deltas.append(value)
+            cancellation.set()
+        result = loop.run("Stop while streaming", tools=[], on_text_delta=on_delta,
+                          cancellation_requested=cancellation.is_set)
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(deltas, ["first"])
+        self.assertEqual(closed, [True])
+
 if __name__ == "__main__":
     unittest.main()
