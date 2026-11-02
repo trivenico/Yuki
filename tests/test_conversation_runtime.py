@@ -5,6 +5,7 @@ from pathlib import Path
 from automation.agent_sessions import AgentSessionStore
 from automation.conversation_service import ConversationService
 from automation.conversation_runtime import ConversationGenerationError, ConversationRuntime
+from yuki_providers import ProviderManager
 
 
 class FakeProvider:
@@ -92,6 +93,35 @@ class ConversationRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.calls, [{
             "required": ("text",), "preference": ("openai",), "allow_cloud": False,
         }])
+
+    def test_real_provider_manager_routes_local_adapter(self):
+        manager = ProviderManager(
+            config={"provider": "ollama", "ollama_model": "test-model"},
+            environ={"YUKI_OLLAMA_MODEL": "test-model"},
+        )
+        manager._build_adapter = lambda name: FakeProvider("Actual manager route")
+        reply = self.runtime.respond_with_manager(
+            actor_id="alice", session_id=self.session.session_id,
+            idempotency_key="turn-real-manager", user_message="Use local model",
+            provider_manager=manager, preference=("ollama",), allow_cloud=False,
+        )
+        self.assertEqual(reply, "Actual manager route")
+
+    def test_unauthorized_actor_is_rejected_before_provider_routing(self):
+        class Manager:
+            def __init__(self):
+                self.called = False
+            def create_routed_adapter(self, **kwargs):
+                self.called = True
+                return FakeProvider()
+        manager = Manager()
+        with self.assertRaises(PermissionError):
+            self.runtime.respond_with_manager(
+                actor_id="mallory", session_id=self.session.session_id,
+                idempotency_key="unauthorized-route", user_message="No",
+                provider_manager=manager,
+            )
+        self.assertFalse(manager.called)
 
     def test_provider_manager_contract_is_required(self):
         with self.assertRaises(TypeError):
