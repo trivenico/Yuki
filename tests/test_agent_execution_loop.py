@@ -233,5 +233,18 @@ class AgentExecutionLoopTests(unittest.TestCase):
         with self.assertRaises(AgentExecutionError):
             loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
 
+    def test_streamed_text_must_match_final_provider_text(self):
+        def stream_model(**kwargs):
+            yield {"type": "text_delta", "text": "visible"}
+            yield {"type": "response", "response": {
+                "text": "different", "tool_calls": {"tool_calls": []}
+            }}
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol, stream_model=stream_model,
+        )
+        with self.assertRaises(AgentExecutionError):
+            loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
+
 if __name__ == "__main__":
     unittest.main()
