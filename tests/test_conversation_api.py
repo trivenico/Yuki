@@ -149,6 +149,22 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "cloud_consent_required")
         self.assertEqual(calls, [])
 
+    def test_non_loopback_ollama_endpoint_requires_cloud_consent(self):
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_or_configured_endpoint",
+             "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "cloud_consent_required")
+        self.assertEqual(calls, [])
+
     def test_login_create_send_history_and_logout(self):
         status, data, headers = self.request(
             "POST", "/v1/auth/login",
