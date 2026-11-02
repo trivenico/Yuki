@@ -5,6 +5,8 @@ skill execution belongs in a separate integration test once the manifest runtime
 and subprocess adapter are implemented on the same branch.
 """
 import tempfile
+import hashlib
+import hmac
 import threading
 import unittest
 from pathlib import Path
@@ -307,6 +309,49 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(
                 event_types,
                 ["requested", "consumed", "approved", "executed"],
+            )
+
+    def test_persistent_audit_events_include_the_request_session_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = b"a" * 32
+            audit = SQLiteApprovalAuditLog(
+                str(Path(tmp) / "audit.sqlite3"), identity_key=key
+            )
+            store = SQLitePendingApprovalStore(
+                str(Path(tmp) / "pending.sqlite3"), identity_key=key
+            )
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            pending = coordinator.record(
+                self.planner, action_result("session-check"),
+                actor="owner", session_id="session-secret",
+            )
+            outcome = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner",
+                session_id="session-secret", confirm=lambda _action: True,
+            )
+            self.assertEqual(outcome.status, "completed")
+            expected = hmac.new(key, b"session-secret", hashlib.sha256).hexdigest()
+            events = list(reversed(audit.list_events()))
+            self.assertEqual([event["event_type"] for event in events],
+                             ["requested", "consumed", "approved", "executed"])
+            self.assertEqual({event["session_hash"] for event in events}, {expected})
+            self.assertTrue(audit.verify_chain())
+
+    def test_pending_store_uses_same_hmac_identity_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = b"p" * 32
+            store = SQLitePendingApprovalStore(
+                str(Path(tmp) / "pending.sqlite3"), identity_key=key
+            )
+            item = store.put(
+                "notes.write", {"text": "safe"}, {"skill_id": "notes.write"},
+                actor="owner", session_id="session-secret",
+            )
+            self.assertEqual(
+                item.actor_hash, hmac.new(key, b"owner", hashlib.sha256).hexdigest()
+            )
+            self.assertEqual(
+                item.session_hash, hmac.new(key, b"session-secret", hashlib.sha256).hexdigest()
             )
 
     def test_rejects_oversized_action_snapshot(self):
