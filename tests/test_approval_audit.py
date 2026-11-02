@@ -44,11 +44,18 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             import sqlite3
             db = sqlite3.connect(path)
             try:
+                # The ordinary SQL API is guarded by append-only triggers.
                 with self.assertRaises(sqlite3.IntegrityError):
                     db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
                 with self.assertRaises(sqlite3.IntegrityError):
                     db.execute("DELETE FROM approval_audit_events WHERE event_id = 1")
                 db.rollback()
+                # A database owner can remove triggers; the hash chain must still
+                # detect a subsequent out-of-band row mutation.
+                db.execute("DROP TRIGGER approval_audit_no_update")
+                db.execute("DROP TRIGGER approval_audit_no_delete")
+                db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
+                db.commit()
             finally:
                 db.close()
             self.assertFalse(audit.verify_chain())
