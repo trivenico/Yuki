@@ -198,7 +198,7 @@ class YukiConversationAPI:
     async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
         """Run synchronous generation off-loop and emit bounded SSE events."""
         loop = asyncio.get_running_loop()
-        events = asyncio.Queue()
+        events = asyncio.Queue(maxsize=64)
         cancellation = threading.Event()
         active_key = (owner_id, conversation_id, payload["request_id"])
         with self._active_lock:
