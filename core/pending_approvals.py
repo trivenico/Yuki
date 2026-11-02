@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+import os
 import json
 import secrets
 import sqlite3
@@ -32,13 +34,24 @@ class StoredPendingAction:
 class SQLitePendingApprovalStore:
     """Bounded, restart-persistent pending approvals with atomic one-time claims."""
 
-    def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128):
+    def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128, identity_key: str | bytes | None = None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 3600:
             raise ValueError("ttl_seconds must be between 1 and 3600.")
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if identity_key is None:
+            identity_key = os.environ.get("YUKI_AUDIT_HMAC_KEY")
+        if isinstance(identity_key, str):
+            identity_key = identity_key.encode("utf-8")
+        if identity_key is not None and (
+            not isinstance(identity_key, bytes) or len(identity_key) < 32
+        ):
+            raise ValueError("identity_key must contain at least 32 bytes.")
+        if identity_key is None and os.environ.get("YUKI_ENV", "").lower() == "production":
+            raise ValueError("YUKI_AUDIT_HMAC_KEY must be configured in production.")
+        self._identity_key = identity_key
         self.database_path = prepare_sqlite_path(database_path)
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
@@ -76,9 +89,11 @@ class SQLitePendingApprovalStore:
             db.close()
             secure_sqlite_file(self.database_path)
 
-    @staticmethod
-    def _identity_hash(value: str) -> str:
-        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    def _identity_hash(self, value: str) -> str:
+        encoded = value.encode("utf-8")
+        if self._identity_key is None:
+            return hashlib.sha256(encoded).hexdigest()
+        return hmac.new(self._identity_key, encoded, hashlib.sha256).hexdigest()
 
     @staticmethod
     def _encode(value: dict[str, Any]) -> str:
