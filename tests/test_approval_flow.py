@@ -245,6 +245,32 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.assertEqual(store.get_status(pending.pending_id), "completed")
             self.assertEqual(len(self.planner.executed), 1)
 
+    def test_unsuccessful_execution_result_is_persisted_as_terminal_failure(self):
+        class RejectedPlanner:
+            def execute_approved_action(self, action):
+                return SimpleNamespace(ok=False, message="skill reported failure")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            pending = coordinator.record(
+                self.planner, action_result("known-failure"),
+                actor="owner", session_id="session-a",
+            )
+            outcome = coordinator.approve(
+                RejectedPlanner(), pending.pending_id,
+                actor="owner", session_id="session-a", confirm=lambda _action: True,
+            )
+            self.assertFalse(outcome.ok)
+            self.assertEqual(outcome.status, "execution_failed")
+            self.assertEqual(store.get_status(pending.pending_id), "execution_failed")
+            self.assertEqual(
+                [event["event_type"] for event in reversed(audit.list_events())],
+                ["requested", "consumed", "approved", "execution_failed"],
+            )
+            self.assertTrue(audit.verify_chain())
+
     def test_execution_exception_is_persisted_as_failed_not_retryable(self):
         class BrokenPlanner:
             def execute_approved_action(self, action):
