@@ -29,6 +29,25 @@ class FakeOpener:
         return FakeResponse(self.body)
 
 
+
+class FakeStreamResponse:
+    def __init__(self, lines):
+        self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def readline(self, limit):
+        if not self.lines: return b""
+        line = self.lines.pop(0)
+        return line[:limit + 1] if len(line) > limit else line
+
+class FakeStreamOpener:
+    def __init__(self, lines, requests):
+        self.response = FakeStreamResponse(lines)
+        self.requests = requests
+    def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return self.response
+
 class OpenAICompatibleToolCallTests(unittest.TestCase):
     def setUp(self):
         self.requests = []
@@ -155,6 +174,44 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             provider.generate_with_tools("prompt", self.tools)
         self.assertEqual(self.requests, [])
 
+
+
+    def test_native_sse_stream_emits_text_and_final_response(self):
+        chunks = [
+            {"choices": [{"delta": {"content": "Hello "}, "finish_reason": None}]},
+            {"choices": [{"delta": {"content": "Yuki"}, "finish_reason": None}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        ]
+        lines = [("data: " + json.dumps(item) + "\n\n") for item in chunks] + ["data: [DONE]\n\n"]
+        opener = FakeStreamOpener(lines, self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools))
+        self.assertEqual(events[:2], [{"type": "text_delta", "text": "Hello "}, {"type": "text_delta", "text": "Yuki"}])
+        self.assertEqual(events[-1]["response"]["text"], "Hello Yuki")
+        self.assertTrue(json.loads(self.requests[0][0].data)["stream"])
+
+    def test_native_sse_stream_reassembles_tool_call_fragments(self):
+        chunks = [
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_stream", "function": {"name": "lookup", "arguments": "{\"key\":"}}]}, "finish_reason": None}]},
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\"value\"}"}}]}, "finish_reason": None}]},
+            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        lines = [("data: " + json.dumps(item) + "\n") for item in chunks] + ["data: [DONE]\n"]
+        opener = FakeStreamOpener(lines, self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            events = list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
+        self.assertEqual(events[-1]["response"]["tool_calls"]["tool_calls"], [
+            {"id": "call_stream", "name": "lookup", "arguments": {"key": "value"}}
+        ])
+
+    def test_native_sse_stream_rejects_unadvertised_tool(self):
+        chunk = {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "bad", "function": {"name": "unadvertised", "arguments": "{}"}}
+        ]}, "finish_reason": "tool_calls"}]}
+        opener = FakeStreamOpener(["data: " + json.dumps(chunk) + "\n", "data: [DONE]\n"], self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaises(RuntimeError):
+                list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
 if __name__ == "__main__":
     unittest.main()
