@@ -141,7 +141,7 @@ class YukiConversationAPI:
                 if not isinstance(tools, list) or len(tools) > 32:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 return await self._stream_reply(
-                    send, owner_id=user.user_id, conversation_id=conversation_id,
+                    send, receive=receive, owner_id=user.user_id, conversation_id=conversation_id,
                     payload=payload, tools=tools,
                 )
 
@@ -195,7 +195,7 @@ class YukiConversationAPI:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
 
-    async def _stream_reply(self, send, *, owner_id, conversation_id, payload, tools):
+    async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
         """Run synchronous generation off-loop and emit bounded SSE events."""
         loop = asyncio.get_running_loop()
         events = asyncio.Queue()
