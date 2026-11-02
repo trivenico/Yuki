@@ -23,7 +23,7 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             try:
                 logger = configure_logging(tmp)
-                log_event(logger, logging.INFO, "started\\nforged", component="runtime")
+                log_event(logger, logging.INFO, "started\nforged", component="runtime")
                 for handler in logger.handlers:
                     handler.flush()
                 text = (Path(tmp) / "yuki.log").read_text(encoding="utf-8")
