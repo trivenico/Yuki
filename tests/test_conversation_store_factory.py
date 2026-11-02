@@ -1,5 +1,6 @@
 import os
 import tempfile
+import uuid
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -66,6 +67,55 @@ class ConversationStoreFactoryTests(unittest.TestCase):
             "SELECT * FROM items WHERE id=%s AND owner=%s",
         )
 
+
+
+    @unittest.skipUnless(os.environ.get("YUKI_TEST_POSTGRES_URL"), "PostgreSQL integration URL not configured")
+    def test_postgres_store_conversation_generation_and_lease_contract(self):
+        store = PostgresConversationStore(
+            os.environ["YUKI_TEST_POSTGRES_URL"], min_pool_size=1, max_pool_size=2
+        )
+        conversation_id = None
+        owner_id = "postgres-integration-" + uuid.uuid4().hex
+        try:
+            conversation = store.create_conversation(owner_id=owner_id)
+            conversation_id = conversation["conversation_id"]
+            user = store.append_message(
+                owner_id=owner_id, conversation_id=conversation_id, role="user",
+                content="PostgreSQL integration", idempotency_key="request-1",
+                expected_version=0, generation_request_id="request-1",
+            )
+            self.assertEqual(user["version"], 1)
+            self.assertEqual(len(store.list_interrupted_generations(
+                owner_id=owner_id, conversation_id=conversation_id
+            )), 1)
+            lease = store.acquire_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id,
+                lease_token="lease-" + uuid.uuid4().hex,
+            )
+            self.assertEqual(lease["conversation_id"], conversation_id)
+            self.assertTrue(store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id,
+                lease_token=next(iter([
+                    row["lease_token"] for row in self._read_lease_tokens(store, conversation_id)
+                ])),
+            ))
+            self.assertTrue(store.finish_generation(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id="request-1", status="cancelled",
+            ))
+        finally:
+            if conversation_id:
+                with store._connect() as db:
+                    db.execute("DELETE FROM conversations WHERE conversation_id=%s", (conversation_id,))
+            store.close()
+
+    @staticmethod
+    def _read_lease_tokens(store, conversation_id):
+        with store._connect() as db:
+            return db.execute(
+                "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=%s",
+                (conversation_id,),
+            ).fetchall()
 
 if __name__ == "__main__":
     unittest.main()
