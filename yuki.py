@@ -206,6 +206,14 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /model select NAME"
         result = providers.select(parts[2])
+        if result.startswith("Selected provider:"):
+            try:
+                adapter = providers.create_selected_adapter()
+                if adapter is None:
+                    return "Model selection failed: no adapter is available."
+                agent.set_provider(adapter)
+            except Exception:
+                return "Model selection failed. The previous model remains active."
         write_audit_event("model:provider-select", "completed" if result.startswith("Selected provider:") else "rejected")
         return result
     if command == "/providers":
