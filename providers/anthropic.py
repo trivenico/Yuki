@@ -148,6 +148,8 @@ class AnthropicProvider:
                         data = json.loads(line[5:].strip())
                     except json.JSONDecodeError as exc:
                         raise RuntimeError("Anthropic returned malformed stream JSON.") from exc
+                    if not isinstance(data, dict):
+                        raise RuntimeError("Anthropic returned an invalid stream event.")
                     if current_event == "error" or data.get("type") == "error":
                         raise RuntimeError("Anthropic reported a streaming error.")
                     if current_event == "content_block_start":
