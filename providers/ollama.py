@@ -66,6 +66,53 @@ class OllamaProvider:
                 return True
         return False
 
+    def stream(self, prompt: str):
+        """Yield response deltas from Ollama's newline-delimited JSON stream."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
+        payload = json.dumps({
+            "model": self.model, "prompt": prompt.strip()[:20000], "stream": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/api/generate", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
+            method="POST",
+        )
+        total, saw_done = 0, False
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                while True:
+                    line = response.readline(1_000_001)
+                    if not line:
+                        break
+                    if len(line) > 1_000_000:
+                        raise RuntimeError("Ollama stream event exceeded the 1 MB limit.")
+                    if not line.strip():
+                        continue
+                    try:
+                        body = json.loads(line.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("Ollama returned an invalid streaming event.") from exc
+                    if not isinstance(body, dict):
+                        raise RuntimeError("Ollama returned an unsupported streaming event.")
+                    delta = body.get("response", "")
+                    if not isinstance(delta, str):
+                        raise RuntimeError("Ollama returned a non-text streaming delta.")
+                    if body.get("error"):
+                        raise RuntimeError("Ollama reported a streaming generation error.")
+                    if delta:
+                        total += len(delta)
+                        if total > 32_000:
+                            raise RuntimeError("Ollama stream exceeded the 32,000-character limit.")
+                        yield delta
+                    if body.get("done") is True:
+                        saw_done = True
+                        break
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Local Ollama streaming request failed.") from exc
+        if not saw_done:
+            raise RuntimeError("Ollama stream ended before its completion event.")
+
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
