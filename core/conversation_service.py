@@ -145,7 +145,7 @@ class ConversationService:
         if following and following[0]["role"] == "assistant":
             return {
                 "conversation_id": conversation_id,
-                "status": "completed",
+                "status": "replayed",
                 "answer": following[0]["content"],
                 "version": self.store.get_conversation(
                     owner_id=owner_id, conversation_id=conversation_id
