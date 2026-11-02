@@ -39,6 +39,18 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
+    def test_runtime_injects_provider_catalog_callback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            catalog = lambda: [{"name": "ollama", "ready": True}]
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), provider_catalog=catalog,
+            )
+            self.assertIs(runtime.app.provider_catalog, catalog)
+            self.assertEqual(runtime.app.provider_catalog()[0]["name"], "ollama")
+            runtime.close()
+
     def test_asgi_lifespan_closes_storage_on_shutdown(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
