@@ -107,12 +107,33 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
+def parse_skill_command(command):
+    """Parse a /skill command without assuming its name or argument exists."""
+    parts = command.split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].strip():
+        return None, ""
+    return parts[1].strip(), parts[2] if len(parts) > 2 else ""
+
+
 def main():
-    config = load_config()
-    workspace = Path(config["workspace"])
-    workspace.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    try:
+        config = load_config()
+    except Exception as exc:
+        print(f"Yuki > Configuration unavailable ({type(exc).__name__}). Check your local config and try again.")
+        return
+    try:
+        workspace = Path(config["workspace"])
+        workspace.mkdir(parents=True, exist_ok=True)
+        agent = build_agent(config)
+    except Exception as exc:
+        print(f"Yuki > Agent startup failed safely ({type(exc).__name__}). Check your local configuration and workspace.")
+        return
+    try:
+        ai = YukiAgent(create_provider(config))
+        task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+    except Exception as exc:
+        print(f"Yuki > Provider startup failed safely ({type(exc).__name__}). Check your provider configuration.")
+        return
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
@@ -266,13 +287,18 @@ def main():
                 print("Yuki > " + answer)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
-        elif command.startswith("/skill "):
-            parts = command.split(maxsplit=2)
-            name, argument = parts[1], parts[2] if len(parts) > 2 else ""
-            response = agent.run_skill(name, argument)
-            print(f"Yuki > {response.message}")
-            if response.ok and response.data is not None:
-                print(response.data)
+        elif command == "/skill" or command.startswith("/skill "):
+            name, argument = parse_skill_command(command)
+            if name is None:
+                print("Yuki > Provide a skill name: /skill NAME [ARG]")
+                continue
+            try:
+                response = agent.run_skill(name, argument)
+                print(f"Yuki > {response.message}")
+                if response.ok and response.data is not None:
+                    print(response.data)
+            except Exception as exc:
+                print(f"Yuki > Skill command failed safely ({type(exc).__name__}).")
         elif command.startswith("/plan "):
             goal = command[len("/plan "):].strip()
             try:
