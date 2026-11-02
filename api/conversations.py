@@ -117,7 +117,7 @@ class YukiConversationAPI:
                     )
                     if target is None:
                         return await self._respond(send, 422, {"error": "provider_not_implemented"})
-                    if target.get("privacy") not in {"local_runtime", "local_or_configured_endpoint"} and not payload["confirm_cloud"]:
+                    if target.get("privacy") != "local_runtime" and not payload["confirm_cloud"]:
                         return await self._respond(send, 400, {"error": "cloud_consent_required"})
                     selected = self.provider_selector(payload["provider"])
                 except ValueError as exc:
