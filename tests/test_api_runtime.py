@@ -39,6 +39,28 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
+    def test_asgi_lifespan_closes_storage_on_shutdown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+            )
+            events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            import asyncio
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent, [
+                {"type": "lifespan.startup.complete"},
+                {"type": "lifespan.shutdown.complete"},
+            ])
+            self.assertTrue(runtime._closed)
+
     def test_invalid_dependencies_fail_before_store_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(TypeError, "auth_service"):
