@@ -181,8 +181,8 @@ class ApprovedTestRunnerTests(unittest.TestCase):
                 principal=self.principal, changes=[self.change()],
                 validate=fail_validation,
             )
-        self.assertEqual(observed, ["VALUE = 2\\n"])
-        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\\n")
+        self.assertEqual(observed, ["VALUE = 2\n"])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
 
     def test_validation_exception_rolls_back_applied_content(self):
         def broken_validation():
@@ -192,7 +192,7 @@ class ApprovedTestRunnerTests(unittest.TestCase):
                 principal=self.principal, changes=[self.change()],
                 validate=broken_validation,
             )
-        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\\n")
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\n")
 
 
 if __name__ == "__main__":
