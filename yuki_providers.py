@@ -102,6 +102,23 @@ class ProviderManager:
             self._selected_adapter = self._build_adapter(self._selected)
         return self._selected_adapter
 
+    def create_selected_agent_model(self):
+        """Return the selected provider through the bounded agent chat contract.
+
+        Text-only providers (Gemini CLI and hybrid routing) are rejected rather
+        than silently flattening transcripts or routing tool requests elsewhere.
+        """
+        from providers.agent_adapter import ProviderAgentAdapter
+
+        provider = self.create_selected_adapter()
+        if provider is None:
+            raise RuntimeError("No provider is selected.")
+        if not callable(getattr(provider, "generate_chat", None)):
+            raise RuntimeError(
+                f"Selected provider '{self._selected}' does not support structured agent chat."
+            )
+        return ProviderAgentAdapter(provider)
+
     def current(self) -> Optional[ProviderInfo]:
         return self._providers.get(self._selected)
 

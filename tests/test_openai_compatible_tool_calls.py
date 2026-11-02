@@ -106,6 +106,38 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             with self.subTest(calls=calls), self.assertRaises(RuntimeError):
                 self.invoke_with(self.response(calls))
 
+    def test_generate_chat_preserves_role_order_and_normalizes_tool_calls(self):
+        body = self.response([{
+            "id": "call_chat",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": '{"key":"from-chat"}'},
+        }], content="")
+        opener = FakeOpener(body, self.requests)
+        messages = [
+            {"role": "system", "content": "You are Yuki"},
+            {"role": "user", "content": "Find it"},
+            {"role": "assistant", "content": "I will look it up"},
+        ]
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            result = self.provider.generate_chat(messages=messages, tools=self.tools)
+        payload = json.loads(self.requests[0][0].data)
+        self.assertEqual(payload["messages"], messages)
+        self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "from-chat"})
+        self.assertEqual(result["text"], "")
+
+    def test_generate_chat_rejects_bad_transcripts_before_network(self):
+        invalid = [
+            [],
+            [{"role": "developer", "content": "no"}],
+            [{"role": "user", "content": 4}],
+            [{"role": "user", "content": "x", "extra": True}],
+            [{"role": [], "content": "x"}],
+        ]
+        for messages in invalid:
+            with self.subTest(messages=messages), self.assertRaises(ValueError):
+                self.provider.generate_chat(messages=messages, tools=self.tools)
+        self.assertEqual(self.requests, [])
+
     def test_invalid_tool_definitions_fail_before_network(self):
         invalid_tools = [
             [],

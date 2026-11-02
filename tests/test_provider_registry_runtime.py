@@ -34,6 +34,27 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
+    def test_selected_openai_provider_exposes_bounded_agent_model(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
+        model = manager.create_selected_agent_model()
+        self.assertIsInstance(model, ProviderAgentAdapter)
+
+    def test_selected_ollama_provider_exposes_bounded_agent_model(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        manager = ProviderManager(
+            {"provider": "ollama", "ollama_model": "test-model"}, environ={}
+        )
+        model = manager.create_selected_agent_model()
+        self.assertIsInstance(model, ProviderAgentAdapter)
+
+    def test_text_only_hybrid_provider_fails_closed_for_agent_chat(self):
+        manager = ProviderManager(
+            {"provider": "hybrid", "ollama_model": "test-model"}, environ={}
+        )
+        with self.assertRaisesRegex(RuntimeError, "does not support structured agent chat"):
+            manager.create_selected_agent_model()
+
     def test_unimplemented_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
