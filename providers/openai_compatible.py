@@ -179,8 +179,6 @@ class OpenAICompatibleProvider:
         calls = message.get("tool_calls", [])
         if not isinstance(calls, list) or len(calls) > 5:
             raise RuntimeError("Cloud provider returned an invalid number of tool calls.")
-        if not saw_done and finish_reason is None:
-            raise RuntimeError("Cloud provider stream ended before a completion event.")
         normalized_calls = []
         seen_ids = set()
         for call in calls:
@@ -328,6 +326,8 @@ class OpenAICompatibleProvider:
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider streaming request failed; redirects are not followed.") from exc
 
+        if not saw_done and finish_reason is None:
+            raise RuntimeError("Cloud provider stream ended before a completion event.")
         normalized_calls = []
         seen_ids = set()
         for index in sorted(tool_parts):
