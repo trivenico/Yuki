@@ -121,5 +121,53 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(result["answer"], "Generation was stopped at your request.")
         self.assertEqual(result["version"], 2)
 
+
+    def test_interrupted_generation_is_reconciled_without_replaying_model(self):
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Potentially side-effecting task",
+            idempotency_key="crashed-request", expected_version=0,
+            generation_request_id="crashed-request",
+        )
+        replay = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Potentially side-effecting task", request_id="crashed-request",
+            expected_version=0, tools=[],
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertIn("interrupted", replay["answer"])
+        self.assertEqual(self.observed, [])
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+
+    def test_new_turn_recovers_previous_crash_before_calling_model(self):
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Previous interrupted task",
+            idempotency_key="old-request", expected_version=0,
+            generation_request_id="old-request",
+        )
+        result = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Continue with a new task", request_id="new-request",
+            expected_version=1, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["version"], 4)
+        history = self.service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual(
+            [item["role"] for item in history],
+            ["user", "assistant", "user", "assistant"],
+        )
+        self.assertIn("interrupted", history[1]["content"])
+        self.assertEqual(len(self.observed), 1)
+
 if __name__ == "__main__":
     unittest.main()
