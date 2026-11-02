@@ -37,4 +37,4 @@ The catalog never returns credential values. Provider selection is explicit.
 The selected provider becomes a strict routing preference; Yuki does not silently
 switch to a different provider when it is unavailable or blocked by privacy
 policy. Cloud providers remain excluded unless the calling workflow explicitly
-opts in. The current local conversation API opts out of cloud routing.
+opts in. The current local conversation API opts out of cloud routing. The desktop model selector only permits providers classified as `local_runtime`; cloud and non-loopback endpoints are not selectable through this local UI.
