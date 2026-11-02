@@ -5,7 +5,9 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import threading
+import uuid
 from typing import Any, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
