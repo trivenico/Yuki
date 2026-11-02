@@ -52,35 +52,32 @@ class SQLiteApprovalAuditLog:
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(approval_audit_events)")}
-            if "session_hash" not in columns:
-                # Existing append-only rows predate session attribution. Rebuild the
-                # chain with an explicit legacy marker before restoring the triggers.
+            needs_pending_hash = "pending_id_hash" not in columns
+            needs_session_hash = "session_hash" not in columns
+            if needs_pending_hash or needs_session_hash:
+                # Perform all legacy-column additions and the chain rebuild together.
+                # The old append-only triggers must be temporarily removed for migration.
                 db.execute("DROP TRIGGER IF EXISTS approval_audit_no_update")
                 db.execute("DROP TRIGGER IF EXISTS approval_audit_no_delete")
-                db.execute("ALTER TABLE approval_audit_events ADD COLUMN session_hash TEXT")
                 db.execute("BEGIN IMMEDIATE")
                 try:
-                    db.execute(
-                        "UPDATE approval_audit_events SET session_hash = ? WHERE session_hash IS NULL",
-                        (self._identity_digest("legacy-session-unspecified"),),
-                    )
-                    self._rebuild_chain(db)
-                    db.execute("COMMIT")
-                except Exception:
-                    db.execute("ROLLBACK")
-                    raise
-            if "pending_id_hash" not in columns:
-                # Migrate legacy records before allowing new events to be appended.
-                db.execute("BEGIN IMMEDIATE")
-                try:
-                    db.execute("ALTER TABLE approval_audit_events ADD COLUMN pending_id_hash TEXT")
-                    rows = db.execute(
-                        "SELECT event_id, pending_id FROM approval_audit_events ORDER BY event_id ASC"
-                    ).fetchall()
-                    for event_id, old_id in rows:
+                    if needs_pending_hash:
+                        db.execute("ALTER TABLE approval_audit_events ADD COLUMN pending_id_hash TEXT")
+                    if needs_session_hash:
+                        db.execute("ALTER TABLE approval_audit_events ADD COLUMN session_hash TEXT")
+                    if needs_pending_hash:
+                        rows = db.execute(
+                            "SELECT event_id, pending_id FROM approval_audit_events ORDER BY event_id ASC"
+                        ).fetchall()
+                        for event_id, old_id in rows:
+                            db.execute(
+                                "UPDATE approval_audit_events SET pending_id_hash = ?, pending_id = '[redacted]' WHERE event_id = ?",
+                                (self._digest(old_id), event_id),
+                            )
+                    if needs_session_hash:
                         db.execute(
-                            "UPDATE approval_audit_events SET pending_id_hash = ?, pending_id = '[redacted]' WHERE event_id = ?",
-                            (self._digest(old_id), event_id),
+                            "UPDATE approval_audit_events SET session_hash = ? WHERE session_hash IS NULL",
+                            (self._identity_digest("legacy-session-unspecified"),),
                         )
                     self._rebuild_chain(db)
                     db.execute("COMMIT")
