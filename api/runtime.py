@@ -52,6 +52,7 @@ def build_conversation_runtime(
     agent_loop: AgentExecutionLoop,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
+    provider_selector: Callable[[str], dict[str, Any]] | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -68,7 +69,7 @@ def build_conversation_runtime(
         service = ConversationService(store, agent_loop)
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
-            provider_catalog=provider_catalog,
+            provider_catalog=provider_catalog, provider_selector=provider_selector,
         )
         return ConversationRuntime(app, store)
     except Exception:
