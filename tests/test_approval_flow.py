@@ -116,6 +116,27 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             "pending_not_found",
         )
 
+    def test_persistent_consumption_audit_failure_is_visible_for_recovery(self):
+        class SelectiveAudit:
+            def append(self, *, event_type, **_event):
+                if event_type == "consumed":
+                    raise OSError("audit unavailable")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=SelectiveAudit())
+            pending = coordinator.record(
+                self.planner, action_result("reconcile"), actor="owner", session_id="session-a"
+            )
+            outcome = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(outcome.status, "audit_unavailable")
+            self.assertEqual(store.get_status(pending.pending_id), "recovery_required")
+            self.assertEqual(len(store.list_recovery_required()), 1)
+            self.assertEqual(self.planner.executed, [])
+
     def test_execution_audit_failure_returns_recovery_required_not_retryable_failure(self):
         class SelectiveAudit:
             def append(self, *, event_type, **_event):
