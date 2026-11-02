@@ -11,7 +11,7 @@ BACKUP_COUNT = 3
 
 
 def _safe_component(value, limit=120):
-    text = re.sub(r"[\\r\\n\\x00-\\x1f\\x7f]+", " ", str(value))
+    text = re.sub(r"[\r\n\x00-\x1f\x7f]+", " ", str(value))
     return text[:limit]
 
 
