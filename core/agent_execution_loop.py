@@ -177,11 +177,22 @@ class AgentExecutionLoop:
                             response = event["response"]
                         else:
                             raise AgentExecutionError("unsupported stream event.")
+                    streamed_answer = "".join(streamed_text)
                     if response is None:
                         response = {
-                            "text": "".join(streamed_text),
+                            "text": streamed_answer,
                             "tool_calls": {"tool_calls": []},
                         }
+                    elif streamed_answer:
+                        if not isinstance(response, Mapping):
+                            raise AgentExecutionError("stream final response must be an object.")
+                        final_text = response.get("text", "")
+                        if not isinstance(final_text, str):
+                            raise AgentExecutionError("stream final response text is invalid.")
+                        if final_text and final_text != streamed_answer:
+                            raise AgentExecutionError("stream fragments do not match the final response.")
+                        if not final_text:
+                            response = {**response, "text": streamed_answer}
                 else:
                     response = self.model(messages=list(messages), tools=list(tools), tool_choice="auto")
             except AgentExecutionError:
