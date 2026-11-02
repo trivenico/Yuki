@@ -24,6 +24,66 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def test_conversation_preview_is_read_only_and_does_not_initialize_provider(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            export=Path(directory)/"history.jsonl"
+            export.write_text('{"id":"m1","role":"user","content":"Hello Yuki"}\n',encoding="utf-8")
+            output=[]
+            def forbidden_provider_factory(config):
+                raise AssertionError("preview must not initialize a provider")
+            code=run_cli(
+                ["conversation-preview",str(export),"--format","jsonl"],
+                provider_factory=forbidden_provider_factory,
+                output_fn=output.append,
+            )
+            self.assertEqual(code,0)
+            result=json.loads(output[0])
+            self.assertEqual(result["records_found"],1)
+            self.assertFalse(result["stored"])
+            self.assertTrue(result["consent_required_for_import"])
+
+    def test_conversation_preview_rejects_missing_file(self):
+        output=[]
+        code=run_cli(
+            ["conversation-preview","/path/that/does/not/exist.json","--format","chatgpt"],
+            output_fn=output.append,
+        )
+        self.assertEqual(code,2)
+        self.assertIn("not found",output[0].lower())
+    def test_conversation_import_requires_confirmation_and_does_not_initialize_provider(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/"export.json"
+            store=Path(directory)/"memories.json"
+            source.write_text(json.dumps({"messages":[{"id":"m1","role":"user","content":"Hello Yuki"},{"id":"m2","role":"assistant","content":"api_key=abc123"}]}),encoding="utf-8")
+            output=[]
+            forbidden=lambda config: self.fail("import must not initialize provider")
+            args=["conversation-import",str(source),"--store",str(store)]
+            self.assertEqual(run_cli(args,provider_factory=forbidden,output_fn=output.append),2)
+            self.assertFalse(store.exists())
+            self.assertEqual(run_cli(args+["--confirm-import"],provider_factory=forbidden,output_fn=output.append),0)
+            result=json.loads(output[-1])
+            self.assertTrue(result["imported"])
+            self.assertEqual(result["message_count"],2)
+            saved=json.loads(store.read_text(encoding="utf-8"))
+            self.assertIn("[REDACTED]",saved[0]["messages"][1]["text"])
+            self.assertEqual(saved[0]["training_status"],"not_eligible_pending_review")
+
+    def test_conversation_import_deduplicates_repeated_export(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            source=Path(directory)/"export.json"
+            store=Path(directory)/"memories.json"
+            source.write_text(json.dumps({"messages":[{"role":"user","content":"One note"}]}),encoding="utf-8")
+            output=[]
+            args=["conversation-import",str(source),"--store",str(store),"--confirm-import"]
+            self.assertEqual(run_cli(args,output_fn=output.append),0)
+            self.assertEqual(run_cli(args,output_fn=output.append),0)
+            self.assertTrue(json.loads(output[-1])["duplicate"])
     def test_ask_uses_configured_provider_and_returns_answer(self):
         provider = FakeProvider(answer="real answer")
         output = []
@@ -35,7 +95,9 @@ class YukiCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(output, ["real answer"])
-        self.assertEqual(provider.prompts, ["hello"])
+        self.assertEqual(len(provider.prompts), 1)
+        self.assertIn("User message: hello", provider.prompts[0])
+        self.assertIn("You are Yuki", provider.prompts[0])
 
     def test_provider_status_reports_unavailable_with_nonzero_exit(self):
         provider = FakeProvider(available=False)

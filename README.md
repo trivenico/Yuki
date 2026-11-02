@@ -64,6 +64,10 @@ This is the target layout, not a claim that the migration is already complete.
 6. Reorganize tests without losing coverage; validate Windows and Linux clean installs, real Ollama inference, persistence, and rollback.
 7. Remove compatibility facades only when import search and CI prove no supported consumer relies on them.
 
+## Yuki Cloud AI (Oracle Cloud)
+
+Yuki now includes an OCI Generative AI provider adapter using the regional OpenAI-compatible Chat Completions endpoint. See [Yuki Cloud AI on OCI](docs/OCI_CLOUD_AI.md) for configuration, model-hosting options, security boundaries, and the 24/7 cloud architecture. The adapter is not a deployed cloud service: no OCI tenancy, GPU fleet, gateway, Vault secrets, or device-authenticated CLI/desktop connection has been provisioned yet.
+
 ## External SSD portability
 
 Yuki now has portable data/config path resolution and starter launchers for Windows and Linux/macOS. It is not yet a zero-install self-contained executable; compatible Python and optional dependencies are still needed on each host. See [External SSD setup and security checklist](docs/PORTABLE_SSD.md) and [Upstream capability audit](docs/UPSTREAM_CAPABILITY_AUDIT.md).
@@ -263,3 +267,25 @@ The following modules are registered as bounded foundations, not claims of full 
 - `vibe_coder`: creates a reviewable engineering plan only. It does not write project files, execute commands, or push code.
 
 The new tests cover registry wiring, input bounds, workspace path containment, and fail-closed provider behavior. CI status must be checked independently; a commit is not evidence that tests passed.
+
+## Personal always-on runtime direction
+
+The specialist runtime now supports a continuous worker supervisor and unbounded-by-default personal fleet configuration:
+
+- The SQLite agent registry has no default agent-count ceiling. An operator can still opt into a positive `max_agents` policy.
+- Agent concurrency and execution deadline fields default to `None` (no per-agent ceiling/deadline). Explicit positive values remain available for machines or providers that need tighter resource budgets.
+- The default worker pool drains eligible queued tasks until the queue is empty. Worker count defaults to the host CPU count; operators can supply a larger positive worker count. No fixed product-level task-count ceiling is imposed by the pool.
+- `AlwaysOnWorkerSupervisor` polls the durable specialist worker indefinitely, waits while idle, retries after transient cycle errors, exposes a health snapshot, and supports graceful shutdown.
+
+Example lifecycle:
+
+```python
+from automation.specialist_worker import AlwaysOnWorkerSupervisor
+
+supervisor = AlwaysOnWorkerSupervisor(worker)
+supervisor.start()
+# On application shutdown:
+supervisor.stop(timeout=30)
+```
+
+**Deployment status:** this is a lifecycle primitive, not yet an installed OS service. CLI/desktop startup wiring, OS-native service definitions (systemd/launchd/Windows Service), wake-from-sleep behavior, watchdog health integration, backup/restore, and long-duration soak testing remain before claiming reliable 24/7 production operation. The machine must remain powered and connected, and model providers/network services may impose their own quotas. Resource-aware scheduling is retained to prevent one personal agent from exhausting the host.

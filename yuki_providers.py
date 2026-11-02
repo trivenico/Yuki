@@ -22,6 +22,8 @@ class ProviderManager:
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            **{name: (lambda name=name: create_provider({**self._config, "provider": name}, environ=self._environ))
+               for name in ("oci", "oci_iam", "oci_responses", "multi")},
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
@@ -30,6 +32,10 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
+            ProviderInfo("oci", ("OCI_GENAI_API_KEY", "OCI Generative AI project OCID"), True),
+            ProviderInfo("oci_iam", ("OCI IAM resource/instance/session principal",), True),
+            ProviderInfo("oci_responses", ("OCI IAM resource/instance/session principal",), True),
+            ProviderInfo("multi", ("explicit per-task provider routing",), True),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),

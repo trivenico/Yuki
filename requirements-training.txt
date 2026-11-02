@@ -1,0 +1,16 @@
+# Optional local model training stack.
+# Install only in the dedicated training environment, not the CLI/Desktop base install.
+# PyTorch must be installed separately using the official hardware-specific selector:
+# https://pytorch.org/get-started/locally/
+transformers>=4.50,<6
+datasets>=3.3,<5
+accelerate>=1.4,<2
+peft>=0.14,<1
+trl>=0.15,<1
+huggingface_hub>=0.29,<2
+tokenizers>=0.21,<1
+safetensors>=0.5,<1
+evaluate>=0.4,<1
+
+# Optional agent framework adapter; keep isolated from Yuki's trusted core.
+smolagents>=1.10,<2

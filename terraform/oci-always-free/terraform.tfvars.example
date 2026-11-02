@@ -1,0 +1,9 @@
+tenancy_ocid     = "ocid1.tenancy.oc1..REPLACE"
+user_ocid        = "ocid1.user.oc1..REPLACE"
+fingerprint      = "REPLACE"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "REPLACE_WITH_HOME_REGION"
+compartment_ocid = "ocid1.compartment.oc1..REPLACE"
+ssh_public_key   = "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY"
+# Only enable SSH if needed, and use your current trusted public IP /32.
+# ssh_cidr = "203.0.113.10/32"

@@ -1,2 +1,3 @@
 # YAML parser used by core/config.py. No AI API key or model SDK is required.
 PyYAML>=6.0.3,<7.0
+httpx>=0.27,<1.0

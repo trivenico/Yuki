@@ -1,0 +1,20 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - fail2ban
+  - unattended-upgrades
+  - ufw
+runcmd:
+  - [systemctl, enable, --now, docker]
+  - [systemctl, enable, --now, fail2ban]
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, allow, 443/tcp]
+  - [bash, -lc, 'if [ -n "${ssh_cidr}" ]; then ufw allow from "${ssh_cidr}" to any port 22 proto tcp; fi']
+  - [ufw, --force, enable]
+  - [bash, -lc, 'install -d -m 0750 /opt/yuki /var/lib/yuki']
+  - [bash, -lc, 'printf "%s\\n" "${instance_name}" > /etc/yuki-instance-name']
