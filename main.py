@@ -64,9 +64,14 @@ def build_agent(config):
         mcp_servers=config.get("mcp_servers", []),
     )
     audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
+    # CLI attribution is a local runtime identity, not an authenticated account.
+    # Web/API adapters must inject a verified principal and session explicitly.
+    actor_id = __import__("os").environ.get("YUKI_ACTOR_ID", "local-cli")
     return YukiCoreAgent(
         registry=registry,
-        permission_gate=PermissionGate(_ask_approval, audit_log=audit_log),
+        permission_gate=PermissionGate(
+            _ask_approval, audit_log=audit_log, actor_id=actor_id
+        ),
     )
 
 
