@@ -130,7 +130,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             [],
             [{"role": "developer", "content": "no"}],
             [{"role": "user", "content": 4}],
-            [{"role": "user", "content": "x", "extra": True}],\n            [{"role": [], "content": "x"}],
+            [{"role": "user", "content": "x", "extra": True}],
+            [{"role": [], "content": "x"}],
         ]
         for messages in invalid:
             with self.subTest(messages=messages), self.assertRaises(ValueError):
