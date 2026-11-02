@@ -1,4 +1,6 @@
 """Regression tests for durable, identity-bound pending approvals."""
+import os
+import stat
 import tempfile
 import threading
 import unittest
@@ -60,6 +62,14 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
                 store.put("skill", {"x": float("nan")}, {}, actor="owner", session_id="s")
             with self.assertRaises(ValueError):
                 store.put("skill", {"x": "a" * (17 * 1024)}, {}, actor="owner", session_id="s")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file mode semantics")
+    def test_pending_database_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pending.sqlite3"
+            store = SQLitePendingApprovalStore(str(path))
+            store.put("notes.write", {}, {}, actor="owner", session_id="session-a")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
