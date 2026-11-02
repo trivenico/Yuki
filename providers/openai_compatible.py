@@ -202,6 +202,156 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
         return {"text": content or "", "tool_calls": envelope, "finish_reason": choice.get("finish_reason")}
 
+
+    def generate_chat_stream(self, *, messages, tools, tool_choice="auto"):
+        """Yield normalized text deltas and one validated final response from SSE."""
+        if not isinstance(messages, (list, tuple)) or not messages or len(messages) > 128:
+            raise ValueError("messages must contain 1 to 128 entries.")
+        normalized_messages = []
+        total_chars = 0
+        for item in messages:
+            if not isinstance(item, dict) or set(item) != {"role", "content"}:
+                raise ValueError("Each message must contain only role and content.")
+            if item["role"] not in {"system", "user", "assistant"} or not isinstance(item["content"], str):
+                raise ValueError("Message role or content is invalid.")
+            total_chars += len(item["content"])
+            if total_chars > 100_000:
+                raise ValueError("Message transcript exceeds the size limit.")
+            normalized_messages.append({"role": item["role"], "content": item["content"]})
+        if not isinstance(tools, list) or len(tools) > 32:
+            raise ValueError("tools must be a list containing at most 32 definitions.")
+        if tool_choice not in ("auto", "none", "required"):
+            raise ValueError("tool_choice must be auto, none, or required.")
+        names = set()
+        normalized_tools = []
+        for item in tools:
+            if (not isinstance(item, dict) or set(item) != {"type", "function"}
+                    or item["type"] != "function" or not isinstance(item["function"], dict)):
+                raise ValueError("Each tool must use the OpenAI function-tool schema.")
+            function = item["function"]
+            name = function.get("name")
+            description = function.get("description", "")
+            parameters = function.get("parameters")
+            if (set(function) - {"name", "description", "parameters", "strict"}
+                    or not isinstance(name, str)
+                    or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", name)
+                    or name in names or not isinstance(description, str) or len(description) > 1024
+                    or not isinstance(parameters, dict)
+                    or len(json.dumps(parameters, separators=(",", ":"))) > 8_000):
+                raise ValueError("Function tool definition is invalid.")
+            names.add(name)
+            normalized_tools.append({"type": "function", "function": {
+                "name": name, "description": description, "parameters": parameters,
+                "strict": function.get("strict", True) is True,
+            }})
+        if tool_choice == "required" and not normalized_tools:
+            raise ValueError("At least one tool is required.")
+        api_key = self._environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
+        payload = json.dumps({
+            "model": self.model, "messages": normalized_messages,
+            "tools": normalized_tools, "tool_choice": tool_choice, "stream": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream",
+                     "Authorization": "Bearer " + api_key}, method="POST",
+        )
+        text_parts = []
+        text_size = 0
+        tool_parts = {}
+        total_bytes = 0
+        finish_reason = None
+        saw_done = False
+        try:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                while True:
+                    line = response.readline(65_537)
+                    if not line:
+                        break
+                    total_bytes += len(line)
+                    if len(line) > 65_536 or total_bytes > 2_000_000:
+                        raise RuntimeError("Cloud provider stream exceeded the response limit.")
+                    line = line.strip()
+                    if not line or line.startswith(b":") or not line.startswith(b"data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == b"[DONE]":
+                        saw_done = True
+                        break
+                    try:
+                        chunk = json.loads(data.decode("utf-8"))
+                        choice = chunk["choices"][0]
+                        delta = choice.get("delta", {})
+                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+                        raise RuntimeError("Cloud provider returned a malformed stream event.") from exc
+                    if not isinstance(delta, dict):
+                        raise RuntimeError("Cloud provider returned an invalid stream delta.")
+                    content = delta.get("content")
+                    if content is not None:
+                        if not isinstance(content, str) or not content:
+                            raise RuntimeError("Cloud provider returned invalid streamed text.")
+                        text_size += len(content)
+                        if text_size > 24_000:
+                            raise RuntimeError("Cloud provider stream exceeded the text limit.")
+                        text_parts.append(content)
+                        yield {"type": "text_delta", "text": content}
+                    calls = delta.get("tool_calls", [])
+                    if not isinstance(calls, list) or len(calls) > 5:
+                        raise RuntimeError("Cloud provider returned invalid streamed tool calls.")
+                    for call in calls:
+                        if not isinstance(call, dict) or type(call.get("index")) is not int or not 0 <= call["index"] < 5:
+                            raise RuntimeError("Cloud provider returned an invalid tool-call index.")
+                        index = call["index"]
+                        current = tool_parts.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                        if "id" in call:
+                            if current["id"] and current["id"] != call["id"]:
+                                raise RuntimeError("Cloud provider changed a streamed tool-call id.")
+                            current["id"] = call["id"]
+                        function = call.get("function", {})
+                        if not isinstance(function, dict):
+                            raise RuntimeError("Cloud provider returned an invalid function delta.")
+                        if "name" in function:
+                            if current["name"] and current["name"] != function["name"]:
+                                raise RuntimeError("Cloud provider changed a streamed tool name.")
+                            current["name"] = function["name"]
+                        fragment = function.get("arguments", "")
+                        if not isinstance(fragment, str) or len(current["arguments"]) + len(fragment) > 8_000:
+                            raise RuntimeError("Cloud provider streamed invalid or oversized tool arguments.")
+                        current["arguments"] += fragment
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = choice["finish_reason"]
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Cloud provider streaming request failed; redirects are not followed.") from exc
+
+        if not saw_done and finish_reason is None:
+            raise RuntimeError("Cloud provider stream ended before a completion event.")
+        normalized_calls = []
+        seen_ids = set()
+        for index in sorted(tool_parts):
+            call = tool_parts[index]
+            try:
+                call_id, name = call["id"], call["name"]
+                arguments = json.loads(call["arguments"])
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise RuntimeError("Cloud provider returned malformed streamed tool-call data.") from exc
+            if (not isinstance(call_id, str) or not call_id or len(call_id) > 64
+                    or call_id in seen_ids or name not in names or not isinstance(arguments, dict)):
+                raise RuntimeError("Cloud provider returned an unrecognized streamed tool call.")
+            seen_ids.add(call_id)
+            normalized_calls.append({"id": call_id, "name": name, "arguments": arguments})
+        envelope = {"tool_calls": normalized_calls}
+        from core.structured_tool_protocol import parse_tool_calls
+        try:
+            parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
+        except ValueError as exc:
+            raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
+        yield {"type": "response", "response": {
+            "text": "".join(text_parts), "tool_calls": envelope, "finish_reason": finish_reason,
+        }}
+
     def generate_with_tools(self, prompt: str, tools: list[dict], *, tool_choice="auto") -> dict:
         """Request OpenAI-compatible function calls and normalize them to Yuki's protocol.
 
