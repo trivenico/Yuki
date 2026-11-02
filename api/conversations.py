@@ -35,6 +35,7 @@ class YukiConversationAPI:
         *,
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
+        provider_selector: Callable[[str], dict[str, Any]] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -48,6 +49,9 @@ class YukiConversationAPI:
         if provider_catalog is not None and not callable(provider_catalog):
             raise TypeError("provider_catalog must be callable")
         self.provider_catalog = provider_catalog or (lambda: [])
+        if provider_selector is not None and not callable(provider_selector):
+            raise TypeError("provider_selector must be callable")
+        self.provider_selector = provider_selector
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -88,6 +92,35 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if method == "GET" and path == "/v1/auth/me":
+                return await self._respond(send, 200, {
+                    "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
+                })
+
+            if method == "PUT" and path == "/v1/providers/active":
+                if user.role != "admin":
+                    return await self._respond(send, 403, {"error": "administrator_required"})
+                if self.provider_selector is None:
+                    return await self._respond(send, 503, {"error": "provider_selection_unavailable"})
+                payload = await self._body(receive)
+                if set(payload) != {"provider"} or not isinstance(payload.get("provider"), str):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    selected = self.provider_selector(payload["provider"])
+                except ValueError as exc:
+                    code = str(exc)
+                    if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready"}:
+                        code = "provider_selection_rejected"
+                    return await self._respond(send, 422, {"error": code})
+                except Exception:
+                    return await self._respond(send, 503, {"error": "provider_selection_failed"})
+                return await self._respond(send, 200, {"provider": {
+                    key: selected[key] for key in (
+                        "name", "label", "implemented", "ready", "privacy",
+                        "configured_model", "credential_configured", "selected", "status",
+                    ) if key in selected
+                }})
 
             if method == "GET" and path == "/v1/providers":
                 try:
