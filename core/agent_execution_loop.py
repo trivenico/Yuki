@@ -90,8 +90,9 @@ class AgentExecutionLoop:
             # continue if a caller-provided durable journal fails.
             self.on_event(kind, details)
 
-    def _stop_reason(self, started: float) -> str | None:
-        if self.cancellation_requested():
+    def _stop_reason(self, started: float, cancellation_requested=None) -> str | None:
+        check_cancelled = cancellation_requested or self.cancellation_requested
+        if check_cancelled():
             return "cancelled"
         if self.clock() - started >= self.max_duration_seconds:
             return "limit_reached"
@@ -142,7 +143,7 @@ class AgentExecutionLoop:
         self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
 
         while turns < self.max_model_turns:
-            reason = self._stop_reason(started)
+            reason = self._stop_reason(started, is_cancelled)
             if reason:
                 self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(reason, "", turns, calls_total, max(0.0, self.clock() - started))
