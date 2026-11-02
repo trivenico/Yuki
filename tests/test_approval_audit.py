@@ -94,6 +94,15 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             )
             self.assertTrue(audit.verify_chain())
 
+    def test_production_requires_identity_hmac_key(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"YUKI_ENV": "production"}, clear=False):
+                os.environ.pop("YUKI_AUDIT_HMAC_KEY", None)
+                with self.assertRaisesRegex(ValueError, "must be configured in production"):
+                    SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+
     def test_rejects_short_identity_hmac_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
