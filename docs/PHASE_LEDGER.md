@@ -60,13 +60,25 @@ Other open product tracks that must be assigned to a phase only after scope/depe
 - Phase 160: provider status is read-only; dynamic switching is not implemented by that phase.
 - Phase 161: centralized multi-process coordination, durable actor-attributed audit, connectivity probes and credential rotation remain follow-ups (Phase 162 proposal addresses the first two).
 
+## Phase 1 current disposition (verified 2026-11-02)
+
+| Item | Evidence | Status |
+|---|---|---|
+| Historical Phase 1 PR | #24 | `superseded` in scope by focused replacement; keep open until replacement disposition is final |
+| Focused replacement | #497 | `in_progress`; ready for review, mergeable, 2 files changed |
+| Exact-head CI | Commit `c2d29def97e2c1eca927bf9a1dd50319def0077b` | 15 reported workflow runs completed successfully, including Yuki quality gates and specialised tests |
+| Independent PR review | PR #497 has no submitted reviews and no inline review threads | **Outstanding**; do not claim review complete or merge under this ledger's governance |
+| Acceptance coverage | `tests/test_phase1_cli_safety.py` | Parser, missing-name, skill exception sanitization, success dispatch/data, config/agent/provider startup sanitization |
+
+PR #497 is marked ready for review. Phase 1 remains `in_progress` until an independent review is recorded and the replacement is merged. No phase completion claim is made from CI alone.
+
 ## Earlier PR backlog evidence (verified 2026-11-02)
 
 The first page of the open-PR search shows that several early serials are still represented by draft PRs, not merged completions:
 
 | Phase / track | PR | Current state | Notes |
 |---|---:|---|---|
-| Phase 1 | #24 | Open, draft | Not merged; earliest explicit phase PR found |
+| Phase 1 (historical) | #24 | Open, draft | Stale replacement candidate; original branch had CI import failures and obsolete patches. Do not merge wholesale. Focused replacement is PR #497. |
 | Phase 2 | #27 and #30 | Open, draft | #27 currently reports non-mergeable; #30 is follow-up hardening |
 | Phase 3 | #2 and #28 | Open, draft | Two different tracks claim Phase 3; scope reconciliation required |
 | Phase 3 resilience | #2 | Open, draft | Separate bounded resilience/self-healing scope |
@@ -82,12 +94,13 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 
 ## Next serial execution order
 
-1. Reconcile Phase 1 PR #24 and Phase 2 PRs #27/#30 against current `main`; inspect exact-head CI, reviews, conflicts, and whether later merged work supersedes their changes. Do not bulk-merge stale drafts.
-2. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
-3. Reconcile Phase 9 PR #8 and issue #9 with later specialist-agent implementation; close or supersede only with evidence.
-4. Continue the full historical serial audit, including undocumented ranges and Phase 154.
-5. Complete explicit security/release blockers (#269, #317/#331) at their correct serial positions after confirming their original phase mapping.
-6. Only then begin Phase 162 (#495), after all predecessor serials and acceptance gates are reconciled.
+1. Finish Phase 1 PR #497 independent review and merge; then close or explicitly supersede stale PR #24. Do not advance phase status before review/merge evidence.
+2. Reconcile Phase 2 PRs #27/#30 against current `main`; inspect exact-head CI, reviews, conflicts, and whether later merged work supersedes their changes. Do not bulk-merge stale drafts.
+3. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
+4. Reconcile Phase 9 PR #8 and issue #9 with later specialist-agent implementation; close or supersede only with evidence.
+5. Continue the full historical serial audit, including undocumented ranges and Phase 154.
+6. Complete explicit security/release blockers (#269, #317/#331) at their correct serial positions after confirming their original phase mapping.
+7. Only then begin Phase 162 (#495), after all predecessor serials and acceptance gates are reconciled.
 
 ## Change log
 
