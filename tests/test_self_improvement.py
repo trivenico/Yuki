@@ -36,6 +36,25 @@ class SelfImprovementProposalTests(unittest.TestCase):
                     files=[ProposedFile(path, "content")],
                 )
 
+    def test_ambiguous_and_nonportable_paths_are_rejected(self):
+        invalid_paths = (
+            "docs//notes.md",
+            "docs/./notes.md",
+            "docs/CON.txt",
+            "docs/NUL",
+            "docs/com1.log",
+            "docs/trailing./notes.md",
+            "docs/trailing /notes.md",
+            "docs/file.txt:stream",
+        )
+        for path in invalid_paths:
+            with self.subTest(path=path), self.assertRaises(ProposalRejected):
+                validate_change_proposal(
+                    title="Invalid path",
+                    rationale="Reject ambiguous cross-platform paths.",
+                    files=[ProposedFile(path, "content")],
+                )
+
     def test_duplicate_case_insensitive_paths_are_rejected(self):
         with self.assertRaises(ProposalRejected):
             validate_change_proposal(
