@@ -90,33 +90,6 @@ def build_application(data_dir, provider_manager):
                     "proposal_id":p.proposal_id,"category":p.category,"content":p.content,
                     "status":p.status,"created_at":p.created_at,"updated_at":p.updated_at,
                     "memory_id":p.memory_id} for p in items]})
-            if path == "/v1/memory-proposals":
-                try:
-                    data = self.body()
-                    proposal = memory_reviews.propose(actor_id=user.user_id,
-                        scope_id="personal:" + user.user_id,
-                        category=data.get("category"), content=data.get("content"))
-                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                    return self.send_json(400, {"error":"invalid_request"})
-                return self.send_json(201, {"proposal_id":proposal.proposal_id,
-                    "category":proposal.category,"content":proposal.content,
-                    "status":proposal.status,"created_at":proposal.created_at})
-            action = re.fullmatch(r"/v1/memory-proposals/([A-Za-z0-9_-]{8,128})/(approve|reject)", path)
-            if action:
-                proposal_id, operation = action.groups()
-                try:
-                    if operation == "approve":
-                        item = memory_reviews.approve(actor_id=user.user_id,
-                            scope_id="personal:" + user.user_id, proposal_id=proposal_id)
-                        return self.send_json(200, {"approved":True,"memory_id":item.memory_id})
-                    rejected = memory_reviews.reject(actor_id=user.user_id,
-                        scope_id="personal:" + user.user_id, proposal_id=proposal_id)
-                    return self.send_json(200 if rejected else 404,
-                        {"rejected":True} if rejected else {"error":"not_found"})
-                except KeyError:
-                    return self.send_json(404, {"error":"not_found"})
-                except ValueError:
-                    return self.send_json(409, {"error":"proposal_state_conflict"})
             if path == "/v1/memories":
                 params = parse_qs(urlsplit(self.path).query)
                 query = params.get("q", [""])[0]
@@ -202,6 +175,33 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(400, {"error": "invalid_request"})
                 except Exception:
                     return self.send_json(503, {"error": "provider_selection_unavailable"})
+            if path == "/v1/memory-proposals":
+                try:
+                    data = self.body()
+                    proposal = memory_reviews.propose(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id,
+                        category=data.get("category"), content=data.get("content"))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error":"invalid_request"})
+                return self.send_json(201, {"proposal_id":proposal.proposal_id,
+                    "category":proposal.category,"content":proposal.content,
+                    "status":proposal.status,"created_at":proposal.created_at})
+            action = re.fullmatch(r"/v1/memory-proposals/([A-Za-z0-9_-]{8,128})/(approve|reject)", path)
+            if action:
+                proposal_id, operation = action.groups()
+                try:
+                    if operation == "approve":
+                        item = memory_reviews.approve(actor_id=user.user_id,
+                            scope_id="personal:" + user.user_id, proposal_id=proposal_id)
+                        return self.send_json(200, {"approved":True,"memory_id":item.memory_id})
+                    rejected = memory_reviews.reject(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id, proposal_id=proposal_id)
+                    return self.send_json(200 if rejected else 404,
+                        {"rejected":True} if rejected else {"error":"not_found"})
+                except KeyError:
+                    return self.send_json(404, {"error":"not_found"})
+                except ValueError:
+                    return self.send_json(409, {"error":"proposal_state_conflict"})
             if path == "/v1/memory-suggestions/preview":
                 try:
                     data = self.body()
