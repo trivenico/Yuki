@@ -17,6 +17,37 @@ class ProviderAgentAdapter:
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
 
+    def stream_model(
+        self, *, messages: Sequence[Mapping[str, str]],
+        tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
+    ):
+        """Expose provider streaming through the agent loop's normalized event contract."""
+        stream = getattr(self.provider, "generate_chat_stream", None)
+        if not callable(stream):
+            raise RuntimeError("configured provider does not support native streaming.")
+        # Reuse the same input contract as the non-streaming adapter.
+        self._validate_inputs(messages, tools, tool_choice)
+        return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+
+    @staticmethod
+    def _validate_inputs(messages, tools, tool_choice):
+        if not isinstance(messages, (list, tuple)) or not messages or len(messages) > 128:
+            raise ValueError("messages must be a non-empty sequence of at most 128 entries.")
+        total_chars = 0
+        for message in messages:
+            if not isinstance(message, Mapping) or set(message) != {"role", "content"}:
+                raise ValueError("each message must contain only role and content.")
+            role, content = message["role"], message["content"]
+            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+                raise ValueError("message role or content is invalid.")
+            total_chars += len(content)
+            if total_chars > 100_000:
+                raise ValueError("message transcript exceeds the character limit.")
+        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
+            raise ValueError("tools must contain at most 32 definitions.")
+        if tool_choice not in {"auto", "none", "required"}:
+            raise ValueError("tool_choice is invalid.")
+
     def __call__(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
