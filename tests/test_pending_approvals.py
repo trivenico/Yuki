@@ -55,6 +55,37 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             self.assertEqual(outcomes.count(True), 1)
             self.assertEqual(outcomes.count(False), 1)
 
+    def test_claim_retains_snapshot_and_prevents_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {"text": "recover me"},
+                {"skill_id": "notes.write", "arguments": {"text": "recover me"}},
+                actor="owner", session_id="session-a",
+            )
+            claimed = store.claim(item.pending_id, actor="owner", session_id="session-a")
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed.status, "claimed")
+            self.assertEqual(claimed.action["arguments"]["text"], "recover me")
+            self.assertEqual(store.get_status(item.pending_id), "claimed")
+            self.assertIsNone(store.claim(item.pending_id, actor="owner", session_id="session-a"))
+
+    def test_lifecycle_transitions_are_compare_and_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertIsNotNone(store.claim(item.pending_id, actor="owner", session_id="session-a"))
+            self.assertTrue(store.transition(item.pending_id, expected="claimed", new_status="approved"))
+            self.assertFalse(store.transition(item.pending_id, expected="claimed", new_status="denied"))
+            self.assertTrue(store.transition(item.pending_id, expected="approved", new_status="executing"))
+            self.assertTrue(store.transition(item.pending_id, expected="executing", new_status="recovery_required"))
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+            with self.assertRaises(ValueError):
+                store.transition(item.pending_id, expected="recovery_required", new_status="pending")
+
     def test_rejects_oversized_or_non_json_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
