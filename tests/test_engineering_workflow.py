@@ -113,13 +113,13 @@ class EngineeringWorkflowTests(unittest.TestCase):
 
     def test_failing_tests_roll_back_the_proposed_workspace_edit(self):
         (self.root / "test_sample.py").write_text(
-            "import unittest\\nclass T(unittest.TestCase):\\n"
-            " def test_failure(self): self.assertEqual(1, 2)\\n",
+            "import unittest\nclass T(unittest.TestCase):\n"
+            " def test_failure(self): self.assertEqual(1, 2)\n",
             encoding="utf-8",
         )
         change = FileChange(
             "README.md", hashlib.sha256(self.readme.read_bytes()).hexdigest(),
-            "This must be rolled back.\\n",
+            "This must be rolled back.\n",
         )
         with self.assertRaises(WorkspaceChangeError):
             self.workflow.run(
@@ -129,7 +129,7 @@ class EngineeringWorkflowTests(unittest.TestCase):
                 proposed_changes=[change],
                 test_module="test_sample",
             )
-        self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\\n")
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\n")
         self.assertTrue(any(
             event.get("outcome") == "failed"
             for event in self.events if "outcome" in event
