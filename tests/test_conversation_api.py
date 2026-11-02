@@ -18,9 +18,25 @@ class FakeProvider:
 
 
 class FakeManager:
+    def __init__(self):
+        self.selected = "ollama"
     def create_routed_adapter(self, **kwargs):
         assert kwargs["allow_cloud"] is False
         return FakeProvider()
+    def catalog(self):
+        return [
+            {"name":"ollama","label":"Ollama","implemented":True,"ready":True,
+             "privacy":"local_runtime","configured_model":"qwen3","status":"ready"},
+            {"name":"openai","label":"OpenAI","implemented":True,"ready":True,
+             "privacy":"cloud_provider","configured_model":"gpt-test","status":"ready"},
+        ]
+    def current(self):
+        return type("Provider", (), {"name":self.selected})()
+    def select(self, name):
+        if name == "ollama":
+            self.selected = name
+            return "Selected provider: ollama"
+        return "openai is not allowed by local policy"
 
 
 class ConversationApiTests(unittest.TestCase):
@@ -77,6 +93,20 @@ class ConversationApiTests(unittest.TestCase):
         history = self.request("GET", "/v1/conversations/%s/events" % sid, token=self.token)
         self.assertEqual([e["kind"] for e in history["items"] if e["kind"].startswith("message.")],
             ["message.user", "message.assistant"])
+
+    def test_model_catalog_is_authenticated_and_sanitized(self):
+        result = self.request("GET", "/v1/models", token=self.token)
+        self.assertEqual(result["selected_provider"], "ollama")
+        self.assertEqual([item["name"] for item in result["items"]], ["ollama", "openai"])
+
+    def test_model_selection_allows_local_and_rejects_cloud(self):
+        result = self.request("POST", "/v1/models/select", {"provider":"ollama"},
+            token=self.token)
+        self.assertTrue(result["selected"])
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST", "/v1/models/select", {"provider":"openai"},
+                token=self.token)
+        self.assertEqual(caught.exception.code, 403)
 
     def test_logout_revokes_bearer_token(self):
         self.request("POST", "/v1/auth/logout", {}, token=self.token)
