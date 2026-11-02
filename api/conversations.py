@@ -256,6 +256,13 @@ class YukiConversationAPI:
             ],
         })
         worker = asyncio.create_task(asyncio.to_thread(run))
+        async def watch_disconnect():
+            while True:
+                incoming = await receive()
+                if incoming.get("type") == "http.disconnect":
+                    cancellation.set()
+                    return
+        disconnect_watcher = asyncio.create_task(watch_disconnect())
         try:
             while True:
                 event = await events.get()
@@ -267,9 +274,16 @@ class YukiConversationAPI:
             await worker
             await send({"type": "http.response.body", "body": b"", "more_body": False})
         except Exception:
+            cancellation.set()
             # A disconnected client must not turn the worker into an unobserved task.
             await worker
             raise
+        finally:
+            disconnect_watcher.cancel()
+            try:
+                await disconnect_watcher
+            except asyncio.CancelledError:
+                pass
 
     async def _principal(self, scope):
         headers = {
