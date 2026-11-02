@@ -128,12 +128,14 @@ class KnowledgeEvolutionEngine:
 
     def review(self, *, reviewer_id: str, proposal_id: str, decision: str) -> EvolutionProposal:
         reviewer = self._text(reviewer_id, "reviewer_id", 100)
+        pid = self._text(proposal_id, "proposal_id", 100)
         if decision not in {"approve", "reject"}:
             raise EvolutionError("decision must be approve or reject.")
+        # Claim the pending proposal in a short transaction. Never hold a
+        # SQLite write lock while calling into the separately connected vault.
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM evolution_proposals WHERE proposal_id=?",
-                             (proposal_id,)).fetchone()
+            row = db.execute("SELECT * FROM evolution_proposals WHERE proposal_id=?", (pid,)).fetchone()
             if row is None:
                 raise EvolutionError("proposal not found.")
             proposal = self._proposal(row)
@@ -141,10 +143,18 @@ class KnowledgeEvolutionEngine:
             if not self._allowed(reviewer, "evolution:review", resource):
                 raise PermissionError("proposal review is not authorized.")
             if proposal.status != "pending":
-                raise EvolutionError("proposal has already been reviewed.")
+                raise EvolutionError("proposal has already been reviewed or is being reviewed.")
             if self.require_independent_reviewer and reviewer == proposal.created_by:
                 raise PermissionError("a different reviewer must approve this proposal.")
-            if decision == "approve":
+            now = datetime.now(timezone.utc).isoformat()
+            claimed = "reviewing" if decision == "approve" else "rejected"
+            db.execute("""UPDATE evolution_proposals SET status=?, reviewed_by=?, reviewed_at=?
+                WHERE proposal_id=? AND status='pending'""", (claimed, reviewer, now, pid))
+            if db.total_changes < 1:
+                raise EvolutionError("proposal was concurrently reviewed.")
+
+        if decision == "approve":
+            try:
                 current = self.vault.get(actor_id=reviewer, memory_id=proposal.memory_id)
                 if current is None or current.version != proposal.expected_version:
                     raise EvolutionError("source memory changed; create a fresh proposal.")
@@ -154,29 +164,17 @@ class KnowledgeEvolutionEngine:
                     source_type="approved_knowledge_evolution",
                     source_ref=proposal.evidence_ref, memory_id=proposal.memory_id,
                 )
-            now = datetime.now(timezone.utc).isoformat()
-            db.execute("""UPDATE evolution_proposals SET status=?, reviewed_by=?, reviewed_at=?
-                WHERE proposal_id=? AND status='pending'""",
-                ("approved" if decision == "approve" else "rejected",
-                 reviewer, now, proposal_id))
-            updated = db.execute("SELECT * FROM evolution_proposals WHERE proposal_id=?",
-                                 (proposal_id,)).fetchone()
-        return self._proposal(updated)
-
-
-class _Connection:
-    def __init__(self, db):
-        self.db = db
-
-    def __enter__(self):
-        return self.db
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            if exc_type:
-                self.db.rollback()
-            else:
-                self.db.commit()
-        finally:
-            self.db.close()
-        return False
+            except Exception:
+                # Release the claim for a retry if the source update failed.
+                with self._connect() as db:
+                    db.execute("""UPDATE evolution_proposals SET status='pending',
+                        reviewed_by=NULL, reviewed_at=NULL
+                        WHERE proposal_id=? AND status='reviewing'""", (pid,))
+                raise
+            with self._connect() as db:
+                db.execute("""UPDATE evolution_proposals SET status='approved'
+                    WHERE proposal_id=? AND status='reviewing'""", (pid,))
+        result = self.get(actor_id=reviewer, proposal_id=pid)
+        if result is None:
+            raise EvolutionError("reviewed proposal could not be reloaded.")
+        return result
