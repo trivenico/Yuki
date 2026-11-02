@@ -150,6 +150,10 @@ class OllamaProvider:
                 raise RuntimeError("Ollama returned an unrecognized tool call.")
             normalized_calls.append({"id": "ollama_" + str(len(normalized_calls) + 1),
                                      "name": name, "arguments": arguments})
+        if tool_choice == "none" and normalized_calls:
+            raise RuntimeError("Ollama returned tool calls when tool_choice was none.")
+        if tool_choice == "required" and not normalized_calls:
+            raise RuntimeError("Ollama did not return a required tool call.")
         envelope = {"tool_calls": normalized_calls}
         from core.structured_tool_protocol import parse_tool_calls
         try:
