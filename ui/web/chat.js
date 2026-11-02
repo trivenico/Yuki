@@ -38,6 +38,32 @@
     const sub = document.createElement("p"); sub.className = "muted"; sub.textContent = "Ask a question, explore an idea, or get something done.";
     welcome.append(mark, eyebrow, title, sub); $("messages").append(welcome);
   };
+  const loadProviderStatus = async () => {
+    const label = $("provider-label");
+    if (!label) return;
+    try {
+      const data = await api("/v1/providers");
+      const providers = data.providers || [];
+      const selected = providers.find((item) => item.selected);
+      if (!selected) {
+        label.textContent = "Model status unavailable";
+        label.title = "No provider is selected in server configuration.";
+        return;
+      }
+      const model = selected.configured_model || "model not configured";
+      label.textContent = (selected.label || selected.name) + " · " + model;
+      label.title = [
+        "Status: " + (selected.ready ? "ready (configuration check only)" : selected.status),
+        "Privacy: " + selected.privacy,
+        "Credential configured: " + (selected.credential_configured ? "yes" : "no"),
+        "Provider selection is controlled by the server configuration."
+      ].join("\\n");
+      label.dataset.ready = selected.ready ? "true" : "false";
+    } catch (_) {
+      label.textContent = "Model status unavailable";
+      label.title = "Unable to load provider metadata.";
+    }
+  };
   const loadConversations = async () => {
     const data = await api("/v1/conversations");
     state.conversations = data.conversations || [];
@@ -118,7 +144,7 @@
     try {
       const data = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       state.token = data.access_token; state.user = data.user; sessionStorage.setItem("yuki_token", state.token);
-      $("account-label").textContent = data.user.username; showChat(); await loadConversations();
+      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
