@@ -52,3 +52,10 @@ The ProviderManager entry point first reads the actor-authorized session and
 validates the message before provider discovery or adapter construction. This
 prevents an unauthorized caller from triggering provider initialization.
 Provider routing still receives explicit cloud consent (false by default).
+
+
+The prompt budget is capped at 18,000 characters to remain below the current
+20,000-character input cap enforced by the Ollama adapter. This is a safe
+cross-provider baseline, not a token-aware context-window allocator. A future
+provider capability should expose model-specific context limits and token
+counting rather than raising this global limit blindly.
