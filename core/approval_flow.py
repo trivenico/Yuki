@@ -71,7 +71,7 @@ class ApprovalCoordinator:
                     "actor": actor, "session_id": session_id,
                 }
         try:
-            self._audit("requested", pending_id, actor, skill_id)
+            self._audit("requested", pending_id, actor, session_id, skill_id)
         except Exception as exc:
             # Never leave an un-audited approval request available for later execution.
             if self.pending_store is not None:
@@ -95,7 +95,7 @@ class ApprovalCoordinator:
         # Record one-time receipt consumption before confirmation or execution.
         # If persistence fails, the request remains consumed and no action runs.
         try:
-            self._audit("consumed", pending_id, actor, pending["skill_id"])
+            self._audit("consumed", pending_id, actor, session_id, pending["skill_id"])
         except Exception:
             self._mark_recovery(pending_id, "claimed")
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
@@ -108,7 +108,7 @@ class ApprovalCoordinator:
             confirmed = False
         if not confirmed:
             try:
-                self._audit("denied", pending_id, actor, pending["skill_id"])
+                self._audit("denied", pending_id, actor, session_id, pending["skill_id"])
                 self._transition(pending_id, "claimed", "denied")
             except Exception:
                 self._mark_recovery(pending_id, "claimed")
@@ -116,7 +116,7 @@ class ApprovalCoordinator:
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
         try:
-            self._audit("approved", pending_id, actor, pending["skill_id"])
+            self._audit("approved", pending_id, actor, session_id, pending["skill_id"])
             self._transition(pending_id, "claimed", "approved")
             self._transition(pending_id, "approved", "executing")
         except Exception:
@@ -131,7 +131,7 @@ class ApprovalCoordinator:
             )
         except Exception as exc:
             try:
-                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+                self._audit("execution_failed", pending_id, actor, session_id, pending["skill_id"])
                 # An exception does not prove that no side effect occurred. Keep
                 # the receipt in manual-reconciliation state; never auto-retry.
                 self._transition(pending_id, "executing", "recovery_required")
@@ -147,7 +147,7 @@ class ApprovalCoordinator:
             )
 
         try:
-            self._audit("executed", pending_id, actor, pending["skill_id"])
+            self._audit("executed", pending_id, actor, session_id, pending["skill_id"])
             self._transition(pending_id, "executing", "completed")
         except Exception:
             self._mark_recovery(pending_id, "executing")
@@ -198,7 +198,7 @@ class ApprovalCoordinator:
                     # Preserve the last durable state for operator reconciliation.
                     return
 
-    def _audit(self, event_type, pending_id, actor, skill_id):
+    def _audit(self, event_type, pending_id, actor, session_id, skill_id):
         if self.audit_log is not None:
             self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                                  actor=actor, skill_id=skill_id)
+                                  actor=actor, session_id=session_id, skill_id=skill_id)
