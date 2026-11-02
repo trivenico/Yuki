@@ -44,8 +44,11 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             import sqlite3
             db = sqlite3.connect(path)
             try:
-                db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
-                db.commit()
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("DELETE FROM approval_audit_events WHERE event_id = 1")
+                db.rollback()
             finally:
                 db.close()
             self.assertFalse(audit.verify_chain())
