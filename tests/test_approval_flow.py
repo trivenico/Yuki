@@ -207,6 +207,44 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcomes.count("completed"), 1)
         self.assertEqual(outcomes.count("pending_not_found"), 1)
 
+    def test_persistent_approval_records_completed_lifecycle_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store)
+            pending = coordinator.record(
+                self.planner, action_result("complete"), actor="owner", session_id="session-a"
+            )
+            outcome = coordinator.approve(
+                self.planner, pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(outcome.status, "completed")
+            self.assertEqual(store.get_status(pending.pending_id), "completed")
+            self.assertEqual(len(self.planner.executed), 1)
+
+    def test_execution_exception_is_persisted_as_failed_not_retryable(self):
+        class BrokenPlanner:
+            def execute_approved_action(self, action):
+                raise RuntimeError("simulated crash before side effect result")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store)
+            pending = coordinator.record(
+                self.planner, action_result("fail"), actor="owner", session_id="session-a"
+            )
+            outcome = coordinator.approve(
+                BrokenPlanner(), pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(outcome.status, "execution_failed")
+            self.assertEqual(store.get_status(pending.pending_id), "execution_failed")
+            replay = coordinator.approve(
+                BrokenPlanner(), pending.pending_id, actor="owner", session_id="session-a",
+                confirm=lambda _action: True,
+            )
+            self.assertEqual(replay.status, "pending_not_found")
+
     def test_concurrent_persistent_approvals_execute_at_most_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
