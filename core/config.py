@@ -108,6 +108,8 @@ def load_config(path=None):
         github_roots = _string_list(raw, "github_allowed_roots")
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    anthropic_model = os.environ.get("YUKI_ANTHROPIC_MODEL", str(raw.get("anthropic_model", ""))).strip()
+    if len(anthropic_model) > 120: raise RuntimeError("anthropic_model is too long.")
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -134,6 +136,7 @@ def load_config(path=None):
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
         "ollama_base_url": base_url, "ollama_model": model,
+        "anthropic_model": anthropic_model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
