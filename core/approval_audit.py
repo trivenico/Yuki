@@ -10,6 +10,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from core.sqlite_security import prepare_sqlite_path, secure_sqlite_file
+
 _ALLOWED_EVENTS = frozenset({"requested", "consumed", "approved", "denied", "executed", "execution_failed"})
 _ZERO_HASH = "0" * 64
 
@@ -20,8 +22,7 @@ class SQLiteApprovalAuditLog:
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS approval_audit_events (
@@ -81,6 +82,7 @@ class SQLiteApprovalAuditLog:
             yield db
         finally:
             db.close()
+            secure_sqlite_file(self.database_path)
 
     @staticmethod
     def _digest(value: str) -> str:
