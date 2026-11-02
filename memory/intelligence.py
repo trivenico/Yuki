@@ -116,7 +116,14 @@ class MemoryIntelligenceEngine:
                     vector = self.embed(record.content)
                     if isinstance(vector, (str, bytes)) or not isinstance(vector, Sequence) or not 1 <= len(vector) <= 8192:
                         raise MemoryIntelligenceError("embedding provider returned an invalid vector.")
-                    vectors[record.memory_id] = tuple(vector)
+                    validated = []
+                    for value in vector:
+                        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                            raise MemoryIntelligenceError("embedding values must be finite numbers.")
+                        validated.append(float(value))
+                    if not any(validated):
+                        raise MemoryIntelligenceError("zero embeddings cannot be compared.")
+                    vectors[record.memory_id] = tuple(validated)
             except MemoryIntelligenceError:
                 raise
             except Exception as exc:
