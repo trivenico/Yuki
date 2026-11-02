@@ -56,6 +56,22 @@ class SQLiteApprovalAuditLog:
                     db.execute("ROLLBACK")
                     raise
             db.execute("CREATE INDEX IF NOT EXISTS idx_approval_audit_created ON approval_audit_events(created_at, event_id)")
+            # Defense in depth against accidental SQL mutation. These triggers are
+            # not a boundary against an administrator who can alter the DB schema.
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS approval_audit_no_update
+                BEFORE UPDATE ON approval_audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'approval audit events are append-only');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS approval_audit_no_delete
+                BEFORE DELETE ON approval_audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'approval audit events are append-only');
+                END
+            """)
 
     @contextmanager
     def _connect(self):
