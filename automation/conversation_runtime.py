@@ -103,6 +103,30 @@ class ConversationRuntime:
             idempotency_key=key + ":assistant", role="assistant", content=reply.strip())
         return reply.strip()
 
+    def respond_stream_with_manager(
+        self, *, actor_id: str, session_id: str, idempotency_key: str,
+        user_message: str, provider_manager: Any, preference=(),
+        allow_cloud: bool = False, cancel_event: Event | None = None,
+    ) -> Iterator[StreamEvent]:
+        """Authorize first, route under explicit cloud consent, then stream."""
+        if not isinstance(allow_cloud, bool):
+            raise TypeError("allow_cloud must be a boolean")
+        # Do not initialize/discover providers for an unauthorized session.
+        self.conversations.sessions.get(actor_id=actor_id, session_id=session_id)
+        if not isinstance(user_message, str) or not user_message.strip() or len(user_message) > 32_000:
+            raise ValueError("user_message must be non-empty text within the message size limit")
+        if not callable(getattr(provider_manager, "create_routed_adapter", None)):
+            raise TypeError("provider_manager must implement create_routed_adapter()")
+        provider = provider_manager.create_routed_adapter(
+            required=("text",), preference=preference, allow_cloud=allow_cloud,
+        )
+        if not callable(getattr(provider, "stream", None)):
+            raise TypeError("selected provider does not support streaming")
+        yield from self.respond_stream(
+            actor_id=actor_id, session_id=session_id, idempotency_key=idempotency_key,
+            user_message=user_message, provider=provider, cancel_event=cancel_event,
+        )
+
     def respond_stream(self, *, actor_id: str, session_id: str, idempotency_key: str,
         user_message: str, provider: Any, cancel_event: Event | None = None) -> Iterator[StreamEvent]:
         """Yield text deltas and persist a single assistant message only on clean completion."""
@@ -118,7 +142,7 @@ class ConversationRuntime:
             idempotency_key=key, role="user", content=user_message)
         prompt = self.build_prompt(actor_id=actor_id, session_id=session_id)
         cancel = cancel_event if cancel_event is not None else Event()
-        iterator, chunks, total, completed = None, [], 0, False
+        iterator, chunks, total, completed, interruption_recorded = None, [], 0, False, False
         try:
             if provider.is_available() is not True:
                 raise RuntimeError("selected provider is not available")
@@ -139,6 +163,7 @@ class ConversationRuntime:
                 self.conversations.sessions.append(actor_id=actor_id, session_id=session_id,
                     idempotency_key=key + ":generation-interrupted", kind="generation.interrupted",
                     payload={"partial_characters": total})
+                interruption_recorded = True
                 yield StreamEvent("interrupted")
                 return
             reply = "".join(chunks).strip()
@@ -149,6 +174,11 @@ class ConversationRuntime:
             completed = True
             yield StreamEvent("completed", reply)
         except GeneratorExit:
+            if not interruption_recorded and not completed:
+                self.conversations.sessions.append(actor_id=actor_id, session_id=session_id,
+                    idempotency_key=key + ":generation-interrupted", kind="generation.interrupted",
+                    payload={"partial_characters": total, "reason": "consumer_closed"})
+                interruption_recorded = True
             raise
         except Exception as exc:
             self.conversations.sessions.append(actor_id=actor_id, session_id=session_id,
