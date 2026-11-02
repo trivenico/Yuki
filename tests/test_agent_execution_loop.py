@@ -185,5 +185,53 @@ class AgentExecutionLoopTests(unittest.TestCase):
                 AgentExecutionLoop(lambda **kw: {}, self.protocol, **kwargs)
 
 
+    def test_stream_model_emits_validated_incremental_text(self):
+        deltas = []
+        def stream_model(**kwargs):
+            yield {"type": "text_delta", "text": "Hello "}
+            yield {"type": "text_delta", "text": "Yuki"}
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
+            self.protocol,
+            stream_model=stream_model,
+        )
+        result = loop.run("Hi", tools=[], on_text_delta=deltas.append)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.text, "Hello Yuki")
+        self.assertEqual(deltas, ["Hello ", "Yuki"])
+
+    def test_stream_model_preserves_final_tool_calls_for_guarded_dispatch(self):
+        observed = []
+        def stream_model(**kwargs):
+            if not observed:
+                observed.append(True)
+                yield {"type": "response", "response": {
+                    "text": "", "tool_calls": {"tool_calls": [
+                        {"id": "call_stream", "name": "echo", "arguments": {"value": "safe"}}
+                    ]}
+                }}
+            else:
+                yield {"type": "text_delta", "text": "Tool completed"}
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol,
+            stream_model=stream_model,
+        )
+        deltas = []
+        result = loop.run("Use echo", tools=self.tools, on_text_delta=deltas.append)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.text, "Tool completed")
+        self.assertEqual(self.invocations, [{"value": "safe"}])
+        self.assertEqual(deltas, ["Tool completed"])
+
+    def test_invalid_stream_event_fails_closed(self):
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "fallback", "tool_calls": {"tool_calls": []}},
+            self.protocol,
+            stream_model=lambda **kwargs: iter([{"type": "unknown"}]),
+        )
+        with self.assertRaises(AgentExecutionError):
+            loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
+
 if __name__ == "__main__":
     unittest.main()
