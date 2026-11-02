@@ -118,6 +118,8 @@ def build_application(data_dir, provider_manager):
                     events = runtime.respond_stream_with_manager(actor_id=user.user_id,
                         session_id=match.group(1),idempotency_key=key,user_message=content,
                         provider_manager=provider_manager,allow_cloud=False)
+                    # Prime before committing headers so immediate failures return HTTP status.
+                    first = next(events, None)
                     self.send_response(200)
                     self.send_header("Content-Type","text/event-stream; charset=utf-8")
                     self.send_header("Cache-Control","no-cache, no-store")
@@ -125,13 +127,21 @@ def build_application(data_dir, provider_manager):
                     self.send_header("X-Content-Type-Options","nosniff")
                     self.end_headers()
                     try:
-                        for event in events:
+                        pending = [first] if first is not None else []
+                        for event in list(pending) + list(events):
                             payload = json.dumps({"type":event.type,"content":event.content},
                                 ensure_ascii=False,separators=(",",":")).encode()
                             self.wfile.write(b"data: "+payload+b"\n\n")
                             self.wfile.flush()
                     except (BrokenPipeError,ConnectionResetError,OSError):
-                        events.close()
+                        pass
+                    except ConversationGenerationError:
+                        error_event = json.dumps({"type":"error","content":"provider_generation_failed"}).encode()
+                        try:
+                            self.wfile.write(b"data: "+error_event+b"\n\n")
+                            self.wfile.flush()
+                        except OSError:
+                            pass
                     finally: events.close()
                     return
                 except ConversationGenerationError:
