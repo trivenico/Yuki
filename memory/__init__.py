@@ -16,3 +16,7 @@ __all__ = [
 from memory.hybrid_retrieval import HybridMemoryResult, HybridMemoryRetriever, RetrievalError
 
 __all__ += ["HybridMemoryResult", "HybridMemoryRetriever", "RetrievalError"]
+
+from memory.intelligence import MemoryFinding, MemoryIntelligenceEngine, MemoryIntelligenceError
+
+__all__ += ["MemoryFinding", "MemoryIntelligenceEngine", "MemoryIntelligenceError"]
