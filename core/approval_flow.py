@@ -132,14 +132,19 @@ class ApprovalCoordinator:
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
-                self._transition(pending_id, "executing", "execution_failed")
+                # An exception does not prove that no side effect occurred. Keep
+                # the receipt in manual-reconciliation state; never auto-retry.
+                self._transition(pending_id, "executing", "recovery_required")
             except Exception:
                 self._mark_recovery(pending_id, "executing")
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
                     result={"execution_error": type(exc).__name__, "audit": "unavailable"},
                 )
-            return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"execution_error": type(exc).__name__, "reconciliation_required": True},
+            )
 
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
