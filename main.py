@@ -134,7 +134,6 @@ def main():
     except Exception as exc:
         print(f"Yuki > Provider startup failed safely ({type(exc).__name__}). Check your provider configuration.")
         return
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
