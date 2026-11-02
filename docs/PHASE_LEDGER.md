@@ -72,6 +72,19 @@ Other open product tracks that must be assigned to a phase only after scope/depe
 
 PR #497 is marked ready for review. Phase 1 remains `in_progress` until an independent review is recorded and the replacement is merged. No phase completion claim is made from CI alone.
 
+## Phase 2 preliminary reconciliation (do not advance until Phase 1 closes)
+
+Static comparison of open draft PRs #27 and #30 against current `main` (2026-11-02):
+
+| Candidate | Observed scope | Current-main overlap / risk | Preliminary disposition |
+|---|---|---|---|
+| #27 | Rotating local logs, JSONL approval audit, SQLite connection lifecycle cleanup, PermissionGate audit wiring | Current `core/approval_audit.py` is a newer SQLite event ledger with hashed pending IDs, hash-chain verification and migrations; current `core/pending_approvals.py` already uses explicit connection closing and bounded atomic claims. The PR introduces a separate JSONL audit path and duplicate audit surface. Its patch also contains a likely typo at the end of `consume_receipt`: `action_fingerprin` (missing final `t`), which requires exact source/test verification. | Do not merge wholesale. Most persistence cleanup is already present on main; determine whether any unique logging/audit wiring remains necessary. |
+| #30 | Redact actor/session identities, add append-only triggers, WAL/FULL sync and migration for `approval_audit` | Current main uses a different `approval_audit_events` schema, hash-chain integrity and pending-ID hashing. The PR's old `approval_audit` schema and trigger migration are not drop-in compatible and could create a parallel/obsolete store. | Do not merge wholesale. Reconcile its privacy/integrity requirements against the current hash-chain implementation and its tests. |
+
+Current-main evidence: `core/approval_audit.py` already implements allowed event types, hashed identifiers, a hash chain, explicit transaction handling and a legacy migration; `core/pending_approvals.py` already uses bounded JSON serialization, TTL/capacity controls, actor/session binding and explicit connection closing. This means Phase 2 must be judged by its acceptance requirements, not by whether the old draft PRs merge.
+
+**Serial gate:** this is preparatory analysis only. Phase 1 (#497) remains open awaiting independent review; do not start Phase 2 implementation or mark Phase 2 complete until Phase 1 has been reviewed and merged/dispositioned.
+
 ## Earlier PR backlog evidence (verified 2026-11-02)
 
 The first page of the open-PR search shows that several early serials are still represented by draft PRs, not merged completions:
