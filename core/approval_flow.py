@@ -180,13 +180,18 @@ class ApprovalCoordinator:
 
     def _mark_recovery(self, pending_id, expected):
         if self.pending_store is not None:
-            try:
-                self.pending_store.transition(
-                    pending_id, expected=expected, new_status="recovery_required"
-                )
-            except Exception:
-                # Preserve the last durable state for operator reconciliation.
-                pass
+            # An audit write may fail before or after a lifecycle compare-and-set.
+            # Try each nonterminal state, but never move a terminal state backwards.
+            candidates = [expected, "claimed", "approved", "executing"]
+            for state in dict.fromkeys(candidates):
+                try:
+                    if self.pending_store.transition(
+                        pending_id, expected=state, new_status="recovery_required"
+                    ):
+                        return
+                except Exception:
+                    # Preserve the last durable state for operator reconciliation.
+                    return
 
     def _audit(self, event_type, pending_id, actor, skill_id):
         if self.audit_log is not None:
