@@ -285,8 +285,11 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
             return
         message_var.set("")
         state["busy"] = True
+        session_id = state["session_id"]
         send_button.configure(state="disabled")
         message_entry.configure(state="disabled")
+        new_button.configure(state="disabled")
+        conversation_list.configure(state="disabled")
         append_text("You\n" + content + "\n\nYuki\n")
         def got_event(event):
             events.put(("stream_event", event, None))
@@ -294,6 +297,8 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
             state["busy"] = False
             send_button.configure(state="normal")
             message_entry.configure(state="normal")
+            new_button.configure(state="normal")
+            conversation_list.configure(state="normal")
             if error:
                 append_text("\n[Error] " + error + "\n")
                 status.configure(text="Generation failed")
@@ -301,7 +306,7 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
                 append_text("\n\n")
                 status.configure(text="Ready")
             refresh_sessions()
-        background(lambda: client.stream_message(state["session_id"], content, got_event), finished)
+        background(lambda: client.stream_message(session_id, content, got_event), finished)
 
     send_button.configure(command=send)
     message_entry.bind("<Return>", lambda _event: send())
