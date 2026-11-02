@@ -12,6 +12,30 @@ class PhaseOneCliSafetyTests(unittest.TestCase):
         self.assertEqual(main.parse_skill_command("/skill notes.write hello world"),
                          ("notes.write", "hello world"))
 
+    def test_skill_command_handles_missing_name_without_calling_agent(self):
+        agent = unittest.mock.Mock()
+        output = []
+        self.assertFalse(main.run_skill_command(agent, "/skill", output.append))
+        self.assertIn("Provide a skill name", output[0])
+        agent.run_skill.assert_not_called()
+
+    def test_skill_exception_is_sanitized_and_local_to_command(self):
+        agent = unittest.mock.Mock()
+        agent.run_skill.side_effect = RuntimeError("private skill details")
+        output = []
+        self.assertFalse(main.run_skill_command(agent, "/skill notes.write", output.append))
+        self.assertIn("Skill command failed safely (RuntimeError)", output[0])
+        self.assertNotIn("private skill details", output[0])
+
+    def test_skill_success_emits_message_and_data(self):
+        response = unittest.mock.Mock(ok=True, message="Completed", data={"saved": True})
+        agent = unittest.mock.Mock()
+        agent.run_skill.return_value = response
+        output = []
+        self.assertTrue(main.run_skill_command(agent, "/skill notes.write hello", output.append))
+        agent.run_skill.assert_called_once_with("notes.write", "hello")
+        self.assertEqual(output, ["Yuki > Completed", {"saved": True}])
+
     def test_configuration_startup_failure_is_sanitized(self):
         with patch.object(main, "load_config", side_effect=RuntimeError("private config path")):
             with patch("builtins.print") as output:
