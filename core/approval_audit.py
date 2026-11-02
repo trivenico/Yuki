@@ -24,6 +24,10 @@ class SQLiteApprovalAuditLog:
             raise ValueError("database_path must be a non-empty path.")
         if identity_key is None:
             identity_key = os.environ.get("YUKI_AUDIT_HMAC_KEY")
+        if identity_key is None and os.environ.get("YUKI_ENV", "").lower() == "production":
+            raise ValueError(
+                "YUKI_AUDIT_HMAC_KEY must be configured in production."
+            )
         if isinstance(identity_key, str):
             identity_key = identity_key.encode("utf-8")
         if identity_key is not None and (
