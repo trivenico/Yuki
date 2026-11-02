@@ -1,6 +1,7 @@
 import asyncio
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -176,6 +177,34 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual([item["role"] for item in history], ["user", "assistant"])
         self.assertEqual(history[-1]["content"], "Hello from Yuki")
+
+
+    def test_authenticated_cancel_endpoint_only_cancels_active_owned_generation(self):
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        cancellation = threading.Event()
+        key = (self.user.user_id, cid, "cancel-me")
+        with self.app._active_lock:
+            self.app._active_generations[key] = cancellation
+        status, data, _ = self.request(
+            "POST", f"/v1/conversations/{cid}/messages/cancel",
+            {"request_id": "cancel-me"}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"cancel_requested": True})
+        self.assertTrue(cancellation.is_set())
+        with self.app._active_lock:
+            self.app._active_generations.pop(key, None)
+
+    def test_cancel_endpoint_does_not_cancel_another_users_generation(self):
+        other = self.app.conversations.create(owner_id="another-owner")
+        cid = other["conversation_id"]
+        status, data, _ = self.request(
+            "POST", f"/v1/conversations/{cid}/messages/cancel",
+            {"request_id": "guess"}, self.issued.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data, {"error": "not_found"})
 
 if __name__ == "__main__":
     unittest.main()
