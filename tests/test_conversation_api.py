@@ -90,6 +90,65 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 500)
         self.assertEqual(data, {"error": "provider_catalog_unavailable"})
 
+    def test_authenticated_identity_endpoint_returns_role(self):
+        status, data, _ = self.request("GET", "/v1/auth/me", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["user"]["role"], "admin")
+        self.assertEqual(data["user"]["username"], "admin-user")
+
+    def test_provider_selection_requires_admin_and_explicit_scope_confirmation(self):
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {
+            "name": name, "label": "Ollama", "selected": True, "ready": True,
+            "privacy": "local_runtime",
+        }
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["provider"]["name"], "ollama")
+        self.assertEqual(calls, ["ollama"])
+
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama"}, self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "explicit_confirmation_required")
+        self.assertEqual(calls, ["ollama"])
+
+    def test_non_admin_cannot_change_server_wide_provider(self):
+        self.app.provider_selector = lambda name: self.fail("selector must not be called")
+        self.auth.create_account("regular-user", "a-secure-user-password")
+        session = self.auth.authenticate("regular-user", "a-secure-user-password")
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            session.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "administrator_required")
+
+    def test_cloud_provider_selection_requires_cloud_consent(self):
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "openai", "privacy": "cloud_provider", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "openai", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "cloud_consent_required")
+        self.assertEqual(calls, [])
+
     def test_login_create_send_history_and_logout(self):
         status, data, headers = self.request(
             "POST", "/v1/auth/login",
