@@ -4,6 +4,7 @@ import json, os, re, secrets, sys
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from itertools import chain
 from automation.agent_sessions import AgentSessionStore
 from automation.conversation_runtime import ConversationGenerationError, ConversationRuntime
 from automation.conversation_service import ConversationService
@@ -127,8 +128,7 @@ def build_application(data_dir, provider_manager):
                     self.send_header("X-Content-Type-Options","nosniff")
                     self.end_headers()
                     try:
-                        pending = [first] if first is not None else []
-                        for event in list(pending) + list(events):
+                        for event in chain((first,) if first is not None else (), events):
                             payload = json.dumps({"type":event.type,"content":event.content},
                                 ensure_ascii=False,separators=(",",":")).encode()
                             self.wfile.write(b"data: "+payload+b"\n\n")
