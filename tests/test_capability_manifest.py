@@ -20,6 +20,20 @@ class CapabilityManifestTests(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         self.assertTrue(all(item.status in CAPABILITY_STATUSES for item in DEFAULT_CAPABILITIES))
 
+    def test_specialist_capabilities_match_verified_entrypoints_and_limits(self):
+        from core.capability_manifest import capability_manifest
+
+        contracts = {item.capability_id: item for item in capability_manifest()}
+        self.assertEqual(contracts["specialist-orchestration"].status, "experimental")
+        self.assertEqual(contracts["specialist-worker"].status, "experimental")
+        self.assertEqual(contracts["specialist-read-tools"].status, "experimental")
+        self.assertIn("automation/agent_coordinator.py",
+                      contracts["specialist-orchestration"].entrypoints)
+        self.assertIn("tests/test_specialist_worker.py",
+                      contracts["specialist-worker"].test_evidence)
+        self.assertTrue(any("No write" in item for item in
+                            contracts["specialist-read-tools"].limitations))
+
     def test_implemented_capability_requires_test_evidence(self):
         contract = CapabilityContract(
             capability_id="test-capability", name="Example", status="implemented",
