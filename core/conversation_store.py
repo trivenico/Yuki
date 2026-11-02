@@ -156,7 +156,7 @@ class ConversationStore:
         idempotency_key: str, expected_version: int | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
-        if role not in {"user", "assistant"}:
+        if not isinstance(role, str) or role not in {"user", "assistant"}:
             raise ValueError("role must be user or assistant.")
         maximum = MAX_USER_CHARS if role == "user" else MAX_ASSISTANT_CHARS
         if not isinstance(content, str) or not content.strip() or len(content) > maximum:
