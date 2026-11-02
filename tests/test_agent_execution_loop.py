@@ -252,15 +252,17 @@ class AgentExecutionLoopTests(unittest.TestCase):
         deltas = []
         def stream_model(**kwargs):
             yield {"type": "text_delta", "text": "partial"}
-            cancelled.append(True)
             yield {"type": "text_delta", "text": "must-not-appear"}
+        def on_delta(value):
+            deltas.append(value)
+            cancelled.append(True)
         loop = AgentExecutionLoop(
             lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
             self.protocol,
             stream_model=stream_model,
         )
         result = loop.run(
-            "Stop this", tools=[], on_text_delta=deltas.append,
+            "Stop this", tools=[], on_text_delta=on_delta,
             cancellation_requested=lambda: bool(cancelled),
         )
         self.assertEqual(result.status, "cancelled")
