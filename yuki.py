@@ -17,6 +17,7 @@ from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
 from automation.conversation_cli import run_interactive_chat
 from api.conversation_server import serve as serve_conversation_api
+from ui.desktop import run_desktop
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
@@ -87,6 +88,7 @@ Yuki commands:
   /provider select NAME           Select an implemented provider adapter
   /chat                           Start or resume persistent local streaming chat
   /api                            Start authenticated local conversation API
+  /desktop                        Launch the Yuki desktop chat application
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
@@ -147,6 +149,13 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 return "Provider selection failed. The previous provider remains active."
         write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
         return result
+    if command == "/desktop":
+        try:
+            run_desktop(providers)
+            return "Yuki desktop closed."
+        except Exception as error:
+            write_audit_event("desktop:launch", "failed")
+            return f"Yuki desktop unavailable ({type(error).__name__}). Check that Python Tk is installed."
     if command == "/api":
         try:
             serve_conversation_api(providers)
