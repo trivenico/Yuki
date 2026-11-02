@@ -92,6 +92,12 @@ class ApprovalCoordinator:
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
+        # Record one-time receipt consumption before confirmation or execution.
+        # If persistence fails, the request remains consumed and no action runs.
+        try:
+            self._audit("consumed", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
         action = pending["action"]
         import json
         display_action = json.loads(json.dumps(action))
