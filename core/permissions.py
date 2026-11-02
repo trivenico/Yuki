@@ -31,6 +31,35 @@ class PermissionGate:
         self._actor_id = actor_id
         self._session_id = session_id
 
+    @property
+    def actor_id(self) -> str:
+        return self._actor_id
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    def confirm_durable_action(self, *, action: str, reason: str, risk: str = "low") -> bool:
+        """Ask the configured human approver without writing a parallel audit trail.
+
+        ApprovalCoordinator owns the durable requested/consumed/approved/terminal
+        events when this method is used.
+        """
+        if self._approver is None:
+            return False
+        if not isinstance(action, str) or not action.strip():
+            return False
+        if not isinstance(reason, str) or not reason.strip():
+            return False
+        if risk not in {"low", "medium", "high"}:
+            return False
+        try:
+            return self._approver(
+                ApprovalRequest(action=action, reason=reason, risk=risk)
+            ) is True
+        except Exception:
+            return False
+
     def _audit(self, event_type: str, receipt_id: str, skill_id: str) -> bool:
         """Write metadata only; a configured but unavailable audit fails closed."""
         if self._audit_log is None:
