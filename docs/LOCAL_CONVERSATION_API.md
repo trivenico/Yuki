@@ -70,3 +70,16 @@ authenticated owner approves them.
 The owner and personal scope are derived from the authenticated session.
 This is a review workflow, not an automatic conversation extractor; Yuki does
 not yet infer or submit suggestions from conversation content.
+
+
+## Memory suggestion preview
+
+- `POST /v1/memory-suggestions/preview` accepts `{"text":"..."}` and returns
+  conservative rule-based candidates, source evidence, confidence, duplicate
+  references and possible-conflict references.
+- The endpoint is authenticated and derives the personal memory scope from the
+  authenticated principal.
+- Preview is strictly non-persisting. It does not create a proposal or memory.
+  A user must separately submit a proposal and approve it.
+- Extraction is heuristic, not semantic model reasoning; candidates require
+  human interpretation and approval.
