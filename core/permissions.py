@@ -12,9 +12,24 @@ class ApprovalRequest:
 
 
 class PermissionGate:
-    def __init__(self, approver: Optional[Callable[[ApprovalRequest], bool]] = None, audit_log=None):
+    def __init__(
+        self,
+        approver: Optional[Callable[[ApprovalRequest], bool]] = None,
+        audit_log=None,
+        *,
+        actor_id: str = "local-cli",
+        session_id: str | None = None,
+    ):
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+            raise ValueError("actor_id must be a non-empty bounded string.")
+        if session_id is None:
+            session_id = secrets.token_urlsafe(24)
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
+            raise ValueError("session_id must be a non-empty bounded string.")
         self._approver = approver
         self._audit_log = audit_log
+        self._actor_id = actor_id
+        self._session_id = session_id
 
     def _audit(self, event_type: str, receipt_id: str, skill_id: str) -> bool:
         """Write metadata only; a configured but unavailable audit fails closed."""
@@ -24,7 +39,8 @@ class PermissionGate:
             self._audit_log.append(
                 event_type=event_type,
                 pending_id=receipt_id,
-                actor="runtime",
+                actor=self._actor_id,
+                session_id=self._session_id,
                 skill_id=skill_id,
             )
             return True
