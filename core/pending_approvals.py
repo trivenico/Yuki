@@ -104,8 +104,18 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now.isoformat(),))
-                count = db.execute("SELECT COUNT(*) FROM pending_approvals").fetchone()[0]
+                retention_cutoff = (now - timedelta(days=7)).isoformat()
+                db.execute(
+                    """DELETE FROM pending_approvals
+                       WHERE (status = 'pending' AND expires_at <= ?)
+                          OR (status IN ('denied', 'completed', 'execution_failed')
+                              AND updated_at <= ?)""",
+                    (now.isoformat(), retention_cutoff),
+                )
+                count = db.execute(
+                    """SELECT COUNT(*) FROM pending_approvals
+                       WHERE status IN ('pending', 'claimed', 'approved', 'executing', 'recovery_required')"""
+                ).fetchone()[0]
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
@@ -179,6 +189,23 @@ class SQLitePendingApprovalStore:
             cursor = db.execute("""UPDATE pending_approvals SET status = ?, updated_at = ?
                 WHERE pending_id = ? AND status = ?""", (new_status, now, pending_id, expected))
             return cursor.rowcount == 1
+
+    def list_recovery_required(self, *, limit: int = 100) -> list[dict[str, str]]:
+        """Return ambiguous/interrupted actions for explicit operator reconciliation."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000.")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT pending_id, skill_id, status, updated_at
+                   FROM pending_approvals
+                   WHERE status IN ('claimed', 'approved', 'executing', 'recovery_required')
+                   ORDER BY updated_at ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [
+            {"pending_id": row[0], "skill_id": row[1], "status": row[2], "updated_at": row[3] or ""}
+            for row in rows
+        ]
 
     def get_status(self, pending_id: str) -> str | None:
         with self._connect() as db:
