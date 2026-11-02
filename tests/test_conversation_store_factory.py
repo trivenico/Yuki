@@ -88,16 +88,15 @@ class ConversationStoreFactoryTests(unittest.TestCase):
             self.assertEqual(len(store.list_interrupted_generations(
                 owner_id=owner_id, conversation_id=conversation_id
             )), 1)
+            lease_token = "lease-" + uuid.uuid4().hex
             lease = store.acquire_generation_lease(
                 owner_id=owner_id, conversation_id=conversation_id,
-                lease_token="lease-" + uuid.uuid4().hex,
+                lease_token=lease_token,
             )
             self.assertEqual(lease["conversation_id"], conversation_id)
             self.assertTrue(store.release_generation_lease(
                 owner_id=owner_id, conversation_id=conversation_id,
-                lease_token=next(iter([
-                    row["lease_token"] for row in self._read_lease_tokens(store, conversation_id)
-                ])),
+                lease_token=lease_token,
             ))
             self.assertTrue(store.finish_generation(
                 owner_id=owner_id, conversation_id=conversation_id,
@@ -108,14 +107,6 @@ class ConversationStoreFactoryTests(unittest.TestCase):
                 with store._connect() as db:
                     db.execute("DELETE FROM conversations WHERE conversation_id=%s", (conversation_id,))
             store.close()
-
-    @staticmethod
-    def _read_lease_tokens(store, conversation_id):
-        with store._connect() as db:
-            return db.execute(
-                "SELECT lease_token FROM conversation_generation_leases WHERE conversation_id=%s",
-                (conversation_id,),
-            ).fetchall()
 
 if __name__ == "__main__":
     unittest.main()
