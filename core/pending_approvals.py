@@ -133,7 +133,7 @@ class SQLitePendingApprovalStore:
             return None
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
-            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
+            row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
@@ -145,7 +145,7 @@ class SQLitePendingApprovalStore:
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                       row[3], row[4], row[5])
+                                       row[3], row[4], row[5], row[6])
 
     def claim(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
         """Atomically claim a receipt without deleting its recovery snapshot."""
