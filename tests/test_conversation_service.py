@@ -106,5 +106,28 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(replay["answer"], result["answer"])
 
 
+
+    def test_cancelled_generation_persists_explicit_stopped_status(self):
+        calls = []
+        def model(**kwargs):
+            calls.append(True)
+            return {"text": "should not run", "tool_calls": {"tool_calls": []}}
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        service = ConversationService(
+            self.store, AgentExecutionLoop(model, protocol)
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Stop this", request_id="cancelled-request", expected_version=0,
+            tools=[], cancellation_requested=lambda: True,
+        )
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["answer"], "Generation was stopped.")
+        self.assertEqual(calls, [])
+        history = service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user", "assistant"])
+
 if __name__ == "__main__":
     unittest.main()
