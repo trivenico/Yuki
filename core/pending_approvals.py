@@ -137,7 +137,7 @@ class SQLitePendingApprovalStore:
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
                 return None
-            if row[3] <= now:
+            if row[3] <= now and row[6] == "pending":
                 db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
                 return None
             # Old rows from before identity binding are rejected, not silently upgraded.
