@@ -97,6 +97,20 @@ class MemoryIntelligenceTests(unittest.TestCase):
                 actor_id="alice", scopes=(("project", "yuki"),), limit=0
             )
 
+    def test_zero_vector_is_rejected_even_for_single_record(self):
+        self.add("One memory.")
+        with self.assertRaises(MemoryIntelligenceError):
+            MemoryIntelligenceEngine(
+                self.vault, embed=lambda _: (0.0, 0.0)
+            ).analyze(actor_id="alice", scopes=(("project", "yuki"),))
+
+    def test_boolean_embedding_values_are_rejected(self):
+        self.add("One memory.")
+        with self.assertRaises(MemoryIntelligenceError):
+            MemoryIntelligenceEngine(
+                self.vault, embed=lambda _: (True, 0.5)
+            ).analyze(actor_id="alice", scopes=(("project", "yuki"),))
+
 
 if __name__ == "__main__":
     unittest.main()
