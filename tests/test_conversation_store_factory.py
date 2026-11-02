@@ -16,7 +16,7 @@ class ConversationStoreFactoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "config.yaml"
             config_path.write_text("workspace: " + directory + "\n", encoding="utf-8")
-            with patch.dict(os.environ, {"YUKI_STORAGE_BACKEND": "sqlite"}, clear=False):
+            with patch.dict(os.environ, {"YUKI_STORAGE_BACKEND": "sqlite", "YUKI_DATABASE_URL": ""}, clear=False):
                 config = load_config(config_path)
             self.assertEqual(config["storage_backend"], "sqlite")
             store = create_conversation_store(config)
