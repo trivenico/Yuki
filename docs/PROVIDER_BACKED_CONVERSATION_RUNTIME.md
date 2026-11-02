@@ -25,3 +25,16 @@ to execute a tool from a conversation event or model-generated text.
 
 Run focused tests:
 \`python -m unittest tests.test_agent_sessions tests.test_conversation_service tests.test_conversation_runtime\`
+
+
+## ProviderManager integration
+
+The runtime also exposes `respond_with_manager(..., provider_manager=...)`.
+It requests the text capability from `ProviderManager.create_routed_adapter`
+and forwards the caller's `allow_cloud` decision (default: false). Provider
+preferences are explicit. A failed route is terminal; this runtime does not
+silently fall back to another model.
+
+The API caller must derive cloud consent from an explicit user/workspace policy,
+not from model output. Do not enable cloud routing merely because a cloud
+provider is available.
