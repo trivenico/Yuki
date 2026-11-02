@@ -55,5 +55,27 @@ class ProviderAgentLoopIntegrationTests(unittest.TestCase):
         self.assertIn("untrusted evidence", provider.transcripts[1][-1]["content"])
 
 
+
+    def test_native_provider_stream_flows_through_agent_loop(self):
+        class StreamingProvider:
+            def generate_chat(self, **kwargs):
+                return {"text": "fallback", "tool_calls": {"tool_calls": []}}
+            def generate_chat_stream(self, **kwargs):
+                yield {"type": "text_delta", "text": "Yuki "}
+                yield {"type": "text_delta", "text": "streams"}
+                yield {"type": "response", "response": {
+                    "text": "Yuki streams", "tool_calls": {"tool_calls": []}
+                }}
+        runtime = GuardedToolRuntime({}, AllowPolicy())
+        protocol = StructuredToolProtocol(runtime)
+        adapter = ProviderAgentAdapter(StreamingProvider())
+        deltas = []
+        result = AgentExecutionLoop(
+            adapter, protocol, stream_model=adapter.stream_model,
+        ).run("Hello", tools=[], on_text_delta=deltas.append)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.text, "Yuki streams")
+        self.assertEqual(deltas, ["Yuki ", "streams"])
+
 if __name__ == "__main__":
     unittest.main()
