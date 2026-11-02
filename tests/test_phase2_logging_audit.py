@@ -91,6 +91,8 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
                 ["requested", "approved", "executed"],
             )
             self.assertEqual(len({event["pending_id_hash"] for event in events}), 1)
+            self.assertEqual(len({event["session_hash"] for event in events}), 1)
+            self.assertTrue(all(event["session_hash"] for event in events))
             self.assertTrue(audit.verify_chain())
 
     def test_agent_surfaces_recovery_when_terminal_audit_fails_after_execution(self):
