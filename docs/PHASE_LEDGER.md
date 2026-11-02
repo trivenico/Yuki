@@ -60,12 +60,34 @@ Other open product tracks that must be assigned to a phase only after scope/depe
 - Phase 160: provider status is read-only; dynamic switching is not implemented by that phase.
 - Phase 161: centralized multi-process coordination, durable actor-attributed audit, connectivity probes and credential rotation remain follow-ups (Phase 162 proposal addresses the first two).
 
+## Earlier PR backlog evidence (verified 2026-11-02)
+
+The first page of the open-PR search shows that several early serials are still represented by draft PRs, not merged completions:
+
+| Phase / track | PR | Current state | Notes |
+|---|---:|---|---|
+| Phase 1 | #24 | Open, draft | Not merged; earliest explicit phase PR found |
+| Phase 2 | #27 and #30 | Open, draft | #27 currently reports non-mergeable; #30 is follow-up hardening |
+| Phase 3 | #2 and #28 | Open, draft | Two different tracks claim Phase 3; scope reconciliation required |
+| Phase 3 resilience | #2 | Open, draft | Separate bounded resilience/self-healing scope |
+| Phase 4 | #3 | Open, draft | Persistent earning tracker |
+| Phase 5 | #4 | Open, draft | Consent-based companion memory |
+| Phase 6 | #5 | Open, draft | Earning opportunity research/coaching |
+| Phase 7 | #6 | Open, draft | Companion orchestrator |
+| Phase 8 | #7 | Open, draft | Capability readiness/gap audit |
+| Phase 9 | #8 | Open, draft | CEO-style specialist organization; issue #9 records original CI blocker |
+| Phase 10 | #10 and #25 | Open, draft | Provider/registry stabilization and safety evaluation are distinct follow-on work |
+
+This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest explicit unmerged phase tracks**, ahead of Phase 9. The first phase number cannot be inferred from document inventory alone. Several early phase PRs have overlapping serials and the open PR search is not a complete audit of every PR or closed PR. Reconcile their diffs against current `main` before deciding whether a phase is already implemented elsewhere, superseded, or still incomplete.
+
 ## Next serial execution order
 
-1. Finish Phase 9 disposition: verify PR #8 scope against the current default branch and later specialist-agent implementation; resolve issue #9 based on evidence, not stale PR claims.
-2. Continue serial gap recovery and audit the earliest undocumented/moved serials, especially Phase 154.
-3. Complete earlier explicit security/release blockers (#269, #317/#331) in their proper serial positions after confirming their relationship to phase history.
-4. Only then begin Phase 162 (#495), and only after its predecessor serials and acceptance gates are reconciled.
+1. Reconcile Phase 1 PR #24 and Phase 2 PRs #27/#30 against current `main`; inspect exact-head CI, reviews, conflicts, and whether later merged work supersedes their changes. Do not bulk-merge stale drafts.
+2. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
+3. Reconcile Phase 9 PR #8 and issue #9 with later specialist-agent implementation; close or supersede only with evidence.
+4. Continue the full historical serial audit, including undocumented ranges and Phase 154.
+5. Complete explicit security/release blockers (#269, #317/#331) at their correct serial positions after confirming their original phase mapping.
+6. Only then begin Phase 162 (#495), after all predecessor serials and acceptance gates are reconciled.
 
 ## Change log
 
