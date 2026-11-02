@@ -1,0 +1,61 @@
+# Provider-backed Conversation Runtime
+
+\`automation.conversation_runtime.ConversationRuntime\` connects the durable
+conversation service to Yuki's existing provider adapter contract.
+
+## Flow
+
+1. Caller authenticates the actor and selects a provider under model/cloud policy.
+2. Runtime appends the user message to the actor-authorized session.
+3. Runtime builds a bounded prompt from recent user/assistant/system events.
+4. Runtime checks the selected provider's availability and calls generate().
+5. Runtime persists the assistant response, or a minimal generation-failed audit event.
+
+## Important limitations
+
+- Text-only synchronous generation; no token streaming or cancellation.
+- No tool execution, approval workflow, autonomous loop or automatic provider fallback.
+- Provider selection and cloud-consent policy are owned by the caller.
+- A model request can be repeated if the caller retries after an ambiguous network failure. The event idempotency key prevents duplicate user/assistant event admission, but does not guarantee exactly-once model inference.
+- The prompt is bounded by event count and character count; production context-window budgeting and summarization are future work.
+- The runtime must be placed behind the authenticated CLI/desktop/API boundary before exposure.
+
+Tool execution remains a separate capability-gated workflow. Never infer permission
+to execute a tool from a conversation event or model-generated text.
+
+Run focused tests:
+\`python -m unittest tests.test_agent_sessions tests.test_conversation_service tests.test_conversation_runtime\`
+
+
+## ProviderManager integration
+
+The runtime also exposes `respond_with_manager(..., provider_manager=...)`.
+It requests the text capability from `ProviderManager.create_routed_adapter`
+and forwards the caller's `allow_cloud` decision (default: false). Provider
+preferences are explicit. A failed route is terminal; this runtime does not
+silently fall back to another model.
+
+The API caller must derive cloud consent from an explicit user/workspace policy,
+not from model output. Do not enable cloud routing merely because a cloud
+provider is available.
+
+
+Prompt construction uses a cursor derived from the session's latest sequence
+number and reads at most the newest 100 events. This avoids repeatedly sending
+the oldest part of a long-running conversation to the model. Production context
+window budgeting and summarization are still required.
+
+
+## Authorization ordering
+
+The ProviderManager entry point first reads the actor-authorized session and
+validates the message before provider discovery or adapter construction. This
+prevents an unauthorized caller from triggering provider initialization.
+Provider routing still receives explicit cloud consent (false by default).
+
+
+The prompt budget is capped at 18,000 characters to remain below the current
+20,000-character input cap enforced by the Ollama adapter. This is a safe
+cross-provider baseline, not a token-aware context-window allocator. A future
+provider capability should expose model-specific context limits and token
+counting rather than raising this global limit blindly.
