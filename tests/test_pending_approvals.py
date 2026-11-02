@@ -67,6 +67,17 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             self.assertEqual(outcomes.count(True), 1)
             self.assertEqual(outcomes.count(False), 1)
 
+    def test_deny_retains_terminal_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            self.assertTrue(store.deny(item.pending_id))
+            self.assertEqual(store.get_status(item.pending_id), "denied")
+            self.assertFalse(store.deny(item.pending_id))
+
     def test_claim_retains_snapshot_and_prevents_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
