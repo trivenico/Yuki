@@ -14,6 +14,25 @@ class AgentSessionStoreTests(unittest.TestCase):
         return self.store.create(actor_id="alice", idempotency_key=key,
             title="Project Alpha", agent_id="engineering", model_id="local-model", workspace_id="repo-1")
 
+    def test_list_sessions_is_actor_scoped_and_cursor_paginated(self):
+        first = self.create("create-1")
+        second = self.store.create(actor_id="alice", idempotency_key="create-2",
+            title="Project Beta", agent_id="general")
+        page_one = self.store.list_sessions(actor_id="alice", limit=1)
+        self.assertEqual(len(page_one), 1)
+        cursor = (page_one[-1].updated_at, page_one[-1].session_id)
+        page_two = self.store.list_sessions(actor_id="alice", before=cursor, limit=1)
+        self.assertEqual(len(page_two), 1)
+        self.assertNotEqual(page_one[0].session_id, page_two[0].session_id)
+        self.assertEqual({page_one[0].session_id, page_two[0].session_id},
+                         {first.session_id, second.session_id})
+        with self.assertRaises(PermissionError):
+            self.store.list_sessions(actor_id="mallory")
+
+    def test_list_sessions_rejects_invalid_page_size(self):
+        with self.assertRaises(ValueError):
+            self.store.list_sessions(actor_id="alice", limit=0)
+
     def test_create_is_idempotent(self):
         first, second = self.create(), self.create()
         self.assertEqual(first.session_id, second.session_id)
