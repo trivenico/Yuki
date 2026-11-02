@@ -121,5 +121,57 @@ class ConversationStoreTests(unittest.TestCase):
             self.store.list_conversations(owner_id=self.owner, limit=101)
 
 
+
+    def test_user_message_and_generation_run_are_created_atomically(self):
+        result = self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="user", content="Recover me", idempotency_key="recover-1",
+            expected_version=0, generation_request_id="recover-1",
+        )
+        self.assertTrue(result["created"])
+        pending = self.store.list_interrupted_generations(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["request_id"], "recover-1")
+        self.assertEqual(pending[0]["status"], "running")
+
+    def test_generation_checkpoint_is_bounded_and_terminal_state_is_immutable(self):
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="user", content="Checkpoint me", idempotency_key="checkpoint-1",
+            expected_version=0, generation_request_id="checkpoint-1",
+        )
+        self.assertTrue(self.store.update_generation_checkpoint(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            request_id="checkpoint-1", checkpoint={"phase": "model_running", "turn": 1},
+        ))
+        self.assertTrue(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            request_id="checkpoint-1", status="interrupted",
+        ))
+        self.assertFalse(self.store.finish_generation(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            request_id="checkpoint-1", status="completed",
+        ))
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"]
+        ), [])
+        with self.assertRaises(ValueError):
+            self.store.update_generation_checkpoint(
+                owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+                request_id="checkpoint-1", checkpoint={"payload": "x" * 5000},
+            )
+
+    def test_generation_records_are_owner_scoped(self):
+        self.store.append_message(
+            owner_id=self.owner, conversation_id=self.conversation["conversation_id"],
+            role="user", content="Private generation", idempotency_key="private-1",
+            expected_version=0, generation_request_id="private-1",
+        )
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id=self.other_owner, conversation_id=self.conversation["conversation_id"]
+        ), [])
+
 if __name__ == "__main__":
     unittest.main()
