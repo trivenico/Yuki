@@ -26,6 +26,7 @@ class StoredPendingAction:
     expires_at: str
     actor_hash: str
     session_hash: str
+    status: str = "pending"
 
 
 class SQLitePendingApprovalStore:
@@ -49,13 +50,19 @@ class SQLitePendingApprovalStore:
                 action_json TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 actor_hash TEXT,
-                session_hash TEXT
+                session_hash TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                updated_at TEXT
             )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
             if "actor_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN actor_hash TEXT")
             if "session_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
+            if "status" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+            if "updated_at" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN updated_at TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
     @contextmanager
@@ -102,9 +109,9 @@ class SQLitePendingApprovalStore:
                 if count >= self.max_pending:
                     raise RuntimeError("Pending approval capacity reached.")
                 db.execute("""INSERT INTO pending_approvals
-                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash))
+                    (pending_id, skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash, status, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                    (item.pending_id, skill_id, args_json, action_json, expires, actor_hash, session_hash, now.isoformat()))
                 db.execute("COMMIT")
             except Exception:
                 db.execute("ROLLBACK")
@@ -129,6 +136,54 @@ class SQLitePendingApprovalStore:
                 return None
             return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
                                        row[3], row[4], row[5])
+
+    def claim(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
+        """Atomically claim a receipt without deleting its recovery snapshot."""
+        if not isinstance(pending_id, str) or not pending_id:
+            return None
+        if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at,
+                    actor_hash, session_hash, status FROM pending_approvals WHERE pending_id = ?""",
+                    (pending_id,)).fetchone()
+                if row is None or row[3] <= now or row[4] != actor_hash or row[5] != session_hash or row[6] != "pending":
+                    db.execute("COMMIT")
+                    return None
+                cursor = db.execute("""UPDATE pending_approvals SET status = 'claimed', updated_at = ?
+                    WHERE pending_id = ? AND status = 'pending'""", (now, pending_id))
+                if cursor.rowcount != 1:
+                    db.execute("ROLLBACK")
+                    return None
+                db.execute("COMMIT")
+                return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
+                                           row[3], row[4], row[5], "claimed")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
+
+    def transition(self, pending_id: str, *, expected: str, new_status: str) -> bool:
+        allowed = {
+            "claimed": {"approved", "denied", "recovery_required"},
+            "approved": {"executing", "recovery_required"},
+            "executing": {"completed", "execution_failed", "recovery_required"},
+        }
+        if new_status not in allowed.get(expected, set()):
+            raise ValueError("Invalid approval lifecycle transition.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            cursor = db.execute("""UPDATE pending_approvals SET status = ?, updated_at = ?
+                WHERE pending_id = ? AND status = ?""", (new_status, now, pending_id, expected))
+            return cursor.rowcount == 1
+
+    def get_status(self, pending_id: str) -> str | None:
+        with self._connect() as db:
+            row = db.execute("SELECT status FROM pending_approvals WHERE pending_id = ?", (pending_id,)).fetchone()
+            return row[0] if row else None
 
     def consume(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
         if not isinstance(pending_id, str) or not pending_id:
