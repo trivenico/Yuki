@@ -1,4 +1,6 @@
 """Regression tests for the durable approval audit log."""
+import hashlib
+import hmac
 import os
 import stat
 import tempfile
@@ -134,9 +136,6 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             self.assertTrue(audit.verify_chain())
 
     def test_actor_hash_uses_configured_hmac_key(self):
-        import hashlib
-        import hmac
-
         with tempfile.TemporaryDirectory() as tmp:
             key = b"k" * 32
             audit = SQLiteApprovalAuditLog(
