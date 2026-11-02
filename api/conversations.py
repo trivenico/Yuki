@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import queue
+import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
@@ -43,6 +44,8 @@ class YukiConversationAPI:
         self.auth = auth_service
         self.conversations = conversation_service
         self.tools_for_user = tools_for_user or (lambda user: [])
+        self._active_lock = threading.Lock()
+        self._active_generations: dict[tuple[str, str], threading.Event] = {}
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
@@ -102,6 +105,22 @@ class YukiConversationAPI:
             match = re.fullmatch(r"/v1/conversations/([^/]+)/messages", path)
             if match and not _CONVERSATION_ID.fullmatch(match.group(1)):
                 return await self._respond(send, 404, {"error": "not_found"})
+
+            cancel_match = re.fullmatch(r"/v1/conversations/([^/]+)/cancel", path)
+            if cancel_match and method == "POST":
+                conversation_id = cancel_match.group(1)
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 404, {"error": "not_found"})
+                # Verify ownership before revealing whether a generation is active.
+                await asyncio.to_thread(
+                    self.conversations.store.get_conversation,
+                    owner_id=user.user_id, conversation_id=conversation_id,
+                )
+                with self._active_lock:
+                    active = self._active_generations.get((user.user_id, conversation_id))
+                    if active is not None:
+                        active.set()
+                return await self._respond(send, 200, {"cancellation_requested": active is not None})
 
             stream_match = re.fullmatch(r"/v1/conversations/([^/]+)/messages/stream", path)
             if stream_match and method == "POST":
@@ -175,6 +194,12 @@ class YukiConversationAPI:
         loop = asyncio.get_running_loop()
         events = asyncio.Queue()
         sentinel = object()
+        cancellation = threading.Event()
+        active_key = (owner_id, conversation_id)
+        with self._active_lock:
+            if active_key in self._active_generations:
+                return await self._respond(send, 409, {"error": "generation_already_active"})
+            self._active_generations[active_key] = cancellation
 
         def publish(event):
             def enqueue():
@@ -200,8 +225,10 @@ class YukiConversationAPI:
                     expected_version=payload["expected_version"],
                     tools=tools,
                     on_text_delta=lambda text: publish({"type": "delta", "text": text}),
+                    cancellation_requested=cancellation.is_set,
                 )
-                publish({"type": "completed", "result": result})
+                event_type = "cancelled" if result.get("status") == "cancelled" else "completed"
+                publish({"type": event_type, "result": result})
             except ConversationNotFound:
                 publish({"type": "error", "error": "not_found"})
             except ConversationConflict:
@@ -209,6 +236,9 @@ class YukiConversationAPI:
             except Exception:
                 publish({"type": "error", "error": "internal_error"})
             finally:
+                with self._active_lock:
+                    if self._active_generations.get(active_key) is cancellation:
+                        self._active_generations.pop(active_key, None)
                 loop.call_soon_threadsafe(events.put_nowait, sentinel)
 
         await send({
