@@ -246,5 +246,27 @@ class AgentExecutionLoopTests(unittest.TestCase):
         with self.assertRaises(AgentExecutionError):
             loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
 
+
+    def test_per_run_cancellation_stops_stream_between_provider_events(self):
+        cancelled = []
+        deltas = []
+        def stream_model(**kwargs):
+            yield {"type": "text_delta", "text": "partial"}
+            yield {"type": "text_delta", "text": "must-not-appear"}
+        def on_delta(value):
+            deltas.append(value)
+            cancelled.append(True)
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol,
+            stream_model=stream_model,
+        )
+        result = loop.run(
+            "Stop this", tools=[], on_text_delta=on_delta,
+            cancellation_requested=lambda: bool(cancelled),
+        )
+        self.assertEqual(result.status, "cancelled")
+        self.assertEqual(deltas, ["partial"])
+
 if __name__ == "__main__":
     unittest.main()
