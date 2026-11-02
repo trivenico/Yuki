@@ -231,7 +231,7 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
             if error:
                 status.configure(text=error)
                 return
-            model_items[:] = [item for item in items if item.get("implemented")]
+            model_items[:] = [item for item in items if item.get("implemented") and item.get("privacy") == "local_runtime"]
             model_picker.configure(values=[item["name"] for item in model_items])
             selected = next((item["name"] for item in model_items if item.get("selected")), "")
             model_var.set(selected or "Select provider")
