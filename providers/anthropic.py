@@ -155,7 +155,7 @@ class AnthropicProvider:
                     if current_event == "content_block_start":
                         index = data.get("index")
                         block = data.get("content_block", {})
-                        if type(index) is not int or not isinstance(block, dict):
+                        if type(index) is not int or not 0 <= index < 128 or not isinstance(block, dict):
                             raise RuntimeError("Anthropic returned an invalid content block.")
                         if block.get("type") == "tool_use":
                             if len(blocks) >= 5 or index in blocks:
@@ -169,7 +169,7 @@ class AnthropicProvider:
                     elif current_event == "content_block_delta":
                         index = data.get("index")
                         delta = data.get("delta", {})
-                        if not isinstance(delta, dict):
+                        if type(index) is not int or not 0 <= index < 128 or not isinstance(delta, dict):
                             raise RuntimeError("Anthropic returned an invalid content delta.")
                         if delta.get("type") == "text_delta":
                             fragment = delta.get("text")
@@ -192,6 +192,8 @@ class AnthropicProvider:
                         delta = data.get("delta", {})
                         if isinstance(delta, dict):
                             finish_reason = delta.get("stop_reason")
+                            if finish_reason is not None and not isinstance(finish_reason, str):
+                                raise RuntimeError("Anthropic returned an invalid stop reason.")
                     elif current_event == "message_stop":
                         message_stopped = True
                     elif current_event in {"message_start", "content_block_stop", "ping"}:
