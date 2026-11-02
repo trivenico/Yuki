@@ -88,14 +88,22 @@ class YukiCoreAgent:
         # intentionally stricter than per-skill defaults so model output cannot
         # invoke a state-changing or external capability without human confirmation.
         argument_fingerprint = hashlib.sha256(argument_bytes).hexdigest()
-        approved = self.permission_gate.request(
-            action=f"skill:{skill.name}:sha256:{argument_fingerprint}",
-            reason=(
+        request_args = {
+            "action": f"skill:{skill.name}:sha256:{argument_fingerprint}",
+            "reason": (
                 f"Invoke {skill.name} ({skill.description}); arguments are redacted. "
                 f"Argument SHA-256: {argument_fingerprint}."
             ),
-            risk=skill.risk,
-        )
+            "risk": skill.risk,
+        }
+        receipt_id = None
+        request_with_receipt = getattr(self.permission_gate, "request_with_receipt", None)
+        if callable(request_with_receipt):
+            approved, receipt_id = request_with_receipt(
+                **request_args, skill_id=skill.name
+            )
+        else:
+            approved = self.permission_gate.request(**request_args)
         if not approved:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
                                  name, stage="permission_denied")
@@ -114,6 +122,19 @@ class YukiCoreAgent:
             approvals=self.invocation_approvals,
             expected_skill=skill,
         )
+        record_execution = getattr(self.permission_gate, "record_execution", None)
+        if receipt_id is not None and callable(record_execution):
+            audited = record_execution(
+                receipt_id, skill_id=skill.name, succeeded=bool(result.ok)
+            )
+            if not audited:
+                return AgentResponse(
+                    False,
+                    "The skill may have run, but its final audit event could not be saved. Verify the outcome before retrying.",
+                    name,
+                    result.data,
+                    stage="recovery_required",
+                )
         return AgentResponse(
             result.ok,
             result.message,
