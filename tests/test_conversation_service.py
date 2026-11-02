@@ -169,5 +169,29 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("interrupted", history[1]["content"])
         self.assertEqual(len(self.observed), 1)
 
+
+    def test_recovery_marks_run_completed_if_assistant_was_already_persisted(self):
+        user = self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="user", content="Already answered", idempotency_key="persisted-request",
+            expected_version=0, generation_request_id="persisted-request",
+        )
+        self.store.append_message(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            role="assistant", content="Persisted answer",
+            idempotency_key="assistant:persisted-request", expected_version=user["version"],
+        )
+        replay = self.service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Already answered", request_id="persisted-request",
+            expected_version=0, tools=[],
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["answer"], "Persisted answer")
+        self.assertEqual(self.observed, [])
+        self.assertEqual(self.store.list_interrupted_generations(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        ), [])
+
 if __name__ == "__main__":
     unittest.main()
