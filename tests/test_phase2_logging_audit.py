@@ -6,6 +6,8 @@ from pathlib import Path
 from core.logging_setup import configure_logging, log_event
 from core.agent import YukiCoreAgent
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.approval_flow import ApprovalCoordinator
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.permissions import PermissionGate
 
 
@@ -93,6 +95,96 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             self.assertEqual(len({event["pending_id_hash"] for event in events}), 1)
             self.assertEqual(len({event["session_hash"] for event in events}), 1)
             self.assertTrue(all(event["session_hash"] for event in events))
+            self.assertTrue(audit.verify_chain())
+
+    def test_agent_uses_durable_coordinator_for_real_skill_execution(self):
+        class EchoSkill:
+            name = "echo"
+            description = "Echo approved input"
+            risk = "low"
+            requires_approval = True
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, argument):
+                self.calls.append(argument)
+                return "done"
+
+        class RecordingStore(SQLitePendingApprovalStore):
+            pending_id = None
+
+            def put(self, *args, **kwargs):
+                item = super().put(*args, **kwargs)
+                self.pending_id = item.pending_id
+                return item
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            store = RecordingStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            confirmations = []
+            skill = EchoSkill()
+            agent = YukiCoreAgent(
+                skills=[skill],
+                permission_gate=PermissionGate(
+                    lambda request: confirmations.append(request) or True,
+                    actor_id="test-actor",
+                    session_id="test-session",
+                ),
+                approval_coordinator=coordinator,
+            )
+
+            result = agent.run_skill("echo", "durably approved input")
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.stage, "report")
+            self.assertEqual(skill.calls, ["durably approved input"])
+            self.assertEqual(len(confirmations), 1)
+            self.assertEqual(store.get_status(store.pending_id), "completed")
+            events = list(reversed(audit.list_events()))
+            self.assertEqual(
+                [event["event_type"] for event in events],
+                ["requested", "consumed", "approved", "executed"],
+            )
+            self.assertEqual(len({event["pending_id_hash"] for event in events}), 1)
+            self.assertEqual(len({event["session_hash"] for event in events}), 1)
+            self.assertTrue(audit.verify_chain())
+
+    def test_durable_coordinator_denial_never_executes_skill(self):
+        class EchoSkill:
+            name = "echo"
+            description = "Echo approved input"
+            risk = "low"
+            requires_approval = True
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, argument):
+                self.calls.append(argument)
+                return "done"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            skill = EchoSkill()
+            agent = YukiCoreAgent(
+                skills=[skill],
+                permission_gate=PermissionGate(lambda _request: False),
+                approval_coordinator=coordinator,
+            )
+
+            result = agent.run_skill("echo", "must not execute")
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.stage, "permission_denied")
+            self.assertEqual(skill.calls, [])
+            self.assertEqual(
+                [event["event_type"] for event in reversed(audit.list_events())],
+                ["requested", "consumed", "denied"],
+            )
             self.assertTrue(audit.verify_chain())
 
     def test_agent_surfaces_recovery_when_terminal_audit_fails_after_execution(self):
