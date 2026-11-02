@@ -38,3 +38,9 @@ silently fall back to another model.
 The API caller must derive cloud consent from an explicit user/workspace policy,
 not from model output. Do not enable cloud routing merely because a cloud
 provider is available.
+
+
+Prompt construction uses a cursor derived from the session's latest sequence
+number and reads at most the newest 100 events. This avoids repeatedly sending
+the oldest part of a long-running conversation to the model. Production context
+window budgeting and summarization are still required.
