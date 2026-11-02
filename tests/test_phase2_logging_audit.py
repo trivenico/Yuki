@@ -18,7 +18,7 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
     def test_rotating_logger_writes_utf8_and_sanitizes_line_breaks(self):
         with tempfile.TemporaryDirectory() as tmp:
             logger = configure_logging(tmp)
-            log_event(logger, logging.INFO, "started\\nforged", component="runtime")
+            log_event(logger, logging.INFO, "started\nforged", component="runtime")
             for handler in logger.handlers:
                 handler.flush()
             text = (Path(tmp) / "yuki.log").read_text(encoding="utf-8")
