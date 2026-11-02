@@ -207,6 +207,49 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcomes.count("completed"), 1)
         self.assertEqual(outcomes.count("pending_not_found"), 1)
 
+    def test_concurrent_persistent_approvals_execute_at_most_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            pending = coordinator.record(
+                self.planner, action_result("persistent-once"),
+                actor="owner", session_id="session-a",
+            )
+            barrier = threading.Barrier(3)
+            outcomes = []
+            outcomes_lock = threading.Lock()
+
+            def attempt():
+                barrier.wait()
+                outcome = coordinator.approve(
+                    self.planner, pending.pending_id,
+                    actor="owner", session_id="session-a",
+                    confirm=lambda _action: True,
+                )
+                with outcomes_lock:
+                    outcomes.append(outcome.status)
+
+            threads = [threading.Thread(target=attempt) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            barrier.wait()
+            for thread in threads:
+                thread.join(timeout=5)
+
+            self.assertTrue(all(not thread.is_alive() for thread in threads))
+            self.assertEqual(len(self.planner.executed), 1)
+            self.assertEqual(outcomes.count("completed"), 1)
+            self.assertEqual(outcomes.count("pending_not_found"), 1)
+            self.assertTrue(audit.verify_chain())
+            event_types = [
+                event["event_type"] for event in reversed(audit.list_events())
+            ]
+            self.assertEqual(
+                event_types,
+                ["requested", "consumed", "approved", "executed"],
+            )
+
     def test_rejects_oversized_action_snapshot(self):
         with self.assertRaisesRegex(ValueError, "JSON-safe"):
             self.coordinator.record(
