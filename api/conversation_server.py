@@ -80,19 +80,6 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(200, {"items": safe_items, "selected_provider": selected})
                 except Exception as exc:
                     return self.send_json(503, {"error": "model_catalog_unavailable"})
-            if path == "/v1/memories/retrieve":
-                try:
-                    data = self.body()
-                    items = memory_retriever.retrieve(actor_id=user.user_id,
-                        scope_id="personal:" + user.user_id, query=data.get("query"),
-                        category=data.get("category"), limit=data.get("limit", 10))
-                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                    return self.send_json(400, {"error":"invalid_request"})
-                return self.send_json(200, {"items":[{
-                    "memory_id":item.memory.memory_id,
-                    "category":item.memory.category,"content":item.memory.content,
-                    "score":item.score,"matched_terms":list(item.matched_terms)
-                    } for item in items], "retrieval":"lexical"})
             if path == "/v1/memory-proposals":
                 params = parse_qs(urlsplit(self.path).query)
                 status = params.get("status", ["pending"])[0]
@@ -190,6 +177,19 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(400, {"error": "invalid_request"})
                 except Exception:
                     return self.send_json(503, {"error": "provider_selection_unavailable"})
+            if path == "/v1/memories/retrieve":
+                try:
+                    data = self.body()
+                    items = memory_retriever.retrieve(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id, query=data.get("query"),
+                        category=data.get("category"), limit=data.get("limit", 10))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error":"invalid_request"})
+                return self.send_json(200, {"items":[{
+                    "memory_id":item.memory.memory_id,
+                    "category":item.memory.category,"content":item.memory.content,
+                    "score":item.score,"matched_terms":list(item.matched_terms)
+                    } for item in items], "retrieval":"lexical"})
             if path == "/v1/memory-proposals":
                 try:
                     data = self.body()
