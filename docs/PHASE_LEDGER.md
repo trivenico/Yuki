@@ -72,7 +72,7 @@ Other open product tracks that must be assigned to a phase only after scope/depe
 
 PR #497 is marked ready for review. Phase 1 remains `in_progress` until an independent review is recorded and the replacement is merged. No phase completion claim is made from CI alone.
 
-## Phase 2 preliminary reconciliation (do not advance until Phase 1 closes)
+## Phase 2 preliminary reconciliation and implementation (user-directed parallel start)
 
 Static comparison of open draft PRs #27 and #30 against current `main` (2026-11-02):
 
@@ -83,7 +83,14 @@ Static comparison of open draft PRs #27 and #30 against current `main` (2026-11-
 
 Current-main evidence: `core/approval_audit.py` already implements allowed event types, hashed identifiers, a hash chain, explicit transaction handling and a legacy migration; `core/pending_approvals.py` already uses bounded JSON serialization, TTL/capacity controls, actor/session binding and explicit connection closing. This means Phase 2 must be judged by its acceptance requirements, not by whether the old draft PRs merge.
 
-**Serial gate:** this is preparatory analysis only. Phase 1 (#497) remains open awaiting independent review; do not start Phase 2 implementation or mark Phase 2 complete until Phase 1 has been reviewed and merged/dispositioned.
+**Sequencing exception (2026-11-02):** the project owner explicitly directed work to proceed on Phase 2 while Phase 1 is deferred for later remediation. Phase 1 (#497) remains `in_progress`; this exception authorizes Phase 2 implementation work only. It does not waive independent review, acceptance testing, or the requirement to reconcile the Phase 1/2 integration before either phase is declared complete or merged out of order.
+
+| Item | Evidence | Status | Disposition |
+|---|---|---|---|
+| Focused Phase 2 implementation | PR #498, head `93133fb5a595c49379d75a20b3dafcea2627c396` | `in_progress` | Reuses current SQLite hash-chain audit; adds rotating operational log, PermissionGate audit wiring, fail-closed behavior, and tests. CI is queued/in progress; independent review outstanding. |
+| Historical Phase 2 PR | #27 | `superseded` in approach, not yet closed | Contains a parallel JSONL audit store and older persistence changes. Retain as source evidence; do not merge wholesale. |
+| Phase 2 hardening PR | #30 | `superseded` in approach, not yet closed | Targets an older audit schema; current main already hashes pending IDs/actors and verifies a hash chain. Its trigger migration is not a drop-in. |
+| Remaining acceptance gaps | PR #498 body | `in_progress` | Actor/session attribution and receipt-consumption audit events remain unimplemented; cross-platform tests, security review, and exact-head CI must pass.
 
 ## Earlier PR backlog evidence (verified 2026-11-02)
 
