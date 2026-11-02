@@ -52,6 +52,25 @@ class ConversationRuntime:
             raise ValueError("conversation prompt exceeds the configured size limit")
         return prompt
 
+    def respond_with_manager(
+        self, *, actor_id: str, session_id: str, idempotency_key: str,
+        user_message: str, provider_manager: Any, preference=(),
+        allow_cloud: bool = False,
+    ) -> str:
+        """Route via ProviderManager; cloud use is denied unless explicitly allowed."""
+        if not isinstance(allow_cloud, bool):
+            raise TypeError("allow_cloud must be a boolean")
+        if not callable(getattr(provider_manager, "create_routed_adapter", None)):
+            raise TypeError("provider_manager must implement create_routed_adapter()")
+        provider = provider_manager.create_routed_adapter(
+            required=("text",), preference=preference, allow_cloud=allow_cloud,
+        )
+        return self.respond(
+            actor_id=actor_id, session_id=session_id,
+            idempotency_key=idempotency_key, user_message=user_message,
+            provider=provider,
+        )
+
     def respond(
         self, *, actor_id: str, session_id: str, idempotency_key: str,
         user_message: str, provider: Any,
