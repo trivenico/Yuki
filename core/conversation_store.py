@@ -5,6 +5,7 @@ the application must pass the authenticated principal's stable owner_id.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -101,12 +102,16 @@ class ConversationStore:
             "created_at": row["created_at"],
         }
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA busy_timeout=10000")
+            yield db
+        finally:
+            db.close()
 
     def create_conversation(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         owner = self._owner(owner_id)
