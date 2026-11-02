@@ -108,6 +108,29 @@ class ConversationApiTests(unittest.TestCase):
                 token=self.token)
         self.assertEqual(caught.exception.code, 403)
 
+    def test_personal_memory_crud_is_authenticated_and_persisted(self):
+        created = self.request("POST", "/v1/memories",
+            {"category":"preference","content":"Prefer local models","metadata":{"origin":"user"}},
+            token=self.token)
+        memory_id = created["memory_id"]
+        listed = self.request("GET", "/v1/memories", token=self.token)
+        self.assertEqual(listed["items"][0]["memory_id"], memory_id)
+        searched = self.request("GET", "/v1/memories?q=local", token=self.token)
+        self.assertEqual(len(searched["items"]), 1)
+        deleted = self.request("DELETE", "/v1/memories/" + memory_id, token=self.token)
+        self.assertTrue(deleted["deleted"])
+        remaining = self.request("GET", "/v1/memories?q=local", token=self.token)
+        self.assertEqual(remaining["items"], [])
+
+    def test_memory_api_rejects_invalid_category_and_unauthenticated_access(self):
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST", "/v1/memories",
+                {"category":"unapproved","content":"do not save"}, token=self.token)
+        self.assertEqual(caught.exception.code, 400)
+        with self.assertRaises(HTTPError) as caught:
+            self.request("GET", "/v1/memories")
+        self.assertEqual(caught.exception.code, 401)
+
     def test_logout_revokes_bearer_token(self):
         self.request("POST", "/v1/auth/logout", {}, token=self.token)
         with self.assertRaises(HTTPError) as caught:
