@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -129,7 +130,7 @@ class OpenAICompatibleProvider:
             description = function.get("description", "")
             parameters = function.get("parameters")
             if (not isinstance(name, str) or not name or len(name) > 128
-                    or not name.replace("_", "a").replace("-", "a").isalnum()
+                    or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,127}", name)
                     or not isinstance(description, str) or len(description) > 1024
                     or not isinstance(parameters, dict)):
                 raise ValueError("Function tool name, description, or parameters are invalid.")
