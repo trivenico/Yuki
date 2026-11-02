@@ -25,7 +25,8 @@ class YukiCoreAgent:
 
     def __init__(self, skills: Optional[Iterable[Skill]] = None,
                  permission_gate: Optional[PermissionGate] = None,
-                 registry: Optional[SkillRegistry] = None):
+                 registry: Optional[SkillRegistry] = None,
+                 approval_coordinator=None):
         if registry is not None and skills is not None:
             raise ValueError("Pass either skills or registry, not both.")
         if registry is not None:
@@ -34,6 +35,7 @@ class YukiCoreAgent:
             available = list(skills) if skills is not None else [TimeSkill(), SystemSkill(), FileSkill()]
             self.registry = SkillRegistry(available)
         self.permission_gate = permission_gate or PermissionGate()
+        self.approval_coordinator = approval_coordinator
         self.invocation_approvals = OneShotSkillApprovals()
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
@@ -66,6 +68,106 @@ class YukiCoreAgent:
         selected = cards[0]
         return self.run_skill(selected.name, argument)
 
+    def _execute_registered_skill(self, name: str, argument: str) -> AgentResponse:
+        """Execute a previously approved registered skill without requesting approval again."""
+        skill = self.registry.get(name)
+        if skill is None:
+            return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
+        risk = str(getattr(skill, "risk", "high")).lower()
+        needs_guard_approval = (
+            bool(getattr(skill, "requires_approval", True))
+            or risk not in {"low", "medium", "high", "critical"}
+            or risk in {"high", "critical"}
+        )
+        if needs_guard_approval:
+            self.invocation_approvals.approve(name, argument)
+        result = invoke_registered_skill(
+            self.registry,
+            name,
+            argument,
+            approvals=self.invocation_approvals,
+            expected_skill=skill,
+        )
+        return AgentResponse(
+            result.ok, result.message, name, result.data,
+            stage="report" if result.ok else "observe",
+        )
+
+    def execute_approved_action(self, action: dict) -> AgentResponse:
+        """Execute only a stored, explicitly approved registered-skill snapshot."""
+        if not isinstance(action, dict) or set(action) != {"skill_id", "arguments"}:
+            return AgentResponse(False, "Blocked: invalid approved action snapshot.", stage="blocked")
+        name = action.get("skill_id")
+        arguments = action.get("arguments")
+        if not isinstance(name, str) or not isinstance(arguments, dict) or set(arguments) != {"argument"}:
+            return AgentResponse(False, "Blocked: invalid approved skill arguments.", stage="invalid_argument")
+        argument = arguments.get("argument")
+        if not isinstance(argument, str) or len(argument) > 20000:
+            return AgentResponse(False, "Blocked: approved skill argument is invalid.", name, stage="invalid_argument")
+        try:
+            argument.encode("utf-8")
+        except UnicodeEncodeError:
+            return AgentResponse(False, "Blocked: approved skill argument is invalid UTF-8.", name, stage="invalid_argument")
+        if self.registry.get(name) is None:
+            return AgentResponse(False, "Blocked: approved skill is no longer registered.", name, stage="blocked")
+        return self._execute_registered_skill(name, argument)
+
+    def _run_durable_approval(self, skill, argument: str) -> AgentResponse:
+        coordinator = self.approval_coordinator
+        action = {"skill_id": skill.name, "arguments": {"argument": argument}}
+        try:
+            pending = coordinator.record(
+                self, {"action": action},
+                actor=self.permission_gate.actor_id,
+                session_id=self.permission_gate.session_id,
+            )
+        except Exception:
+            return AgentResponse(
+                False, "Approval could not be durably recorded; the skill was not executed.",
+                skill.name, stage="audit_unavailable",
+            )
+
+        def confirm(snapshot):
+            current = self.registry.get(snapshot.get("skill_id"))
+            if current is None or current.name != skill.name:
+                return False
+            supplied = snapshot.get("arguments", {}).get("argument")
+            if not isinstance(supplied, str) or supplied != argument:
+                return False
+            fingerprint = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+            risk = str(getattr(current, "risk", "high")).lower()
+            if risk not in {"low", "medium", "high"}:
+                risk = "high"
+            return self.permission_gate.confirm_durable_action(
+                action=f"skill:{current.name}:sha256:{fingerprint}",
+                reason=(
+                    f"Invoke {current.name} ({current.description}); arguments are redacted. "
+                    f"Argument SHA-256: {fingerprint}."
+                ),
+                risk=risk,
+            )
+
+        outcome = coordinator.approve(
+            self, pending.pending_id,
+            actor=self.permission_gate.actor_id,
+            session_id=self.permission_gate.session_id,
+            confirm=confirm,
+        )
+        if outcome.status == "completed" and isinstance(outcome.result, AgentResponse):
+            return outcome.result
+        stages = {
+            "approval_denied": "permission_denied",
+            "audit_unavailable": "audit_unavailable",
+            "recovery_required": "recovery_required",
+            "pending_not_found": "approval_unavailable",
+        }
+        return AgentResponse(
+            False,
+            "Not executed: approval was not completed." if outcome.status != "recovery_required"
+            else "The skill may have run; its outcome requires manual recovery review.",
+            skill.name, outcome.result, stage=stages.get(outcome.status, "approval_unavailable"),
+        )
+
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
         if not isinstance(argument, str) or len(argument) > 20000:
             return AgentResponse(
@@ -84,9 +186,10 @@ class YukiCoreAgent:
         skill = self.registry.get(name)
         if skill is None:
             return AgentResponse(False, "Blocked: that skill is not registered.", name, stage="blocked")
-        # Strict policy: request fresh approval for every skill invocation. This is
-        # intentionally stricter than per-skill defaults so model output cannot
-        # invoke a state-changing or external capability without human confirmation.
+        if self.approval_coordinator is not None:
+            return self._run_durable_approval(skill, argument)
+
+        # Compatibility path for callers that have not configured durable approvals.
         argument_fingerprint = hashlib.sha256(argument_bytes).hexdigest()
         request_args = {
             "action": f"skill:{skill.name}:sha256:{argument_fingerprint}",
@@ -94,7 +197,7 @@ class YukiCoreAgent:
                 f"Invoke {skill.name} ({skill.description}); arguments are redacted. "
                 f"Argument SHA-256: {argument_fingerprint}."
             ),
-            "risk": skill.risk,
+            "risk": skill.risk if skill.risk in {"low", "medium", "high"} else "high",
         }
         receipt_id = None
         request_with_receipt = getattr(self.permission_gate, "request_with_receipt", None)
@@ -107,21 +210,7 @@ class YukiCoreAgent:
         if not approved:
             return AgentResponse(False, "Not executed: explicit human approval was not granted.",
                                  name, stage="permission_denied")
-        risk = str(getattr(skill, "risk", "high")).lower()
-        needs_guard_approval = (
-            bool(getattr(skill, "requires_approval", True))
-            or risk not in {"low", "medium", "high", "critical"}
-            or risk in {"high", "critical"}
-        )
-        if needs_guard_approval:
-            self.invocation_approvals.approve(name, argument)
-        result = invoke_registered_skill(
-            self.registry,
-            name,
-            argument,
-            approvals=self.invocation_approvals,
-            expected_skill=skill,
-        )
+        result = self._execute_registered_skill(name, argument)
         record_execution = getattr(self.permission_gate, "record_execution", None)
         if receipt_id is not None and callable(record_execution):
             audited = record_execution(
@@ -131,14 +220,6 @@ class YukiCoreAgent:
                 return AgentResponse(
                     False,
                     "The skill may have run, but its final audit event could not be saved. Verify the outcome before retrying.",
-                    name,
-                    result.data,
-                    stage="recovery_required",
+                    name, result.data, stage="recovery_required",
                 )
-        return AgentResponse(
-            result.ok,
-            result.message,
-            name,
-            result.data,
-            stage="report" if result.ok else "observe",
-        )
+        return result
