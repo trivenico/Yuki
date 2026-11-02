@@ -117,6 +117,24 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             self.assertEqual(rows[0]["status"], "recovery_required")
             self.assertEqual(store.get_status(item.pending_id), "recovery_required")
 
+    def test_expired_recovery_snapshot_remains_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.claim(item.pending_id, actor="owner", session_id="session-a")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET expires_at = '2000-01-01T00:00:00+00:00' WHERE pending_id = ?",
+                    (item.pending_id,),
+                )
+            recovered = store.get(item.pending_id)
+            self.assertIsNotNone(recovered)
+            self.assertEqual(recovered.status, "recovery_required")
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
