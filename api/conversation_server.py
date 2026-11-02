@@ -89,7 +89,7 @@ def build_application(data_dir, provider_manager):
                 except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
                     return self.send_json(400, {"error":"invalid_request"})
                 return self.send_json(200, {"items":[{
-                    "memory_id:item.memory.memory_id" : item.memory.memory_id,
+                    "memory_id":item.memory.memory_id,
                     "category":item.memory.category,"content":item.memory.content,
                     "score":item.score,"matched_terms":list(item.matched_terms)
                     } for item in items], "retrieval":"lexical"})
