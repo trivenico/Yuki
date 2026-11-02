@@ -164,7 +164,7 @@
     try {
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
       showChat(); $("account-label").textContent = "Signed in";
-      await loadConversations();
+      await loadProviderStatus(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }
   };
