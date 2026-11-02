@@ -78,6 +78,10 @@ def build_application(data_dir, provider_manager):
                     name = data.get("provider")
                     if not isinstance(name, str) or not name.strip() or len(name) > 64:
                         raise ValueError()
+                    catalog_item = next((item for item in provider_manager.catalog()
+                                          if item.get("name") == name.strip().lower()), None)
+                    if catalog_item is None or catalog_item.get("privacy") != "local_runtime":
+                        return self.send_json(403, {"error": "local_provider_required"})
                     result = provider_manager.select(name)
                     selected = result.startswith("Selected provider:")
                     return self.send_json(200 if selected else 400, {
