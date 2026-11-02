@@ -31,7 +31,7 @@ class ProviderAgentAdapter:
             if not isinstance(message, Mapping) or set(message) != {"role", "content"}:
                 raise ValueError("each message must contain only role and content.")
             role, content = message["role"], message["content"]
-            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+            if not isinstance(role, str) or role not in {"system", "user", "assistant"} or not isinstance(content, str):
                 raise ValueError("message role or content is invalid.")
             total_chars += len(content)
             if total_chars > 100_000:
