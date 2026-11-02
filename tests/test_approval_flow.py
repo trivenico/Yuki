@@ -258,8 +258,8 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 BrokenPlanner(), pending.pending_id, actor="owner", session_id="session-a",
                 confirm=lambda _action: True,
             )
-            self.assertEqual(outcome.status, "execution_failed")
-            self.assertEqual(store.get_status(pending.pending_id), "execution_failed")
+            self.assertEqual(outcome.status, "recovery_required")
+            self.assertEqual(store.get_status(pending.pending_id), "recovery_required")
             replay = coordinator.approve(
                 BrokenPlanner(), pending.pending_id, actor="owner", session_id="session-a",
                 confirm=lambda _action: True,
