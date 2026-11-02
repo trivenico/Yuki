@@ -61,6 +61,13 @@ class YukiDesktopClient:
             finally:
                 self.token = None
 
+    def models(self):
+        result = self._request("GET", "/v1/models")
+        return result.get("items", [])
+
+    def select_model(self, provider):
+        return self._request("POST", "/v1/models/select", {"provider": provider})
+
     def conversations(self):
         return self._request("GET", "/v1/conversations").get("items", [])
 
@@ -164,6 +171,10 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
     signin_button = ttk.Button(login, text="Sign in")
     signin_button.pack(side="left", padx=8)
     identity = ttk.Label(login, text="Not signed in")
+    model_var = tk.StringVar()
+    model_picker = ttk.Combobox(login, textvariable=model_var, state="disabled", width=18)
+    model_picker.pack(side="left", padx=(8, 0))
+    model_picker.set("Model / provider")
     identity.pack(side="right")
 
     body = ttk.Panedwindow(shell, orient="horizontal")
@@ -212,6 +223,36 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
             except Exception as exc:
                 events.put((success, None, str(exc)))
         threading.Thread(target=work, daemon=True).start()
+
+    model_items = []
+
+    def refresh_models():
+        def loaded(items, error):
+            if error:
+                status.configure(text=error)
+                return
+            model_items[:] = [item for item in items if item.get("implemented")]
+            model_picker.configure(values=[item["name"] for item in model_items])
+            selected = next((item["name"] for item in model_items if item.get("selected")), "")
+            model_var.set(selected or "Select provider")
+        background(client.models, loaded)
+
+    def change_model(_event=None):
+        name = model_var.get().strip()
+        if not name:
+            return
+        model_picker.configure(state="disabled")
+        def selected(result, error):
+            model_picker.configure(state="readonly")
+            if error or not result.get("selected"):
+                status.configure(text=error or result.get("message", "Provider selection failed"))
+                refresh_models()
+                return
+            status.configure(text="Selected provider: " + result.get("provider", name))
+            refresh_models()
+        background(lambda: client.select_model(name), selected)
+
+    model_picker.bind("<<ComboboxSelected>>", change_model)
 
     def refresh_sessions():
         def done(items, error):
@@ -332,6 +373,8 @@ def run_desktop(provider_manager, *, data_dir=None, host="127.0.0.1", port=8765)
             send_button.configure(state="normal")
             message_entry.configure(state="normal")
             refresh_sessions()
+            model_picker.configure(state="readonly")
+            refresh_models()
         background(lambda: client.login(username_var.get().strip(), password_var.get()), signed_in)
     signin_button.configure(command=signin)
     for widget in (new_button, send_button, message_entry):
