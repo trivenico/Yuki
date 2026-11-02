@@ -213,33 +213,25 @@ class SQLitePendingApprovalStore:
             return row[0] if row else None
 
     def consume(self, pending_id: str, *, actor: str, session_id: str) -> StoredPendingAction | None:
-        if not isinstance(pending_id, str) or not pending_id:
-            return None
-        if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
-            return None
-        now = datetime.now(timezone.utc).isoformat()
-        actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
-                    FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
-                if row is None or row[3] <= now or row[4] != actor_hash or row[5] != session_hash:
-                    if row is not None and row[3] <= now:
-                        db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
-                    db.execute("COMMIT")
-                    return None
-                db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
-                db.execute("COMMIT")
-                return StoredPendingAction(pending_id, row[0], json.loads(row[1]), json.loads(row[2]),
-                                           row[3], row[4], row[5])
-            except Exception:
-                db.execute("ROLLBACK")
-                raise
+        """Backward-compatible alias for claim; never deletes a recovery snapshot."""
+        return self.claim(pending_id, actor=actor, session_id=session_id)
 
     def deny(self, pending_id: str) -> bool:
+        """Mark a still-pending request denied without deleting its audit snapshot."""
+        if not isinstance(pending_id, str) or not pending_id:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        return self.transition(
+            pending_id, expected="pending", new_status="denied"
+        )
+
+    def discard_pending(self, pending_id: str) -> bool:
+        """Remove only a not-yet-claimed request that failed initial audit creation."""
         if not isinstance(pending_id, str) or not pending_id:
             return False
         with self._connect() as db:
-            cursor = db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
+            cursor = db.execute(
+                "DELETE FROM pending_approvals WHERE pending_id = ? AND status = 'pending'",
+                (pending_id,),
+            )
             return cursor.rowcount == 1
