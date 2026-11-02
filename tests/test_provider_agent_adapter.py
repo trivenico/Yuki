@@ -65,5 +65,29 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             ProviderAgentAdapter(object())
 
 
+
+    def test_stream_model_forwards_provider_native_events(self):
+        class StreamingProvider(FakeChatProvider):
+            def generate_chat_stream(self, *, messages, tools, tool_choice):
+                self.received = (messages, tools, tool_choice)
+                yield {"type": "text_delta", "text": "Hi"}
+                yield {"type": "response", "response": {
+                    "text": "Hi", "tool_calls": {"tool_calls": []}
+                }}
+        provider = StreamingProvider()
+        adapter = ProviderAgentAdapter(provider)
+        events = list(adapter.stream_model(
+            messages=[{"role": "user", "content": "Hello"}], tools=[]
+        ))
+        self.assertEqual(events[0], {"type": "text_delta", "text": "Hi"})
+        self.assertEqual(provider.received[0][0]["content"], "Hello")
+
+    def test_stream_model_fails_closed_when_provider_has_no_streaming(self):
+        adapter = ProviderAgentAdapter(FakeChatProvider())
+        with self.assertRaises(RuntimeError):
+            list(adapter.stream_model(
+                messages=[{"role": "user", "content": "Hello"}], tools=[]
+            ))
+
 if __name__ == "__main__":
     unittest.main()
