@@ -19,7 +19,19 @@ class ConversationRuntime:
         self._closed = False
 
     async def __call__(self, scope, receive, send):
-        await self.app(scope, receive, send)
+        if scope.get("type") == "http":
+            await self.app(scope, receive, send)
+            return
+        if scope.get("type") != "lifespan":
+            raise RuntimeError("ConversationRuntime supports HTTP and ASGI lifespan scopes.")
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                self.close()
+                await send({"type": "lifespan.shutdown.complete"})
+                return
 
     def close(self) -> None:
         """Close backend resources once during graceful application shutdown."""
