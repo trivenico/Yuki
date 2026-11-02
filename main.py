@@ -12,6 +12,8 @@ from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.approval_flow import ApprovalCoordinator
+from core.pending_approvals import SQLitePendingApprovalStore
 from core.logging_setup import configure_logging, log_event
 import logging
 from core.planner import Planner
@@ -65,14 +67,19 @@ def build_agent(config):
         mcp_servers=config.get("mcp_servers", []),
     )
     audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
+    pending_store = SQLitePendingApprovalStore(
+        str(workspace / "pending_approvals.sqlite3")
+    )
+    coordinator = ApprovalCoordinator(
+        pending_store=pending_store, audit_log=audit_log
+    )
     # CLI attribution is a local runtime identity, not an authenticated account.
     # Web/API adapters must inject a verified principal and session explicitly.
-    actor_id = "local-cli"
+    permission_gate = PermissionGate(_ask_approval, actor_id="local-cli")
     return YukiCoreAgent(
         registry=registry,
-        permission_gate=PermissionGate(
-            _ask_approval, audit_log=audit_log, actor_id=actor_id
-        ),
+        permission_gate=permission_gate,
+        approval_coordinator=coordinator,
     )
 
 
