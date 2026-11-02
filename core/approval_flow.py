@@ -146,16 +146,22 @@ class ApprovalCoordinator:
                 result={"execution_error": type(exc).__name__, "reconciliation_required": True},
             )
 
+        succeeded = bool(getattr(result, "ok", True))
+        terminal_event = "executed" if succeeded else "execution_failed"
+        terminal_state = "completed" if succeeded else "execution_failed"
         try:
-            self._audit("executed", pending_id, actor, session_id, pending["skill_id"])
-            self._transition(pending_id, "executing", "completed")
+            self._audit(terminal_event, pending_id, actor, session_id, pending["skill_id"])
+            self._transition(pending_id, "executing", terminal_state)
         except Exception:
             self._mark_recovery(pending_id, "executing")
             return ApprovalOutcome(
                 False, "recovery_required", pending_id=pending_id,
                 result={"execution_result": result, "audit": "unavailable"},
             )
-        return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
+        return ApprovalOutcome(
+            succeeded, "completed" if succeeded else "execution_failed",
+            pending_id=pending_id, result=result,
+        )
 
     def _consume(self, pending_id, *, actor, session_id):
         if not isinstance(pending_id, str) or not pending_id:
