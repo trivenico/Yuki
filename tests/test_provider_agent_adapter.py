@@ -37,7 +37,8 @@ class ProviderAgentAdapterTests(unittest.TestCase):
         for messages in (
             [], [{"role": "developer", "content": "x"}],
             [{"role": "user", "content": "x", "extra": True}],
-            [{"role": "user", "content": 3}],\n            [{"role": [], "content": "x"}],
+            [{"role": "user", "content": 3}],
+            [{"role": [], "content": "x"}],
         ):
             with self.subTest(messages=messages), self.assertRaises(ValueError):
                 adapter(messages=messages, tools=[])
