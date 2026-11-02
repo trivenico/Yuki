@@ -30,6 +30,19 @@ class DesktopClientTests(unittest.TestCase):
         self.assertTrue(request.full_url.endswith("/v1/auth/login"))
 
     @patch("ui.desktop.urlopen")
+    def test_model_catalog_and_provider_selection(self, urlopen_mock):
+        self.client.token = "opaque-token"
+        urlopen_mock.return_value = FakeResponse(json.dumps({"items":[{"name":"ollama"}]}))
+        self.assertEqual(self.client.models()[0]["name"], "ollama")
+        request = urlopen_mock.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/v1/models"))
+        urlopen_mock.return_value = FakeResponse(json.dumps({"selected":True,"provider":"ollama"}))
+        result = self.client.select_model("ollama")
+        self.assertTrue(result["selected"])
+        request = urlopen_mock.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/v1/models/select"))
+
+    @patch("ui.desktop.urlopen")
     def test_stream_emits_incremental_events(self, urlopen_mock):
         self.client.token = "opaque-token"
         urlopen_mock.return_value = FakeResponse(
