@@ -122,6 +122,21 @@ class ConversationApiTests(unittest.TestCase):
         remaining = self.request("GET", "/v1/memories?q=local", token=self.token)
         self.assertEqual(remaining["items"], [])
 
+    def test_memory_retrieval_is_authenticated_and_scope_bound(self):
+        self.request("POST", "/v1/memories",
+            {"category":"fact","content":"Yuki uses SQLite for persistent memory"},
+            token=self.token)
+        results = self.request("POST", "/v1/memories/retrieve",
+            {"query":"SQLite persistent memory"}, token=self.token)
+        self.assertEqual(results["retrieval"], "lexical")
+        self.assertEqual(len(results["items"]), 1)
+        self.assertIn("sqlite", results["items"][0]["matched_terms"])
+
+    def test_memory_retrieval_rejects_unauthenticated_requests(self):
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST", "/v1/memories/retrieve", {"query":"SQLite"})
+        self.assertEqual(caught.exception.code, 401)
+
     def test_memory_suggestion_preview_does_not_persist(self):
         result = self.request("POST", "/v1/memory-suggestions/preview",
             {"text":"I prefer local models. We have decided to use SQLite."},

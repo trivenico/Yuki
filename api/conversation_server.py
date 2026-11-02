@@ -12,6 +12,7 @@ from core.auth import AuthenticationError, BuiltInAuthService
 from core.memory import MemoryStore
 from core.memory_review import MemoryReviewStore
 from core.memory_intelligence import MemoryIntelligence
+from core.memory_retrieval import MemoryRetriever
 
 MAX_BODY = 40000
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
@@ -29,6 +30,7 @@ def build_application(data_dir, provider_manager):
     memories = MemoryStore(root / "memories.sqlite3")
     memory_reviews = MemoryReviewStore(root / "memory_review.sqlite3", memories)
     memory_intelligence = MemoryIntelligence(memories)
+    memory_retriever = MemoryRetriever(memories)
 
     class Handler(BaseHTTPRequestHandler):
         server_version, sys_version = "YukiLocalAPI/1", ""
@@ -175,6 +177,19 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(400, {"error": "invalid_request"})
                 except Exception:
                     return self.send_json(503, {"error": "provider_selection_unavailable"})
+            if path == "/v1/memories/retrieve":
+                try:
+                    data = self.body()
+                    items = memory_retriever.retrieve(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id, query=data.get("query"),
+                        category=data.get("category"), limit=data.get("limit", 10))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error":"invalid_request"})
+                return self.send_json(200, {"items":[{
+                    "memory_id":item.memory.memory_id,
+                    "category":item.memory.category,"content":item.memory.content,
+                    "score":item.score,"matched_terms":list(item.matched_terms)
+                    } for item in items], "retrieval":"lexical"})
             if path == "/v1/memory-proposals":
                 try:
                     data = self.body()
