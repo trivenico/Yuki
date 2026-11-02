@@ -1,4 +1,5 @@
 """Regression tests for durable, identity-bound pending approvals."""
+import multiprocessing
 import os
 import stat
 import tempfile
@@ -7,6 +8,17 @@ import unittest
 from pathlib import Path
 
 from core.pending_approvals import SQLitePendingApprovalStore
+
+
+
+
+def _claim_in_child_process(database_path, pending_id, barrier, results):
+    store = SQLitePendingApprovalStore(database_path)
+    barrier.wait(timeout=15)
+    claimed = store.claim(
+        pending_id, actor="owner", session_id="session-a"
+    ) is not None
+    results.put(claimed)
 
 
 class SQLitePendingApprovalStoreTests(unittest.TestCase):
@@ -118,6 +130,47 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             self.assertEqual(results.count(True), 1)
             self.assertEqual(results.count(False), 1)
             self.assertEqual(first.get_status(item.pending_id), "claimed")
+
+    @unittest.skipUnless("spawn" in multiprocessing.get_all_start_methods(),
+                         "requires multiprocessing spawn support")
+    def test_claim_is_atomic_across_independent_processes(self):
+        context = multiprocessing.get_context("spawn")
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(database_path)
+            item = store.put(
+                "notes.write", {},
+                {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            barrier = context.Barrier(3)
+            results = context.Queue()
+            workers = [
+                context.Process(
+                    target=_claim_in_child_process,
+                    args=(database_path, item.pending_id, barrier, results),
+                )
+                for _ in range(2)
+            ]
+            for worker in workers:
+                worker.start()
+            try:
+                barrier.wait(timeout=15)
+                for worker in workers:
+                    worker.join(timeout=20)
+                self.assertTrue(all(not worker.is_alive() for worker in workers))
+                self.assertTrue(all(worker.exitcode == 0 for worker in workers))
+                outcomes = [results.get(timeout=5), results.get(timeout=5)]
+                self.assertEqual(outcomes.count(True), 1)
+                self.assertEqual(outcomes.count(False), 1)
+                self.assertEqual(store.get_status(item.pending_id), "claimed")
+            finally:
+                for worker in workers:
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join(timeout=5)
+                results.close()
+                results.join_thread()
 
     def test_rejects_oversized_or_non_json_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
