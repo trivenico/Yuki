@@ -86,6 +86,39 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.transition(item.pending_id, expected="recovery_required", new_status="pending")
 
+    def test_claim_is_atomic_across_independent_store_instances(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "pending.sqlite3")
+            first = SQLitePendingApprovalStore(path)
+            second = SQLitePendingApprovalStore(path)
+            item = first.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            barrier = threading.Barrier(3)
+            results = []
+            lock = threading.Lock()
+
+            def claim(store):
+                barrier.wait()
+                result = store.claim(item.pending_id, actor="owner", session_id="session-a")
+                with lock:
+                    results.append(result is not None)
+
+            workers = [
+                threading.Thread(target=claim, args=(first,)),
+                threading.Thread(target=claim, args=(second,)),
+            ]
+            for worker in workers:
+                worker.start()
+            barrier.wait()
+            for worker in workers:
+                worker.join(timeout=5)
+            self.assertTrue(all(not worker.is_alive() for worker in workers))
+            self.assertEqual(results.count(True), 1)
+            self.assertEqual(results.count(False), 1)
+            self.assertEqual(first.get_status(item.pending_id), "claimed")
+
     def test_rejects_oversized_or_non_json_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
