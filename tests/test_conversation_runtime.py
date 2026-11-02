@@ -64,6 +64,32 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.runtime.respond(actor_id="mallory", session_id=self.session.session_id,
                 idempotency_key="turn-unauthorized", user_message="Hi", provider=FakeProvider())
 
+    def test_provider_manager_route_passes_cloud_consent_gate(self):
+        class Manager:
+            def __init__(self):
+                self.calls = []
+            def create_routed_adapter(self, **kwargs):
+                self.calls.append(kwargs)
+                return FakeProvider("Routed response")
+        manager = Manager()
+        reply = self.runtime.respond_with_manager(
+            actor_id="alice", session_id=self.session.session_id,
+            idempotency_key="turn-routed", user_message="Route this",
+            provider_manager=manager, preference=("openai",), allow_cloud=False,
+        )
+        self.assertEqual(reply, "Routed response")
+        self.assertEqual(manager.calls, [{
+            "required": ("text",), "preference": ("openai",), "allow_cloud": False,
+        }])
+
+    def test_provider_manager_contract_is_required(self):
+        with self.assertRaises(TypeError):
+            self.runtime.respond_with_manager(
+                actor_id="alice", session_id=self.session.session_id,
+                idempotency_key="turn-invalid", user_message="Hi",
+                provider_manager=object(),
+            )
+
     def test_provider_contract_is_checked(self):
         with self.assertRaises(TypeError):
             self.runtime.respond(actor_id="alice", session_id=self.session.session_id,
