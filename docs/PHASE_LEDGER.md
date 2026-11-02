@@ -114,9 +114,9 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 
 ## Next serial execution order
 
-1. Finish Phase 1 PR #497 independent review and merge; then close or explicitly supersede stale PR #24. Do not advance phase status before review/merge evidence.
-2. Reconcile Phase 2 PRs #27/#30 against current `main`; inspect exact-head CI, reviews, conflicts, and whether later merged work supersedes their changes. Do not bulk-merge stale drafts.
-3. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
+1. **Phase 1 is explicitly deferred by the owner**: keep PR #497 open and unmerged; return to its independent review, acceptance gaps, and stale PR #24 disposition before Phase 3 or any later serial is declared complete. The owner has asked to continue Phase 2 in the meantime.
+2. Finish Phase 2 PR #498 against current `main`: exact-head cross-platform CI, independent security review, actor-attribution decision, storage-permission validation, and acceptance evidence. Close or supersede historical PRs #27/#30 only after the replacement is accepted; do not bulk-merge stale drafts.
+3. Reconcile Phase 1 and Phase 2 integration and close their outstanding gates before starting Phase 3. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
 4. Reconcile Phase 9 PR #8 and issue #9 with later specialist-agent implementation; close or supersede only with evidence.
 5. Continue the full historical serial audit, including undocumented ranges and Phase 154.
 6. Complete explicit security/release blockers (#269, #317/#331) at their correct serial positions after confirming their original phase mapping.
@@ -125,3 +125,4 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 ## Change log
 
 - 2026-11-02: Initial ledger created from docs inventory and verified open issues/PR discussions. This is a baseline, not a completed historical audit.
+- 2026-11-02: Owner-directed sequencing exception recorded: Phase 1 deferred, Phase 2 active; both must be reconciled before Phase 3.
