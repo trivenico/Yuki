@@ -34,26 +34,47 @@ class ConversationRuntime:
 
     def build_prompt(self, *, actor_id: str, session_id: str) -> str:
         session = self.conversations.sessions.get(actor_id=actor_id, session_id=session_id)
-        # Event pagination is ascending; start at the newest bounded window rather
-        # than accidentally replaying only the first 100 events of long sessions.
+        # Read the newest bounded event window. The store returns events in
+        # ascending sequence order, so the cursor is based on the latest sequence.
         after_sequence = max(0, session.last_sequence - _MAX_HISTORY_EVENTS)
         events = self.conversations.history(
             actor_id=actor_id, session_id=session_id,
             after_sequence=after_sequence, limit=_MAX_HISTORY_EVENTS,
         )
-        lines = []
+        messages = []
         for event in events:
             if event.kind not in {"message.user", "message.assistant", "message.system"}:
                 continue
             content = event.payload.get("content")
-            if not isinstance(content, str):
-                continue
-            role = event.kind.removeprefix("message.")
-            lines.append(f"{role.upper()}: {content}")
-        prompt = "\n\n".join(lines)
-        if not prompt:
+            if isinstance(content, str) and content.strip():
+                role = event.kind.removeprefix("message.")
+                messages.append((role, content.strip()))
+
+        if not messages:
             raise ValueError("conversation has no text messages")
-        if len(prompt) > _MAX_PROMPT_CHARS:
+
+        # Greedily retain the most recent context within the character budget.
+        # Keep the latest user message even if it alone exceeds the budget by
+        # truncating its oldest prefix; never silently send an empty prompt.
+        selected = []
+        remaining = _MAX_PROMPT_CHARS
+        for role, content in reversed(messages):
+            prefix = f"{role.upper()}: "
+            available = remaining - len(prefix)
+            if available <= 0:
+                break
+            if len(content) > available:
+                if not selected:
+                    content = content[-available:]
+                else:
+                    break
+            selected.append(f"{prefix}{content}")
+            remaining -= len(selected[-1]) + 2
+            if remaining <= 0:
+                break
+
+        prompt = "\n\n".join(reversed(selected))
+        if not prompt:
             raise ValueError("conversation prompt exceeds the configured size limit")
         return prompt
 
