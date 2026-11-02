@@ -3,12 +3,13 @@ from __future__ import annotations
 import json, os, re, secrets, sys
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 from itertools import chain
 from automation.agent_sessions import AgentSessionStore
 from automation.conversation_runtime import ConversationGenerationError, ConversationRuntime
 from automation.conversation_service import ConversationService
 from core.auth import AuthenticationError, BuiltInAuthService
+from core.memory import MemoryStore
 
 MAX_BODY = 40000
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
@@ -23,6 +24,7 @@ def build_application(data_dir, provider_manager):
         authorize=lambda actor, action, resource: bool(actor))
     conversations = ConversationService(sessions)
     runtime = ConversationRuntime(conversations)
+    memories = MemoryStore(root / "memories.sqlite3")
 
     class Handler(BaseHTTPRequestHandler):
         server_version, sys_version = "YukiLocalAPI/1", ""
@@ -72,6 +74,33 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(200, {"items": safe_items, "selected_provider": selected})
                 except Exception as exc:
                     return self.send_json(503, {"error": "model_catalog_unavailable"})
+            if path == "/v1/memories":
+                params = parse_qs(urlsplit(self.path).query)
+                query = params.get("q", [""])[0]
+                category = params.get("category", [None])[0]
+                scope = "personal:" + user.user_id
+                try:
+                    items = (memories.search(actor_id=user.user_id, scope_id=scope,
+                        query=query, category=category) if query else
+                        memories.list(actor_id=user.user_id, scope_id=scope, category=category))
+                except ValueError:
+                    return self.send_json(400, {"error": "invalid_request"})
+                return self.send_json(200, {"items": [
+                    {"memory_id":m.memory_id,"category":m.category,"content":m.content,
+                     "source":m.source,"metadata":m.metadata,"created_at":m.created_at,
+                     "updated_at":m.updated_at} for m in items]})
+            if path == "/v1/memories":
+                try:
+                    data = self.body()
+                    item = memories.put(actor_id=user.user_id,
+                        scope_id="personal:" + user.user_id,
+                        category=data.get("category"), content=data.get("content"),
+                        source="user", metadata=data.get("metadata"))
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error": "invalid_request"})
+                return self.send_json(201, {"memory_id":item.memory_id,
+                    "category":item.category,"content":item.content,
+                    "created_at":item.created_at,"updated_at":item.updated_at})
             if path == "/v1/conversations":
                 items = conversations.list_sessions(actor_id=user.user_id, limit=50)
                 return self.send_json(200, {"items":[{"session_id":x.session_id,"title":x.title,
@@ -87,6 +116,21 @@ def build_application(data_dir, provider_manager):
                 return self.send_json(200, {"items":[{"sequence":e.sequence,"event_id":e.event_id,
                     "kind":e.kind,"payload":e.payload,"created_at":e.created_at} for e in events]})
             return self.send_json(404, {"error":"not_found"})
+        def do_DELETE(self):
+            path = urlsplit(self.path).path
+            user = self.require()
+            if user is None: return
+            match = re.fullmatch(r"/v1/memories/([A-Za-z0-9_-]{8,128})", path)
+            if not match:
+                return self.send_json(404, {"error": "not_found"})
+            params = parse_qs(urlsplit(self.path).query)
+            if params.get("scope", ["personal"])[0] != "personal":
+                return self.send_json(403, {"error": "scope_not_allowed"})
+            deleted = memories.delete(actor_id=user.user_id,
+                scope_id="personal:" + user.user_id, memory_id=match.group(1))
+            return self.send_json(200 if deleted else 404,
+                {"deleted": deleted} if deleted else {"error": "not_found"})
+
         def do_POST(self):
             path = urlsplit(self.path).path
             if path == "/v1/auth/login":
