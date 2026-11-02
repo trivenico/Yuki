@@ -68,6 +68,10 @@ class ConversationService:
             raise ValueError("tools must contain at most 32 definitions.")
 
         with self._lock:
+            starting_version = self.store.get_conversation(
+                owner_id=owner_id, conversation_id=conversation_id
+            )["version"]
+            recovered_request_ids = set()
             # Reconcile durable running records before accepting retries. Never
             # re-execute a model/tool sequence after a process crash: side effects
             # may already have happened before the crash.
@@ -75,6 +79,7 @@ class ConversationService:
                 owner_id=owner_id, conversation_id=conversation_id, limit=100
             )
             for generation in pending:
+                recovered_request_ids.add(generation["request_id"])
                 conversation_now = self.store.get_conversation(
                     owner_id=owner_id, conversation_id=conversation_id
                 )
@@ -111,6 +116,11 @@ class ConversationService:
             conversation = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
             )
+            if (recovered_request_ids and request_id not in recovered_request_ids
+                    and expected_version == starting_version):
+                # Recovery appended the missing assistant turn. Advance this new
+                # request's optimistic version by exactly those reconciled writes.
+                expected_version = conversation["version"]
             existing_messages = self.store.list_messages(
                 owner_id=owner_id, conversation_id=conversation_id, limit=200
             )
