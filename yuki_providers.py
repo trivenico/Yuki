@@ -21,6 +21,7 @@ class ProviderManager:
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
+            "anthropic": lambda: create_provider({**self._config, "provider": "anthropic"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
         }
         self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
@@ -30,7 +31,7 @@ class ProviderManager:
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
-            ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
+            ProviderInfo("anthropic", ("ANTHROPIC_API_KEY",), True),
             ProviderInfo("deepseek", ("official_api_key_flow_planned",)),
             ProviderInfo("kimi", ("official_api_key_flow_planned",)),
             ProviderInfo("minimax", ("official_api_key_flow_planned",)),
