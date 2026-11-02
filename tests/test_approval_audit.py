@@ -71,6 +71,68 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
                 self.assertNotIn(b"secret-pending-token", handle.read())
             self.assertTrue(audit.verify_chain())
 
+    def test_session_identity_is_hmac_hashed_and_chain_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = b"s" * 32
+            audit = SQLiteApprovalAuditLog(
+                str(Path(tmp) / "audit.sqlite3"), identity_key=key
+            )
+            audit.append(
+                event_type="requested", pending_id="pending-session",
+                actor="local-cli", session_id="session-secret",
+                skill_id="notes.write",
+            )
+            event = audit.list_events()[0]
+            expected = hmac.new(
+                key, b"session-secret", hashlib.sha256
+            ).hexdigest()
+            self.assertEqual(event["session_hash"], expected)
+            self.assertNotEqual(event["session_hash"], "session-secret")
+            self.assertTrue(audit.verify_chain())
+
+    def test_migrates_legacy_schema_missing_both_hash_columns(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "legacy.sqlite3")
+            db = sqlite3.connect(path)
+            db.execute("""
+                CREATE TABLE approval_audit_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    pending_id TEXT NOT NULL,
+                    actor_hash TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL
+                )
+            """)
+            db.execute(
+                "INSERT INTO approval_audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (1, "requested", "legacy-bearer", "actor-hash", "notes.write",
+                 "2026-01-01T00:00:00+00:00", "0" * 64, "0" * 64),
+            )
+            db.execute("""
+                CREATE TRIGGER approval_audit_no_update
+                BEFORE UPDATE ON approval_audit_events
+                BEGIN SELECT RAISE(ABORT, 'append-only'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER approval_audit_no_delete
+                BEFORE DELETE ON approval_audit_events
+                BEGIN SELECT RAISE(ABORT, 'append-only'); END
+            """)
+            db.commit()
+            db.close()
+            audit = SQLiteApprovalAuditLog(path, identity_key=b"m" * 32)
+            event = audit.list_events()[0]
+            self.assertEqual(event["pending_id_hash"], hashlib.sha256(b"legacy-bearer").hexdigest())
+            self.assertEqual(event["session_hash"], hmac.new(
+                b"m" * 32, b"legacy-session-unspecified", hashlib.sha256
+            ).hexdigest())
+            self.assertTrue(audit.verify_chain())
+
     def test_actor_hash_uses_configured_hmac_key(self):
         import hashlib
         import hmac
