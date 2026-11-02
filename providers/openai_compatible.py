@@ -103,3 +103,104 @@ class OpenAICompatibleProvider:
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Cloud provider returned no text response.")
         return text.strip()
+
+    def generate_with_tools(self, prompt: str, tools: list[dict], *, tool_choice="auto") -> dict:
+        """Request OpenAI-compatible function calls and normalize them to Yuki's protocol.
+
+        Only caller-supplied, bounded JSON schemas are sent. Returned arguments
+        are parsed as JSON objects and re-serialized into the provider-neutral
+        structured_tool_protocol envelope; they are not executed here.
+        """
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20_000:
+            raise ValueError("Prompt must be non-empty text of at most 20000 characters.")
+        if not isinstance(tools, list) or not 1 <= len(tools) <= 32:
+            raise ValueError("tools must be a list containing 1 to 32 definitions.")
+        if tool_choice not in ("auto", "none", "required"):
+            raise ValueError("tool_choice must be auto, none, or required.")
+        normalized = []
+        names = set()
+        for item in tools:
+            if not isinstance(item, dict) or set(item) != {"type", "function"} or item["type"] != "function":
+                raise ValueError("Each tool must use the OpenAI function-tool schema.")
+            function = item["function"]
+            if not isinstance(function, dict) or set(function) - {"name", "description", "parameters", "strict"}:
+                raise ValueError("Function tool definition contains unsupported fields.")
+            name = function.get("name")
+            description = function.get("description", "")
+            parameters = function.get("parameters")
+            if (not isinstance(name, str) or not name or len(name) > 128
+                    or not name.replace("_", "a").replace("-", "a").isalnum()
+                    or not isinstance(description, str) or len(description) > 1024
+                    or not isinstance(parameters, dict)):
+                raise ValueError("Function tool name, description, or parameters are invalid.")
+            if name in names:
+                raise ValueError("Function tool names must be unique.")
+            names.add(name)
+            encoded = json.dumps(parameters, separators=(",", ":"))
+            if len(encoded) > 8_000:
+                raise ValueError("Function parameter schema exceeds the size limit.")
+            normalized.append({"type": "function", "function": {
+                "name": name, "description": description, "parameters": parameters,
+                "strict": function.get("strict", True) is True,
+            }})
+        if tool_choice == "required" and not normalized:
+            raise ValueError("At least one tool is required.")
+        api_key = self._environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt.strip()}],
+            "tools": normalized,
+            "tool_choice": tool_choice,
+            "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "application/json",
+                     "Authorization": "Bearer " + api_key}, method="POST",
+        )
+        try:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                raw = response.read(2_000_001)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Cloud provider tool-call request failed; redirects are not followed.") from exc
+        if len(raw) > 2_000_000:
+            raise RuntimeError("Cloud provider response exceeded the 2 MB limit.")
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            message = body["choices"][0]["message"]
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Cloud provider returned an unsupported tool-call response.") from exc
+        calls = message.get("tool_calls", [])
+        if not isinstance(calls, list) or len(calls) > 5:
+            raise RuntimeError("Cloud provider returned an invalid number of tool calls.")
+        normalized_calls = []
+        seen_ids = set()
+        for call in calls:
+            try:
+                call_id = call["id"]
+                function = call["function"]
+                name = function["name"]
+                arguments = json.loads(function["arguments"])
+            except (TypeError, KeyError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Cloud provider returned malformed tool-call data.") from exc
+            if (not isinstance(call_id, str) or not call_id or len(call_id) > 64
+                    or call_id in seen_ids or name not in names or not isinstance(arguments, dict)):
+                raise RuntimeError("Cloud provider returned an unrecognized tool call.")
+            seen_ids.add(call_id)
+            normalized_calls.append({"id": call_id, "name": name, "arguments": arguments})
+        envelope = {"tool_calls": normalized_calls}
+        # Reuse the canonical protocol validator so provider output cannot bypass
+        # its stricter identifier, payload, or batch constraints.
+        from core.structured_tool_protocol import parse_tool_calls
+        try:
+            parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
+        except ValueError as exc:
+            raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
+        return {
+            "tool_calls": envelope,
+            "text": message.get("content") if isinstance(message.get("content"), str) else "",
+            "finish_reason": body["choices"][0].get("finish_reason"),
+        }
