@@ -68,6 +68,45 @@ class ConversationService:
             raise ValueError("tools must contain at most 32 definitions.")
 
         with self._lock:
+            # Reconcile durable running records before accepting retries. Never
+            # re-execute a model/tool sequence after a process crash: side effects
+            # may already have happened before the crash.
+            pending = self.store.list_interrupted_generations(
+                owner_id=owner_id, conversation_id=conversation_id, limit=100
+            )
+            for generation in pending:
+                conversation_now = self.store.get_conversation(
+                    owner_id=owner_id, conversation_id=conversation_id
+                )
+                messages_now = self.store.list_messages(
+                    owner_id=owner_id, conversation_id=conversation_id, limit=200
+                )
+                user_message = next(
+                    (item for item in messages_now if item["message_id"] == generation["user_message_id"]),
+                    None,
+                )
+                following = self.store.list_messages(
+                    owner_id=owner_id, conversation_id=conversation_id,
+                    after_sequence=user_message["sequence"] if user_message else 0,
+                    limit=1,
+                ) if user_message else []
+                if following and following[0]["role"] == "assistant":
+                    self.store.finish_generation(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        request_id=generation["request_id"], status="completed",
+                    )
+                elif user_message is not None:
+                    self.store.append_message(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        role="assistant",
+                        content="This response was interrupted before completion. Please submit a new request; Yuki will not automatically repeat potentially side-effecting actions.",
+                        idempotency_key="assistant:" + generation["request_id"],
+                        expected_version=conversation_now["version"],
+                    )
+                    self.store.finish_generation(
+                        owner_id=owner_id, conversation_id=conversation_id,
+                        request_id=generation["request_id"], status="interrupted",
+                    )
             # Check ownership and stale versions before invoking a model.
             conversation = self.store.get_conversation(
                 owner_id=owner_id, conversation_id=conversation_id
@@ -98,7 +137,7 @@ class ConversationService:
             user_result = self.store.append_message(
                 owner_id=owner_id, conversation_id=conversation_id,
                 role="user", content=user_text, idempotency_key=request_id,
-                expected_version=expected_version,
+                expected_version=expected_version, generation_request_id=request_id,
             )
             if not user_result["created"]:
                 return self._replay_or_conflict(
@@ -111,6 +150,10 @@ class ConversationService:
                 for item in existing_messages[-126:]
             ]
             status, answer, model_turns, tool_calls = "completed", "", 0, 0
+            self.store.update_generation_checkpoint(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id, checkpoint={"phase": "model_running"},
+            )
             try:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
@@ -137,6 +180,11 @@ class ConversationService:
                 role="assistant", content=answer,
                 idempotency_key=f"assistant:{request_id}",
                 expected_version=user_result["version"],
+            )
+            self.store.finish_generation(
+                owner_id=owner_id, conversation_id=conversation_id,
+                request_id=request_id,
+                status=status if status in {"completed", "failed", "cancelled"} else "failed",
             )
             return {
                 "conversation_id": conversation_id,
