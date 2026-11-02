@@ -171,6 +171,29 @@ class ApprovedTestRunnerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runner(timeout=121)
 
+    def test_validation_failure_rolls_back_applied_content(self):
+        observed = []
+        def fail_validation():
+            observed.append(self.file.read_text(encoding="utf-8"))
+            return False
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[self.change()],
+                validate=fail_validation,
+            )
+        self.assertEqual(observed, ["VALUE = 2\\n"])
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\\n")
+
+    def test_validation_exception_rolls_back_applied_content(self):
+        def broken_validation():
+            raise RuntimeError("validator unavailable")
+        with self.assertRaises(WorkspaceChangeError):
+            self.service().apply(
+                principal=self.principal, changes=[self.change()],
+                validate=broken_validation,
+            )
+        self.assertEqual(self.file.read_text(encoding="utf-8"), "VALUE = 1\\n")
+
 
 if __name__ == "__main__":
     unittest.main()
