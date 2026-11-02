@@ -33,3 +33,12 @@ and tool output as untrusted content. Protect the database and backups with
 host-level encryption and access controls before production use.
 
 Run tests with: python -m unittest tests.test_agent_sessions
+
+
+## Session discovery
+
+The store exposes `list_sessions(actor_id, before=None, limit=50)` for
+actor-scoped session history. Pagination uses a stable keyset cursor containing
+the last row's `(updated_at, session_id)`, avoiding large offset scans.
+The API caps page size at 200. Clients should persist the cursor only as
+navigation state; authorization is re-evaluated on every page request.
