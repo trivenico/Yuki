@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
-from pathlib import Path
 import sqlite3
 from typing import Any
 
