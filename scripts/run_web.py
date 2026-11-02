@@ -16,7 +16,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
-from providers.catalog import build_provider_catalog
+from providers.runtime_manager import ProviderRuntimeManager
 
 
 class DenyAllTools:
@@ -46,6 +46,9 @@ def create_app():
 
     provider = create_provider(config)
     adapter = ProviderAgentAdapter(provider)
+    provider_manager = ProviderRuntimeManager(
+        config, adapter, workspace / "provider-selection.json", environ=os.environ,
+    )
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
     agent_loop = AgentExecutionLoop(
         adapter,
@@ -57,7 +60,8 @@ def create_app():
     )
     return build_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=lambda: build_provider_catalog(config=config),
+        provider_catalog=provider_manager.catalog,
+        provider_selector=provider_manager.select,
     )
 
 
