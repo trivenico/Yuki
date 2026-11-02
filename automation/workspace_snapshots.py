@@ -7,6 +7,7 @@ requires an application-owned authorization callback for every operation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -84,11 +85,19 @@ class WorkspaceSnapshotStore:
                 PRIMARY KEY(snapshot_id,path),
                 FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id))""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database, timeout=5.0)
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout=5000")
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _allowed(self, actor: str, action: str) -> None:
         try:
