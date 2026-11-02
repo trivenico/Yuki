@@ -76,6 +76,22 @@ class ConversationRuntimeTests(unittest.TestCase):
         self.assertIn("message-109", prompt)
         self.assertNotIn("message-0", prompt)
 
+    def test_prompt_budget_keeps_latest_user_message(self):
+        huge = "x" * 32_000
+        for index in range(4):
+            self.conversations.add_message(
+                actor_id="alice", session_id=self.session.session_id,
+                idempotency_key=f"large-{index}", role="assistant", content=huge,
+            )
+        self.conversations.add_message(
+            actor_id="alice", session_id=self.session.session_id,
+            idempotency_key="latest-question", role="user", content="LATEST QUESTION",
+        )
+        prompt = self.runtime.build_prompt(actor_id="alice", session_id=self.session.session_id)
+        self.assertLessEqual(len(prompt), 100_000)
+        self.assertIn("LATEST QUESTION", prompt)
+        self.assertTrue(prompt.endswith("USER: LATEST QUESTION"))
+
     def test_provider_manager_route_passes_cloud_consent_gate(self):
         class Manager:
             def __init__(self):
