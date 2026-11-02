@@ -27,7 +27,7 @@ class MemoryReviewTests(unittest.TestCase):
             scope_id="personal:alice", proposal_id=item.proposal_id)
         self.assertEqual(approved.content, "Prefer concise answers")
         self.assertEqual(self.review.list(actor_id="alice",
-            scope_id="personal:alice")[0].status, "approved")
+            scope_id="personal:alice", status="approved")[0].status, "approved")
 
     def test_approval_is_idempotent(self):
         item = self.propose()
