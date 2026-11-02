@@ -33,8 +33,13 @@ class ConversationRuntime:
             raise TypeError("provider must implement is_available()")
 
     def build_prompt(self, *, actor_id: str, session_id: str) -> str:
+        session = self.conversations.sessions.get(actor_id=actor_id, session_id=session_id)
+        # Event pagination is ascending; start at the newest bounded window rather
+        # than accidentally replaying only the first 100 events of long sessions.
+        after_sequence = max(0, session.last_sequence - _MAX_HISTORY_EVENTS)
         events = self.conversations.history(
-            actor_id=actor_id, session_id=session_id, limit=_MAX_HISTORY_EVENTS
+            actor_id=actor_id, session_id=session_id,
+            after_sequence=after_sequence, limit=_MAX_HISTORY_EVENTS,
         )
         lines = []
         for event in events:
