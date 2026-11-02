@@ -104,9 +104,21 @@ class YukiConversationAPI:
                 if self.provider_selector is None:
                     return await self._respond(send, 503, {"error": "provider_selection_unavailable"})
                 payload = await self._body(receive)
-                if set(payload) != {"provider"} or not isinstance(payload.get("provider"), str):
-                    return await self._respond(send, 400, {"error": "invalid_request"})
+                if (set(payload) != {"provider", "confirm_global", "confirm_cloud"}
+                        or not isinstance(payload.get("provider"), str)
+                        or payload.get("confirm_global") is not True
+                        or not isinstance(payload.get("confirm_cloud"), bool)):
+                    return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
                 try:
+                    target = next(
+                        (item for item in self.provider_catalog()
+                         if item.get("name") == payload["provider"].strip().lower()),
+                        None,
+                    )
+                    if target is None:
+                        return await self._respond(send, 422, {"error": "provider_not_implemented"})
+                    if target.get("privacy") not in {"local_runtime", "local_or_configured_endpoint"} and not payload["confirm_cloud"]:
+                        return await self._respond(send, 400, {"error": "cloud_consent_required"})
                     selected = self.provider_selector(payload["provider"])
                 except ValueError as exc:
                     code = str(exc)
