@@ -121,6 +121,8 @@ class ConversationService:
                 tool_calls = result.tool_calls
                 if result.status == "completed":
                     answer = result.text
+                elif result.status == "cancelled":
+                    answer = "Generation was stopped at your request."
                 else:
                     answer = (
                         "I couldn't complete that request within the current execution limits. "
