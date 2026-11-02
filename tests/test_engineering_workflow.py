@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from automation.approved_workspace_changes import ApprovedTestRunner, ApprovedWorkspaceChanges, FileChange
+from automation.approved_workspace_changes import ApprovedTestRunner, ApprovedWorkspaceChanges, FileChange, WorkspaceChangeError
 from automation.authorized_read_tools import AuthorizedReadOnlyTools, ToolPrincipal, ToolAuthorizationError
 from automation.engineering_workflow import EngineeringWorkflow
 
@@ -110,6 +110,30 @@ class EngineeringWorkflowTests(unittest.TestCase):
                 proposed_changes=[change], test_module="test_sample",
             )
         self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\n")
+
+    def test_failing_tests_roll_back_the_proposed_workspace_edit(self):
+        (self.root / "test_sample.py").write_text(
+            "import unittest\\nclass T(unittest.TestCase):\\n"
+            " def test_failure(self): self.assertEqual(1, 2)\\n",
+            encoding="utf-8",
+        )
+        change = FileChange(
+            "README.md", hashlib.sha256(self.readme.read_bytes()).hexdigest(),
+            "This must be rolled back.\\n",
+        )
+        with self.assertRaises(WorkspaceChangeError):
+            self.workflow.run(
+                principal=self.principal,
+                task="Apply this change only if tests pass.",
+                inspection_calls=[{"name": "workspace.read", "arguments": {"path": "README.md"}}],
+                proposed_changes=[change],
+                test_module="test_sample",
+            )
+        self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\\n")
+        self.assertTrue(any(
+            event.get("outcome") == "failed"
+            for event in self.events if "outcome" in event
+        ))
 
 
 if __name__ == "__main__":
