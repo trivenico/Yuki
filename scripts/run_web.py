@@ -51,7 +51,7 @@ def create_app():
         protocol,
         stream_model=adapter.stream_model,
         max_model_turns=8,
-        max_tool_calls=0,
+        max_tool_calls=1,
         max_duration_seconds=120,
     )
     return build_conversation_runtime(config, auth_service=auth, agent_loop=agent_loop)
