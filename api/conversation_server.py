@@ -11,6 +11,7 @@ from automation.conversation_service import ConversationService
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.memory import MemoryStore
 from core.memory_review import MemoryReviewStore
+from core.memory_intelligence import MemoryIntelligence
 
 MAX_BODY = 40000
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
@@ -27,6 +28,7 @@ def build_application(data_dir, provider_manager):
     runtime = ConversationRuntime(conversations)
     memories = MemoryStore(root / "memories.sqlite3")
     memory_reviews = MemoryReviewStore(root / "memory_review.sqlite3", memories)
+    memory_intelligence = MemoryIntelligence(memories)
 
     class Handler(BaseHTTPRequestHandler):
         server_version, sys_version = "YukiLocalAPI/1", ""
@@ -76,6 +78,19 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(200, {"items": safe_items, "selected_provider": selected})
                 except Exception as exc:
                     return self.send_json(503, {"error": "model_catalog_unavailable"})
+            if path == "/v1/memory-suggestions/preview":
+                try:
+                    data = self.body()
+                    candidates = memory_intelligence.extract(data.get("text"),
+                        actor_id=user.user_id, scope_id="personal:" + user.user_id)
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error":"invalid_request"})
+                return self.send_json(200, {"items":[{
+                    "category":item.category,"content":item.content,
+                    "evidence":item.evidence,"confidence":item.confidence,
+                    "duplicate_of":item.duplicate_of,
+                    "possible_conflict_with":list(item.possible_conflict_with)
+                    } for item in candidates], "persisted":False})
             if path == "/v1/memory-proposals":
                 params = parse_qs(urlsplit(self.path).query)
                 status = params.get("status", ["pending"])[0]
