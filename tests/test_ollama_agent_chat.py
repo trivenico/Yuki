@@ -106,7 +106,7 @@ class OllamaAgentChatTests(unittest.TestCase):
             "function": {"name": "lookup", "arguments": "not-an-object"}
         }]}}, self.requests)
         with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
-            with self.assertRaisesRegex(RuntimeError, "malformed"):
+            with self.assertRaisesRegex(RuntimeError, "malformed tool arguments"):
                 self.provider.generate_chat(messages=self.messages, tools=self.tools)
 
 
