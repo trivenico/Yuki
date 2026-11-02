@@ -65,6 +65,11 @@ class ConversationRuntime:
         """Route via ProviderManager; cloud use is denied unless explicitly allowed."""
         if not isinstance(allow_cloud, bool):
             raise TypeError("allow_cloud must be a boolean")
+        # Authenticate and validate the request before provider discovery or
+        # adapter construction; unauthorized callers must not trigger provider work.
+        self.conversations.sessions.get(actor_id=actor_id, session_id=session_id)
+        if not isinstance(user_message, str) or not user_message.strip() or len(user_message) > 32_000:
+            raise ValueError("user_message must be non-empty text within the message size limit")
         if not callable(getattr(provider_manager, "create_routed_adapter", None)):
             raise TypeError("provider_manager must implement create_routed_adapter()")
         provider = provider_manager.create_routed_adapter(
