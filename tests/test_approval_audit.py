@@ -1,4 +1,6 @@
 """Regression tests for the durable approval audit log."""
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +78,14 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             audit.append(event_type="requested", pending_id="pending-1", actor="secret-actor-123", skill_id="notes.write")
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file mode semantics")
+    def test_audit_database_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "audit.sqlite3"
+            audit = SQLiteApprovalAuditLog(str(path))
+            audit.append(event_type="requested", pending_id="p1", actor="owner", skill_id="notes.write")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
