@@ -72,27 +72,6 @@ def build_application(data_dir, provider_manager):
                     return self.send_json(200, {"items": safe_items, "selected_provider": selected})
                 except Exception as exc:
                     return self.send_json(503, {"error": "model_catalog_unavailable"})
-            if path == "/v1/models/select":
-                try:
-                    data = self.body()
-                    name = data.get("provider")
-                    if not isinstance(name, str) or not name.strip() or len(name) > 64:
-                        raise ValueError()
-                    catalog_item = next((item for item in provider_manager.catalog()
-                                          if item.get("name") == name.strip().lower()), None)
-                    if catalog_item is None or catalog_item.get("privacy") != "local_runtime":
-                        return self.send_json(403, {"error": "local_provider_required"})
-                    result = provider_manager.select(name)
-                    selected = result.startswith("Selected provider:")
-                    return self.send_json(200 if selected else 400, {
-                        "selected": selected,
-                        "provider": provider_manager.current().name if selected and provider_manager.current() else None,
-                        "message": result,
-                    })
-                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                    return self.send_json(400, {"error": "invalid_request"})
-                except Exception:
-                    return self.send_json(503, {"error": "provider_selection_unavailable"})
             if path == "/v1/conversations":
                 items = conversations.list_sessions(actor_id=user.user_id, limit=50)
                 return self.send_json(200, {"items":[{"session_id":x.session_id,"title":x.title,
@@ -127,6 +106,27 @@ def build_application(data_dir, provider_manager):
                 _, _, token = self.headers.get("Authorization","").partition(" ")
                 auth.revoke_session(token)
                 return self.send_json(200, {"status":"signed_out"})
+            if path == "/v1/models/select":
+                try:
+                    data = self.body()
+                    name = data.get("provider")
+                    if not isinstance(name, str) or not name.strip() or len(name) > 64:
+                        raise ValueError()
+                    catalog_item = next((item for item in provider_manager.catalog()
+                                          if item.get("name") == name.strip().lower()), None)
+                    if catalog_item is None or catalog_item.get("privacy") != "local_runtime":
+                        return self.send_json(403, {"error": "local_provider_required"})
+                    result = provider_manager.select(name)
+                    selected = result.startswith("Selected provider:")
+                    return self.send_json(200 if selected else 400, {
+                        "selected": selected,
+                        "provider": provider_manager.current().name if selected and provider_manager.current() else None,
+                        "message": result,
+                    })
+                except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                    return self.send_json(400, {"error": "invalid_request"})
+                except Exception:
+                    return self.send_json(503, {"error": "provider_selection_unavailable"})
             if path == "/v1/conversations":
                 try:
                     data = self.body()
