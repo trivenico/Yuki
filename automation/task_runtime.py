@@ -184,6 +184,24 @@ class TaskRuntime:
                                      expected_version=expected_version)
         return self._record(self.store.get(task_id))
 
+    def renew_lease(
+        self, *, actor_id: str, task_id: str, worker_id: str,
+        expected_version: int, lease_seconds: int = 60,
+    ) -> TaskRecord:
+        """Renew the current worker lease with authorization and compare-and-swap."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:lease:renew", task_id):
+            raise PermissionError("task lease renewal is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        renewed = self.store.renew_lease(
+            task_id, worker_id=worker_id.strip(),
+            expected_version=expected_version, lease_seconds=lease_seconds,
+        )
+        return self._record(renewed)
+
     def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
                         artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
