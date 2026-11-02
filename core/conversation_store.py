@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import time
 import uuid
 from typing import Any
 
@@ -67,6 +68,13 @@ class ConversationStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_conversation_messages_order
                     ON conversation_messages(conversation_id, sequence);
+                CREATE TABLE IF NOT EXISTS conversation_generation_leases (
+                    conversation_id TEXT PRIMARY KEY REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    lease_token TEXT NOT NULL,
+                    expires_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_generation_leases_expiry ON conversation_generation_leases(expires_at);
             """)
 
     @staticmethod
@@ -255,6 +263,62 @@ class ConversationStore:
                     (conversation_id, after_sequence, limit),
                 ).fetchall()
         return [self._message(row) for row in rows]
+
+
+    def acquire_generation_lease(self, *, owner_id: str, conversation_id: str, lease_token: str, ttl_seconds: int = 600) -> dict[str, Any]:
+        """Atomically claim one conversation's generation slot across processes."""
+        owner = self._owner(owner_id)
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ValueError("conversation_id must be non-empty text.")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 200:
+            raise ValueError("lease_token must be non-empty text of at most 200 characters.")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 3600:
+            raise ValueError("ttl_seconds must be an integer from 5 to 3600.")
+        now = time.time()
+        expires_at = now + ttl_seconds
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                conversation = db.execute(
+                    "SELECT archived FROM conversations WHERE conversation_id=? AND owner_id=?",
+                    (conversation_id, owner),
+                ).fetchone()
+                if conversation is None:
+                    raise ConversationNotFound("conversation not found.")
+                if conversation["archived"]:
+                    raise ConversationConflict("conversation is archived.")
+                current = db.execute(
+                    "SELECT expires_at FROM conversation_generation_leases WHERE conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                if current is not None and current["expires_at"] > now:
+                    raise ConversationConflict("another generation is already active for this conversation.")
+                db.execute(
+                    """INSERT INTO conversation_generation_leases
+                       (conversation_id, owner_id, lease_token, expires_at) VALUES (?, ?, ?, ?)
+                       ON CONFLICT(conversation_id) DO UPDATE SET
+                         owner_id=excluded.owner_id, lease_token=excluded.lease_token,
+                         expires_at=excluded.expires_at""",
+                    (conversation_id, owner, lease_token.strip(), expires_at),
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return {"conversation_id": conversation_id, "expires_at": expires_at}
+
+    def release_generation_lease(self, *, owner_id: str, conversation_id: str, lease_token: str) -> bool:
+        """Release only a lease matching its owner and unique fencing token."""
+        owner = self._owner(owner_id)
+        if not isinstance(lease_token, str) or not lease_token.strip():
+            raise ValueError("lease_token must be non-empty text.")
+        with self._connect() as db:
+            cursor = db.execute(
+                """DELETE FROM conversation_generation_leases
+                   WHERE conversation_id=? AND owner_id=? AND lease_token=?""",
+                (conversation_id, owner, lease_token.strip()),
+            )
+            return cursor.rowcount == 1
 
     def archive_conversation(self, *, owner_id: str, conversation_id: str) -> dict[str, Any]:
         owner = self._owner(owner_id)
