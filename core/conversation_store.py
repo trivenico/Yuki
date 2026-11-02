@@ -75,6 +75,22 @@ class ConversationStore:
                     expires_at REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_generation_leases_expiry ON conversation_generation_leases(expires_at);
+
+                CREATE TABLE IF NOT EXISTS conversation_generation_runs (
+                    generation_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
+                    owner_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    user_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(message_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'interrupted', 'failed', 'cancelled')),
+                    checkpoint TEXT NOT NULL DEFAULT '{}',
+                    started_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    UNIQUE(conversation_id, request_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
+                    ON conversation_generation_runs(owner_id, status, updated_at);
             """)
 
     @staticmethod
@@ -167,6 +183,7 @@ class ConversationStore:
     def append_message(
         self, *, owner_id: str, conversation_id: str, role: str, content: str,
         idempotency_key: str, expected_version: int | None = None,
+        generation_request_id: str | None = None,
     ) -> dict[str, Any]:
         owner = self._owner(owner_id)
         if not isinstance(role, str) or role not in {"user", "assistant"}:
@@ -176,6 +193,8 @@ class ConversationStore:
             raise ValueError(f"content must be non-empty text of at most {maximum} characters.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
+        if generation_request_id is not None and (role != "user" or not isinstance(generation_request_id, str) or not generation_request_id.strip() or len(generation_request_id) > 160):
+            raise ValueError("generation_request_id must be non-empty text for user messages.")
         if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
             raise ValueError("expected_version must be a non-negative integer.")
         now, message_id = self._now(), str(uuid.uuid4())
@@ -223,6 +242,15 @@ class ConversationStore:
                        WHERE conversation_id=? AND owner_id=?""",
                     (title, now, sequence, conversation_id, owner),
                 )
+                if generation_request_id is not None:
+                    db.execute(
+                        """INSERT INTO conversation_generation_runs
+                           (generation_id, conversation_id, owner_id, request_id, user_message_id,
+                            status, checkpoint, started_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, 'running', '{}', ?, ?)""",
+                        (str(uuid.uuid4()), conversation_id, owner, generation_request_id.strip(),
+                         message_id, now, now),
+                    )
                 row = db.execute(
                     "SELECT * FROM conversation_messages WHERE message_id=?", (message_id,)
                 ).fetchone()
@@ -319,6 +347,74 @@ class ConversationStore:
                 (conversation_id, owner, lease_token.strip()),
             )
             return cursor.rowcount == 1
+
+
+    def update_generation_checkpoint(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        checkpoint: dict[str, Any],
+    ) -> bool:
+        """Persist a bounded, non-sensitive execution checkpoint for recovery."""
+        owner = self._owner(owner_id)
+        if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
+            raise ValueError("request_id must be non-empty text of at most 160 characters.")
+        if not isinstance(checkpoint, dict) or len(checkpoint) > 16:
+            raise ValueError("checkpoint must be a small object.")
+        import json
+        encoded = json.dumps(checkpoint, ensure_ascii=True, separators=(",", ":"))
+        if len(encoded) > 4096:
+            raise ValueError("checkpoint exceeds 4096 characters.")
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_generation_runs
+                   SET checkpoint=?, updated_at=?
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
+                (encoded, self._now(), owner, conversation_id, request_id.strip()),
+            )
+            return cursor.rowcount == 1
+
+    def finish_generation(
+        self, *, owner_id: str, conversation_id: str, request_id: str,
+        status: str,
+    ) -> bool:
+        owner = self._owner(owner_id)
+        if status not in {"completed", "interrupted", "failed", "cancelled"}:
+            raise ValueError("invalid generation terminal status.")
+        now = self._now()
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE conversation_generation_runs
+                   SET status=?, updated_at=?, finished_at=?
+                   WHERE owner_id=? AND conversation_id=? AND request_id=? AND status='running'""",
+                (status, now, now, owner, conversation_id, request_id.strip()),
+            )
+            return cursor.rowcount == 1
+
+    def list_interrupted_generations(
+        self, *, owner_id: str, conversation_id: str | None = None, limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        owner = self._owner(owner_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        with self._connect() as db:
+            if conversation_id is None:
+                rows = db.execute(
+                    """SELECT * FROM conversation_generation_runs
+                       WHERE owner_id=? AND status='running'
+                       ORDER BY started_at LIMIT ?""", (owner, limit)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """SELECT * FROM conversation_generation_runs
+                       WHERE owner_id=? AND conversation_id=? AND status='running'
+                       ORDER BY started_at LIMIT ?""", (owner, conversation_id, limit)
+                ).fetchall()
+        import json
+        return [{
+            "generation_id": row["generation_id"], "conversation_id": row["conversation_id"],
+            "request_id": row["request_id"], "user_message_id": row["user_message_id"],
+            "status": row["status"], "checkpoint": json.loads(row["checkpoint"]),
+            "started_at": row["started_at"], "updated_at": row["updated_at"],
+        } for row in rows]
 
     def archive_conversation(self, *, owner_id: str, conversation_id: str) -> dict[str, Any]:
         owner = self._owner(owner_id)
