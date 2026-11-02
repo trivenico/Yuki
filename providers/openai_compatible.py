@@ -68,6 +68,73 @@ class OpenAICompatibleProvider:
     def is_available(self):
         return bool(self._environ.get(self.api_key_env, "").strip())
 
+    def stream(self, prompt: str):
+        """Yield Chat Completions SSE content deltas; never follow redirects."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Prompt must be non-empty text.")
+        api_key = self._environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            raise RuntimeError(f"Cloud provider is not configured; set {self.api_key_env}.")
+        payload = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt.strip()[:20000]}],
+            "stream": True,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + "/chat/completions", data=payload,
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream",
+                     "Authorization": "Bearer " + api_key}, method="POST",
+        )
+        total, saw_done = 0, False
+        try:
+            opener = urllib.request.build_opener(_RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
+                while True:
+                    line = response.readline(1_000_001)
+                    if not line:
+                        break
+                    if len(line) > 1_000_000:
+                        raise RuntimeError("Cloud provider stream event exceeded the 1 MB limit.")
+                    line = line.strip()
+                    if not line or line.startswith(b":") or not line.startswith(b"data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == b"[DONE]":
+                        saw_done = True
+                        break
+                    try:
+                        body = json.loads(data.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("Cloud provider returned an invalid SSE event.") from exc
+                    if not isinstance(body, dict):
+                        raise RuntimeError("Cloud provider returned an unsupported SSE event.")
+                    choices = body.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        # Some providers send usage-only events with an empty choices array.
+                        if body.get("usage") is not None:
+                            continue
+                        raise RuntimeError("Cloud provider returned an event without choices.")
+                    choice = choices[0]
+                    if not isinstance(choice, dict):
+                        raise RuntimeError("Cloud provider returned an invalid choice.")
+                    delta = choice.get("delta", {})
+                    if not isinstance(delta, dict):
+                        raise RuntimeError("Cloud provider returned an invalid delta.")
+                    content = delta.get("content", "")
+                    if content is None:
+                        content = ""
+                    if not isinstance(content, str):
+                        raise RuntimeError("Cloud provider returned a non-text delta.")
+                    if content:
+                        total += len(content)
+                        if total > 32_000:
+                            raise RuntimeError("Cloud provider stream exceeded the 32,000-character limit.")
+                        yield content
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError("Cloud provider streaming request failed; redirects are not followed.") from exc
+        if not saw_done:
+            raise RuntimeError("Cloud provider stream ended before the [DONE] marker.")
+
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must be non-empty text.")
