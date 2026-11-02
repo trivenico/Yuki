@@ -4,9 +4,9 @@ These tests deliberately exercise only modules present in this branch. End-to-en
 skill execution belongs in a separate integration test once the manifest runtime
 and subprocess adapter are implemented on the same branch.
 """
-import tempfile
 import hashlib
 import hmac
+import tempfile
 import threading
 import unittest
 from pathlib import Path
