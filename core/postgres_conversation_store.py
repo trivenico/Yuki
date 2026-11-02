@@ -6,9 +6,7 @@ service can use either backend without backend-specific branching.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from pathlib import Path
 from urllib.parse import urlsplit
-import re
 from typing import Any
 
 from psycopg.rows import dict_row
