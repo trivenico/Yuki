@@ -55,3 +55,18 @@ Supported categories: preference, fact, decision, procedure, project, skill, not
 Project-scoped storage exists at the store layer, but project memory is not exposed
 over HTTP until project membership and authorization checks are implemented.
 Memory is not automatically injected into model prompts in this phase.
+
+
+## Memory proposal review
+
+Suggested memories remain outside the searchable memory store until the
+authenticated owner approves them.
+
+- `GET /v1/memory-proposals` — list pending proposals; optional `?status=all|approved|rejected`.
+- `POST /v1/memory-proposals` — submit `{"category":"preference","content":"..."}`.
+- `POST /v1/memory-proposals/{proposal_id}/approve` — approve and persist.
+- `POST /v1/memory-proposals/{proposal_id}/reject` — reject without persisting.
+
+The owner and personal scope are derived from the authenticated session.
+This is a review workflow, not an automatic conversation extractor; Yuki does
+not yet infer or submit suggestions from conversation content.
