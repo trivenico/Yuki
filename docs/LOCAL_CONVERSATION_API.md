@@ -83,3 +83,13 @@ not yet infer or submit suggestions from conversation content.
   A user must separately submit a proposal and approve it.
 - Extraction is heuristic, not semantic model reasoning; candidates require
   human interpretation and approval.
+
+
+## Memory retrieval
+
+- `POST /v1/memories/retrieve` accepts `{"query":"...","limit":10}`.
+- Optional `category` narrows results to one memory category.
+- Results include a relevance score and matched terms.
+- Retrieval is scoped to the authenticated user's personal memory.
+- The current implementation is bounded BM25-style lexical ranking, not vector
+  embeddings or semantic understanding. It is an offline baseline.
