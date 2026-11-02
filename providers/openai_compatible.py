@@ -114,7 +114,7 @@ class OpenAICompatibleProvider:
         for item in messages:
             if not isinstance(item, dict) or set(item) != {"role", "content"}:
                 raise ValueError("Each message must contain only role and content.")
-            if item["role"] not in {"system", "user", "assistant"} or not isinstance(item["content"], str):
+            if not isinstance(item["role"], str) or item["role"] not in {"system", "user", "assistant"} or not isinstance(item["content"], str):
                 raise ValueError("Message role or content is invalid.")
             total_chars += len(item["content"])
             if total_chars > 100_000:
