@@ -64,6 +64,17 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.runtime.respond(actor_id="mallory", session_id=self.session.session_id,
                 idempotency_key="turn-unauthorized", user_message="Hi", provider=FakeProvider())
 
+    def test_prompt_uses_latest_events_for_long_conversations(self):
+        for index in range(110):
+            self.conversations.add_message(
+                actor_id="alice", session_id=self.session.session_id,
+                idempotency_key=f"history-{index}", role="user",
+                content=f"message-{index}",
+            )
+        prompt = self.runtime.build_prompt(actor_id="alice", session_id=self.session.session_id)
+        self.assertIn("message-109", prompt)
+        self.assertNotIn("message-0", prompt)
+
     def test_provider_manager_route_passes_cloud_consent_gate(self):
         class Manager:
             def __init__(self):
