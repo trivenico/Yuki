@@ -5,7 +5,6 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import threading
 import uuid
 from typing import Any, Sequence
@@ -46,7 +45,15 @@ class ConversationService:
             limit=limit, after_sequence=after_sequence,
         )
 
-    def reply(
+    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None) -> dict[str, Any]:
+        token = str(uuid.uuid4())
+        self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=600)
+        try:
+            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text)
+        finally:
+            self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
+
+    def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
         tools: Sequence[dict[str, Any]], system_text: str | None = None,
