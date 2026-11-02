@@ -132,6 +132,10 @@ class ProviderManager:
             raise TypeError("preference must be iterable.") from exc
         if len(preferences) > 32:
             raise ValueError("at most 32 provider preferences are allowed.")
+        # An explicit user selection is authoritative. Never silently route to
+        # another provider if that selection is unavailable or violates privacy policy.
+        if not preferences and self._selected:
+            preferences = (self._selected,)
         selected = self.routing_registry().route(
             required=required, preference=preferences, allow_cloud=allow_cloud,
             strict_preference=bool(preferences),

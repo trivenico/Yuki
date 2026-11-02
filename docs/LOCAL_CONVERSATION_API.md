@@ -25,3 +25,16 @@ Cloud routing is disabled. SSE client disconnect closes the conversation
 runtime iterator. Remaining pre-production work includes rate limiting,
 TLS/reverse-proxy integration, operational telemetry, multi-client load tests,
 and security review.
+
+
+## Model control
+
+- `GET /v1/models` — authenticated, sanitized provider/model readiness catalog.
+- `POST /v1/models/select` — authenticated provider selection; JSON
+  `{"provider":"ollama"}`.
+
+The catalog never returns credential values. Provider selection is explicit.
+The selected provider becomes a strict routing preference; Yuki does not silently
+switch to a different provider when it is unavailable or blocked by privacy
+policy. Cloud providers remain excluded unless the calling workflow explicitly
+opts in. The current local conversation API opts out of cloud routing. The desktop model selector only permits providers classified as `local_runtime`; cloud and non-loopback endpoints are not selectable through this local UI.

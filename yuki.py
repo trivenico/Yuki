@@ -85,6 +85,8 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
+  /models                         Show sanitized model/provider readiness catalog
+  /model select NAME              Select an implemented provider
   /provider select NAME           Select an implemented provider adapter
   /chat                           Start or resume persistent local streaming chat
   /api                            Start authenticated local conversation API
@@ -185,6 +187,35 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
             f"Learning records: {len(load_history())}\n"
             f"Recent audit events: {len(load_audit_events())}"
         )
+    if command == "/models":
+        try:
+            catalog = providers.catalog()
+            current = providers.current()
+            selected = current.name if current else "none"
+            return "\\n".join(
+                f'{item["label"]}: {"ready" if item["ready"] else "not ready"}; '
+                f'model={item["configured_model"] or "not configured"}; '
+                f'privacy={item["privacy"]}; status={item["status"]}'
+                f'{" (selected)" if item["name"] == selected else ""}'
+                for item in catalog
+            )
+        except Exception as error:
+            return f"Model catalog unavailable ({type(error).__name__})."
+    if command.startswith("/model "):
+        parts = command.split(maxsplit=2)
+        if len(parts) != 3 or parts[1] != "select":
+            return "Usage: /model select NAME"
+        result = providers.select(parts[2])
+        if result.startswith("Selected provider:"):
+            try:
+                adapter = providers.create_selected_adapter()
+                if adapter is None:
+                    return "Model selection failed: no adapter is available."
+                agent.set_provider(adapter)
+            except Exception:
+                return "Model selection failed. The previous model remains active."
+        write_audit_event("model:provider-select", "completed" if result.startswith("Selected provider:") else "rejected")
+        return result
     if command == "/providers":
         return "\n".join(
             f'{item["name"]}: {"implemented" if item["implemented"] else "not implemented"}'
