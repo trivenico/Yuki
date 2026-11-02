@@ -97,6 +97,7 @@ class ApprovalCoordinator:
         try:
             self._audit("consumed", pending_id, actor, pending["skill_id"])
         except Exception:
+            self._mark_recovery(pending_id, "claimed")
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
         action = pending["action"]
         import json
@@ -108,13 +109,18 @@ class ApprovalCoordinator:
         if not confirmed:
             try:
                 self._audit("denied", pending_id, actor, pending["skill_id"])
+                self._transition(pending_id, "claimed", "denied")
             except Exception:
+                self._mark_recovery(pending_id, "claimed")
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
         try:
             self._audit("approved", pending_id, actor, pending["skill_id"])
+            self._transition(pending_id, "claimed", "approved")
+            self._transition(pending_id, "approved", "executing")
         except Exception:
+            self._mark_recovery(pending_id, "approved")
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
@@ -126,7 +132,9 @@ class ApprovalCoordinator:
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+                self._transition(pending_id, "executing", "execution_failed")
             except Exception:
+                self._mark_recovery(pending_id, "executing")
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
                     result={"execution_error": type(exc).__name__, "audit": "unavailable"},
@@ -135,7 +143,9 @@ class ApprovalCoordinator:
 
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
+            self._transition(pending_id, "executing", "completed")
         except Exception:
+            self._mark_recovery(pending_id, "executing")
             return ApprovalOutcome(
                 False, "recovery_required", pending_id=pending_id,
                 result={"execution_result": result, "audit": "unavailable"},
@@ -148,7 +158,7 @@ class ApprovalCoordinator:
         if not isinstance(actor, str) or not isinstance(session_id, str):
             return None
         if self.pending_store is not None:
-            item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
+            item = self.pending_store.claim(pending_id, actor=actor, session_id=session_id)
             if item is None:
                 return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
@@ -160,6 +170,23 @@ class ApprovalCoordinator:
             if item is None or item["actor"] != actor or item["session_id"] != session_id:
                 return None
             return self._pending.pop(pending_id)
+
+    def _transition(self, pending_id, expected, new_status):
+        if self.pending_store is not None:
+            if not self.pending_store.transition(
+                pending_id, expected=expected, new_status=new_status
+            ):
+                raise RuntimeError("Approval lifecycle state changed unexpectedly.")
+
+    def _mark_recovery(self, pending_id, expected):
+        if self.pending_store is not None:
+            try:
+                self.pending_store.transition(
+                    pending_id, expected=expected, new_status="recovery_required"
+                )
+            except Exception:
+                # Preserve the last durable state for operator reconciliation.
+                pass
 
     def _audit(self, event_type, pending_id, actor, skill_id):
         if self.audit_log is not None:
