@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from core.logging_setup import configure_logging, log_event
+from core.agent import YukiCoreAgent
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.permissions import PermissionGate
 
@@ -57,6 +58,81 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
                 data = stream.read()
             self.assertNotIn(b"secret-args", data)
             self.assertNotIn(b"private prompt text", data)
+            self.assertTrue(audit.verify_chain())
+
+    def test_real_agent_execution_writes_correlated_terminal_audit_event(self):
+        class EchoSkill:
+            name = "echo"
+            description = "Echo approved input"
+            risk = "low"
+            requires_approval = True
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, argument):
+                self.calls.append(argument)
+                return "done"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            skill = EchoSkill()
+            agent = YukiCoreAgent(
+                skills=[skill],
+                permission_gate=PermissionGate(lambda _request: True, audit_log=audit),
+            )
+            result = agent.run_skill("echo", "safe input")
+            self.assertTrue(result.ok)
+            self.assertEqual(result.stage, "report")
+            self.assertEqual(skill.calls, ["safe input"])
+            events = list(reversed(audit.list_events()))
+            self.assertEqual(
+                [event["event_type"] for event in events],
+                ["requested", "approved", "executed"],
+            )
+            self.assertEqual(len({event["pending_id_hash"] for event in events}), 1)
+            self.assertTrue(audit.verify_chain())
+
+    def test_agent_surfaces_recovery_when_terminal_audit_fails_after_execution(self):
+        class EchoSkill:
+            name = "echo"
+            description = "Echo approved input"
+            risk = "low"
+            requires_approval = True
+
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, argument):
+                self.calls.append(argument)
+                return "done"
+
+        class FailTerminalAudit:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def append(self, *, event_type, **event):
+                if event_type == "executed":
+                    raise OSError("audit unavailable")
+                return self.wrapped.append(event_type=event_type, **event)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            skill = EchoSkill()
+            agent = YukiCoreAgent(
+                skills=[skill],
+                permission_gate=PermissionGate(
+                    lambda _request: True, audit_log=FailTerminalAudit(audit)
+                ),
+            )
+            result = agent.run_skill("echo", "possibly completed")
+            self.assertFalse(result.ok)
+            self.assertEqual(result.stage, "recovery_required")
+            self.assertEqual(skill.calls, ["possibly completed"])
+            self.assertEqual(
+                [event["event_type"] for event in reversed(audit.list_events())],
+                ["requested", "approved"],
+            )
             self.assertTrue(audit.verify_chain())
 
     def test_audit_failure_prevents_approval(self):
