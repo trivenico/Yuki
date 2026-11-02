@@ -77,6 +77,22 @@ class OllamaAgentChatTests(unittest.TestCase):
             self.provider.generate_chat(messages=self.messages, tools=self.tools, tool_choice="sometimes")
         self.assertEqual(self.requests, [])
 
+    def test_required_tool_choice_rejects_text_only_response(self):
+        fake = FakeOpener({"message": {"content": "No tool", "tool_calls": []}}, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            with self.assertRaisesRegex(RuntimeError, "required tool"):
+                self.provider.generate_chat(
+                    messages=self.messages, tools=self.tools, tool_choice="required")
+
+    def test_none_tool_choice_rejects_returned_tool_calls(self):
+        fake = FakeOpener({"message": {"content": "", "tool_calls": [{
+            "function": {"name": "lookup", "arguments": {"key": "value"}}
+        }]}}, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            with self.assertRaisesRegex(RuntimeError, "tool_choice was none"):
+                self.provider.generate_chat(
+                    messages=self.messages, tools=self.tools, tool_choice="none")
+
     def test_rejects_unadvertised_tool_names(self):
         fake = FakeOpener({"message": {"content": "", "tool_calls": [{
             "function": {"name": "delete_everything", "arguments": {}}
