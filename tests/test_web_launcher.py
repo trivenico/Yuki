@@ -25,6 +25,8 @@ class WebLauncherTests(unittest.TestCase):
                 app = run_web.create_app()
             self.assertIsInstance(app, ConversationRuntime)
             self.assertTrue((Path(directory) / "auth.sqlite3").exists())
+            self.assertTrue(callable(app.app.provider_selector))
+            self.assertTrue(callable(app.app.provider_catalog))
             app.close()
 
     def test_default_tool_policy_denies_all_tools(self):

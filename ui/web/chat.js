@@ -40,28 +40,44 @@
   };
   const loadProviderStatus = async () => {
     const label = $("provider-label");
+    const select = $("provider-select");
     if (!label) return;
     try {
       const data = await api("/v1/providers");
       const providers = data.providers || [];
+      window.__yukiProviders = providers;
       const selected = providers.find((item) => item.selected);
       if (!selected) {
         label.textContent = "Model status unavailable";
         label.title = "No provider is selected in server configuration.";
+        if (select) select.hidden = true;
         return;
       }
       const model = selected.configured_model || "model not configured";
       label.textContent = (selected.label || selected.name) + " · " + model;
       label.title = [
-        "Status: " + (selected.ready ? "ready (configuration check only)" : selected.status),
+        "Status: " + (selected.ready ? "configured (connectivity not verified)" : selected.status),
         "Privacy: " + selected.privacy,
         "Credential configured: " + (selected.credential_configured ? "yes" : "no"),
-        "Provider selection is controlled by the server configuration."
-      ].join("\\n");
+        "Provider changes affect every user of this Yuki server."
+      ].join("\n");
       label.dataset.ready = selected.ready ? "true" : "false";
+      if (select) {
+        select.replaceChildren();
+        providers.filter((item) => item.implemented).forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.name;
+          option.textContent = (item.label || item.name) + (item.ready ? "" : " — not ready");
+          option.disabled = !item.ready && !item.selected;
+          option.selected = Boolean(item.selected);
+          select.append(option);
+        });
+        select.hidden = !state.user || state.user.role !== "admin";
+      }
     } catch (_) {
       label.textContent = "Model status unavailable";
       label.title = "Unable to load provider metadata.";
+      if (select) select.hidden = true;
     }
   };
   const loadConversations = async () => {
@@ -148,6 +164,27 @@
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
+  $("provider-select").addEventListener("change", async () => {
+    const select = $("provider-select");
+    const provider = select.value;
+    const target = (window.__yukiProviders || []).find((item) => item.name === provider);
+    const cloud = !target || target.privacy !== "local_runtime";
+    const warning = "This changes the active provider for EVERY user on this Yuki server. Existing in-flight requests may finish on their current provider. Continue?" +
+      (cloud ? "\n\nThis provider may send conversation content to a cloud service or configured remote endpoint. Confirm that this data-routing change is permitted." : "");
+    if (!window.confirm(warning)) { await loadProviderStatus(); return; }
+    select.disabled = true;
+    try {
+      await api("/v1/providers/active", {
+        method: "PUT",
+        body: JSON.stringify({ provider, confirm_global: true, confirm_cloud: cloud })
+      });
+      toast("Active provider changed. New requests will use the selected provider.");
+      await loadProviderStatus();
+    } catch (error) {
+      toast(error.message);
+      await loadProviderStatus();
+    } finally { select.disabled = false; }
+  });
   $("new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
   $("logout").addEventListener("click", async () => { try { await api("/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) {} signOut(); });
   $("composer").addEventListener("submit", (event) => { event.preventDefault(); sendMessage($("message-input").value).catch((error) => toast(error.message)); });
@@ -162,8 +199,9 @@
   const boot = async () => {
     if (!state.token) return showLogin();
     try {
+      const identity = await api("/v1/auth/me"); state.user = identity.user;
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
-      showChat(); $("account-label").textContent = "Signed in";
+      showChat(); $("account-label").textContent = state.user.username;
       await loadProviderStatus(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }
