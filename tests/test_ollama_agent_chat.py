@@ -29,6 +29,25 @@ class FakeOpener:
         return FakeResponse(self.payload)
 
 
+
+class FakeNDJSONResponse:
+    def __init__(self, lines):
+        self.lines = [line if isinstance(line, bytes) else line.encode() for line in lines]
+    def __enter__(self): return self
+    def __exit__(self, *_): return False
+    def readline(self, limit):
+        if not self.lines: return b""
+        line = self.lines.pop(0)
+        return line[:limit + 1] if len(line) > limit else line
+
+class FakeNDJSONOpener:
+    def __init__(self, lines, requests):
+        self.response = FakeNDJSONResponse(lines)
+        self.requests = requests
+    def open(self, request, timeout):
+        self.requests.append((request, timeout))
+        return self.response
+
 class OllamaAgentChatTests(unittest.TestCase):
     def setUp(self):
         self.provider = OllamaProvider(model="test-model")
@@ -109,6 +128,55 @@ class OllamaAgentChatTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "malformed tool arguments"):
                 self.provider.generate_chat(messages=self.messages, tools=self.tools)
 
+
+
+    def test_native_ndjson_stream_emits_text_deltas_and_completion(self):
+        chunks = [
+            {"message": {"content": "Hello "}, "done": False},
+            {"message": {"content": "from Yuki"}, "done": False},
+            {"message": {"content": ""}, "done": True, "done_reason": "stop"},
+        ]
+        lines = [json.dumps(chunk) + "\n" for chunk in chunks]
+        opener = FakeNDJSONOpener(lines, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
+            events = list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
+        self.assertEqual(events[:2], [
+            {"type": "text_delta", "text": "Hello "},
+            {"type": "text_delta", "text": "from Yuki"},
+        ])
+        self.assertEqual(events[-1]["response"]["text"], "Hello from Yuki")
+        self.assertTrue(json.loads(self.requests[0][0].data)["stream"])
+        self.assertEqual(self.requests[0][0].get_header("Accept"), "application/x-ndjson")
+
+    def test_native_ndjson_stream_normalizes_guarded_tool_proposals(self):
+        chunks = [
+            {"message": {"content": "Checking", "tool_calls": []}, "done": False},
+            {"message": {"content": "", "tool_calls": [{
+                "function": {"name": "lookup", "arguments": {"key": "value"}}
+            }]}, "done": True, "done_reason": "tool_calls"},
+        ]
+        opener = FakeNDJSONOpener([json.dumps(chunk) + "\n" for chunk in chunks], self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
+            events = list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
+        self.assertEqual(events[-1]["response"]["tool_calls"]["tool_calls"], [{
+            "id": "ollama_1", "name": "lookup", "arguments": {"key": "value"}
+        }])
+
+    def test_native_ndjson_stream_rejects_missing_done_and_unadvertised_tool(self):
+        missing_done = FakeNDJSONOpener([
+            json.dumps({"message": {"content": "partial"}, "done": False}) + "\n"
+        ], self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=missing_done):
+            with self.assertRaisesRegex(RuntimeError, "final done"):
+                list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
+        bad = FakeNDJSONOpener([
+            json.dumps({"message": {"tool_calls": [{
+                "function": {"name": "unknown", "arguments": {}}
+            }]}, "done": True}) + "\n"
+        ], self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=bad):
+            with self.assertRaisesRegex(RuntimeError, "unrecognized"):
+                list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
 
 if __name__ == "__main__":
     unittest.main()
