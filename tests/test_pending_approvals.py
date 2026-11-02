@@ -102,6 +102,21 @@ class SQLitePendingApprovalStoreTests(unittest.TestCase):
             store.put("notes.write", {}, {}, actor="owner", session_id="session-a")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_recovery_items_are_listed_and_not_expired_away(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self.make_store(tmp, ttl_seconds=1)
+            item = store.put(
+                "notes.write", {}, {"skill_id": "notes.write", "arguments": {}},
+                actor="owner", session_id="session-a",
+            )
+            store.claim(item.pending_id, actor="owner", session_id="session-a")
+            self.assertTrue(store.transition(item.pending_id, expected="claimed", new_status="recovery_required"))
+            with store._connect() as db:
+                rows = store.list_recovery_required()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "recovery_required")
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
