@@ -179,6 +179,8 @@ class OpenAICompatibleProvider:
         calls = message.get("tool_calls", [])
         if not isinstance(calls, list) or len(calls) > 5:
             raise RuntimeError("Cloud provider returned an invalid number of tool calls.")
+        if not saw_done and finish_reason is None:
+            raise RuntimeError("Cloud provider stream ended before a completion event.")
         normalized_calls = []
         seen_ids = set()
         for call in calls:
@@ -259,9 +261,11 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         text_parts = []
+        text_size = 0
         tool_parts = {}
         total_bytes = 0
         finish_reason = None
+        saw_done = False
         try:
             opener = urllib.request.build_opener(_RejectRedirects())
             with opener.open(request, timeout=self.timeout) as response:
@@ -277,6 +281,7 @@ class OpenAICompatibleProvider:
                         continue
                     data = line[5:].strip()
                     if data == b"[DONE]":
+                        saw_done = True
                         break
                     try:
                         chunk = json.loads(data.decode("utf-8"))
@@ -290,7 +295,8 @@ class OpenAICompatibleProvider:
                     if content is not None:
                         if not isinstance(content, str) or not content:
                             raise RuntimeError("Cloud provider returned invalid streamed text.")
-                        if sum(map(len, text_parts)) + len(content) > 24_000:
+                        text_size += len(content)
+                        if text_size > 24_000:
                             raise RuntimeError("Cloud provider stream exceeded the text limit.")
                         text_parts.append(content)
                         yield {"type": "text_delta", "text": content}
