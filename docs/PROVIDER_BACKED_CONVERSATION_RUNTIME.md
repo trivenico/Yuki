@@ -44,3 +44,11 @@ Prompt construction uses a cursor derived from the session's latest sequence
 number and reads at most the newest 100 events. This avoids repeatedly sending
 the oldest part of a long-running conversation to the model. Production context
 window budgeting and summarization are still required.
+
+
+## Authorization ordering
+
+The ProviderManager entry point first reads the actor-authorized session and
+validates the message before provider discovery or adapter construction. This
+prevents an unauthorized caller from triggering provider initialization.
+Provider routing still receives explicit cloud consent (false by default).
