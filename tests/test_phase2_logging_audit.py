@@ -9,30 +9,41 @@ from core.permissions import PermissionGate
 
 
 class PhaseTwoLoggingAuditTests(unittest.TestCase):
-    def tearDown(self):
+    @staticmethod
+    def _close_logger():
         logger = logging.getLogger("yuki")
         for handler in list(logger.handlers):
             logger.removeHandler(handler)
             handler.close()
 
+    def tearDown(self):
+        self._close_logger()
+
     def test_rotating_logger_writes_utf8_and_sanitizes_line_breaks(self):
         with tempfile.TemporaryDirectory() as tmp:
-            logger = configure_logging(tmp)
-            log_event(logger, logging.INFO, "started\nforged", component="runtime")
-            for handler in logger.handlers:
-                handler.flush()
-            text = (Path(tmp) / "yuki.log").read_text(encoding="utf-8")
-            self.assertIn("event='started forged'", text)
-            self.assertEqual(len(text.splitlines()), 1)
-            self.assertFalse(logger.propagate)
+            try:
+                logger = configure_logging(tmp)
+                log_event(logger, logging.INFO, "started\\nforged", component="runtime")
+                for handler in logger.handlers:
+                    handler.flush()
+                text = (Path(tmp) / "yuki.log").read_text(encoding="utf-8")
+                self.assertIn("event='started forged'", text)
+                self.assertEqual(len(text.splitlines()), 1)
+                self.assertFalse(logger.propagate)
+            finally:
+                # Windows cannot remove a temporary directory while its log file is open.
+                self._close_logger()
 
     def test_logger_configuration_is_idempotent_for_same_path(self):
         with tempfile.TemporaryDirectory() as tmp:
-            first = configure_logging(tmp)
-            count = len(first.handlers)
-            second = configure_logging(tmp)
-            self.assertIs(first, second)
-            self.assertEqual(len(second.handlers), count)
+            try:
+                first = configure_logging(tmp)
+                count = len(first.handlers)
+                second = configure_logging(tmp)
+                self.assertIs(first, second)
+                self.assertEqual(len(second.handlers), count)
+            finally:
+                self._close_logger()
 
     def test_permission_gate_audits_only_fingerprint(self):
         with tempfile.TemporaryDirectory() as tmp:
