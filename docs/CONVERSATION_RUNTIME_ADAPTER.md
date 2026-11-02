@@ -1,11 +1,11 @@
 # Conversation Runtime Adapter
 
-\`automation.conversation_service.ConversationService\` is the application-facing
+`automation.conversation_service.ConversationService` is the application-facing
 facade for CLI and desktop conversation clients.
 
 It provides session creation, typed user/assistant/system messages, typed tool
 lifecycle events, history pagination and session listing. Every operation
-delegates authorization to \`AgentSessionStore\`.
+delegates authorization to `AgentSessionStore`.
 
 ## Safety and integration boundary
 
@@ -22,7 +22,7 @@ delegates authorization to \`AgentSessionStore\`.
   duplicate a conversation event.
 
 Run focused tests with:
-\`python -m unittest tests.test_agent_sessions tests.test_conversation_service\`
+`python -m unittest tests.test_agent_sessions tests.test_conversation_service`
 
 The next integration phase should connect this facade to the existing provider
 registry and CLI/desktop API, with streaming, cancellation and approval handling
