@@ -163,6 +163,34 @@ class AgentSessionStore:
             db.execute("UPDATE agent_sessions SET last_sequence=1 WHERE session_id=?", (sid,))
             return self._row(db.execute("SELECT * FROM agent_sessions WHERE session_id=?", (sid,)).fetchone())
 
+    def list_sessions(
+        self, *, actor_id: str, before: tuple[str, str] | None = None, limit: int = 50,
+    ) -> list[AgentSession]:
+        """List the actor's sessions newest-first using a stable keyset cursor."""
+        actor = _text(actor_id, "actor_id")
+        if not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200.")
+        if before is not None:
+            if not isinstance(before, tuple) or len(before) != 2:
+                raise ValueError("before must be an (updated_at, session_id) tuple.")
+            before = (_text(before[0], "cursor.updated_at"), _text(before[1], "cursor.session_id"))
+        self._authorize(actor, "session:list")
+        with self._connect() as db:
+            if before is None:
+                rows = db.execute(
+                    "SELECT * FROM agent_sessions WHERE actor_id=? "
+                    "ORDER BY updated_at DESC, session_id DESC LIMIT ?",
+                    (actor, limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM agent_sessions WHERE actor_id=? "
+                    "AND (updated_at < ? OR (updated_at = ? AND session_id < ?)) "
+                    "ORDER BY updated_at DESC, session_id DESC LIMIT ?",
+                    (actor, before[0], before[0], before[1], limit),
+                ).fetchall()
+        return [self._row(row) for row in rows]
+
     def get(self, *, actor_id: str, session_id: str) -> AgentSession:
         actor, sid = _text(actor_id, "actor_id"), _text(session_id, "session_id")
         self._authorize(actor, "session:read", sid)
