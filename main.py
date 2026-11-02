@@ -1,6 +1,7 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import shlex
 
 from companion import DEFAULT_PERSONA
@@ -66,7 +67,7 @@ def build_agent(config):
     audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
     # CLI attribution is a local runtime identity, not an authenticated account.
     # Web/API adapters must inject a verified principal and session explicitly.
-    actor_id = __import__("os").environ.get("YUKI_ACTOR_ID", "local-cli")
+    actor_id = "local-cli"
     return YukiCoreAgent(
         registry=registry,
         permission_gate=PermissionGate(
