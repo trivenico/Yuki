@@ -16,9 +16,8 @@ from core.conversation_store import ConversationConflict, ConversationStore
 class ConversationService:
     """Synchronous conversation orchestration for a single application worker.
 
-    A process-local lock prevents duplicate generation inside this service
-    instance. Multi-process deployments must add a database-backed generation
-    lease before sharing one SQLite database between API workers.
+    A process-local lock avoids duplicate work inside one instance; a database
+    lease additionally coordinates independent service instances sharing storage.
     """
 
     def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
