@@ -115,11 +115,12 @@ class AgentTaskJournalTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task: action == "task:read",
         )
+        journal = AgentTaskJournal(
+            restricted, actor_id="agent-worker",
+            task_id=self.claimed.run_id, worker_id="worker-1",
+        )
         with self.assertRaises(PermissionError):
-            AgentTaskJournal(
-                restricted, actor_id="agent-worker",
-                task_id=self.claimed.run_id, worker_id="worker-1",
-            )
+            journal("agent.started", {})
 
 
 if __name__ == "__main__":
