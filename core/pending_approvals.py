@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
-import os
 import json
+import os
 import secrets
 import sqlite3
 from typing import Any
@@ -34,7 +34,14 @@ class StoredPendingAction:
 class SQLitePendingApprovalStore:
     """Bounded, restart-persistent pending approvals with atomic one-time claims."""
 
-    def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128, identity_key: str | bytes | None = None):
+    def __init__(
+        self,
+        database_path: str,
+        *,
+        ttl_seconds: int = 300,
+        max_pending: int = 128,
+        identity_key: str | bytes | None = None,
+    ):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 3600:
