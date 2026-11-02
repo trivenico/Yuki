@@ -122,6 +122,30 @@ class ConversationApiTests(unittest.TestCase):
         remaining = self.request("GET", "/v1/memories?q=local", token=self.token)
         self.assertEqual(remaining["items"], [])
 
+    def test_memory_proposal_requires_explicit_approval(self):
+        proposal = self.request("POST", "/v1/memory-proposals",
+            {"category":"preference","content":"Prefer local inference"}, token=self.token)
+        self.assertEqual(proposal["status"], "pending")
+        memories = self.request("GET", "/v1/memories", token=self.token)
+        self.assertEqual(memories["items"], [])
+        pending = self.request("GET", "/v1/memory-proposals", token=self.token)
+        self.assertEqual(pending["items"][0]["proposal_id"], proposal["proposal_id"])
+        approved = self.request("POST",
+            "/v1/memory-proposals/%s/approve" % proposal["proposal_id"],
+            {}, token=self.token)
+        self.assertTrue(approved["approved"])
+        memories = self.request("GET", "/v1/memories", token=self.token)
+        self.assertEqual(memories["items"][0]["content"], "Prefer local inference")
+
+    def test_memory_proposals_are_user_isolated(self):
+        proposal = self.request("POST", "/v1/memory-proposals",
+            {"category":"note","content":"Private note"}, token=self.token)
+        with self.assertRaises(HTTPError) as caught:
+            self.request("POST",
+                "/v1/memory-proposals/%s/approve" % proposal["proposal_id"],
+                {}, token="invalid-token")
+        self.assertEqual(caught.exception.code, 401)
+
     def test_memory_api_rejects_invalid_category_and_unauthenticated_access(self):
         with self.assertRaises(HTTPError) as caught:
             self.request("POST", "/v1/memories",
