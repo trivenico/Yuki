@@ -178,3 +178,22 @@ class KnowledgeEvolutionEngine:
         if result is None:
             raise EvolutionError("reviewed proposal could not be reloaded.")
         return result
+
+class _Connection:
+    """Small context manager that commits successful operations and closes reliably."""
+
+    def __init__(self, db: sqlite3.Connection):
+        self.db = db
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self.db
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        try:
+            if exc_type is None:
+                self.db.commit()
+            else:
+                self.db.rollback()
+        finally:
+            self.db.close()
+        return False
