@@ -29,7 +29,7 @@ The following phase documents were present in `docs/` at the baseline commit. Th
 |---:|---|---|---|
 | 1–7 | No `PHASE1`–`PHASE7` documents found | unknown | Historical scope not recovered in this audit |
 | 8 | `PHASE8_UPSTREAM_INTEGRATION_AUDIT.md` | unknown | Audit implementation and acceptance evidence; issue #55 is a related but separately scoped upstream reuse audit |
-| 9–45 | No phase documents found | unknown | Includes issue #9 for Phase 9; other serials need historical classification |
+| 9–45 | PR #8 explicitly proposes Phase 9; PR #10 Phase 10; PRs #11–#16 Phase 11–16; see historical evidence section | in_progress / unknown | The range is not wholly undocumented; per-serial proposal history must be reconciled |
 | 46 | `PHASE46_READINESS.md` | unknown | Audit implementation/tests/CI |
 | 47 | `PHASE47_LIVE_SMOKE_TEST.md` | unknown | Audit runtime evidence |
 | 48 | `PHASE48_CI_QUALITY_GATES.md` | unknown | Audit current workflow evidence |
@@ -116,6 +116,32 @@ The following phase documents were present in `docs/` at the baseline commit. Th
 | 159 | `PHASE159_AUTHENTICATED_WEB_CHAT.md` | unknown | Audit end-to-end auth and chat tests |
 | 160 | `PHASE160_PROVIDER_STATUS.md` | unknown | Audit provider health semantics |
 | 161 | `PHASE161_PROVIDER_SWITCHING.md` | in_progress | Document explicitly requires shared multi-worker control plane, durable actor-attributed audit, connectivity probes, credential rotation procedure |
+
+## Historical pull-request evidence (expanded audit, 2026-11-03)
+
+A chronological audit of the first 35 pull requests changes the interpretation of several undocumented serials. The PRs are still open drafts unless otherwise stated; their existence is evidence of proposed scope, **not** evidence of merged implementation or completion.
+
+| Phase serial | Historical PR evidence | Governance interpretation |
+|---:|---|---|
+| 1 | #24 (CLI crash/command dispatch); earlier #1 is broad production engineering, not Phase 1 | in_progress; #24 is draft and exact-head failure was previously recorded in issue #496 comments; replacement work is tracked in #497 |
+| 2 | #27 (logging/audit), #30 (audit privacy/integrity); current implementation PR #498 | in_progress; multiple overlapping drafts; reconcile against current main and use #498 as current focused candidate |
+| 3 | #2 (resilience/self-healing), #28 (local chat sessions) | duplicate serial with materially different scopes; requires maintainer decision and scope separation |
+| 4–9 | #3–#8 respectively propose earning companion tracker, companion memory, opportunity research/coach plans, companion orchestrator, capability readiness/competitive audit, and specialist-agent organization | historical proposals exist; branch ancestry is inconsistent and PRs remain open drafts; do not treat as integrated |
+| 10 | #10 provider/skill registry stabilization; #25 safety evaluation harness | duplicate/overlapping Phase 10 scope; reconcile before claiming completion |
+| 11–16 | #11–#16 propose cloud terminal/preflight, roadmap/role catalog, SQLite job queue, guarded task handlers, worker lifecycle, and CI stabilization | open draft proposals; audit dependencies and branch ancestry before selective salvage |
+| 17–20 | #18–#21 propose approval store, approval-flow closure, bounded subprocess execution, and CI fixture correction | historical PR numbering and phase numbering are offset; preserve titles and inspect actual diff before mapping |
+| 21 | No PR title explicitly identifies Phase 21 in the first 35 PRs | unknown; do not infer from PR #22 |
+| 22–23 | #22 (runtime worker lifecycle), #23 (safe runtime composition root) | open draft proposals |
+| 24 onward | The current docs/phase inventory and subsequent issue/commit history are the primary evidence | continue per-serial audit |
+
+Additional observations:
+
+- PR #3–#6 are based on predecessor feature branches rather than current `main`; their mergeability and dependency chain must be checked before reuse.
+- PR #7 and #8 target `main`, while #8's title explicitly maps to Phase 9. This is evidence that serials 8 and 9 cannot be inferred from document filenames alone.
+- PR #17 is an unnumbered provider/skill/approval fix; PR #26 is an unnumbered security remediation. Do not assign either a phase serial without an explicit roadmap decision.
+- PR #24, #27, #28 and #30 are later focused drafts that overlap older serial assignments. Avoid bulk-merging legacy branches. Compare each diff to current `main`, salvage only still-needed changes, and rerun CI on the resulting exact head.
+
+This evidence supersedes the earlier blanket note that serials 1–9 had no historical evidence. The serial statuses remain non-complete pending code, tests, exact-head CI and review.
 
 ## Reconciliation decisions
 
