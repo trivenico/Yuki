@@ -52,10 +52,14 @@ class EngineeringWorkflow:
     ):
         if not callable(audit):
             raise TypeError("audit callback is required.")
-        self.inspect = build_read_tool_specialist_handler(
-            provider, read_tools, principal_resolver=principal_resolver,
-            allowed_tool_names=allowed_inspection_tools,
-        )
+        if not callable(principal_resolver):
+            raise TypeError("principal_resolver must be callable.")
+        if not isinstance(allowed_inspection_tools, tuple) or not allowed_inspection_tools:
+            raise ValueError("allowed_inspection_tools must be a non-empty tuple.")
+        self.provider = provider
+        self.read_tools = read_tools
+        self.principal_resolver = principal_resolver
+        self.allowed_inspection_tools = allowed_inspection_tools
         self.workspace_changes = workspace_changes
         self.test_runner = test_runner
         self.audit = audit
@@ -75,6 +79,21 @@ class EngineeringWorkflow:
             raise ValueError("task must be bounded non-empty text.")
         if not isinstance(test_module, str) or not test_module:
             raise ValueError("an explicit allow-listed test module is required.")
+        # Resolve identity once and require the caller-supplied principal to match.
+        # Inspection, edits, tests, and audit must all operate as the same actor.
+        try:
+            authenticated_principal = self.principal_resolver()
+        except Exception as exc:
+            raise PermissionError("authenticated principal resolution failed.") from exc
+        if not isinstance(authenticated_principal, ToolPrincipal) or authenticated_principal != principal:
+            raise PermissionError("workflow principal does not match the authenticated session.")
+
+        inspect = build_read_tool_specialist_handler(
+            self.provider,
+            self.read_tools,
+            principal_resolver=lambda: authenticated_principal,
+            allowed_tool_names=self.allowed_inspection_tools,
+        )
         change_facts = []
         for change in proposed_changes:
             if not isinstance(change, FileChange):
@@ -92,7 +111,7 @@ class EngineeringWorkflow:
         workflow_id = "eng_" + workflow_digest[:24]
         self._record(principal.actor_id, workflow_id, "started", workflow_digest)
 
-        report = self.inspect(json.dumps({
+        report = inspect(json.dumps({
             "task": task,
             "tool_calls": inspection_calls,
         }, ensure_ascii=False))
