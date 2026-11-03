@@ -36,6 +36,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        device_agent: Any | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -52,6 +53,9 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if device_agent is not None and not callable(getattr(device_agent, "heartbeat", None)):
+            raise TypeError("device_agent must provide a heartbeat method")
+        self.device_agent = device_agent
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -61,6 +65,33 @@ class YukiConversationAPI:
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "/")
         try:
+            # Device credentials are independent of user browser sessions.
+            # Heartbeats accept only a paired-device bearer token and bounded metadata.
+            if method == "POST" and path == "/v1/devices/heartbeat":
+                if self.device_agent is None:
+                    return await self._respond(send, 503, {"error": "device_agent_unavailable"})
+                _, device_token = await self._bearer_token(scope)
+                if device_token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                payload = await self._body(receive)
+                if set(payload) != {"sequence", "status", "capabilities"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    heartbeat = await asyncio.to_thread(
+                        self.device_agent.heartbeat, device_token,
+                        sequence=payload["sequence"], status=payload["status"],
+                        capabilities=payload["capabilities"],
+                    )
+                    from core.device_agent import heartbeat_to_dict
+                    return await self._respond(send, 200, heartbeat_to_dict(heartbeat))
+                except PermissionError:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                except ValueError as exc:
+                    code = str(exc)
+                    if code not in {"invalid_sequence", "invalid_status", "invalid_capabilities", "stale_heartbeat"}:
+                        code = "invalid_device_heartbeat"
+                    return await self._respond(send, 400, {"error": code})
+
             if method == "POST" and path == "/v1/auth/login":
                 payload = await self._body(receive)
                 if set(payload) != {"username", "password"}:
@@ -92,6 +123,27 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if method == "GET" and path == "/v1/devices":
+                if self.device_agent is None:
+                    return await self._respond(send, 503, {"error": "device_agent_unavailable"})
+                devices = await asyncio.to_thread(self.device_agent.list_devices, user.user_id)
+                from core.device_agent import heartbeat_to_dict
+                return await self._respond(send, 200, {
+                    "devices": [heartbeat_to_dict(device) for device in devices]
+                })
+
+            revoke_match = re.fullmatch(r"/v1/devices/([^/]+)", path)
+            if revoke_match and method == "DELETE":
+                if self.device_agent is None:
+                    return await self._respond(send, 503, {"error": "device_agent_unavailable"})
+                device_id = revoke_match.group(1)
+                if not 1 <= len(device_id) <= 128:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                revoked = await asyncio.to_thread(
+                    self.device_agent.revoke_device, user.user_id, device_id
+                )
+                return await self._respond(send, 200 if revoked else 404, {"revoked": revoked})
 
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
@@ -352,6 +404,17 @@ class YukiConversationAPI:
                 await disconnect_watcher
             except asyncio.CancelledError:
                 pass
+
+    async def _bearer_token(self, scope):
+        headers = {
+            key.lower(): value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and isinstance(value, bytes)
+        }
+        authorization = headers.get(b"authorization", b"").decode("latin-1")
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
+            return None, None
+        return None, token
 
     async def _principal(self, scope):
         headers = {
