@@ -106,3 +106,10 @@ This is deliberately a preparation layer, not a new model, autonomous reasoning 
 `build_conversation_runtime(..., cognitive_context_engine=...)` optionally injects a `CognitiveContextEngine` into `ConversationService`. For each authenticated user turn, the service prepares a brief using the verified owner ID and the user goal, then passes its serialization to the agent loop as untrusted reference context. The agent loop applies its existing instruction-boundary wrapper. The brief is proposal-only: it does not dispatch the specialist coordinator or execute tools.
 
 Use either the composed cognitive context engine or the individual identity/memory integrations on a service, not both, to avoid duplicate retrieval and context injection. Existing deployments remain unchanged unless the engine is explicitly supplied.
+
+
+## Cognitive proposal to specialist coordinator adapter
+
+`automation.cognitive_agent_adapter.CognitiveAgentAdapter` translates a validated `CognitiveBrief.specialist_tasks` DAG into the existing `SubtaskSpec` contract. It re-validates the DAG at the trust boundary, preserves capability requirements, dependency edges and approval flags, and always supplies an empty permission request rather than deriving permissions from model or memory content.
+
+`submit_proposal(...)` calls the coordinator's authorized `submit` operation to persist and capability-route a proposal. It deliberately does not call `advance`; worker task creation/dispatch remains a separate operation requiring the coordinator's own `agent:dispatch` authorization. This adapter does not infer a verified actor identity; the caller must pass the authenticated actor ID. It does not execute agents or tools.
