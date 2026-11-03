@@ -28,6 +28,7 @@ class KnowledgeEngine:
     """Ingest approved workspace text files and retrieve source-attributed chunks."""
 
     SUPPORTED_SUFFIXES = frozenset({".txt", ".md", ".rst", ".py", ".json", ".yaml", ".yml"})
+    EXTRACTED_SUFFIXES = SUPPORTED_SUFFIXES | frozenset({".html", ".htm", ".pdf", ".docx"})
     MAX_FILE_BYTES = 2_000_000
     MAX_DOCUMENT_CHARS = 200_000
     MAX_CHUNK_CHARS = 2_000
@@ -110,7 +111,9 @@ class KnowledgeEngine:
         return chunks
 
     @staticmethod
-    def _safe_workspace_file(path: str | Path, workspace: str | Path) -> tuple[Path, Path]:
+    def _safe_workspace_file(
+        path: str | Path, workspace: str | Path, *, allow_extracted_formats: bool = False
+    ) -> tuple[Path, Path]:
         root = Path(workspace).expanduser().resolve(strict=True)
         supplied = Path(path).expanduser()
         candidate = supplied if supplied.is_absolute() else root / supplied
@@ -129,8 +132,12 @@ class KnowledgeEngine:
         resolved = candidate.resolve(strict=True)
         if root not in resolved.parents or not resolved.is_file():
             raise ValueError("Knowledge source must be a regular file inside the workspace.")
-        if resolved.suffix.lower() not in KnowledgeEngine.SUPPORTED_SUFFIXES:
-            raise ValueError("Unsupported file type. Supported: TXT, Markdown, RST, PY, JSON, YAML.")
+        allowed_suffixes = (
+            KnowledgeEngine.EXTRACTED_SUFFIXES
+            if allow_extracted_formats else KnowledgeEngine.SUPPORTED_SUFFIXES
+        )
+        if resolved.suffix.lower() not in allowed_suffixes:
+            raise ValueError("Unsupported file type for this ingestion path.")
         if resolved.stat().st_size > KnowledgeEngine.MAX_FILE_BYTES:
             raise ValueError("Knowledge source exceeds the 2 MB file limit.")
         return root, resolved
@@ -269,7 +276,9 @@ class KnowledgeEngine:
         source_sha256: str, text: str,
     ) -> dict:
         """Index text extracted by a trusted parser from an approved workspace file."""
-        _, source = self._safe_workspace_file(source_path, workspace)
+        _, source = self._safe_workspace_file(
+            source_path, workspace, allow_extracted_formats=True
+        )
         raw = source.read_bytes()
         if not isinstance(source_sha256, str) or hashlib.sha256(raw).hexdigest() != source_sha256:
             raise ValueError("Source changed after parsing; parse it again before indexing.")
