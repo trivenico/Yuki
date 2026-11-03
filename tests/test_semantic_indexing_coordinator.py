@@ -63,7 +63,7 @@ class SemanticIndexCoordinatorTests(unittest.TestCase):
             [1, 0, 0], model_id=self.embedder.model_id, limit=100
         )}
         self.assertEqual(stored_ids, current_ids)
-        self.assertGreaterEqual(second["stale_vectors_removed"], 0)
+        self.assertGreater(second["stale_vectors_removed"], 0)
 
     def test_removing_source_removes_vectors(self):
         source = self.workspace / "guide.md"
