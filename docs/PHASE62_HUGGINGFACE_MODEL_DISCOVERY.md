@@ -27,3 +27,10 @@ Before using a candidate, review the official model card and license, model prov
 ## Tests
 
 `tests/test_huggingface_discovery.py` uses mocked HTTP responses; it makes no network requests. It checks ID validation, deduplication, bounded request parameters, source attribution, authorization-header handling, invalid JSON and review-first defaults.
+
+
+## Metadata governance hardening
+
+The discovery response requests full public model metadata so available library and safetensors parameter information can be surfaced. Normalized records include reported library, parameter count when present, gated-access status, private visibility flag and explicit review flags. Private results are excluded from the public candidate list. Unknown gated status is conservatively flagged for access review. Parameter counts are descriptive metadata, not RAM/VRAM estimates.
+
+Model IDs reject dot path segments. The HTTP client retains a fixed official HTTPS endpoint, rejects redirects, validates optional bearer token format, and caps the response body. This is still metadata discovery, not a model-card/legal review, runtime compatibility proof, benchmark, download, or activation workflow. All candidates remain human-review-only.
