@@ -5,6 +5,7 @@ identity from request payloads and never constructs an unguarded tool runtime.
 """
 from __future__ import annotations
 
+import sqlite3
 import threading
 import uuid
 from typing import Any, Sequence
@@ -172,10 +173,15 @@ class ConversationService:
                 if system_text is not None:
                     kwargs["system_text"] = system_text
                 if self.memory_context_builder is not None:
-                    memory_context = self.memory_context_builder.build(
-                        owner_id=owner_id, query=user_text
-                    )
-                    if memory_context.text:
+                    try:
+                        memory_context = self.memory_context_builder.build(
+                            owner_id=owner_id, query=user_text
+                        )
+                    except (PermissionError, ValueError, OSError, sqlite3.Error):
+                        # Memory is an optional context source. A storage/consent
+                        # failure must not make the core conversation unavailable.
+                        memory_context = None
+                    if memory_context is not None and memory_context.text:
                         kwargs["untrusted_context"] = [memory_context.text]
                 result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
