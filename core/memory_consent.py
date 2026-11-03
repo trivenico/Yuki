@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -13,7 +14,7 @@ class MemoryConsentStore:
         path = Path(database_path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         self.database_path = str(path)
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS memory_consent (
                     user_id TEXT PRIMARY KEY,
@@ -26,6 +27,16 @@ class MemoryConsentStore:
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.execute("PRAGMA busy_timeout=5000")
         return db
+
+    @contextmanager
+    def _connection(self):
+        """Commit or roll back work and always release the SQLite file handle."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def enabled(self, user_id: str) -> bool:
         if not isinstance(user_id, str) or not user_id:
