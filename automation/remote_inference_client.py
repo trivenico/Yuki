@@ -6,6 +6,7 @@ uses a device bearer credential, bounds response bodies, and never logs secrets.
 from __future__ import annotations
 from dataclasses import dataclass
 import json
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -84,6 +85,8 @@ class RemoteInferenceJobClient:
 
     def complete_job(self,device_token,job_id,*,result_text=None,error_code=None):
         if device_token!=self.device_token: raise PermissionError("device_credential_mismatch")
+        if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
+            raise ValueError("invalid_job_id")
         if (result_text is None)==(error_code is None): raise ValueError("provide_exactly_one_result_or_error")
         if result_text is not None and (not isinstance(result_text,str) or len(result_text.encode("utf-8"))>20_000):
             raise ValueError("result_too_large")
