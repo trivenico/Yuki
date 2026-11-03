@@ -22,7 +22,7 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, memory_context_builder=None, identity_core=None):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, memory_context_builder=None, identity_core=None, cognitive_context_engine=None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -35,6 +35,17 @@ class ConversationService:
         if identity_core is not None and not callable(getattr(identity_core, "snapshot", None)):
             raise TypeError("identity_core must provide snapshot().")
         self.identity_core = identity_core
+        if cognitive_context_engine is not None and not callable(
+            getattr(cognitive_context_engine, "prepare", None)
+        ):
+            raise TypeError("cognitive_context_engine must provide prepare().")
+        if cognitive_context_engine is not None and (
+            memory_context_builder is not None or identity_core is not None
+        ):
+            raise ValueError(
+                "provide cognitive_context_engine or its individual identity/memory components, not both."
+            )
+        self.cognitive_context_engine = cognitive_context_engine
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -174,6 +185,14 @@ class ConversationService:
             )
             try:
                 kwargs = {"tools": list(tools), "history": history}
+                if self.cognitive_context_engine is not None:
+                    brief = self.cognitive_context_engine.prepare(
+                        owner_id=owner_id, goal=user_text
+                    )
+                    context_text = brief.to_untrusted_context()
+                    if not isinstance(context_text, str) or not context_text.strip():
+                        raise RuntimeError("cognitive context engine returned an invalid brief.")
+                    kwargs["untrusted_context"] = [context_text]
                 effective_system_text = system_text
                 if self.identity_core is not None:
                     snapshot = self.identity_core.snapshot()
