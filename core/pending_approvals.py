@@ -294,7 +294,7 @@ class SQLitePendingApprovalStore:
             rows = db.execute(
                 """SELECT pending_id, skill_id, status, updated_at
                    FROM pending_approvals
-                   WHERE status IN ('claimed', 'approved', 'executing', 'recovery_required')
+                   WHERE status IN ('claimed', 'approved', 'executing', 'recovery_required', 'reconciling')
                    ORDER BY updated_at ASC LIMIT ?""",
                 (limit,),
             ).fetchall()
