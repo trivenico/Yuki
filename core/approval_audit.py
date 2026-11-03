@@ -203,10 +203,10 @@ class SQLiteApprovalAuditLog:
                 )
                 if cursor.rowcount == 0 and idempotency_key is not None:
                     existing = db.execute(
-                        "SELECT event_id, event_type FROM approval_audit_events WHERE event_key = ?",
+                        "SELECT event_id, event_type, pending_id_hash, skill_id FROM approval_audit_events WHERE event_key = ?",
                         (idempotency_key,),
                     ).fetchone()
-                    if existing is None or existing[1] != event_type:
+                    if existing is None or existing[1:] != (event_type, pending_id_hash, skill_id):
                         raise ValueError("Idempotency key was already used for a different audit event.")
                     event_id = int(existing[0])
                 else:
