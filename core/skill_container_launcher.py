@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from core.skill_container_request import (
     SkillContainerRequest,
@@ -115,9 +116,20 @@ def _remove_container(name: str) -> bool:
 
 
 def launch_skill_container(
-    request: SkillContainerRequest, arguments: object
+    request: SkillContainerRequest,
+    arguments: object,
+    *,
+    authorize: Callable[[SkillContainerRequest], bool],
 ) -> SkillContainerResult:
-    """Launch exactly one approved invocation; no host-execution fallback exists."""
+    """Launch one invocation only after live approval/lease revalidation.
+
+    The callback must query Yuki's durable approval and worker lease state and
+    return exactly True for this complete immutable request. It must not be
+    model-controlled. The caller must persist the started intent before this
+    call. No host-execution fallback exists.
+    """
+    if not callable(authorize):
+        raise SkillContainerLaunchError("live approval and lease revalidation is required")
     try:
         payload = build_skill_runtime_input(
             _binding_view(request), arguments, max_input_bytes=request.max_input_bytes
@@ -126,6 +138,12 @@ def launch_skill_container(
         raise SkillContainerLaunchError("runtime input does not match approved request") from exc
     name = "yuki-skill-" + secrets.token_hex(12)
     argv = build_skill_docker_argv(request, container_name=name)
+    try:
+        authorized = authorize(request)
+    except Exception as exc:
+        raise SkillContainerLaunchError("live approval/lease check failed; launch denied") from exc
+    if authorized is not True:
+        raise SkillContainerLaunchError("live approval/lease check denied launch")
     output = bytearray()
     output_limit_hit = threading.Event()
     writer_errors: list[BaseException] = []
@@ -134,7 +152,7 @@ def launch_skill_container(
     try:
         process = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, shell=False, close_fds=True, env=_docker_env(),
+            stderr=subprocess.DEVNULL, shell=False, close_fds=True, env=_docker_env(),
         )
     except OSError as exc:
         raise SkillContainerLaunchError("Docker runtime unavailable; skill execution denied") from exc
@@ -196,8 +214,18 @@ def launch_skill_container(
             raise SkillContainerLaunchError("skill container cleanup could not be confirmed")
     if reader.is_alive() or writer.is_alive() or reader_errors:
         raise SkillContainerLaunchError("skill runtime pipe handling did not complete safely")
-    # Broken pipe is expected only if the container rejected input; nonzero exit
-    # remains visible to the supervisor and must not be interpreted as success.
+    if returncode == 0 and not timed_out and not output_limit_hit.is_set():
+        from core.skill_runtime_protocol import (
+            SkillRuntimeProtocolError, parse_runtime_response,
+        )
+        try:
+            parse_runtime_response(
+                bytes(output), expected_invocation_id=request.invocation_id,
+                max_bytes=request.max_output_bytes,
+            )
+        except SkillRuntimeProtocolError as exc:
+            raise SkillContainerLaunchError("skill runtime returned an invalid protocol response") from exc
+    # Nonzero exits and timeouts remain explicit; they are never success.
     return SkillContainerResult(
         returncode=int(returncode), stdout=bytes(output), timed_out=timed_out,
         output_truncated=output_limit_hit.is_set(),
