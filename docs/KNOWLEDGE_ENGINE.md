@@ -97,3 +97,38 @@ Claim states are `proposed`, `supported`, `contested`, `verified` and `rejected`
 The two-source rule is a conservative workflow gate, not proof of source independence, truth, or source quality. Distinct source IDs can still represent copied material. Reviewer identity and review method are supplied by the trusted caller; this module does not authenticate reviewers or establish cryptographic attestation. Do not expose review operations directly to untrusted model output.
 
 Evidence records retain canonical chunk and source IDs, not a permanent copy of the source text. If a source is deleted or re-indexed, evidence may become stale; resolve chunk IDs against the knowledge engine before presenting evidence, and re-evaluate affected claims. Claim extraction, source credibility scoring, contradiction resolution and graph synchronization remain separate future components.
+
+## Verified knowledge graph synchronization
+
+The existing `KnowledgeGraph` remains the graph storage implementation. `VerifiedKnowledgeGraphSync` is an explicit projection adapter; it does not perform model extraction or approve claims.
+
+```python
+from knowledge import (
+    EvidenceLedger, KnowledgeGraph, KnowledgeEngine,
+    VerifiedKnowledgeGraphSync,
+)
+
+engine = KnowledgeEngine()
+ledger = EvidenceLedger(engine)
+graph = KnowledgeGraph("YukiData/knowledge-graph.json")
+sync = VerifiedKnowledgeGraphSync(ledger, graph)
+
+result = sync.sync_claim(
+    verified_claim_id,
+    entities=[
+        {"name": "Yuki", "kind": "project",
+         "description": "Local AI assistant and agent platform."},
+        {"name": "Knowledge Engine", "kind": "concept",
+         "description": "Source-grounded local knowledge subsystem."},
+    ],
+    relations=[
+        {"source": "Yuki", "type": "uses", "target": "Knowledge Engine"}
+    ],
+)
+```
+
+The adapter requires an explicitly verified claim, a recorded verification review, at least two distinct current supporting source IDs and no stale evidence. The caller supplies the proposed graph entities and relations; this module does not trust arbitrary model-generated graph mutations. Graph endpoints must be present in the supplied entity set and graph types are allowlisted.
+
+Synchronization is idempotent for the same claim, evidence and graph projection. A persisted plan hash rejects silent projection drift on retry. Graph JSON and the sync audit SQLite database are separate stores, so a process crash can leave graph writes without an audit record; graph entity/relation insertion is idempotent and retry can complete the audit record. This is not a cross-store atomic transaction. Sync records retain evidence IDs for traceability; consumers must re-read the claim before presenting graph facts as current. Reopening or rejecting a claim prevents new sync operations but does not automatically retract an existing graph projection. Retraction and reconciliation are explicit future work.
+
+Only trusted application code should call this adapter after reviewer authorization. Reviewer authentication, graph write authorization, provenance-aware graph reads and revocation are not provided by this module.
