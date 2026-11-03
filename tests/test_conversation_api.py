@@ -281,6 +281,55 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(history[-1]["content"], "Hello from Yuki")
 
 
+    def test_streamed_tool_requests_receive_verified_request_identity(self):
+        observed = []
+        self.app.conversations.agent_loop_factory = (
+            lambda identity: observed.append(identity) or self.app.conversations.agent_loop
+        )
+        self.app.tools_for_user = lambda user: [{
+            "type": "function",
+            "function": {
+                "name": "diagnostic.read",
+                "description": "Read-only diagnostic tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }]
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+
+        async def run():
+            body = json.dumps({
+                "content": "Stream with authorized tools",
+                "request_id": "stream-identity-request",
+                "expected_version": 0,
+            }).encode()
+            events = [{"type": "http.request", "body": body, "more_body": False}]
+            sent = []
+
+            async def receive():
+                if events:
+                    return events.pop(0)
+                await asyncio.Future()
+
+            async def send(message):
+                sent.append(message)
+
+            await self.app(
+                {"type": "http", "method": "POST",
+                 "path": f"/v1/conversations/{cid}/messages/stream",
+                 "headers": [(b"authorization", f"Bearer {self.issued.token}".encode())],
+                 "query_string": b""},
+                receive, send,
+            )
+            return sent
+
+        sent = asyncio.run(run())
+        self.assertEqual(sent[0]["status"], 200)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].actor_id, self.user.user_id)
+        self.assertEqual(observed[0].role, "admin")
+
+
     def test_authenticated_cancel_endpoint_only_cancels_active_owned_generation(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)
         cid = conversation["conversation_id"]
