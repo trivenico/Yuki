@@ -403,15 +403,31 @@ class OneShotInvocationApprovalStore:
             db.commit()
             return True
 
-    def recover_interrupted_launches(self) -> int:
-        """Mark in-flight launches uncertain after restart; never automatically replay."""
+    def recover_interrupted_launches(self, invocation_ids: tuple[str, ...] | list[str]) -> int:
+        """Mark only supervisor-confirmed abandoned launches uncertain.
+
+        Callers must supply IDs positively identified as owned by a dead worker.
+        This method deliberately never sweeps all in-flight rows: another live
+        worker may still be executing them.
+        """
+        if (not isinstance(invocation_ids, (tuple, list))
+                or not invocation_ids or len(invocation_ids) > 256):
+            return 0
+        try:
+            ids = tuple(sorted({_identifier(item, "invocation_id") for item in invocation_ids}))
+        except InvocationApprovalError:
+            return 0
+        if len(ids) != len(invocation_ids):
+            return 0
+        placeholders = ",".join("?" for _ in ids)
         now = _iso(_utcnow())
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
-                """UPDATE skill_invocation_launch_intents SET state='uncertain', updated_at=?
-                   WHERE state IN ('launching','running')""",
-                (now,),
+                f"""UPDATE skill_invocation_launch_intents SET state='uncertain', updated_at=?
+                    WHERE invocation_id IN ({placeholders})
+                    AND state IN ('launching','running')""",
+                (now, *ids),
             ).rowcount
             db.commit()
             return changed
