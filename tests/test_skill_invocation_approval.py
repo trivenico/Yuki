@@ -79,7 +79,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             "current_approval_revision": "revision-1",
         }
         args.update(overrides)
-        return self.consume(approval, binding, **args)
+        return self.store.consume(approval, binding, **args)
 
     def issue(self, binding=None, **overrides):
         args = {
