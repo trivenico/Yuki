@@ -92,3 +92,10 @@ The SHA-256 digest detects accidental corruption only; it is not a signature or 
 ## Identity profile in the conversation runtime
 
 `build_conversation_runtime(..., identity_core=...)` optionally injects the existing `IdentityCore` into `ConversationService`. Each model turn receives the current profile as JSON-encoded descriptive system metadata, ahead of any caller-supplied system text. Profile values are explicitly non-authoritative preferences; they cannot grant tool permissions or override system/developer policy. The integration is optional and does not change existing deployments unless an identity core is supplied. The local identity file remains a single-process store and must be protected by OS account permissions.
+
+
+## Cognitive context preparation
+
+`core.cognitive_context.CognitiveContextEngine` composes the existing planner, optional versioned identity core, and optional consent-aware memory context builder into an immutable `CognitiveBrief`. It validates that identity remains configuration-only and cannot claim policy or tool authority. It emits a bounded deterministic task DAG and a serialized untrusted context brief for a downstream agent turn.
+
+This is deliberately a preparation layer, not a new model, autonomous reasoning claim, agent dispatcher, or tool executor. It does not submit work to `SpecialistAgentCoordinator`; the caller must explicitly review/authorize and translate the proposed `PlanTask` values into the coordinator's `SubtaskSpec` contract. Memory consent/backend failures produce warnings and planning continues without retrieved memory. The planner remains deterministic keyword-based until a model-backed planner with schema validation and evaluation is introduced.
