@@ -206,14 +206,23 @@ class EvidenceLedger:
                 ).fetchone()
                 if claim is None:
                     raise KeyError("Unknown claim.")
-                sources = [row["source_id"] for row in db.execute(
-                    "SELECT DISTINCT source_id FROM claim_evidence WHERE claim_id=? AND stance IN ('supports','refutes')",
-                    (claim_id,),
-                ).fetchall()]
-                stances = {row["stance"] for row in db.execute(
-                    "SELECT DISTINCT stance FROM claim_evidence WHERE claim_id=?", (claim_id,)
-                ).fetchall()}
+                evidence_rows = db.execute(
+                    """SELECT chunk_id, source_id, stance FROM claim_evidence
+                       WHERE claim_id=?""", (claim_id,)
+                ).fetchall()
+                sources = sorted({row["source_id"] for row in evidence_rows
+                                  if row["stance"] in {"supports", "refutes"}})
+                stances = {row["stance"] for row in evidence_rows}
                 if decision == "verify":
+                    current = self.knowledge_engine.get_chunks(
+                        [row["chunk_id"] for row in evidence_rows]
+                    ) if evidence_rows else []
+                    current_by_id = {item.chunk_id: item.source_id for item in current}
+                    if len(current_by_id) != len(evidence_rows) or any(
+                        current_by_id.get(row["chunk_id"]) != row["source_id"]
+                        for row in evidence_rows
+                    ):
+                        raise ValueError("Verification requires current canonical evidence; stale evidence must be replaced.")
                     if len(sources) < 2:
                         raise ValueError("Verification requires evidence from at least two distinct sources.")
                     if "refutes" in stances:
@@ -249,6 +258,10 @@ class EvidenceLedger:
                    FROM claim_evidence WHERE claim_id=? ORDER BY created_at, evidence_id""",
                 (claim_id,),
             ).fetchall()
+            current_chunks = self.knowledge_engine.get_chunks(
+                [row["chunk_id"] for row in evidence]
+            ) if evidence else []
+            current_by_id = {item.chunk_id: item for item in current_chunks}
             reviews = db.execute(
                 """SELECT review_id, decision, reviewer, method, rationale,
                           source_ids_json, created_at
@@ -259,7 +272,22 @@ class EvidenceLedger:
             "claim_id": claim["claim_id"], "claim_text": claim["claim_text"],
             "status": claim["status"], "created_at": claim["created_at"],
             "updated_at": claim["updated_at"],
-            "evidence": [dict(row) for row in evidence],
+            "evidence": [
+                {
+                    **dict(row),
+                    "current": (
+                        row["chunk_id"] in current_by_id
+                        and current_by_id[row["chunk_id"]].source_id == row["source_id"]
+                    ),
+                    "content": (
+                        current_by_id[row["chunk_id"]].content
+                        if row["chunk_id"] in current_by_id
+                        and current_by_id[row["chunk_id"]].source_id == row["source_id"]
+                        else None
+                    ),
+                }
+                for row in evidence
+            ],
             "reviews": [
                 {**dict(row), "source_ids": json.loads(row["source_ids_json"])}
                 for row in reviews
