@@ -6,9 +6,10 @@ from knowledge.vector_store import VectorStore
 from knowledge.hybrid_search import HybridKnowledgeSearch
 from knowledge.indexing_coordinator import SemanticIndexCoordinator
 from knowledge.document_parsers import DocumentParser, ParsedDocument
+from knowledge.evidence_ledger import EvidenceLedger
 
 __all__ = [
     "KnowledgeEngine", "KnowledgeResult", "SentenceTransformerEmbedder",
     "VectorStore", "HybridKnowledgeSearch", "SemanticIndexCoordinator",
-    "DocumentParser", "ParsedDocument",
+    "DocumentParser", "ParsedDocument", "EvidenceLedger",
 ]
