@@ -100,13 +100,21 @@ class EngineeringWorkflow:
 
         # Existing services independently enforce permissions, approvals, path policy,
         # source digests and audit preflight. Do not continue to tests after an edit error.
+        validation_result = {}
+
+        def validate_proposed_changes() -> bool:
+            result = self.test_runner.run(principal=principal, test_module=test_module)
+            validation_result["tests"] = result
+            return result.exit_code == 0 and not result.timed_out
+
         changed = self.workspace_changes.apply(
             principal=principal, changes=proposed_changes,
+            validate=validate_proposed_changes,
         )
         self._record(principal.actor_id, workflow_id, "changes_applied", workflow_digest)
 
-        tests = self.test_runner.run(principal=principal, test_module=test_module)
-        outcome = "succeeded" if tests.exit_code == 0 and not tests.timed_out else "tests_failed"
+        tests = validation_result["tests"]
+        outcome = "succeeded"
         self._record(principal.actor_id, workflow_id, outcome, workflow_digest)
         return EngineeringWorkflowResult(workflow_id, report, changed, tests, outcome)
 
