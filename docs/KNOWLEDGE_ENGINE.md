@@ -75,3 +75,25 @@ Cache the selected Hugging Face model explicitly before runtime. Runtime model l
 This is a local retrieval foundation, not a complete RAG pipeline. OCR, web crawling, claim verification, freshness evaluation, automatic knowledge-graph extraction and training data curation remain future work. Semantic vector search currently performs an exact local scan and should be benchmarked before scaling to very large corpora.
 
 Retrieved content is untrusted evidence. It must never authorize tools, override system policy or execute instructions embedded in documents.
+
+## Evidence-backed claims
+
+`EvidenceLedger` stores proposed claims separately from source documents and personal memory. Every evidence item must resolve to a current canonical knowledge chunk; caller-supplied text alone cannot be attached as evidence.
+
+```python
+from knowledge import KnowledgeEngine, EvidenceLedger
+
+engine = KnowledgeEngine()
+ledger = EvidenceLedger(engine)
+claim = ledger.create_claim(
+    "Yuki uses local semantic retrieval.",
+    [canonical_chunk_id],
+    stance="supports",
+)
+```
+
+Claim states are `proposed`, `supported`, `contested`, `verified` and `rejected`. Creating a claim never verifies it. Verification is an explicit review action, requires supporting evidence from at least two distinct source IDs, and is blocked when refuting evidence exists. Each review records reviewer, method, rationale and the source IDs considered. A reviewed claim must be explicitly reopened before its evidence can be changed.
+
+The two-source rule is a conservative workflow gate, not proof of source independence, truth, or source quality. Distinct source IDs can still represent copied material. Reviewer identity and review method are supplied by the trusted caller; this module does not authenticate reviewers or establish cryptographic attestation. Do not expose review operations directly to untrusted model output.
+
+Evidence records retain canonical chunk and source IDs, not a permanent copy of the source text. If a source is deleted or re-indexed, evidence may become stale; resolve chunk IDs against the knowledge engine before presenting evidence, and re-evaluate affected claims. Claim extraction, source credibility scoring, contradiction resolution and graph synchronization remain separate future components.
