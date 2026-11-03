@@ -48,13 +48,15 @@ class SQLiteApprovalAuditLog:
                     previous_hash TEXT NOT NULL,
                     event_hash TEXT NOT NULL,
                     pending_id_hash TEXT,
-                    session_hash TEXT
+                    session_hash TEXT,
+                    event_key TEXT
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(approval_audit_events)")}
             needs_pending_hash = "pending_id_hash" not in columns
             needs_session_hash = "session_hash" not in columns
-            if needs_pending_hash or needs_session_hash:
+            needs_event_key = "event_key" not in columns
+            if needs_pending_hash or needs_session_hash or needs_event_key:
                 # Perform all legacy-column additions and the chain rebuild together.
                 # The old append-only triggers must be temporarily removed for migration.
                 db.execute("DROP TRIGGER IF EXISTS approval_audit_no_update")
@@ -79,12 +81,15 @@ class SQLiteApprovalAuditLog:
                             "UPDATE approval_audit_events SET session_hash = ? WHERE session_hash IS NULL",
                             (self._identity_digest("legacy-session-unspecified"),),
                         )
+                    if needs_event_key:
+                        db.execute("ALTER TABLE approval_audit_events ADD COLUMN event_key TEXT")
                     self._rebuild_chain(db)
                     db.execute("COMMIT")
                 except Exception:
                     db.execute("ROLLBACK")
                     raise
             db.execute("CREATE INDEX IF NOT EXISTS idx_approval_audit_created ON approval_audit_events(created_at, event_id)")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_audit_event_key ON approval_audit_events(event_key) WHERE event_key IS NOT NULL")
             # Defense in depth against accidental SQL mutation. These triggers are
             # not a boundary against an administrator who can alter the DB schema.
             db.execute("""
@@ -159,12 +164,20 @@ class SQLiteApprovalAuditLog:
             )
             previous_hash = event_hash
 
-    def append(self, *, event_type: str, pending_id: str, actor: str, skill_id: str, session_id: str = "unspecified") -> int:
+    def append(
+        self, *, event_type: str, pending_id: str, actor: str, skill_id: str,
+        session_id: str = "unspecified", idempotency_key: str | None = None,
+    ) -> int:
         if not isinstance(event_type, str) or event_type not in _ALLOWED_EVENTS:
             raise ValueError("Unsupported approval audit event type.")
         for name, value, limit in (("pending_id", pending_id, 128), ("actor", actor, 256), ("session_id", session_id, 256), ("skill_id", skill_id, 120)):
             if not isinstance(value, str) or not value.strip() or len(value) > limit:
                 raise ValueError(f"{name} must be a non-empty bounded string.")
+        if idempotency_key is not None and (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > 200
+        ):
+            raise ValueError("idempotency_key must be a non-empty bounded string.")
         created_at = datetime.now(timezone.utc).isoformat()
         pending_id_hash = self._digest(pending_id)
         actor_hash = self._identity_digest(actor)
@@ -180,14 +193,25 @@ class SQLiteApprovalAuditLog:
                     event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, previous_hash
                 )
                 cursor = db.execute(
-                    """INSERT INTO approval_audit_events
+                    """INSERT OR IGNORE INTO approval_audit_events
                        (event_type, pending_id, actor_hash, skill_id, created_at,
-                        previous_hash, event_hash, pending_id_hash, session_hash)
-                       VALUES (?, '[redacted]', ?, ?, ?, ?, ?, ?, ?)""",
-                    (event_type, actor_hash, skill_id, created_at, previous_hash, event_hash, pending_id_hash, session_hash),
+                        previous_hash, event_hash, pending_id_hash, session_hash, event_key)
+                       VALUES (?, '[redacted]', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (event_type, actor_hash, skill_id, created_at, previous_hash, event_hash,
+                     pending_id_hash, session_hash, idempotency_key),
                 )
+                if cursor.rowcount == 0 and idempotency_key is not None:
+                    existing = db.execute(
+                        "SELECT event_id, event_type FROM approval_audit_events WHERE event_key = ?",
+                        (idempotency_key,),
+                    ).fetchone()
+                    if existing is None or existing[1] != event_type:
+                        raise ValueError("Idempotency key was already used for a different audit event.")
+                    event_id = int(existing[0])
+                else:
+                    event_id = int(cursor.lastrowid)
                 db.execute("COMMIT")
-                return int(cursor.lastrowid)
+                return event_id
             except Exception:
                 db.execute("ROLLBACK")
                 raise
