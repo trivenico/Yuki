@@ -195,3 +195,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Hugging Face metadata governance hardening | `providers/huggingface_discovery.py`; `tests/test_huggingface_discovery.py`; `docs/PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | `in_progress` | Adds gated/private/library/safetensors metadata, conservative review flags, private-candidate exclusion, path-segment validation, and tests for token validation and response-size bounds. Human license/model-card review, model benchmark, hardware compatibility, download and activation approval remain separate gates. |
+
+
+| Local Ollama evaluation laboratory | `evaluation/local_benchmark.py`; `yuki_evaluate_local.py`; `tests/test_local_benchmark.py`; `docs/PHASE63_MODEL_EVALUATION.md` | `in_progress` | Adds reproducible versioned benchmark loading, dataset SHA-256 fingerprint, local Ollama runner, redacted report, no-overwrite owner-only output and explicit non-activation policy. Exact-head CI, semantic/human rubric, repeated-run confidence intervals, throughput/token accounting and task-specific safety suites remain open. |
