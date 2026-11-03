@@ -10,6 +10,7 @@ from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
+from core.user_memory_service import UserMemoryService
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -33,7 +34,8 @@ class ConversationAPITests(unittest.TestCase):
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
         loop = AgentExecutionLoop(model, protocol, stream_model=lambda **kwargs: iter([{'type': 'text_delta', 'text': 'Hello '}, {'type': 'text_delta', 'text': 'from Yuki'}]))
         service = ConversationService(ConversationStore(root / "conversations.sqlite"), loop)
-        self.app = YukiConversationAPI(self.auth, service)
+        self.memory = UserMemoryService(root / "user-memory", root / "memory-consent.sqlite")
+        self.app = YukiConversationAPI(self.auth, service, memory_service=self.memory)
 
     def tearDown(self):
         self.tempdir.cleanup()
@@ -307,6 +309,86 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_memory_api_requires_auth_and_explicit_consent(self):
+        status, data, _ = self.request("GET", "/v1/memory/consent")
+        self.assertEqual(status, 401)
+
+        status, data, _ = self.request("GET", "/v1/memory/consent", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertFalse(data["enabled"])
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory", {"text": "Yuki local preference"}, self.issued.token
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "memory_consent_required")
+
+        status, data, _ = self.request(
+            "PUT", "/v1/memory/consent", {"enabled": True}, self.issued.token
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["enabled"])
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory",
+            {"text": "Yuki prefers local inference", "category": "preference"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        memory_id = data["memory"]["id"]
+
+        status, data, _ = self.request(
+            "GET", "/v1/memory/search", token=self.issued.token,
+            query=b"q=local+inference",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"][0]["id"], memory_id)
+
+        status, data, _ = self.request(
+            "PATCH", f"/v1/memory/{memory_id}",
+            {"text": "Yuki prefers private local inference", "category": "lesson"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memory"]["category"], "lesson")
+
+        status, data, _ = self.request(
+            "GET", "/v1/memory/export", token=self.issued.token
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["memories"]), 1)
+
+        status, data, _ = self.request(
+            "DELETE", f"/v1/memory/{memory_id}", token=self.issued.token
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["deleted"])
+
+    def test_memory_api_isolates_authenticated_accounts(self):
+        self.auth.create_account("second-user", "a-secure-second-password")
+        second = self.auth.authenticate("second-user", "a-secure-second-password")
+        self.request("PUT", "/v1/memory/consent", {"enabled": True}, self.issued.token)
+        self.request(
+            "POST", "/v1/memory", {"text": "alice private memory"}, self.issued.token
+        )
+        self.request("PUT", "/v1/memory/consent", {"enabled": True}, second.token)
+
+        status, data, _ = self.request("GET", "/v1/memory", token=second.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+
+    def test_memory_api_rejects_forged_fields_and_invalid_consent(self):
+        status, data, _ = self.request(
+            "PUT", "/v1/memory/consent",
+            {"enabled": True, "user_id": "victim"}, self.issued.token
+        )
+        self.assertEqual(status, 400)
+        status, data, _ = self.request(
+            "PUT", "/v1/memory/consent", {"enabled": "yes"}, self.issued.token
+        )
+        self.assertEqual(status, 400)
 
 if __name__ == "__main__":
     unittest.main()
