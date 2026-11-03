@@ -1,17 +1,16 @@
-"""Coordinate canonical document ingestion with local embedding persistence."""
+"""Coordinate document parsing, canonical ingestion and semantic indexing."""
 from __future__ import annotations
+
+from knowledge.document_parsers import DocumentParser
 
 
 class SemanticIndexCoordinator:
-    """Keep a source's semantic vectors aligned with its canonical knowledge chunks.
+    """Keep parsed source text and its semantic vectors aligned."""
 
-    Embeddings are generated and upserted before stale vectors are pruned. If
-    embedding generation fails, the previous semantic index remains available.
-    """
-
-    def __init__(self, knowledge_engine, vector_store, embedding_backend, *, batch_size: int = 64):
+    def __init__(self, knowledge_engine, vector_store, embedding_backend, *,
+                 parser=None, batch_size: int = 64):
         for name, obj, method in (
-            ("knowledge_engine", knowledge_engine, "ingest_file"),
+            ("knowledge_engine", knowledge_engine, "ingest_extracted_text"),
             ("vector_store", vector_store, "upsert_many"),
             ("embedding_backend", embedding_backend, "embed"),
         ):
@@ -22,10 +21,17 @@ class SemanticIndexCoordinator:
         self.knowledge_engine = knowledge_engine
         self.vector_store = vector_store
         self.embedding_backend = embedding_backend
+        self.parser = parser or DocumentParser()
+        if not callable(getattr(self.parser, "parse_file", None)):
+            raise TypeError("parser must provide parse_file().")
         self.batch_size = batch_size
 
     def index_file(self, path, *, workspace) -> dict:
-        ingestion = self.knowledge_engine.ingest_file(path, workspace=workspace)
+        document = self.parser.parse_file(path, workspace=workspace)
+        ingestion = self.knowledge_engine.ingest_extracted_text(
+            source_path=document.source_path, workspace=workspace,
+            source_sha256=document.source_sha256, text=document.text,
+        )
         source_id = ingestion["source_id"]
         chunks = self.knowledge_engine.get_source_chunks(source_id)
         if not chunks:
@@ -54,10 +60,11 @@ class SemanticIndexCoordinator:
             "vectors_indexed": indexed,
             "stale_vectors_removed": removed,
             "embedding_model": self.embedding_backend.model_id,
+            "document_format": document.format,
+            "page_count": document.page_count,
         }
 
     def remove_source(self, source_id: str) -> bool:
-        """Remove canonical content and its vectors for this embedding model."""
         removed = self.knowledge_engine.remove_source(source_id)
         self.vector_store.delete_source(
             source_id, model_id=self.embedding_backend.model_id
