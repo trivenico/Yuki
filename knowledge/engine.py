@@ -135,6 +135,18 @@ class KnowledgeEngine:
             raise ValueError("Knowledge source exceeds the 2 MB file limit.")
         return root, resolved
 
+    @classmethod
+    def chunk_text(cls, text: str) -> list[str]:
+        """Return the canonical chunk sequence without mutating the knowledge store."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text must be non-empty.")
+        if len(text.strip()) > cls.MAX_DOCUMENT_CHARS:
+            raise ValueError("Document exceeds the character limit.")
+        chunks = cls._chunks(text.strip())
+        if not chunks:
+            raise ValueError("Document contains no indexable text.")
+        return chunks
+
     def ingest_file(self, path: str | Path, *, workspace: str | Path) -> dict:
         """Index one explicitly selected file; re-ingesting unchanged content is a no-op."""
         _, source = self._safe_workspace_file(path, workspace)
