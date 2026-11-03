@@ -155,7 +155,7 @@ class KnowledgeEngine:
         if not chunks:
             raise ValueError("Knowledge source contains no indexable text.")
 
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             existing = db.execute(
                 "SELECT content_sha256, chunk_count FROM knowledge_sources WHERE source_id=?",
                 (source_id,),
@@ -204,7 +204,7 @@ class KnowledgeEngine:
         if not terms:
             return []
         match = " AND ".join('"' + term.replace('"', '""') + '"' for term in dict.fromkeys(terms))
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             rows = db.execute(
                 """SELECT c.chunk_id, c.source_id, s.source_name, s.source_path,
                           c.content, bm25(knowledge_chunks_fts) AS rank
@@ -233,7 +233,7 @@ class KnowledgeEngine:
         if not chunk_ids:
             return []
         placeholders = ",".join("?" for _ in chunk_ids)
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             rows = db.execute(
                 f"""SELECT c.chunk_id, c.source_id, s.source_name, s.source_path,
                            c.content
@@ -330,7 +330,7 @@ class KnowledgeEngine:
         ]
 
     def list_sources(self) -> list[dict]:
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             rows = db.execute(
                 """SELECT source_id, source_name, source_path, content_sha256,
                           indexed_at, chunk_count
@@ -341,7 +341,7 @@ class KnowledgeEngine:
     def remove_source(self, source_id: str) -> bool:
         if not isinstance(source_id, str) or not source_id.strip():
             raise ValueError("source_id is required.")
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 row = db.execute(
