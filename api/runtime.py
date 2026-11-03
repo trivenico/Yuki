@@ -9,6 +9,7 @@ from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
 from core.user_memory_service import UserMemoryService
+from core.memory_context import MemoryContextBuilder
 from api.web import YukiWebApplication
 
 
@@ -68,7 +69,8 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     store = create_conversation_store(config)
     try:
-        service = ConversationService(store, agent_loop)
+        memory_context_builder = MemoryContextBuilder(memory_service) if memory_service is not None else None
+        service = ConversationService(store, agent_loop, memory_context_builder=memory_context_builder)
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
