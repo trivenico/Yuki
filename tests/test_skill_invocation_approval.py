@@ -230,11 +230,15 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             current_approval_revision="revision-1",
         )
         first = self.claim(binding, "worker-old")
-        with self.store._connect() as db:
+        db = self.store._connect()
+        try:
             db.execute(
                 "UPDATE skill_invocation_launch_intents SET lease_until=? WHERE invocation_id=?",
                 ("2000-01-01T00:00:00+00:00", binding.invocation_id),
             )
+            db.commit()
+        finally:
+            db.close()
         self.assertIsNone(self.store.claim_launch(
             binding.invocation_id, "worker-new", lease_seconds=120
         ))
