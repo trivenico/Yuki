@@ -43,6 +43,51 @@ class ConversationServiceTests(unittest.TestCase):
         )
 
 
+
+    def test_explicit_agent_plan_proposal_uses_authenticated_owner_and_never_dispatches(self):
+        from unittest.mock import Mock
+        engine = Mock()
+        brief = object()
+        engine.prepare.return_value = brief
+        adapter = Mock()
+        expected = object()
+        adapter.submit_proposal.return_value = expected
+        service = ConversationService(
+            self.store, self.loop,
+            cognitive_context_engine=engine,
+            cognitive_agent_adapter=adapter,
+        )
+        result = service.propose_agent_plan(
+            owner_id="owner-a", goal="Build a secure desktop app",
+            idempotency_key="plan-request-1",
+        )
+        self.assertIs(result, expected)
+        engine.prepare.assert_called_once_with(
+            owner_id="owner-a", goal="Build a secure desktop app"
+        )
+        adapter.submit_proposal.assert_called_once_with(
+            actor_id="owner-a", idempotency_key="plan-request-1", brief=brief
+        )
+
+    def test_agent_plan_proposal_requires_both_components_and_valid_input(self):
+        with self.assertRaisesRegex(RuntimeError, "not configured"):
+            self.service.propose_agent_plan(
+                owner_id="owner-a", goal="Build an app", idempotency_key="plan-1"
+            )
+        from unittest.mock import Mock
+        service = ConversationService(
+            self.store, self.loop,
+            cognitive_context_engine=Mock(),
+            cognitive_agent_adapter=Mock(),
+        )
+        for owner, goal, key in (
+            ("", "Build an app", "plan-1"),
+            ("owner-a", "", "plan-1"),
+            ("owner-a", "Build an app", ""),
+        ):
+            with self.subTest(owner=owner, goal=goal, key=key), self.assertRaises(ValueError):
+                service.propose_agent_plan(owner_id=owner, goal=goal, idempotency_key=key)
+
     def test_identity_profile_is_injected_as_descriptive_system_metadata(self):
         class FakeIdentity:
             def snapshot(self):
