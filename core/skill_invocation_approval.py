@@ -208,6 +208,13 @@ class OneShotInvocationApprovalStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_skill_launch_state ON skill_invocation_launch_intents(state, updated_at)")
+            launch_columns = {row[1] for row in db.execute("PRAGMA table_info(skill_invocation_launch_intents)")}
+            if "worker_id" not in launch_columns:
+                db.execute("ALTER TABLE skill_invocation_launch_intents ADD COLUMN worker_id TEXT")
+            if "lease_until" not in launch_columns:
+                db.execute("ALTER TABLE skill_invocation_launch_intents ADD COLUMN lease_until TEXT")
+            if "fencing_token" not in launch_columns:
+                db.execute("ALTER TABLE skill_invocation_launch_intents ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0")
         if os.name != "nt":
             os.chmod(self.database, 0o600)
 
@@ -359,43 +366,102 @@ class OneShotInvocationApprovalStore:
             row,
         ))
 
-    def transition_launch(
-        self,
-        invocation_id: str,
-        binding_sha256: str,
-        *,
-        new_state: str,
-    ) -> bool:
-        """Apply a one-way launch-state transition; never retries uncertain work."""
+    def claim_launch(self, invocation_id: str, worker_id: str, *, lease_seconds: int = 30) -> int | None:
+        """Acquire a launch lease and monotonically increasing fencing token."""
         try:
             _identifier(invocation_id, "invocation_id")
+            _identifier(worker_id, "worker_id")
+        except InvocationApprovalError:
+            return None
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 300:
+            return None
+        now = _utcnow()
+        until = _iso(now + timedelta(seconds=lease_seconds))
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT state, worker_id, lease_until, fencing_token FROM skill_invocation_launch_intents WHERE invocation_id=?",
+                (invocation_id,),
+            ).fetchone()
+            if row is None or row[0] in {"succeeded", "failed", "uncertain"}:
+                db.rollback()
+                return None
+            if row[2] is not None and row[2] > _iso(now):
+                db.rollback()
+                return None
+            # Once a worker has claimed the intent, a lease expiry is not proof
+            # that its external side effects stopped. Never reassign it here.
+            if row[0] != "launch_intent":
+                db.rollback()
+                return None
+            token = int(row[3]) + 1
+            changed = db.execute(
+                """UPDATE skill_invocation_launch_intents
+                   SET state='launching', worker_id=?, lease_until=?, fencing_token=?, updated_at=?
+                   WHERE invocation_id=? AND fencing_token=?""",
+                (worker_id, until, token, _iso(now), invocation_id, row[3]),
+            ).rowcount
+            if changed != 1:
+                db.rollback()
+                return None
+            db.commit()
+            return token
+
+    def renew_launch_lease(self, invocation_id: str, worker_id: str, fencing_token: int, *, lease_seconds: int = 30) -> bool:
+        if (isinstance(fencing_token, bool) or not isinstance(fencing_token, int) or fencing_token < 1
+                or isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 300):
+            return False
+        now = _utcnow()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE skill_invocation_launch_intents SET lease_until=?, updated_at=?
+                   WHERE invocation_id=? AND worker_id=? AND fencing_token=?
+                   AND state IN ('launching','running') AND lease_until>?""",
+                (_iso(now + timedelta(seconds=lease_seconds)), _iso(now), invocation_id,
+                 worker_id, fencing_token, _iso(now)),
+            ).rowcount
+            db.commit()
+            return changed == 1
+
+    def transition_launch(
+        self, invocation_id: str, binding_sha256: str, *, worker_id: str,
+        fencing_token: int, new_state: str,
+    ) -> bool:
+        """Fence stale workers from mutating launch state after lease loss."""
+        try:
+            _identifier(invocation_id, "invocation_id")
+            _identifier(worker_id, "worker_id")
             _digest(binding_sha256, "binding_sha256")
         except InvocationApprovalError:
             return False
+        if isinstance(fencing_token, bool) or not isinstance(fencing_token, int) or fencing_token < 1:
+            return False
         allowed = {
-            "launch_intent": {"launching"},
             "launching": {"running", "succeeded", "failed", "uncertain"},
             "running": {"succeeded", "failed", "uncertain"},
-            "succeeded": set(),
-            "failed": set(),
-            "uncertain": set(),
         }
-        if new_state not in {"launching", "running", "succeeded", "failed", "uncertain"}:
+        if new_state not in {"running", "succeeded", "failed", "uncertain"}:
             return False
         now = _iso(_utcnow())
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT state FROM skill_invocation_launch_intents WHERE invocation_id=? AND binding_sha256=?",
-                (invocation_id, binding_sha256),
+                """SELECT state FROM skill_invocation_launch_intents
+                   WHERE invocation_id=? AND binding_sha256=? AND worker_id=?
+                   AND fencing_token=? AND lease_until>?""",
+                (invocation_id, binding_sha256, worker_id, fencing_token, now),
             ).fetchone()
             if row is None or new_state not in allowed.get(row[0], set()):
                 db.rollback()
                 return False
             changed = db.execute(
-                """UPDATE skill_invocation_launch_intents SET state=?, updated_at=?
-                   WHERE invocation_id=? AND binding_sha256=? AND state=?""",
-                (new_state, now, invocation_id, binding_sha256, row[0]),
+                """UPDATE skill_invocation_launch_intents SET state=?, updated_at=?,
+                   lease_until=CASE WHEN ? IN ('succeeded','failed','uncertain') THEN NULL ELSE lease_until END
+                   WHERE invocation_id=? AND binding_sha256=? AND worker_id=?
+                   AND fencing_token=? AND state=? AND lease_until>?""",
+                (new_state, now, new_state, invocation_id, binding_sha256, worker_id,
+                 fencing_token, row[0], now),
             ).rowcount
             if changed != 1:
                 db.rollback()
@@ -403,15 +469,18 @@ class OneShotInvocationApprovalStore:
             db.commit()
             return True
 
-    def recover_interrupted_launches(self, invocation_ids: tuple[str, ...] | list[str]) -> int:
-        """Mark only supervisor-confirmed abandoned launches uncertain.
-
-        Callers must supply IDs positively identified as owned by a dead worker.
-        This method deliberately never sweeps all in-flight rows: another live
-        worker may still be executing them.
-        """
-        if (not isinstance(invocation_ids, (tuple, list))
-                or not invocation_ids or len(invocation_ids) > 256):
+    def recover_interrupted_launches(
+        self, invocation_ids: tuple[str, ...] | list[str], *, dead_worker_id: str,
+        fencing_token: int,
+    ) -> int:
+        """Recover only supervisor-confirmed dead-worker invocations at the observed fence."""
+        try:
+            _identifier(dead_worker_id, "dead_worker_id")
+        except InvocationApprovalError:
+            return 0
+        if (not isinstance(invocation_ids, (tuple, list)) or not invocation_ids
+                or len(invocation_ids) > 256 or isinstance(fencing_token, bool)
+                or not isinstance(fencing_token, int) or fencing_token < 1):
             return 0
         try:
             ids = tuple(sorted({_identifier(item, "invocation_id") for item in invocation_ids}))
@@ -424,10 +493,10 @@ class OneShotInvocationApprovalStore:
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
-                f"""UPDATE skill_invocation_launch_intents SET state='uncertain', updated_at=?
-                    WHERE invocation_id IN ({placeholders})
-                    AND state IN ('launching','running')""",
-                (now, *ids),
+                f"""UPDATE skill_invocation_launch_intents SET state='uncertain',
+                    lease_until=NULL, updated_at=? WHERE invocation_id IN ({placeholders})
+                    AND worker_id=? AND fencing_token=? AND state IN ('launching','running')""",
+                (now, *ids, dead_worker_id, fencing_token),
             ).rowcount
             db.commit()
             return changed
