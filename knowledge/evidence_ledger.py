@@ -214,11 +214,12 @@ class EvidenceLedger:
                                   if row["stance"] in {"supports", "refutes"}})
                 stances = {row["stance"] for row in evidence_rows}
                 if decision == "verify":
-                    current = self.knowledge_engine.get_chunks(
-                        [row["chunk_id"] for row in evidence_rows]
-                    ) if evidence_rows else []
+                    evidence_chunk_ids = list(dict.fromkeys(
+                        row["chunk_id"] for row in evidence_rows
+                    ))
+                    current = self.knowledge_engine.get_chunks(evidence_chunk_ids) if evidence_chunk_ids else []
                     current_by_id = {item.chunk_id: item.source_id for item in current}
-                    if len(current_by_id) != len(evidence_rows) or any(
+                    if len(current_by_id) != len(evidence_chunk_ids) or any(
                         current_by_id.get(row["chunk_id"]) != row["source_id"]
                         for row in evidence_rows
                     ):
@@ -258,9 +259,8 @@ class EvidenceLedger:
                    FROM claim_evidence WHERE claim_id=? ORDER BY created_at, evidence_id""",
                 (claim_id,),
             ).fetchall()
-            current_chunks = self.knowledge_engine.get_chunks(
-                [row["chunk_id"] for row in evidence]
-            ) if evidence else []
+            evidence_chunk_ids = list(dict.fromkeys(row["chunk_id"] for row in evidence))
+            current_chunks = self.knowledge_engine.get_chunks(evidence_chunk_ids) if evidence_chunk_ids else []
             current_by_id = {item.chunk_id: item for item in current_chunks}
             reviews = db.execute(
                 """SELECT review_id, decision, reviewer, method, rationale,
