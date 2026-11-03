@@ -195,6 +195,19 @@ class OneShotInvocationApprovalStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_skill_invocation_binding ON skill_invocation_approvals(binding_sha256)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS skill_invocation_launch_intents (
+                    invocation_id TEXT PRIMARY KEY,
+                    approval_id TEXT NOT NULL UNIQUE,
+                    binding_sha256 TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN (
+                        'launch_intent','launching','running','succeeded','failed','uncertain'
+                    )),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_skill_launch_state ON skill_invocation_launch_intents(state, updated_at)")
         if os.name != "nt":
             os.chmod(self.database, 0o600)
 
@@ -235,6 +248,173 @@ class OneShotInvocationApprovalStore:
             )
             db.commit()
         return approval_id
+
+    def authorize_launch(
+        self,
+        approval_id: str,
+        binding: SkillInvocationBinding,
+        *,
+        auth_service: BuiltInAuthService,
+        actor_session_token: str,
+        current_approval_revision: str,
+    ) -> dict[str, str] | None:
+        """Atomically consume approval and persist one durable launch intent.
+
+        Repeating the same request returns its existing intent. It never creates
+        a second intent for an invocation or approval ID.
+        """
+        if (not isinstance(approval_id, str) or not 20 <= len(approval_id) <= 256
+                or not isinstance(binding, SkillInvocationBinding)
+                or not isinstance(auth_service, BuiltInAuthService)):
+            return None
+        try:
+            _identifier(current_approval_revision, "current_approval_revision")
+            actor = auth_service.resolve_session(actor_session_token)
+        except (InvocationApprovalError, TypeError, ValueError):
+            return None
+        if actor is None or not secrets.compare_digest(actor.user_id, binding.actor_id):
+            return None
+
+        now = _iso(_utcnow())
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                """SELECT invocation_id, approval_id, binding_sha256, state, created_at, updated_at
+                   FROM skill_invocation_launch_intents WHERE invocation_id=?""",
+                (binding.invocation_id,),
+            ).fetchone()
+            if existing is not None:
+                if (existing[1] == approval_id
+                        and secrets.compare_digest(existing[2], binding.binding_sha256)):
+                    db.commit()
+                    return dict(zip(
+                        ("invocation_id", "approval_id", "binding_sha256", "state", "created_at", "updated_at"),
+                        existing,
+                    ))
+                db.rollback()
+                return None
+
+            approval = db.execute(
+                """SELECT binding_sha256, expires_at, approval_revision, consumed_at
+                   FROM skill_invocation_approvals WHERE approval_id=?""",
+                (approval_id,),
+            ).fetchone()
+            if (approval is None or approval[3] is not None
+                    or approval[0] != binding.binding_sha256
+                    or approval[1] <= now
+                    or approval[2] != current_approval_revision):
+                db.rollback()
+                return None
+
+            consumed = db.execute(
+                """UPDATE skill_invocation_approvals SET consumed_at=?
+                   WHERE approval_id=? AND consumed_at IS NULL""",
+                (now, approval_id),
+            )
+            if consumed.rowcount != 1:
+                db.rollback()
+                return None
+
+            db.execute(
+                """INSERT INTO skill_invocation_launch_intents
+                   (invocation_id, approval_id, binding_sha256, state, created_at, updated_at)
+                   VALUES(?,?,?,'launch_intent',?,?)""",
+                (binding.invocation_id, approval_id, binding.binding_sha256, now, now),
+            )
+            db.commit()
+            return {
+                "invocation_id": binding.invocation_id,
+                "approval_id": approval_id,
+                "binding_sha256": binding.binding_sha256,
+                "state": "launch_intent",
+                "created_at": now,
+                "updated_at": now,
+            }
+        except sqlite3.IntegrityError:
+            db.rollback()
+            return None
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def get_launch_intent(self, invocation_id: str) -> dict[str, str] | None:
+        """Return durable launch metadata for reconciliation; never returns payloads."""
+        try:
+            _identifier(invocation_id, "invocation_id")
+        except InvocationApprovalError:
+            return None
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT invocation_id, approval_id, binding_sha256, state, created_at, updated_at
+                   FROM skill_invocation_launch_intents WHERE invocation_id=?""",
+                (invocation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("invocation_id", "approval_id", "binding_sha256", "state", "created_at", "updated_at"),
+            row,
+        ))
+
+    def transition_launch(
+        self,
+        invocation_id: str,
+        binding_sha256: str,
+        *,
+        new_state: str,
+    ) -> bool:
+        """Apply a one-way launch-state transition; never retries uncertain work."""
+        try:
+            _identifier(invocation_id, "invocation_id")
+            _digest(binding_sha256, "binding_sha256")
+        except InvocationApprovalError:
+            return False
+        allowed = {
+            "launch_intent": {"launching"},
+            "launching": {"running", "succeeded", "failed", "uncertain"},
+            "running": {"succeeded", "failed", "uncertain"},
+            "succeeded": set(),
+            "failed": set(),
+            "uncertain": set(),
+        }
+        if new_state not in {"launching", "running", "succeeded", "failed", "uncertain"}:
+            return False
+        now = _iso(_utcnow())
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT state FROM skill_invocation_launch_intents WHERE invocation_id=? AND binding_sha256=?",
+                (invocation_id, binding_sha256),
+            ).fetchone()
+            if row is None or new_state not in allowed.get(row[0], set()):
+                db.rollback()
+                return False
+            changed = db.execute(
+                """UPDATE skill_invocation_launch_intents SET state=?, updated_at=?
+                   WHERE invocation_id=? AND binding_sha256=? AND state=?""",
+                (new_state, now, invocation_id, binding_sha256, row[0]),
+            ).rowcount
+            if changed != 1:
+                db.rollback()
+                return False
+            db.commit()
+            return True
+
+    def recover_interrupted_launches(self) -> int:
+        """Mark in-flight launches uncertain after restart; never automatically replay."""
+        now = _iso(_utcnow())
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE skill_invocation_launch_intents SET state='uncertain', updated_at=?
+                   WHERE state IN ('launching','running')""",
+                (now,),
+            ).rowcount
+            db.commit()
+            return changed
 
     def consume(
         self,
