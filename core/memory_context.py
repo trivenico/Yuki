@@ -27,6 +27,7 @@ class MemoryContextBuilder:
         max_memories: int = 5,
         max_chars: int = 4000,
         max_item_chars: int = 700,
+        episodic_memory_service: Any | None = None,
     ):
         if not callable(getattr(memory_service, "search", None)):
             raise TypeError("memory_service must provide search().")
@@ -37,7 +38,12 @@ class MemoryContextBuilder:
         ):
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError(f"{name} must be between 1 and {maximum}.")
+        if episodic_memory_service is not None and not callable(
+            getattr(episodic_memory_service, "search", None)
+        ):
+            raise TypeError("episodic_memory_service must provide search().")
         self.memory_service = memory_service
+        self.episodic_memory_service = episodic_memory_service
         self.max_memories = max_memories
         self.max_chars = max_chars
         self.max_item_chars = max_item_chars
@@ -54,6 +60,15 @@ class MemoryContextBuilder:
         matches = self.memory_service.search(
             identity, query, limit=self.max_memories
         )
+        if self.episodic_memory_service is not None:
+            try:
+                episodes = self.episodic_memory_service.search(
+                    identity, query, limit=self.max_memories
+                )
+            except PermissionError:
+                # Episodic memory is optional and independently consent-gated.
+                episodes = []
+            matches = list(matches) + list(episodes)
         lines = []
         memory_ids = []
         used = 0
