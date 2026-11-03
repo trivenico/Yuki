@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -30,6 +31,16 @@ class MemoryConsentStore:
 
     @contextmanager
     def _connection(self):
+        """Commit or roll back work and always close the SQLite connection."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    @contextmanager
+    def _connection(self):
         """Commit or roll back work and always release the SQLite file handle."""
         db = self._connect()
         try:
@@ -41,7 +52,7 @@ class MemoryConsentStore:
     def enabled(self, user_id: str) -> bool:
         if not isinstance(user_id, str) or not user_id:
             raise ValueError("verified user_id is required")
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute(
                 "SELECT enabled FROM memory_consent WHERE user_id=?", (user_id,)
             ).fetchone()
