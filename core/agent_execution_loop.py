@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.tool_schema_validation import ToolSchemaError, validate_tool_calls, validate_tool_definitions
 
 
 class AgentExecutionError(RuntimeError):
@@ -143,6 +144,10 @@ class AgentExecutionLoop:
         ]
         turns = 0
         calls_total = 0
+        try:
+            tool_schemas = validate_tool_definitions(tools)
+        except ToolSchemaError as exc:
+            raise ValueError("tool definitions failed validation.") from exc
         self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
 
         while turns < self.max_model_turns:
@@ -230,8 +235,9 @@ class AgentExecutionLoop:
                 encoded_envelope = json.dumps(dict(envelope), ensure_ascii=False, separators=(",", ":"))
                 from core.structured_tool_protocol import parse_tool_calls
                 parsed = parse_tool_calls(encoded_envelope)
+                validate_tool_calls(parsed, tool_schemas)
             except (TypeError, ValueError) as exc:
-                raise AgentExecutionError("model returned an invalid structured tool-call envelope.") from exc
+                raise AgentExecutionError("model returned an invalid or unauthorized tool-call proposal.") from exc
 
             if not parsed:
                 if not text.strip():
