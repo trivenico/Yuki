@@ -67,6 +67,42 @@ class MemoryContextBuilderTests(unittest.TestCase):
             with self.subTest(owner=owner, query_length=len(query)), self.assertRaises(ValueError):
                 builder.build(owner_id=owner, query=query)
 
+
+    def test_includes_episodic_memories_as_untrusted_reference_data(self):
+        class FakeEpisodes:
+            def search(self, user, query, *, limit=5):
+                self.owner = user.user_id
+                self.query = query
+                return [{
+                    "id": "episode-1", "category": "episode",
+                    "text": "Previously completed local model evaluation.",
+                }]
+
+        episodes = FakeEpisodes()
+        builder = MemoryContextBuilder(
+            FakeMemoryService([]), episodic_memory_service=episodes
+        )
+        result = builder.build(owner_id="verified-owner", query="model evaluation")
+        self.assertIn("Previously completed local model evaluation", result.text)
+        self.assertIn("episode-1", result.memory_ids)
+        self.assertIn("UNTRUSTED REFERENCE DATA ONLY", result.text)
+        self.assertEqual(episodes.owner, "verified-owner")
+
+    def test_episodic_consent_failure_does_not_break_regular_memory(self):
+        class DisabledEpisodes:
+            def search(self, user, query, *, limit=5):
+                raise PermissionError("memory_consent_required")
+
+        builder = MemoryContextBuilder(
+            FakeMemoryService([{
+                "id": "a" * 32, "category": "note", "text": "Regular memory"
+            }]),
+            episodic_memory_service=DisabledEpisodes(),
+        )
+        result = builder.build(owner_id="verified-owner", query="memory")
+        self.assertIn("Regular memory", result.text)
+        self.assertNotIn("episode", result.text)
+
     def test_rejects_invalid_budgets(self):
         for kwargs in ({"max_memories": True}, {"max_chars": 0},
                        {"max_item_chars": 2001}):
