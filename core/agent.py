@@ -85,7 +85,7 @@ class YukiCoreAgent:
             for item in records
         ]
 
-    def resolve_approval_recovery(self, reference: str, decision: str, *, note: str = "") -> bool:
+    def resolve_approval_recovery(self, reference: str, decision: str) -> bool:
         """Record an operator decision; this method never retries the approved action."""
         coordinator = self.approval_coordinator
         store = getattr(coordinator, "pending_store", None)
@@ -93,10 +93,6 @@ class YukiCoreAgent:
         if store is None or audit is None:
             return False
         if decision not in {"completed", "failed", "uncertain"}:
-            return False
-        if not isinstance(note, str) or len(note) > 500:
-            return False
-        if any(ord(ch) < 32 and ch not in "\\t" for ch in note):
             return False
         record = store.find_recovery_by_reference(reference)
         if record is None:
