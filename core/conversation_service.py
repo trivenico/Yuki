@@ -20,13 +20,16 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, memory_context_builder=None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         self.store = store
         self.agent_loop = agent_loop
+        if memory_context_builder is not None and not callable(getattr(memory_context_builder, "build", None)):
+            raise TypeError("memory_context_builder must provide build().")
+        self.memory_context_builder = memory_context_builder
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -168,6 +171,12 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
+                if self.memory_context_builder is not None:
+                    memory_context = self.memory_context_builder.build(
+                        owner_id=owner_id, query=user_text
+                    )
+                    if memory_context.text:
+                        kwargs["untrusted_context"] = [memory_context.text]
                 result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
