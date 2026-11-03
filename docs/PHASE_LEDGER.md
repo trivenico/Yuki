@@ -198,3 +198,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Local Ollama evaluation laboratory | `evaluation/local_benchmark.py`; `yuki_evaluate_local.py`; `tests/test_local_benchmark.py`; `docs/PHASE63_MODEL_EVALUATION.md` | `in_progress` | Adds reproducible versioned benchmark loading, dataset SHA-256 fingerprint, local Ollama runner, redacted report, no-overwrite owner-only output and explicit non-activation policy. Exact-head CI, semantic/human rubric, repeated-run confidence intervals, throughput/token accounting and task-specific safety suites remain open. |
+
+
+| Consent-aware learning proposal service | `core/learning_service.py`; `tests/test_learning_service.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds per-owner pending lesson proposals, best-effort secret redaction, consent gates, explicit approve/reject, owner isolation and idempotent completed approval. Not yet wired into HTTP/agent loop. SQLite proposal metadata and JSON personal memory are separate stores; crash-window reconciliation and transactional outbox remain open. |
