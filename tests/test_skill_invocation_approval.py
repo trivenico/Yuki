@@ -134,6 +134,94 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         self.assertFalse(self.consume(approval, binding, actor_session_token=revoked))
         self.assertTrue(self.consume(approval, binding))
 
+    def test_authorize_launch_atomically_consumes_approval_and_is_idempotent(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        intent = self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        self.assertEqual(intent["state"], "launch_intent")
+        replay = self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        self.assertEqual(replay, intent)
+        self.assertFalse(self.consume(approval, binding))
+
+    def test_launch_intent_rejects_wrong_actor_and_stale_approval(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        self.assertIsNone(self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.other_actor_session,
+            current_approval_revision="revision-1",
+        ))
+        self.assertIsNone(self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-2",
+        ))
+        intent = self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        self.assertEqual(intent["state"], "launch_intent")
+
+    def test_launch_state_machine_is_one_way_and_terminal(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        intent = self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        digest = binding.binding_sha256
+        self.assertTrue(self.store.transition_launch(
+            binding.invocation_id, digest, new_state="launching"
+        ))
+        self.assertTrue(self.store.transition_launch(
+            binding.invocation_id, digest, new_state="running"
+        ))
+        self.assertTrue(self.store.transition_launch(
+            binding.invocation_id, digest, new_state="succeeded"
+        ))
+        self.assertFalse(self.store.transition_launch(
+            binding.invocation_id, digest, new_state="launching"
+        ))
+        self.assertFalse(self.store.transition_launch(
+            binding.invocation_id, digest, new_state="failed"
+        ))
+
+    def test_recovery_marks_interrupted_launches_uncertain_without_replay(self):
+        first_binding = self.binding()
+        first_approval = self.issue(first_binding)
+        first = self.store.authorize_launch(
+            first_approval, first_binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        second_binding = self.binding(invocation_id="invocation-2", task_id="task-2")
+        second_approval = self.issue(second_binding)
+        self.store.authorize_launch(
+            second_approval, second_binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        self.assertTrue(self.store.transition_launch(
+            first_binding.invocation_id, first_binding.binding_sha256,
+            new_state="launching",
+        ))
+        self.assertEqual(self.store.recover_interrupted_launches(), 1)
+        self.assertFalse(self.store.transition_launch(
+            first_binding.invocation_id, first_binding.binding_sha256,
+            new_state="running",
+        ))
+        self.assertEqual(self.store.recover_interrupted_launches(), 0)
+
     def test_revoked_actor_session_is_rejected(self):
         token = self.auth.authenticate(
             "user.one", "correct-horse-battery-staple"
