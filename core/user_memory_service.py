@@ -63,7 +63,7 @@ class UserMemoryService:
         if not self.consent.enabled(user_id):
             raise PermissionError("memory_consent_required")
         memory = self._memory(user)
-        updated = memory._store.update(memory_id, text, category=category)
+        updated = memory.update(memory_id, text, category=category)
         if updated is None:
             raise KeyError("memory_not_found")
         return updated
