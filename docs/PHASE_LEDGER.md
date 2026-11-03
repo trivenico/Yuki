@@ -168,3 +168,9 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Any non-empty tool list is rejected unless a verified `AuthenticatedIdentity` and request-scoped agent-loop factory are supplied. This blocks accidental use of the shared process-wide execution loop for multi-user tool execution.
 - The authenticated ASGI API passes its resolved identity into conversation generation. Factory output is type-checked as `AgentExecutionLoop`.
 - Tests cover tool execution denial without verified identity/factory, owner mismatch, and identity propagation. Latest PR #498 head: `67c770b3cfdf29bc126cad2ab8cca2918d2f57c0`; 26 checks registered (4 running, 22 queued, no failures at initial inspection). Branch 119 ahead / 4 behind main. The web profile remains deny-by-default for tools; no production multi-user tool capability is claimed.
+
+## Phase 2 CI correction — request identity validation ordering
+
+- Ubuntu Python 3.11 surfaced two errors in the request-scoped conversation tests. A fixture used a placeholder conversation owner rather than the authenticated account ID; the second exposed that principal mismatch was detected only after generation lease acquisition.
+- Moved verified-principal and tool-execution preconditions ahead of lease acquisition and corrected the fixture to use the authenticated actor ID. No tests were weakened or removed.
+- Latest PR #498 head: `d90a813f7f86d9d7d1ffa7275f9b64828c48eb2c`; 5 exact-head checks queued at initial inspection. Revalidation pending.
