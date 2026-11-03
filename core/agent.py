@@ -68,6 +68,23 @@ class YukiCoreAgent:
         selected = cards[0]
         return self.run_skill(selected.name, argument)
 
+    def list_approval_recovery(self, *, limit: int = 100) -> list[dict[str, str]]:
+        """List interrupted approval records without exposing bearer receipt IDs."""
+        coordinator = self.approval_coordinator
+        store = getattr(coordinator, "pending_store", None)
+        if store is None:
+            return []
+        records = store.list_recovery_required(limit=limit)
+        return [
+            {
+                "reference": str(item.get("pending_id", ""))[-6:],
+                "skill_id": str(item.get("skill_id", "")),
+                "status": str(item.get("status", "")),
+                "updated_at": str(item.get("updated_at", "")),
+            }
+            for item in records
+        ]
+
     def _execute_registered_skill(self, name: str, argument: str) -> AgentResponse:
         """Execute a previously approved registered skill without requesting approval again."""
         skill = self.registry.get(name)
