@@ -73,3 +73,10 @@ The service hashes the verified user ID for proposal ownership and never accepts
 **Important consistency boundary:** proposal metadata and personal memory currently live in separate storage systems (SQLite and the scoped JSON memory store). The approval operation serializes local calls and uses a SQLite write transaction, but cannot provide a true atomic transaction across both stores. A process or disk failure between the memory write and proposal commit can leave an orphaned lesson or require manual reconciliation. Do not claim distributed exactly-once semantics. A future transactional memory backend or durable outbox/idempotency key is required before multi-process production use.
 
 The service does not train or fine-tune a model, change system prompts, alter identity/policies, grant tools, or autonomously modify Yuki. Approved lessons are retrievable personal reference data only.
+
+
+## Episodic memory and reasoning context
+
+`core.episodic_memory.EpisodicMemoryService` stores concise, explicitly supplied task summaries, outcomes and tags in a per-owner SQLite journal. It requires the existing memory-consent setting for recording and retrieval, supports owner-scoped search/list/delete, enforces a bounded retention count, and redacts common secret patterns. It does not automatically capture raw conversation history, model responses or tool payloads.
+
+`MemoryContextBuilder` can optionally receive an episodic memory service. When configured, it retrieves relevant episodes alongside personal semantic/lesson memories and places both in the same bounded untrusted-reference block. Episodic consent failure is fail-closed for episodes but does not disable ordinary conversation or unrelated personal memory. Retrieved episode text is context only: it cannot alter system policy, authorize tools or grant permissions. The current search is bounded lexical overlap, not embeddings or temporal/causal reasoning.
