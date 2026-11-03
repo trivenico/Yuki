@@ -6,6 +6,7 @@ code or automatically replay work after an expired worker lease.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from datetime import datetime, timezone
 import re
 from typing import Any, Callable
@@ -74,6 +75,19 @@ class TaskRuntime:
             raise ValueError("actor_id must be non-empty bounded text.")
         return actor_id.strip()
 
+    @staticmethod
+    def _scoped_idempotency_key(actor: str, key: str) -> str:
+        """Namespace idempotency keys by actor without storing raw caller keys."""
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or len(key) > 200
+            or "\x00" in key
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        digest = hashlib.sha256((actor + "\0" + key.strip()).encode("utf-8")).hexdigest()
+        return "actor:" + digest
+
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
         if self.authorize is None:
             return False
@@ -92,7 +106,8 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
+        scoped_key = self._scoped_idempotency_key(actor, idempotency_key)
+        run = self.store.create(idempotency_key=scoped_key, workflow_name=name, definition=steps)
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
@@ -288,7 +303,9 @@ class TaskRuntime:
         if original.state not in {"failed", "interrupted"}:
             raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
         # A stable key makes duplicate submissions for the same observed version idempotent.
-        retry_key = f"retry:{original.run_id}:{expected_version}"
+        retry_key = self._scoped_idempotency_key(
+            actor, f"retry:{original.run_id}:{expected_version}"
+        )
         retried = self.store.create(
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
