@@ -290,9 +290,12 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "uncertain")
         self.assertFalse(self.store.transition_launch(
             first_binding.invocation_id, first_binding.binding_sha256,
-            new_state="running",
+            worker_id="worker-first", fencing_token=token, new_state="running",
         ))
-        self.assertEqual(self.store.recover_interrupted_launches([first_binding.invocation_id]), 0)
+        self.assertEqual(self.store.recover_interrupted_launches(
+            [first_binding.invocation_id], dead_worker_id="worker-first",
+            fencing_token=token,
+        ), 0)
 
     def test_revoked_actor_session_is_rejected(self):
         token = self.auth.authenticate(
