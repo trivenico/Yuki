@@ -95,11 +95,14 @@ class TaskRuntime:
             raise KeyError("task not found.")
         return self._record(run)
 
-    def events(self, *, actor_id: str, task_id: str, after_sequence: int = 0) -> list[TaskEvent]:
+    def events(self, *, actor_id: str, task_id: str, after_sequence: int = 0,
+               limit: int = 100) -> list[TaskEvent]:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:read", task_id):
             raise PermissionError("task event read is not authorized.")
-        return self.store.list_task_events(task_id, after_sequence=after_sequence)
+        return self.store.list_task_events(
+            task_id, after_sequence=after_sequence, limit=limit,
+        )
 
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
                         message: str, percent: int | None = None) -> TaskRecord:
