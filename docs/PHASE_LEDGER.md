@@ -216,3 +216,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Cognitive context runtime integration | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Optional cognitive engine injection into authenticated conversation service. Each turn builds a brief from verified owner and goal and supplies it as untrusted context; no automatic agent dispatch. Mutually exclusive with separately injected identity/memory sources to avoid duplicate context. |
+
+
+| Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval while never inferring permissions. Persists/routs proposal through authorized submit only; no advance/worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
