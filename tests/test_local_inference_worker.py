@@ -38,6 +38,10 @@ class LocalWorkerTests(unittest.TestCase):
   self.provider.generate_chat.return_value={"text":"too long"}
   self.assertEqual(worker.run_once().error_code,"output_too_large")
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"failed")
+ def test_lease_must_outlast_provider_timeout(self):
+  self.provider.timeout=120
+  with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
+   LocalInferenceWorker(self.jobs,self.device.token,{"local/model":self.provider})
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
   with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
