@@ -312,7 +312,7 @@ class SQLitePendingApprovalStore:
                 """SELECT pending_id, skill_id, status, updated_at
                    FROM pending_approvals
                    WHERE substr(pending_id, -12) = ?
-                     AND status IN ('claimed', 'approved', 'executing', 'recovery_required')
+                     AND status IN ('claimed', 'approved', 'executing', 'recovery_required', 'reconciling')
                    LIMIT 2""",
                 (reference,),
             ).fetchall()
