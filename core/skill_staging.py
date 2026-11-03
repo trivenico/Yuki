@@ -136,11 +136,20 @@ def stage_skill_artifact(
     if parent.is_symlink():
         raise SkillStagingError("staging parent must not be a symlink")
     try:
+        unresolved_parent = parent.absolute()
         parent = parent.resolve(strict=True)
     except OSError as exc:
         raise SkillStagingError("staging parent must already exist") from exc
+    if os.path.normcase(str(unresolved_parent)) != os.path.normcase(str(parent)):
+        raise SkillStagingError("staging parent path must not traverse symlinked components")
     if not parent.is_dir():
         raise SkillStagingError("staging parent must be a directory")
+    if os.name != "nt":
+        parent_stat = parent.stat()
+        if parent_stat.st_uid != os.geteuid():
+            raise SkillStagingError("staging parent must be owned by the current user")
+        if stat.S_IMODE(parent_stat.st_mode) & 0o022:
+            raise SkillStagingError("staging parent must not be group- or world-writable")
 
     with tempfile.TemporaryDirectory(prefix="yuki-skill-", dir=parent) as temporary:
         root = Path(temporary)
