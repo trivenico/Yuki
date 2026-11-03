@@ -41,11 +41,14 @@ class PermissionGate:
 
         End-user roles deliberately cannot approve privileged operations.
         """
-        role = getattr(identity, "role", None)
+        from core.identity import AuthenticatedIdentity
+        if not isinstance(identity, AuthenticatedIdentity):
+            raise TypeError("identity must be a server-verified AuthenticatedIdentity.")
+        role = identity.role
         if role not in {"admin", "operator"}:
             raise PermissionError("This authenticated role cannot approve actions.")
-        actor_id = getattr(identity, "actor_id", None)
-        session_id = getattr(identity, "session_id", None)
+        actor_id = identity.actor_id
+        session_id = identity.session_id
         if not isinstance(actor_id, str) or not actor_id.strip():
             raise ValueError("Verified actor identity is required.")
         if not isinstance(session_id, str) or not session_id.strip():
