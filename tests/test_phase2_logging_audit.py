@@ -282,6 +282,77 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             self.assertEqual(len(agent.list_approval_recovery()), 1)
             self.assertEqual(audit.list_events()[0]["event_type"], "reconciliation_uncertain")
 
+    def test_reconciliation_reservation_is_atomic_and_identity_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            item = store.put(
+                "files.write", {"argument": "x"},
+                {"skill_id": "files.write", "arguments": {"argument": "x"}},
+                actor="creator", session_id="creator-session",
+            )
+            store.claim(item.pending_id, actor="creator", session_id="creator-session")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+
+            self.assertTrue(store.begin_reconciliation(
+                item.pending_id, decision="completed", actor="operator-a", session_id="session-a"
+            ))
+            self.assertTrue(store.begin_reconciliation(
+                item.pending_id, decision="completed", actor="operator-a", session_id="session-a"
+            ))
+            self.assertFalse(store.begin_reconciliation(
+                item.pending_id, decision="failed", actor="operator-a", session_id="session-a"
+            ))
+            self.assertFalse(store.begin_reconciliation(
+                item.pending_id, decision="completed", actor="operator-b", session_id="session-b"
+            ))
+            self.assertEqual(store.list_recovery_required()[0]["status"], "reconciling")
+            self.assertTrue(store.finish_reconciliation(item.pending_id, decision="completed"))
+            self.assertEqual(store.get_status(item.pending_id), "reconciled_completed")
+            self.assertFalse(store.finish_reconciliation(item.pending_id, decision="completed"))
+
+    def test_reconciliation_can_resume_after_audit_failure_without_duplicate_event(self):
+        class FailOnceAudit:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.fail = True
+
+            def append(self, **kwargs):
+                if self.fail:
+                    self.fail = False
+                    raise OSError("simulated crash before audit append")
+                return self.wrapped.append(**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            item = store.put(
+                "files.write", {"argument": "x"},
+                {"skill_id": "files.write", "arguments": {"argument": "x"}},
+                actor="creator", session_id="creator-session",
+            )
+            store.claim(item.pending_id, actor="creator", session_id="creator-session")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            wrapped = FailOnceAudit(audit)
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=wrapped)
+            confirmations = []
+            agent = YukiCoreAgent(
+                skills=[],
+                permission_gate=PermissionGate(
+                    lambda request: confirmations.append(request) or True,
+                    actor_id="operator-a", session_id="session-a",
+                ),
+                approval_coordinator=coordinator,
+            )
+
+            self.assertFalse(agent.resolve_approval_recovery(item.pending_id[-12:], "completed"))
+            self.assertEqual(store.get_status(item.pending_id), "reconciling")
+            self.assertEqual(store.list_recovery_required()[0]["status"], "reconciling")
+            self.assertTrue(agent.resolve_approval_recovery(item.pending_id[-12:], "completed"))
+            self.assertEqual(store.get_status(item.pending_id), "reconciled_completed")
+            events = [event for event in audit.list_events() if event["event_type"] == "reconciliation_completed"]
+            self.assertEqual(len(events), 1)
+            self.assertTrue(audit.verify_chain())
+
     def test_recovery_resolution_requires_operator_confirmation(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
