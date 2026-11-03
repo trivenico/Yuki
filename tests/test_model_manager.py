@@ -4,6 +4,7 @@ from unittest.mock import patch
 from providers.model_manager import (
     HardwareProfile, LocalModelManager, OllamaLocalClient, recommend_models,
 )
+from unittest.mock import Mock
 
 
 class FakeOllama:
@@ -43,6 +44,23 @@ class LocalModelManagerTests(unittest.TestCase):
         self.assertTrue(result["ollama"]["available"])
         self.assertFalse(result["downloads_performed"])
         self.assertEqual(result["installation_policy"], "explicit_user_approval_required")
+
+
+    def test_explicit_discovery_attaches_hardware_without_installing(self):
+        discovery = Mock()
+        discovery.discover.return_value = {
+            "source": "huggingface_hub_public_model_metadata",
+            "count": 1, "models": [{"model_id": "org/model"}],
+        }
+        manager = LocalModelManager(ollama_client=FakeOllama())
+        result = manager.discover_candidates(discovery_client=discovery)
+        self.assertEqual(result["count"], 1)
+        self.assertIn("hardware_profile", result)
+        self.assertFalse(result["downloads_performed"])
+        self.assertEqual(result["installation_policy"], "explicit_user_approval_required")
+        discovery.discover.assert_called_once_with(
+            task="text-generation", sort="downloads", token=None
+        )
 
     def test_unavailable_ollama_is_reported(self):
         class Unavailable:
