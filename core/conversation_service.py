@@ -22,7 +22,7 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, memory_context_builder=None, identity_core=None, cognitive_context_engine=None):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, memory_context_builder=None, identity_core=None, cognitive_context_engine=None, cognitive_agent_adapter=None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
@@ -46,7 +46,33 @@ class ConversationService:
                 "provide cognitive_context_engine or its individual identity/memory components, not both."
             )
         self.cognitive_context_engine = cognitive_context_engine
+        if cognitive_agent_adapter is not None and not callable(
+            getattr(cognitive_agent_adapter, "submit_proposal", None)
+        ):
+            raise TypeError("cognitive_agent_adapter must provide submit_proposal().")
+        if cognitive_agent_adapter is not None and cognitive_context_engine is None:
+            raise ValueError("cognitive_agent_adapter requires cognitive_context_engine.")
+        self.cognitive_agent_adapter = cognitive_agent_adapter
         self._lock = threading.RLock()
+
+    def propose_agent_plan(self, *, owner_id: str, goal: str, idempotency_key: str):
+        """Persist an authenticated cognitive proposal; never dispatch workers."""
+        if self.cognitive_context_engine is None or self.cognitive_agent_adapter is None:
+            raise RuntimeError("cognitive agent proposal integration is not configured.")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("authenticated owner_id is required.")
+        if not isinstance(goal, str) or not goal.strip() or len(goal) > 20_000:
+            raise ValueError("goal must be non-empty bounded text.")
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200:
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        brief = self.cognitive_context_engine.prepare(
+            owner_id=owner_id.strip(), goal=goal.strip()
+        )
+        return self.cognitive_agent_adapter.submit_proposal(
+            actor_id=owner_id.strip(),
+            idempotency_key=idempotency_key.strip(),
+            brief=brief,
+        )
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         return self.store.create_conversation(owner_id=owner_id, title=title)
