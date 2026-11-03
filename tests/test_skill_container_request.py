@@ -36,18 +36,24 @@ class SkillContainerRequestTests(unittest.TestCase):
             "network":"none","mount_policy":"invocation_staging_only",
         })
 
-    def test_builds_fixed_restrictive_request_from_matching_binding(self):
         from core.auth import BuiltInAuthService
-        auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
-        auth.bootstrap_admin("operator", "another-correct-horse-battery")
-        auth.create_account("actor", "correct-horse-battery-staple")
-        session = auth.authenticate("actor", "correct-horse-battery-staple").token
+        self.auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
+        self.auth.bootstrap_admin("operator", "another-correct-horse-battery")
+        self.auth.create_account("actor", "correct-horse-battery-staple")
+        self.session = self.auth.authenticate("actor", "correct-horse-battery-staple").token
+
+    def _binding(self, staged, arguments=None):
+        if arguments is None:
+            arguments = {"format": "json"}
+        return build_invocation_binding(
+            self.manifest, auth_service=self.auth, actor_session_token=self.session,
+            tenant_id="tenant", task_id="task", invocation_id="invocation",
+            arguments=arguments, staging_sha256=staged.tree_sha256,
+        )
+
+    def test_builds_fixed_restrictive_request_from_matching_binding(self):
         with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
-            binding = build_invocation_binding(
-                self.manifest, auth_service=auth, actor_session_token=session,
-                tenant_id="tenant", task_id="task", invocation_id="invocation",
-                arguments={"format":"json"}, staging_sha256=staged.tree_sha256,
-            )
+            binding = self._binding(staged)
             request = build_skill_container_request(
                 self.manifest, staged, binding, worker_id="worker-1", fencing_token=1,
             )
@@ -60,17 +66,8 @@ class SkillContainerRequestTests(unittest.TestCase):
             self.assertEqual(len(request.canonical_sha256()), 64)
 
     def test_rejects_changed_fencing_token(self):
-        from core.auth import BuiltInAuthService
-        auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
-        auth.bootstrap_admin("operator", "another-correct-horse-battery")
-        auth.create_account("actor", "correct-horse-battery-staple")
-        session = auth.authenticate("actor", "correct-horse-battery-staple").token
         with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
-            binding = build_invocation_binding(
-                self.manifest, auth_service=auth, actor_session_token=session,
-                tenant_id="tenant", task_id="task", invocation_id="invocation",
-                arguments={"format":"json"}, staging_sha256=staged.tree_sha256,
-            )
+            binding = self._binding(staged)
             for token in (0, -1, True, "1"):
                 with self.subTest(token=token), self.assertRaises(SkillContainerRequestError):
                     build_skill_container_request(
@@ -78,17 +75,8 @@ class SkillContainerRequestTests(unittest.TestCase):
                     )
 
     def test_rejects_changed_staged_content_after_approval(self):
-        from core.auth import BuiltInAuthService
-        auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
-        auth.bootstrap_admin("operator", "another-correct-horse-battery")
-        auth.create_account("actor", "correct-horse-battery-staple")
-        session = auth.authenticate("actor", "correct-horse-battery-staple").token
         with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
-            binding = build_invocation_binding(
-                self.manifest, auth_service=auth, actor_session_token=session,
-                tenant_id="tenant", task_id="task", invocation_id="invocation",
-                arguments={"format":"json"}, staging_sha256=staged.tree_sha256,
-            )
+            binding = self._binding(staged)
             file = staged.root / "package/entry.py"
             file.chmod(0o600)
             file.write_text("def run(): return 2")
@@ -97,18 +85,20 @@ class SkillContainerRequestTests(unittest.TestCase):
                     self.manifest, staged, binding, worker_id="worker-1", fencing_token=1,
                 )
 
-    def test_rejects_binding_for_different_manifest(self):
-        from core.auth import BuiltInAuthService
-        auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
-        auth.bootstrap_admin("operator", "another-correct-horse-battery")
-        auth.create_account("actor", "correct-horse-battery-staple")
-        session = auth.authenticate("actor", "correct-horse-battery-staple").token
+    def test_runtime_input_matches_approved_digest_and_size_limit(self):
+        arguments = {"format": "json"}
         with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
-            binding = build_invocation_binding(
-                self.manifest, auth_service=auth, actor_session_token=session,
-                tenant_id="tenant", task_id="task", invocation_id="invocation",
-                arguments={"format":"json"}, staging_sha256=staged.tree_sha256,
-            )
+            binding = self._binding(staged, arguments)
+            payload = build_skill_runtime_input(binding, arguments, max_input_bytes=65536)
+            self.assertEqual(payload, b'{"format":"json"}')
+            with self.assertRaises(SkillContainerRequestError):
+                build_skill_runtime_input(binding, {"format": "csv"}, max_input_bytes=65536)
+            with self.assertRaises(SkillContainerRequestError):
+                build_skill_runtime_input(binding, arguments, max_input_bytes=2)
+
+    def test_rejects_binding_for_different_manifest(self):
+        with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
+            binding = self._binding(staged)
             changed = validate_manifest(dict(self.manifest.as_dict(), skill_version="1.0.1"))
             with self.assertRaises(SkillContainerRequestError):
                 build_skill_container_request(
