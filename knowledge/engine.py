@@ -252,6 +252,27 @@ class KnowledgeEngine:
         }
         return [by_id[item] for item in chunk_ids if item in by_id]
 
+    def get_source_chunks(self, source_id: str) -> list[KnowledgeResult]:
+        """Return every current chunk for one canonical source in ordinal order."""
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("source_id is required.")
+        with self._lock, self._session() as db:
+            rows = db.execute(
+                """SELECT c.chunk_id, c.source_id, s.source_name, s.source_path, c.content
+                   FROM knowledge_chunks c
+                   JOIN knowledge_sources s ON s.source_id = c.source_id
+                   WHERE c.source_id=? ORDER BY c.ordinal""",
+                (source_id,),
+            ).fetchall()
+        return [
+            KnowledgeResult(
+                chunk_id=row["chunk_id"], source_id=row["source_id"],
+                source_name=row["source_name"], source_path=row["source_path"],
+                content=row["content"], score=0.0,
+            )
+            for row in rows
+        ]
+
     def list_sources(self) -> list[dict]:
         with self._lock, self._connect() as db:
             rows = db.execute(
