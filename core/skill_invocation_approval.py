@@ -213,7 +213,7 @@ class OneShotInvocationApprovalStore:
             raise InvocationApprovalError("approval TTL must be between 1 and 3600 seconds")
         approval_id = secrets.token_urlsafe(32)
         now = _utcnow()
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT INTO skill_invocation_approvals VALUES(?,?,?,?,?,?,NULL)",
