@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -53,7 +54,7 @@ class EpisodicMemoryService:
         self.database_path = str(path)
         self.memory_service = memory_service
         self._lock = RLock()
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS episodic_memory (
                     episode_id TEXT PRIMARY KEY,
@@ -76,6 +77,16 @@ class EpisodicMemoryService:
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.execute("PRAGMA busy_timeout=5000")
         return db
+
+    @contextmanager
+    def _connection(self):
+        """Commit or roll back work and always close the SQLite connection."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def _require_consent(self, user: Any) -> str:
         owner = _owner_key(user)
