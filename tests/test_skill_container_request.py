@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from core.skill_execution_manifest import validate_manifest
-from core.skill_invocation_approval import SkillInvocationBinding, build_invocation_binding
+from core.skill_invocation_approval import build_invocation_binding
 from core.skill_staging import stage_skill_artifact
 from core.skill_container_request import (
     SkillContainerRequestError,
