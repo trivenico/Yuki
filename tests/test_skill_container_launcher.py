@@ -17,13 +17,16 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        self.input_schema_bytes = b'{"type":"object"}'
+        self.output_schema_bytes = b'{"type":"object"}'
         self.request = SkillContainerRequest(
             actor_id="actor", tenant_id="tenant", task_id="task",
             invocation_id="invocation", skill_id="skill", worker_id="worker",
             fencing_token=1, binding_sha256="a"*64, manifest_sha256="b"*64,
             artifact_sha256="c"*64, staging_sha256="d"*64, argument_sha256="e"*64,
-            entrypoint="pkg.entry:run", input_schema_sha256="f"*64,
-            output_schema_sha256="0"*64, capabilities=("read_staged_input",),
+            entrypoint="pkg.entry:run",
+            input_schema_sha256=hashlib.sha256(self.input_schema_bytes).hexdigest(),
+            output_schema_sha256=hashlib.sha256(self.output_schema_bytes).hexdigest(), capabilities=("read_staged_input",),
             read_grants=(), write_grants=(),
             image="registry.example/yuki-runtime@sha256:"+"1"*64,
             workspace=str(Path(self.tmp.name).resolve()), mount_target="/yuki/skill",
@@ -66,7 +69,8 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
         ).encode("utf-8")).hexdigest()
         request = replace(self.request, argument_sha256=digest)
         with self.assertRaises(SkillContainerLaunchError):
-            launch_skill_container(request, arguments, authorize=lambda _request: False)
+            launch_skill_container(request, arguments, authorize=lambda _request: False,
+                input_schema_bytes=self.input_schema_bytes, output_schema_bytes=self.output_schema_bytes)
         popen.assert_not_called()
 
     @patch("core.skill_container_launcher.subprocess.Popen")
@@ -81,7 +85,8 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
         def broken_authorizer(_request):
             raise RuntimeError("store unavailable")
         with self.assertRaises(SkillContainerLaunchError):
-            launch_skill_container(request, arguments, authorize=broken_authorizer)
+            launch_skill_container(request, arguments, authorize=broken_authorizer,
+                input_schema_bytes=self.input_schema_bytes, output_schema_bytes=self.output_schema_bytes)
         popen.assert_not_called()
 
     def test_rejects_noncanonical_workspace(self):
