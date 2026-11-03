@@ -252,6 +252,62 @@ class KnowledgeEngine:
         }
         return [by_id[item] for item in chunk_ids if item in by_id]
 
+    def ingest_extracted_text(
+        self, *, source_path: str | Path, workspace: str | Path,
+        source_sha256: str, text: str,
+    ) -> dict:
+        """Index text extracted by a trusted parser from an approved workspace file."""
+        _, source = self._safe_workspace_file(source_path, workspace)
+        raw = source.read_bytes()
+        if not isinstance(source_sha256, str) or hashlib.sha256(raw).hexdigest() != source_sha256:
+            raise ValueError("Source changed after parsing; parse it again before indexing.")
+        if not isinstance(text, str):
+            raise ValueError("Extracted text must be a string.")
+        normalized = text.strip()
+        if not normalized:
+            raise ValueError("Document contains no indexable text.")
+        if len(normalized) > self.MAX_DOCUMENT_CHARS:
+            raise ValueError("Extracted document exceeds the 200,000 character limit.")
+
+        source_path_value = str(source)
+        source_id = hashlib.sha256(source_path_value.encode("utf-8")).hexdigest()
+        chunks = self._chunks(normalized)
+        digest = source_sha256
+        with self._lock, self._session() as db:
+            existing = db.execute(
+                "SELECT content_sha256, chunk_count FROM knowledge_sources WHERE source_id=?",
+                (source_id,),
+            ).fetchone()
+            if existing and existing["content_sha256"] == digest:
+                return {"source_id": source_id, "source_name": source.name,
+                        "chunks_indexed": existing["chunk_count"], "unchanged": True}
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("DELETE FROM knowledge_chunks_fts WHERE source_path=?", (source_path_value,))
+                db.execute("DELETE FROM knowledge_sources WHERE source_id=?", (source_id,))
+                db.execute(
+                    """INSERT INTO knowledge_sources
+                       (source_id, source_name, source_path, content_sha256, chunk_count)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (source_id, source.name, source_path_value, digest, len(chunks)),
+                )
+                for ordinal, chunk in enumerate(chunks):
+                    cursor = db.execute(
+                        "INSERT INTO knowledge_chunks(source_id, ordinal, content) VALUES (?, ?, ?)",
+                        (source_id, ordinal, chunk),
+                    )
+                    db.execute(
+                        """INSERT INTO knowledge_chunks_fts(rowid, content, source_name, source_path)
+                           VALUES (?, ?, ?, ?)""",
+                        (cursor.lastrowid, chunk, source.name, source_path_value),
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        return {"source_id": source_id, "source_name": source.name,
+                "chunks_indexed": len(chunks), "unchanged": False}
+
     def get_source_chunks(self, source_id: str) -> list[KnowledgeResult]:
         """Return every current chunk for one canonical source in ordinal order."""
         if not isinstance(source_id, str) or not source_id.strip():
