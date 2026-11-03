@@ -7,7 +7,6 @@ configured allowlist; jobs cannot choose arbitrary endpoints or tools.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Any
-from core.inference_jobs import InferenceJobService
 from providers.ollama import OllamaProvider
 
 @dataclass(frozen=True)
@@ -20,8 +19,10 @@ class WorkerRun:
 class LocalInferenceWorker:
     def __init__(self, jobs: InferenceJobService, device_token: str,
                  providers: Mapping[str, OllamaProvider], *, max_output_bytes: int = 200_000):
-        if not isinstance(jobs, InferenceJobService):
-            raise TypeError("jobs must be an InferenceJobService")
+        if not callable(getattr(jobs, "claim_next", None)) or not callable(getattr(jobs, "complete_job", None)):
+            raise TypeError("jobs must provide claim_next and complete_job")
+        if type(getattr(jobs, "lease_seconds", None)) is not int:
+            raise TypeError("jobs must expose an integer lease_seconds")
         if not isinstance(device_token, str) or not 20 <= len(device_token) <= 256:
             raise ValueError("invalid_device_credential")
         if not isinstance(providers, Mapping) or not providers or len(providers) > 32:
