@@ -155,3 +155,25 @@ Plan creation is proposal-only. It does not call a model, access the network, ex
 An optional configured `TaskStore` allows `enqueue_for_approval(plan_id)` to submit a bounded `research.investigate` task with an idempotency key, retry limit, token/time budgets and `approval_required=True`. Queue submission is not execution. A worker must independently authenticate the actor, enforce connector/source policy, validate every step and tool, and require review before evidence or graph writes. The plan/task stores are separate databases; idempotency makes retry safe after partial failure, but does not provide a cross-database transaction. Cancelling a queued plan must use the authorized TaskStore cancellation path.
 
 The planner intentionally does not contain model-specific prompt code. Local model orchestration, worker implementation, source connector authorization, checkpointed step execution and report publication are separate integration work.
+
+## Local research retrieval worker
+
+`LocalResearchWorker` executes the local retrieval stage against the canonical `KnowledgeEngine` lexical index. It accepts an existing research plan, searches each question, de-duplicates chunks, preserves canonical source and chunk provenance, records unanswered questions, and persists an idempotent run record.
+
+```python
+from research import ResearchPlanner, LocalResearchWorker
+from knowledge import KnowledgeEngine
+
+planner = ResearchPlanner()
+knowledge = KnowledgeEngine()
+worker = LocalResearchWorker(planner, knowledge)
+plan = planner.create_plan(
+    "Investigate Yuki's memory architecture.",
+    questions=["How is local memory stored?", "How is evidence reviewed?"],
+)
+result = worker.run_local_retrieval(plan["plan_id"])
+```
+
+This first worker is deliberately read-only: no model inference, external network access, file ingestion, evidence-ledger writes, graph writes or report publication. It is a local lexical retrieval stage, not yet an autonomous reasoning agent. Results are untrusted source material and must never be treated as instructions. A no-match result means only that the configured local index returned no match.
+
+Retrieval is bounded to eight questions, five results per question and forty unique chunks per run. Runs are persisted separately from plans and keyed by a deterministic plan/query hash. Changes to the local knowledge index do not automatically invalidate an existing identical plan run; rerun freshness/invalidation policy is follow-up work. The worker is not yet wired into the TaskStore executor and has no actor authorization boundary of its own. It should only be called from trusted application code.
