@@ -43,6 +43,8 @@ class ScopedMemory:
         self.actor_key = key
         self._store = MemoryStore(namespace / "memories.json")
         self._retrieval = VectorMemory(namespace / "memories.json")
+        # Share one lock and store instance across reads and writes to this namespace.
+        self._retrieval.store = self._store
 
     def remember(self, text: str, *, category: str = "note") -> dict[str, Any]:
         return self._store.add(text, category=category)
