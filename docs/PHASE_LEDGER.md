@@ -219,3 +219,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval while never inferring permissions. Persists/routs proposal through authorized submit only; no advance/worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
+
+
+| Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval. Persists/routes proposal through authorized submit only; no advance or worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
