@@ -189,3 +189,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Local-first provider default | `providers/factory.py`; `providers/catalog.py`; `config.yaml`; `tests/test_provider_factory.py`; `tests/test_provider_catalog.py` | `in_progress` | Ollama is now the factory/config/catalog default; cloud providers require explicit selection. Hardware-aware model installation, first-run onboarding, runtime resource management, and exact-head CI remain open. |
+
+
+| Hardware-aware local model manager | `providers/model_manager.py`; `tests/test_model_manager.py`; `providers/__init__.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Hardware inspection, conservative RAM-based recommendations, loopback-only Ollama inventory, no implicit downloads and explicit-approval policy. Platform-specific GPU detection, model metadata/license catalog, secure download/verification, benchmark, onboarding and exact-head CI remain open. |
