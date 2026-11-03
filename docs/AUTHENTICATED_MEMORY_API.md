@@ -120,3 +120,8 @@ Use either the composed cognitive context engine or the individual identity/memo
 `automation.cognitive_agent_adapter.CognitiveAgentAdapter` translates a validated `CognitiveBrief.specialist_tasks` DAG into the existing `SubtaskSpec` contract. It re-validates the DAG at the trust boundary, preserves capability requirements, dependency edges and approval flags, and does not derive permission requests from model or memory content.
 
 `submit_proposal(...)` calls the coordinator's authorized `submit` operation to persist and capability-route a proposal. It deliberately does not call `advance`; worker task creation and dispatch remain separate operations requiring the coordinator's own `agent:dispatch` authorization. The caller must supply the authenticated actor ID. The adapter does not execute agents or tools.
+
+
+## Explicit authenticated proposal service
+
+When both `cognitive_context_engine` and `cognitive_agent_adapter` are configured, `ConversationService.propose_agent_plan(owner_id, goal, idempotency_key)` prepares a brief using the authenticated owner ID supplied by the API/service boundary and asks the adapter to persist the proposal. It is an explicit service operation, not an automatic side effect of ordinary chat turns. It never calls coordinator `advance`, creates worker tasks, or dispatches agents. The runtime composition accepts the adapter as an optional dependency; without both dependencies, proposal creation fails closed.
