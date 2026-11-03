@@ -22,6 +22,7 @@ from core.skill_execution_manifest import (
     SkillExecutionManifest,
     SkillManifestError,
     verify_artifact_digest,
+    validate_manifest,
 )
 
 
@@ -123,8 +124,8 @@ def stage_skill_artifact(
     if not isinstance(manifest, SkillExecutionManifest):
         raise SkillStagingError("validated skill manifest required")
     try:
-        manifest.validate()
-    except SkillManifestError as exc:
+        manifest = validate_manifest(manifest.as_dict())
+    except (SkillManifestError, AttributeError, TypeError) as exc:
         raise SkillStagingError("skill manifest rejected") from exc
     if not isinstance(artifact, bytes) or not artifact or len(artifact) > _MAX_ARCHIVE_BYTES:
         raise SkillStagingError("skill artifact is empty or exceeds the archive size limit")
