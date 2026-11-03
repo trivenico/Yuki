@@ -62,6 +62,9 @@ class ResearchPlannerTests(unittest.TestCase):
         self.assertEqual(queued["task_id"], "task-1")
         task = self.tasks.tasks["yuki-research-plan:" + plan["plan_id"]]
         self.assertTrue(task["approval_required"])
+        self.assertIsNone(task["budget_tokens"])
+        self.assertIsNone(task["budget_seconds"])
+        self.assertEqual(task["max_attempts"], 3)
         self.assertEqual(task["task_type"], "research.investigate")
         self.assertFalse(task["payload"]["execution_contract"]["autonomous_execution"])
         self.assertEqual(task["payload"]["execution_contract"]["graph_writes"], "verified_claims_only")
