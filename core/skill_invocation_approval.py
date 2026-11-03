@@ -241,15 +241,22 @@ class OneShotInvocationApprovalStore:
         approval_id: str,
         binding: SkillInvocationBinding,
         *,
+        auth_service: BuiltInAuthService,
+        actor_session_token: str,
         current_approval_revision: str,
     ) -> bool:
-        """Atomically consume only an unexpired exact binding at the current revision."""
+        """Revalidate the bound actor's live session, then atomically consume approval."""
         if (not isinstance(approval_id, str) or not 20 <= len(approval_id) <= 256
                 or not isinstance(binding, SkillInvocationBinding)):
             return False
+        if not isinstance(auth_service, BuiltInAuthService):
+            return False
         try:
             _identifier(current_approval_revision, "current_approval_revision")
-        except InvocationApprovalError:
+            actor = auth_service.resolve_session(actor_session_token)
+        except (InvocationApprovalError, TypeError, ValueError):
+            return False
+        if actor is None or not secrets.compare_digest(actor.user_id, binding.actor_id):
             return False
         now = _iso(_utcnow())
         db = self._connect()
