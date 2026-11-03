@@ -113,3 +113,10 @@ Use either the composed cognitive context engine or the individual identity/memo
 `automation.cognitive_agent_adapter.CognitiveAgentAdapter` translates a validated `CognitiveBrief.specialist_tasks` DAG into the existing `SubtaskSpec` contract. It re-validates the DAG at the trust boundary, preserves capability requirements, dependency edges and approval flags, and always supplies an empty permission request rather than deriving permissions from model or memory content.
 
 `submit_proposal(...)` calls the coordinator's authorized `submit` operation to persist and capability-route a proposal. It deliberately does not call `advance`; worker task creation/dispatch remains a separate operation requiring the coordinator's own `agent:dispatch` authorization. This adapter does not infer a verified actor identity; the caller must pass the authenticated actor ID. It does not execute agents or tools.
+
+
+## Cognitive proposal to specialist coordinator adapter
+
+`automation.cognitive_agent_adapter.CognitiveAgentAdapter` translates a validated `CognitiveBrief.specialist_tasks` DAG into the existing `SubtaskSpec` contract. It re-validates the DAG at the trust boundary, preserves capability requirements, dependency edges and approval flags, and does not derive permission requests from model or memory content.
+
+`submit_proposal(...)` calls the coordinator's authorized `submit` operation to persist and capability-route a proposal. It deliberately does not call `advance`; worker task creation and dispatch remain separate operations requiring the coordinator's own `agent:dispatch` authorization. The caller must supply the authenticated actor ID. The adapter does not execute agents or tools.
