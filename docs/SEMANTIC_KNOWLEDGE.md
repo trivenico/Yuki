@@ -57,7 +57,7 @@ coordinator = SemanticIndexCoordinator(engine, vectors, embedder)
 result = coordinator.index_file("docs/architecture.md", workspace=".")
 ```
 
-The coordinator embeds canonical chunks in bounded batches, upserts the new vectors, and only then prunes stale vectors for that source/model. Source removal also removes vectors for the configured model. If embedding fails, indexing raises rather than reporting success. The lexical source and vector databases are separate SQLite files, so a process crash between ingestion and vector synchronization can leave stale or missing vectors; hybrid retrieval validates every semantic candidate against canonical chunks and ignores stale IDs. Re-run indexing to reconcile the source.
+The coordinator parses the approved file and generates all embeddings in bounded batches before replacing canonical chunks. Thus parsing or embedding failure leaves the prior lexical and semantic source intact. It then commits canonical chunks, writes vectors, and prunes stale vectors. Source removal also removes vectors for the configured model. The lexical source and vector databases are separate SQLite files, so a process crash or vector-store write failure after canonical ingestion can still leave missing or stale vectors; hybrid retrieval validates every semantic candidate against canonical chunks and ignores stale IDs. Re-run indexing to reconcile the source.
 
 The example model name is illustrative: cache the model explicitly before runtime. Model suitability, multilingual support, license, and performance must be validated before selecting a production default.
 
