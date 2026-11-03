@@ -32,6 +32,10 @@ class LocalInferenceWorker:
                 raise ValueError("invalid_model_allowlist_entry")
             if not isinstance(provider, OllamaProvider):
                 raise TypeError("each provider must be an OllamaProvider")
+            # A synchronous request must fit inside its device job lease.
+            # Keep a safety margin for scheduling and result persistence.
+            if jobs.lease_seconds <= provider.timeout + 15:
+                raise ValueError("job lease must exceed Ollama timeout by at least 15 seconds")
             normalized[model_id] = provider
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= 256_000:
             raise ValueError("invalid_max_output_bytes")
