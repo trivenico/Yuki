@@ -67,6 +67,10 @@ def build_skill_docker_argv(
         request.drop_all_capabilities, request.no_new_privileges,
     )):
         raise SkillContainerLaunchError("skill runtime security policy is not restrictive")
+    if "write_staged_output" in request.capabilities or request.write_grants:
+        raise SkillContainerLaunchError("writable skill staging is not supported by this launcher")
+    if "," in request.workspace or "\\n" in request.workspace or "\\r" in request.workspace:
+        raise SkillContainerLaunchError("staging path contains unsupported mount characters")
     if request.mount_target != "/yuki/skill":
         raise SkillContainerLaunchError("unsupported skill mount target")
     if request.command != ("/opt/yuki/bin/skill-runner", "--protocol-v1"):
