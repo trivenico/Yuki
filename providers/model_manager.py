@@ -87,9 +87,9 @@ def recommend_models(profile: HardwareProfile):
         return [ModelRecommendation("qwen3:0.6b", 1.5,
                                     "Memory could not be detected; use a small starter model.",
                                     "low")]
+    # System-available RAM is the conservative baseline. VRAM is reported
+    # separately; it must not mask insufficient host memory.
     gib = usable / 1024 ** 3
-    if profile.gpu_vram_bytes:
-        gib = max(gib, profile.gpu_vram_bytes / 1024 ** 3)
     if gib < 4:
         choices = [("qwen3:0.6b", 1.5), ("gemma3:1b", 2.0)]
     elif gib < 8:
