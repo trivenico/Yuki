@@ -161,3 +161,10 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Added `YukiCoreAgent.from_authenticated_identity`, constructing a fresh agent and fresh PermissionGate from the verified authenticated identity. This prevents accidental cross-session sharing when callers follow the documented request-scoped construction pattern.
 - Added regression coverage authenticating one admin twice and verifying separate agent/gate objects with distinct session pseudonyms.
 - Latest PR #498 head: `cd1efdd6ee669227ae00613de7ccbab831962f45`; 9 exact-head checks queued at initial inspection. Branch 116 ahead / 3 behind main. CI pending. Web chat tool execution remains disabled; this factory is not yet wired to enable multi-user web tools. End-to-end runtime integration and independent review remain open.
+
+## Phase 2 follow-up — request-scoped conversation execution boundary
+
+- `ConversationService` now accepts an optional `agent_loop_factory(identity)` and validates that the verified identity actor matches the conversation owner.
+- Any non-empty tool list is rejected unless a verified `AuthenticatedIdentity` and request-scoped agent-loop factory are supplied. This blocks accidental use of the shared process-wide execution loop for multi-user tool execution.
+- The authenticated ASGI API passes its resolved identity into conversation generation. Factory output is type-checked as `AgentExecutionLoop`.
+- Tests cover tool execution denial without verified identity/factory, owner mismatch, and identity propagation. Latest PR #498 head: `67c770b3cfdf29bc126cad2ab8cca2918d2f57c0`; 26 checks registered (4 running, 22 queued, no failures at initial inspection). Branch 119 ahead / 4 behind main. The web profile remains deny-by-default for tools; no production multi-user tool capability is claimed.
