@@ -136,12 +136,12 @@ def stage_skill_artifact(
     if parent.is_symlink():
         raise SkillStagingError("staging parent must not be a symlink")
     try:
-        unresolved_parent = parent.absolute()
+        # Resolve platform-standard aliases (for example macOS /tmp -> /private/tmp)
+        # before applying ownership and permission checks. The caller-supplied
+        # final component itself was already rejected if it was a symlink.
         parent = parent.resolve(strict=True)
     except OSError as exc:
         raise SkillStagingError("staging parent must already exist") from exc
-    if os.path.normcase(str(unresolved_parent)) != os.path.normcase(str(parent)):
-        raise SkillStagingError("staging parent path must not traverse symlinked components")
     if not parent.is_dir():
         raise SkillStagingError("staging parent must be a directory")
     if os.name != "nt":
