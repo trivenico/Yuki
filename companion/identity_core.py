@@ -8,6 +8,7 @@ mechanism against an attacker who can rewrite the local file.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -74,7 +75,7 @@ class IdentityCore:
             raise RuntimeError("Identity profile envelope is invalid.")
         digest = raw.get("sha256")
         payload = {key: raw.get(key) for key in ("schema_version", "revision", "profile")}
-        if not isinstance(digest, str) or not hashlib.compare_digest(
+        if not isinstance(digest, str) or not hmac.compare_digest(
             digest, hashlib.sha256(_canonical(payload)).hexdigest()
         ):
             raise RuntimeError("Identity profile integrity check failed.")
