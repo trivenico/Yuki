@@ -121,6 +121,32 @@ class VectorStore:
         matches.sort(key=lambda item: (-item["score"], item["chunk_id"]))
         return matches[:limit]
 
+    def prune_source(self, source_id: str, keep_chunk_ids: Sequence[int], *, model_id: str) -> int:
+        """Remove stale vectors for a source after replacement vectors are safely stored."""
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("source_id is required.")
+        if not isinstance(model_id, str) or not model_id.strip() or len(model_id) > 300:
+            raise ValueError("model_id must be non-empty text of at most 300 characters.")
+        if not isinstance(keep_chunk_ids, (list, tuple)) or len(keep_chunk_ids) > 10000:
+            raise ValueError("keep_chunk_ids must contain at most 10000 IDs.")
+        if any(type(item) is not int or item <= 0 for item in keep_chunk_ids):
+            raise ValueError("chunk IDs must be positive integers.")
+        keep = sorted(set(keep_chunk_ids))
+        with self._lock, self._connect() as db:
+            if not keep:
+                cursor = db.execute(
+                    "DELETE FROM knowledge_vectors WHERE source_id=? AND model_id=?",
+                    (source_id, model_id),
+                )
+            else:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = db.execute(
+                    f"DELETE FROM knowledge_vectors WHERE source_id=? AND model_id=? "
+                    f"AND chunk_id NOT IN ({placeholders})",
+                    (source_id, model_id, *keep),
+                )
+            return cursor.rowcount
+
     def delete_source(self, source_id: str, *, model_id: str | None = None) -> int:
         if not isinstance(source_id, str) or not source_id.strip():
             raise ValueError("source_id is required.")
