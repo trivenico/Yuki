@@ -60,6 +60,48 @@ def _memory_bytes() -> tuple[int | None, int | None]:
     return None, None
 
 
+def _discover_linux_gpus(sysfs_root: str | Path = "/sys/class/drm") -> list[dict[str, Any]]:
+    """Read bounded AMD VRAM metadata from Linux sysfs without running commands."""
+    root = Path(sysfs_root)
+    found: list[dict[str, Any]] = []
+    try:
+        devices = sorted(root.glob("card[0-9]*/device"))
+    except OSError:
+        return found
+    seen: set[Path] = set()
+    for device in devices[:8]:
+        try:
+            resolved = device.resolve(strict=True)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            vendor = (device / "vendor").read_text(encoding="ascii").strip().lower()
+            if vendor != "0x1002":
+                continue
+            total_path = device / "mem_info_vram_total"
+            free_path = device / "mem_info_vram_used"
+            total = _positive_int(int(total_path.read_text(encoding="ascii").strip()))
+            used = _positive_int(int(free_path.read_text(encoding="ascii").strip()))
+            if total is None or used is None or used > total:
+                continue
+            name = "AMD GPU"
+            try:
+                product = (device / "product_name").read_text(encoding="utf-8").strip()
+                if product:
+                    name = product[:80]
+            except OSError:
+                pass
+            found.append({
+                "name": name,
+                "vendor": "AMD",
+                "memory_total_bytes": total,
+                "memory_available_bytes": total - used,
+            })
+        except (OSError, ValueError, UnicodeError):
+            continue
+    return found
+
+
 def discover_capabilities() -> dict[str, Any]:
     """Return conservative, privacy-minimal host capabilities."""
     total, available = _memory_bytes()
@@ -78,30 +120,32 @@ def discover_capabilities() -> dict[str, Any]:
             result["storage_free_bytes"] = free
     except OSError:
         pass
-    # GPU enumeration is deliberately optional and does not invoke shell tools.
+    # GPU discovery is optional, bounded and never invokes shell commands.
+    gpus = []
+    nvml = None
     try:
-        import pynvml  # type: ignore[import-not-found]
-        pynvml.nvmlInit()
-        gpus = []
+        import pynvml as nvml  # type: ignore[import-not-found]
+        nvml.nvmlInit()
         try:
-            for index in range(min(pynvml.nvmlDeviceGetCount(), 8)):
-                handle = pynvml.nvmlDeviceGetHandleByIndex(index)
-                memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                raw_name = pynvml.nvmlDeviceGetName(handle)
+            for index in range(min(nvml.nvmlDeviceGetCount(), 8)):
+                handle = nvml.nvmlDeviceGetHandleByIndex(index)
+                memory = nvml.nvmlDeviceGetMemoryInfo(handle)
+                raw_name = nvml.nvmlDeviceGetName(handle)
                 name = raw_name.decode("utf-8", "replace") if isinstance(raw_name, bytes) else str(raw_name)
                 gpus.append({
-                    "name": name[:80],
-                    "vendor": "NVIDIA",
+                    "name": name[:80], "vendor": "NVIDIA",
                     "memory_total_bytes": int(memory.total),
                     "memory_available_bytes": int(memory.free),
                 })
         finally:
-            pynvml.nvmlShutdown()
-        if gpus:
-            result["gpus"] = gpus
-    except (ImportError, Exception):
-        # Hardware discovery must never prevent CPU-only agent operation.
+            nvml.nvmlShutdown()
+    except Exception:
+        # Missing driver/library or unsupported hardware must not block CPU mode.
         pass
+    if not gpus and sys.platform.startswith("linux"):
+        gpus = _discover_linux_gpus()
+    if gpus:
+        result["gpus"] = gpus
     return result
 
 
