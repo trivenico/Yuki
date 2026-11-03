@@ -92,6 +92,7 @@ def print_help():
   /recovery actions               List approved recovery handlers
   /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
+  /approvals recovery            List interrupted approvals; does not retry them
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -250,6 +251,21 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command == "/approvals recovery":
+            try:
+                records = agent.list_approval_recovery(limit=100)
+                if not records:
+                    print("Yuki > No interrupted approvals require reconciliation.")
+                else:
+                    print("Yuki > Interrupted approvals (not retried automatically):")
+                    for item in records:
+                        print(
+                            f"- ref=…{item['reference']} | skill={item['skill_id']} "
+                            f"| status={item['status']} | updated={item['updated_at']}"
+                        )
+                    print("Yuki > Verify external side effects before any manual retry.")
+            except Exception as exc:
+                print(f"Yuki > Recovery queue unavailable ({type(exc).__name__}).")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
