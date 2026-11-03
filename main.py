@@ -266,6 +266,27 @@ def main():
                     print("Yuki > Verify external side effects before any manual retry.")
             except Exception as exc:
                 print(f"Yuki > Recovery queue unavailable ({type(exc).__name__}).")
+        elif command.startswith("/approvals resolve "):
+            parts = command.split(maxsplit=4)
+            if len(parts) < 4:
+                print("Yuki > Usage: /approvals resolve REF completed|failed|uncertain [note]")
+            else:
+                note = parts[4] if len(parts) == 5 else ""
+                try:
+                    resolved = agent.resolve_approval_recovery(
+                        parts[2], parts[3], note=note
+                    )
+                    if resolved:
+                        print(
+                            "Yuki > Operator decision recorded. No skill was executed or retried."
+                        )
+                    else:
+                        print(
+                            "Yuki > Resolution not recorded. Check the reference, current state, "
+                            "and explicit operator confirmation."
+                        )
+                except Exception as exc:
+                    print(f"Yuki > Recovery resolution unavailable ({type(exc).__name__}).")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:
