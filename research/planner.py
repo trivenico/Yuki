@@ -190,9 +190,9 @@ class ResearchPlanner:
                 "research.investigate",
                 payload,
                 idempotency_key=f"yuki-research-plan:{plan_id}",
-                max_attempts=2,
-                budget_tokens=20000,
-                budget_seconds=1800,
+                max_attempts=3,
+                budget_tokens=None,
+                budget_seconds=None,
                 approval_required=True,
             )
             now = datetime.now(timezone.utc).isoformat()
