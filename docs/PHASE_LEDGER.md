@@ -192,3 +192,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Hardware-aware local model manager | `providers/model_manager.py`; `tests/test_model_manager.py`; `providers/__init__.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Hardware inspection, conservative RAM-based recommendations, loopback-only Ollama inventory, no implicit downloads and explicit-approval policy. Platform-specific GPU detection, model metadata/license catalog, secure download/verification, benchmark, onboarding and exact-head CI remain open. |
+
+
+| Hugging Face metadata governance hardening | `providers/huggingface_discovery.py`; `tests/test_huggingface_discovery.py`; `docs/PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | `in_progress` | Adds gated/private/library/safetensors metadata, conservative review flags, private-candidate exclusion, path-segment validation, and tests for token validation and response-size bounds. Human license/model-card review, model benchmark, hardware compatibility, download and activation approval remain separate gates. |
