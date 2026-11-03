@@ -23,6 +23,24 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+
+    def test_runtime_injects_identity_core_into_conversation_service(self):
+        class FakeIdentity:
+            def snapshot(self):
+                return {"profile": {
+                    "display_name": "Yuki", "greeting": "Hello",
+                    "voice_style": "calm", "interaction_style": "helpful",
+                }}
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            identity = FakeIdentity()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), identity_core=identity,
+            )
+            self.assertIs(runtime.app.conversations.identity_core, identity)
+            runtime.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
