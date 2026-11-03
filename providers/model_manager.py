@@ -144,6 +144,20 @@ class LocalModelManager:
         self.workspace = Path(workspace).expanduser()
         self.ollama = ollama_client or OllamaLocalClient()
 
+    def discover_candidates(self, *, task="text-generation", sort="downloads",
+                            limit=20, token=None, discovery_client=None):
+        """Explicitly query Hub metadata; this never downloads or activates models."""
+        from providers.huggingface_discovery import HuggingFaceDiscovery
+
+        client = discovery_client or HuggingFaceDiscovery(max_results=limit)
+        result = client.discover(task=task, sort=sort, token=token)
+        return {
+            **result,
+            "hardware_profile": asdict(detect_hardware(workspace=self.workspace)),
+            "installation_policy": "explicit_user_approval_required",
+            "downloads_performed": False,
+        }
+
     def inspect(self):
         profile = detect_hardware(workspace=self.workspace)
         inventory = self.ollama.status()
