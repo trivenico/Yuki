@@ -229,10 +229,25 @@ def stage_skill_artifact(
                 os.chmod(path, 0o400)
         if os.name != "nt":
             os.chmod(root, 0o500)
-        yield StagedSkillArtifact(
-            root=root,
-            tree_sha256=tree_sha,
-            artifact_sha256=manifest.artifact_sha256,
-            file_count=file_count,
-            expanded_bytes=expanded_bytes,
-        )
+        try:
+            yield StagedSkillArtifact(
+                root=root,
+                tree_sha256=tree_sha,
+                artifact_sha256=manifest.artifact_sha256,
+                file_count=file_count,
+                expanded_bytes=expanded_bytes,
+            )
+        finally:
+            # TemporaryDirectory must be able to remove the read-only tree.
+            # Restore owner write/search permissions only after the caller has
+            # stopped using the staged mount.
+            if os.name != "nt":
+                for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+                    try:
+                        if path.is_dir() and not path.is_symlink():
+                            os.chmod(path, 0o700)
+                        elif not path.is_symlink():
+                            os.chmod(path, 0o600)
+                    except OSError:
+                        pass
+                os.chmod(root, 0o700)
