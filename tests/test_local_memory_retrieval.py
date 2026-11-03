@@ -21,7 +21,9 @@ class LocalMemoryRetrievalTests(unittest.TestCase):
         results = self.memory.search("local model offline")
         self.assertEqual(len(results), 2)
         self.assertTrue(all("score" in item for item in results))
-        self.assertEqual(results[0]["category"], "lesson")
+        self.assertEqual({item["category"] for item in results}, {"lesson", "preference"})
+        rare_term_results = self.memory.search("private reasoning")
+        self.assertEqual(rare_term_results[0]["category"], "lesson")
 
     def test_supports_unicode_tokens(self):
         self.memory.remember("Yuki understands français and 日本語 with local models")
