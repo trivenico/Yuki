@@ -20,8 +20,11 @@ class DevicePairingServiceTests(unittest.TestCase):
         self.assertEqual(self.service.authenticate_device(credential.token).device_id,
                          credential.device.device_id)
         import sqlite3
-        with sqlite3.connect(self.service.database_path) as db:
+        db = sqlite3.connect(self.service.database_path)
+        try:
             stored = db.execute("SELECT token_hash FROM paired_devices").fetchone()[0]
+        finally:
+            db.close()
         self.assertNotEqual(stored, credential.token)
 
     def test_pairing_challenge_is_single_use(self):
