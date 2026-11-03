@@ -17,6 +17,7 @@ from pathlib import Path
 from contextlib import closing
 from typing import Any, Mapping
 
+from core.auth import AuthenticatedUser
 from core.skill_execution_manifest import (
     SkillExecutionManifest, SkillManifestError, manifest_sha256,
 )
@@ -123,7 +124,7 @@ class SkillInvocationBinding:
 def build_invocation_binding(
     manifest: SkillExecutionManifest,
     *,
-    actor_id: str,
+    actor: AuthenticatedUser,
     tenant_id: str,
     task_id: str,
     invocation_id: str,
@@ -135,6 +136,8 @@ def build_invocation_binding(
     """Bind identity, manifest, canonical arguments, staging and grants."""
     if not isinstance(manifest, SkillExecutionManifest):
         raise InvocationApprovalError("a validated skill manifest is required")
+    if not isinstance(actor, AuthenticatedUser) or not actor.user_id:
+        raise InvocationApprovalError("an authenticated application principal is required")
     try:
         argument_bytes = _canonical(arguments)
     except InvocationApprovalError:
@@ -148,7 +151,7 @@ def build_invocation_binding(
     if reads and "read_staged_input" not in capabilities:
         raise InvocationApprovalError("read grants require read_staged_input capability")
     return SkillInvocationBinding(
-        actor_id=_identifier(actor_id, "actor_id"),
+        actor_id=_identifier(actor.user_id, "actor_id"),
         tenant_id=_identifier(tenant_id, "tenant_id"),
         task_id=_identifier(task_id, "task_id"),
         invocation_id=_identifier(invocation_id, "invocation_id"),
@@ -201,13 +204,16 @@ class OneShotInvocationApprovalStore:
         self,
         binding: SkillInvocationBinding,
         *,
-        approved_by: str,
+        approved_by: AuthenticatedUser,
         approval_revision: str,
         ttl_seconds: int = 300,
     ) -> str:
         if not isinstance(binding, SkillInvocationBinding):
             raise InvocationApprovalError("validated invocation binding required")
-        _identifier(approved_by, "approved_by")
+        if (not isinstance(approved_by, AuthenticatedUser)
+                or "workflow:approve" not in approved_by.permissions):
+            raise InvocationApprovalError("an authenticated approver with workflow:approve permission is required")
+        approver_id = _identifier(approved_by.user_id, "approved_by")
         _identifier(approval_revision, "approval_revision")
         if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 3600:
             raise InvocationApprovalError("approval TTL must be between 1 and 3600 seconds")
@@ -217,7 +223,7 @@ class OneShotInvocationApprovalStore:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT INTO skill_invocation_approvals VALUES(?,?,?,?,?,?,NULL)",
-                (approval_id, binding.binding_sha256, approved_by, _iso(now + timedelta(seconds=ttl_seconds)),
+                (approval_id, binding.binding_sha256, approver_id, _iso(now + timedelta(seconds=ttl_seconds)),
                  approval_revision, _iso(now)),
             )
             db.commit()
