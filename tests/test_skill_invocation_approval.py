@@ -99,10 +99,10 @@ class SkillInvocationApprovalTests(unittest.TestCase):
     def test_exact_binding_is_consumed_once(self):
         binding = self.binding()
         approval = self.issue(binding)
-        self.assertTrue(self.store.consume(
+        self.assertTrue(self.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
-        self.assertFalse(self.store.consume(
+        self.assertFalse(self.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
 
@@ -118,10 +118,10 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             self.binding(staging_sha256=hashlib.sha256(b"other").hexdigest()),
         )
         for changed in changes:
-            self.assertFalse(self.store.consume(
+            self.assertFalse(self.consume(
                 approval, changed, current_approval_revision="revision-1"
             ))
-        self.assertTrue(self.store.consume(
+        self.assertTrue(self.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
 
@@ -158,10 +158,10 @@ class SkillInvocationApprovalTests(unittest.TestCase):
     def test_approval_revision_mismatch_fails_closed(self):
         binding = self.binding()
         approval = self.issue(binding)
-        self.assertFalse(self.store.consume(
+        self.assertFalse(self.consume(
             approval, binding, current_approval_revision="revision-2"
         ))
-        self.assertTrue(self.store.consume(
+        self.assertTrue(self.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
 
@@ -175,10 +175,10 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         )
         changed_grants = self.binding(write_grants=("output/other.json",))
         for changed in (changed_manifest, changed_grants):
-            self.assertFalse(self.store.consume(
+            self.assertFalse(self.consume(
                 approval, changed, current_approval_revision="revision-1"
             ))
-        self.assertTrue(self.store.consume(
+        self.assertTrue(self.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
 
@@ -212,7 +212,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
 
         def consume():
             barrier.wait()
-            result = self.store.consume(
+            result = self.consume(
                 approval, binding, current_approval_revision="revision-1"
             )
             with lock:
