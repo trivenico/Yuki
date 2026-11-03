@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import hashlib
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -52,6 +54,34 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
             build_skill_docker_argv(replace(self.request, network_mode="bridge"), container_name="yuki-skill-"+"a"*24)
         with self.assertRaises(SkillContainerLaunchError):
             build_skill_docker_argv(self.request, container_name="arbitrary-name")
+
+    @patch("core.skill_container_launcher.subprocess.Popen")
+    def test_live_authorization_denial_prevents_docker_launch(self, popen):
+        from dataclasses import replace
+        arguments = {"input": "safe"}
+        digest = hashlib.sha256(json.dumps(
+            arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        request = replace(self.request, argument_sha256=digest)
+        with self.assertRaises(SkillContainerLaunchError):
+            launch_skill_container(request, arguments, authorize=lambda _request: False)
+        popen.assert_not_called()
+
+    @patch("core.skill_container_launcher.subprocess.Popen")
+    def test_authorization_exception_fails_closed(self, popen):
+        from dataclasses import replace
+        arguments = {"input": "safe"}
+        digest = hashlib.sha256(json.dumps(
+            arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        request = replace(self.request, argument_sha256=digest)
+        def broken_authorizer(_request):
+            raise RuntimeError("store unavailable")
+        with self.assertRaises(SkillContainerLaunchError):
+            launch_skill_container(request, arguments, authorize=broken_authorizer)
+        popen.assert_not_called()
 
     def test_rejects_noncanonical_workspace(self):
         from dataclasses import replace
