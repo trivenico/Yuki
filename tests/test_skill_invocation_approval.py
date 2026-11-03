@@ -171,6 +171,26 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         )
         self.assertEqual(intent["state"], "launch_intent")
 
+    def test_recovery_does_not_sweep_unrelated_live_launches(self):
+        bindings = [self.binding(invocation_id=f"invocation-{i}", task_id=f"task-{i}") for i in (1, 2)]
+        approvals = [self.issue(binding) for binding in bindings]
+        for binding, approval in zip(bindings, approvals):
+            self.store.authorize_launch(
+                approval, binding, auth_service=self.auth,
+                actor_session_token=self.actor_session,
+                current_approval_revision="revision-1",
+            )
+            self.store.transition_launch(
+                binding.invocation_id, binding.binding_sha256, new_state="launching"
+            )
+        self.assertEqual(self.store.recover_interrupted_launches([bindings[0].invocation_id]), 1)
+        self.assertEqual(self.store.get_launch_intent(bindings[0].invocation_id)["state"], "uncertain")
+        self.assertEqual(self.store.get_launch_intent(bindings[1].invocation_id)["state"], "launching")
+
+    def test_recovery_rejects_empty_or_invalid_worker_inventory(self):
+        self.assertEqual(self.store.recover_interrupted_launches([]), 0)
+        self.assertEqual(self.store.recover_interrupted_launches(["../invalid"]), 0)
+
     def test_launch_state_machine_is_one_way_and_terminal(self):
         binding = self.binding()
         approval = self.issue(binding)
@@ -216,13 +236,13 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             new_state="launching",
         ))
         self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "launching")
-        self.assertEqual(self.store.recover_interrupted_launches(), 1)
+        self.assertEqual(self.store.recover_interrupted_launches([first_binding.invocation_id]), 1)
         self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "uncertain")
         self.assertFalse(self.store.transition_launch(
             first_binding.invocation_id, first_binding.binding_sha256,
             new_state="running",
         ))
-        self.assertEqual(self.store.recover_interrupted_launches(), 0)
+        self.assertEqual(self.store.recover_interrupted_launches([first_binding.invocation_id]), 0)
 
     def test_revoked_actor_session_is_rejected(self):
         token = self.auth.authenticate(
