@@ -107,6 +107,32 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
+
+def parse_skill_command(command):
+    """Parse a /skill command without assuming its name or argument exists."""
+    parts = command.split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].strip():
+        return None, ""
+    return parts[1].strip(), parts[2] if len(parts) > 2 else ""
+
+
+def run_skill_command(agent, command, emit=print):
+    """Run one explicitly requested skill and keep failures local to the command."""
+    name, argument = parse_skill_command(command)
+    if name is None:
+        emit("Yuki > Provide a skill name: /skill NAME [ARG]")
+        return False
+    try:
+        response = agent.run_skill(name, argument)
+        emit(f"Yuki > {response.message}")
+        if response.ok and response.data is not None:
+            emit(response.data)
+        return True
+    except Exception as exc:
+        emit(f"Yuki > Skill command failed safely ({type(exc).__name__}).")
+        return False
+
+
 def main():
     try:
         config = load_config()
@@ -280,13 +306,8 @@ def main():
                 print("Yuki > " + answer)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
-        elif command.startswith("/skill "):
-            parts = command.split(maxsplit=2)
-            name, argument = parts[1], parts[2] if len(parts) > 2 else ""
-            response = agent.run_skill(name, argument)
-            print(f"Yuki > {response.message}")
-            if response.ok and response.data is not None:
-                print(response.data)
+        elif command == "/skill" or command.startswith("/skill "):
+            run_skill_command(agent, command)
         elif command.startswith("/plan "):
             goal = command[len("/plan "):].strip()
             try:
