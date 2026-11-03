@@ -174,3 +174,12 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Ubuntu Python 3.11 surfaced two errors in the request-scoped conversation tests. A fixture used a placeholder conversation owner rather than the authenticated account ID; the second exposed that principal mismatch was detected only after generation lease acquisition.
 - Moved verified-principal and tool-execution preconditions ahead of lease acquisition and corrected the fixture to use the authenticated actor ID. No tests were weakened or removed.
 - Latest PR #498 head: `d90a813f7f86d9d7d1ffa7275f9b64828c48eb2c`; 5 exact-head checks queued at initial inspection. Revalidation pending.
+
+
+## Knowledge intelligence workstream: evidence ledger
+
+This workstream is tracked independently of serial phase numbering while the historical phase gaps above remain unresolved.
+
+| Item | Evidence | Status | Disposition |
+|---|---|---|---|
+| Source-grounded claim ledger | `knowledge/evidence_ledger.py`; `tests/test_evidence_ledger.py`; `docs/KNOWLEDGE_EVIDENCE_LEDGER.md` | `in_progress` | Proposed claims, canonical chunk provenance, explicit review history, two-distinct-source verification gate, contradiction blocking, stale-evidence detection. Exact-head CI, security review, reviewer authentication boundary, and cross-database lifecycle reconciliation remain open. |
