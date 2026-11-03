@@ -46,6 +46,9 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
         self.assertIn("--cap-drop", argv)
         self.assertIn("--init", argv)
         self.assertIn("--ipc", argv)
+        self.assertEqual(argv[argv.index("--memory-swap")+1], "256m")
+        self.assertIn("core=0", argv)
+        self.assertIn("nofile=64:64", argv)
         self.assertEqual(argv[argv.index("--user")+1], "65532:65532")
         mount = argv[argv.index("--mount")+1]
         self.assertTrue(mount.endswith(",readonly"))
