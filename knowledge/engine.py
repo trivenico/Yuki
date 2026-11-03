@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -50,8 +51,16 @@ class KnowledgeEngine:
         connection.execute("PRAGMA busy_timeout = 10000")
         return connection
 
+    @contextmanager
+    def _session(self):
+        connection = self._connect()
+        try:
+            yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS knowledge_sources (
