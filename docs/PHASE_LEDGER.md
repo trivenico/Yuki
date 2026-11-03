@@ -222,3 +222,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval. Persists/routes proposal through authorized submit only; no advance or worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
+
+
+| Authenticated cognitive proposal service | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds explicit owner-scoped proposal operation and optional runtime composition for cognitive engine + coordinator adapter. It is not triggered by chat turns and does not dispatch workers. API route exposure and exact-head CI remain open. |
