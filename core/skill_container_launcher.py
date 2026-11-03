@@ -209,4 +209,9 @@ def _binding_view(request: SkillContainerRequest):
     """Minimal adapter to reuse the existing canonical input digest verifier."""
     class BindingView:
         argument_sha256 = request.argument_sha256
+        invocation_id = request.invocation_id
+        skill_id = request.skill_id
+        entrypoint = request.entrypoint
+        input_schema_sha256 = request.input_schema_sha256
+        output_schema_sha256 = request.output_schema_sha256
     return BindingView()
