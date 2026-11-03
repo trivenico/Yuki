@@ -80,3 +80,10 @@ The service does not train or fine-tune a model, change system prompts, alter id
 `core.episodic_memory.EpisodicMemoryService` stores concise, explicitly supplied task summaries, outcomes and tags in a per-owner SQLite journal. It requires the existing memory-consent setting for recording and retrieval, supports owner-scoped search/list/delete, enforces a bounded retention count, and redacts common secret patterns. It does not automatically capture raw conversation history, model responses or tool payloads.
 
 `MemoryContextBuilder` can optionally receive an episodic memory service. When configured, it retrieves relevant episodes alongside personal semantic/lesson memories and places both in the same bounded untrusted-reference block. Episodic consent failure is fail-closed for episodes but does not disable ordinary conversation or unrelated personal memory. Retrieved episode text is context only: it cannot alter system policy, authorize tools or grant permissions. The current search is bounded lexical overlap, not embeddings or temporal/causal reasoning.
+
+
+## Stable Yuki identity profile
+
+`companion.identity_core.IdentityCore` provides a local, versioned identity profile separate from model-provider configuration and user memories. It derives defaults from `yuki_identity.py`, preserves the canonical product name, validates a strict field allowlist, and supports explicit-approval updates with optimistic revision checks and reset. Writes use a same-directory temporary file, restrictive POSIX permissions, fsync and atomic replace.
+
+The SHA-256 digest detects accidental corruption only; it is not a signature or protection against an attacker who can rewrite the profile and digest. Identity configuration does not grant tool access, alter security policy, or establish machine-verifiable consciousness. The current implementation is a local single-process file store; multi-process writers need an inter-process lock or transactional database.
