@@ -306,6 +306,10 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
                 item.pending_id, decision="completed", actor="operator-b", session_id="session-b"
             ))
             self.assertEqual(store.list_recovery_required()[0]["status"], "reconciling")
+            self.assertEqual(
+                store.find_recovery_by_reference(item.pending_id[-12:])["status"],
+                "reconciling",
+            )
             self.assertTrue(store.finish_reconciliation(item.pending_id, decision="completed"))
             self.assertEqual(store.get_status(item.pending_id), "reconciled_completed")
             self.assertFalse(store.finish_reconciliation(item.pending_id, decision="completed"))
