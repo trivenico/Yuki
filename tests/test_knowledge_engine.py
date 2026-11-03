@@ -90,9 +90,20 @@ class KnowledgeEngineTests(unittest.TestCase):
         self.write(content="Yuki retrieval engine supports local search.")
         self.engine.ingest_file(self.workspace / "notes.md", workspace=self.workspace)
         self.assertEqual(self.engine.search('"; DROP TABLE knowledge_sources; --'), [])
+        self.assertEqual(len(self.engine.list_sources()), 1)
         for query, limit in (("", 5), ("valid", True), ("valid", 0), ("x" * 2001, 5)):
             with self.subTest(query=query[:10], limit=limit), self.assertRaises(ValueError):
                 self.engine.search(query, limit=limit)
+
+    def test_large_documents_are_chunked_with_overlap(self):
+        text = "alpha " * 900
+        source = self.write(content=text)
+        indexed = self.engine.ingest_file(source, workspace=self.workspace)
+        self.assertGreater(indexed["chunks_indexed"], 1)
+        results = self.engine.search("alpha", limit=20)
+        self.assertGreater(len(results), 1)
+        self.assertTrue(all(len(item.content) <= self.engine.MAX_CHUNK_CHARS for item in results))
+        self.assertTrue(all(item.source_id == indexed["source_id"] for item in results))
 
     def test_document_character_limit(self):
         source = self.write(content="x" * (self.engine.MAX_DOCUMENT_CHARS + 1))
