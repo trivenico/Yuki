@@ -114,14 +114,16 @@ class KnowledgeEngine:
     def _safe_workspace_file(
         path: str | Path, workspace: str | Path, *, allow_extracted_formats: bool = False
     ) -> tuple[Path, Path]:
-        root = Path(workspace).expanduser().resolve(strict=True)
+        workspace_path = Path(workspace).expanduser()
+        workspace_lexical = workspace_path.absolute()
+        root = workspace_path.resolve(strict=True)
         supplied = Path(path).expanduser()
-        candidate = supplied if supplied.is_absolute() else root / supplied
+        candidate = supplied if supplied.is_absolute() else workspace_lexical / supplied
         try:
-            lexical = candidate.absolute()
-            relative = lexical.relative_to(root)
+            relative = candidate.absolute().relative_to(workspace_lexical)
         except ValueError as exc:
             raise ValueError("Knowledge source must be inside the approved workspace.") from exc
+        candidate = root / relative
 
         cursor = root
         for part in relative.parts:
