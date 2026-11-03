@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import hashlib
+import json
 import re
 import secrets
 import subprocess
@@ -119,6 +121,8 @@ def launch_skill_container(
     arguments: object,
     *,
     authorize: Callable[[SkillContainerRequest], bool],
+    input_schema_bytes: bytes,
+    output_schema_bytes: bytes,
 ) -> SkillContainerResult:
     """Launch one invocation only after live approval/lease revalidation.
 
@@ -129,6 +133,14 @@ def launch_skill_container(
     """
     if not callable(authorize):
         raise SkillContainerLaunchError("live approval and lease revalidation is required")
+    from core.skill_schema_validation import (
+        SkillSchemaError, load_verified_schema, validate_instance,
+    )
+    try:
+        input_schema = load_verified_schema(input_schema_bytes, request.input_schema_sha256)
+        output_schema = load_verified_schema(output_schema_bytes, request.output_schema_sha256)
+    except SkillSchemaError as exc:
+        raise SkillContainerLaunchError("approved schema artifacts failed verification") from exc
     try:
         argument_bytes = json.dumps(
             arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -136,6 +148,10 @@ def launch_skill_container(
         ).encode("utf-8")
         if hashlib.sha256(argument_bytes).hexdigest() != request.argument_sha256:
             raise SkillContainerLaunchError("runtime arguments do not match approved digest")
+        try:
+            validate_instance(arguments, input_schema)
+        except SkillSchemaError as exc:
+            raise SkillContainerLaunchError("runtime arguments violate approved input schema") from exc
         payload = json.dumps({
             "protocol_version": 1,
             "invocation_id": request.invocation_id,
@@ -235,12 +251,13 @@ def launch_skill_container(
             SkillRuntimeProtocolError, parse_runtime_response,
         )
         try:
-            parse_runtime_response(
+            response = parse_runtime_response(
                 bytes(output), expected_invocation_id=request.invocation_id,
                 max_bytes=request.max_output_bytes,
             )
-        except SkillRuntimeProtocolError as exc:
-            raise SkillContainerLaunchError("skill runtime returned an invalid protocol response") from exc
+            validate_instance(response["output"], output_schema)
+        except (SkillRuntimeProtocolError, SkillSchemaError) as exc:
+            raise SkillContainerLaunchError("skill runtime returned an invalid or schema-incompatible response") from exc
     # Nonzero exits and timeouts remain explicit; they are never success.
     return SkillContainerResult(
         returncode=int(returncode), stdout=bytes(output), timed_out=timed_out,
