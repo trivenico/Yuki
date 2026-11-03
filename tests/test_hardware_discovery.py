@@ -40,7 +40,8 @@ class HardwareDiscoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = HardwareDiscovery().discover(storage_path=directory)
             self.assertGreaterEqual(result.storage_free_bytes, 0)
-            self.assertEqual(result.storage_path, directory)
+            from pathlib import Path
+            self.assertEqual(result.storage_path, str(Path(directory).resolve()))
 
     def test_inventory_serializes_without_device_identifiers(self):
         result = inventory_to_dict(HardwareDiscovery().discover())
