@@ -234,7 +234,7 @@ class SQLitePendingApprovalStore:
 
     def find_recovery_by_reference(self, reference: str) -> dict[str, str] | None:
         """Resolve a non-bearer 12-character suffix only when it is unambiguous."""
-        if not isinstance(reference, str) or len(reference) != 12 or not reference.isalnum():
+        if not isinstance(reference, str) or len(reference) != 12 or not all(ch.isalnum() or ch in "-_" for ch in reference):
             return None
         with self._connect() as db:
             rows = db.execute(
