@@ -12,10 +12,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 
 from core.skill_execution_manifest import SkillExecutionManifest, manifest_sha256
 from core.skill_invocation_approval import SkillInvocationBinding
 from core.skill_staging import StagedSkillArtifact
+
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class SkillContainerRequestError(ValueError):
@@ -127,6 +131,8 @@ def build_skill_container_request(
         (binding.staging_sha256, staged.tree_sha256),
         (staged.artifact_sha256, manifest.artifact_sha256),
     )
+    if not _SHA256.fullmatch(binding.argument_sha256):
+        raise SkillContainerRequestError("approved argument digest is invalid")
     if any(actual != expected for actual, expected in checks):
         raise SkillContainerRequestError("manifest, staged artifact and approval binding do not match")
 
@@ -182,3 +188,30 @@ def build_skill_container_request(
         max_input_bytes=limits["max_input_bytes"],
         max_output_bytes=limits["max_output_bytes"],
     )
+
+
+
+def build_skill_runtime_input(
+    binding: SkillInvocationBinding,
+    arguments: object,
+    *,
+    max_input_bytes: int,
+) -> bytes:
+    """Serialize invocation arguments for one-shot stdin delivery, never persistence."""
+    if not isinstance(binding, SkillInvocationBinding):
+        raise SkillContainerRequestError("approved invocation binding required")
+    if (isinstance(max_input_bytes, bool) or not isinstance(max_input_bytes, int)
+            or not 1 <= max_input_bytes <= 1_048_576):
+        raise SkillContainerRequestError("invalid runtime input bound")
+    try:
+        encoded = json.dumps(
+            arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise SkillContainerRequestError("runtime input must be finite JSON data") from exc
+    if len(encoded) > max_input_bytes:
+        raise SkillContainerRequestError("runtime input exceeds approved byte limit")
+    if hashlib.sha256(encoded).hexdigest() != binding.argument_sha256:
+        raise SkillContainerRequestError("runtime input does not match approved argument digest")
+    return encoded
