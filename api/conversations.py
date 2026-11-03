@@ -14,6 +14,7 @@ import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
+from core.identity import AuthenticatedIdentity
 from core.conversation_service import ConversationService
 from core.conversation_store import (
     ConversationConflict,
@@ -89,9 +90,10 @@ class YukiConversationAPI:
                 await asyncio.to_thread(self.auth.revoke_session, token)
                 return await self._respond(send, 200, {"logged_out": True})
 
-            user, _ = await self._principal(scope)
+            user, session_token = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+            identity = AuthenticatedIdentity.from_session(user, session_token)
 
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
@@ -99,7 +101,7 @@ class YukiConversationAPI:
                 })
 
             if method == "PUT" and path == "/v1/providers/active":
-                if user.role != "admin":
+                if not identity.is_admin:
                     return await self._respond(send, 403, {"error": "administrator_required"})
                 if self.provider_selector is None:
                     return await self._respond(send, 503, {"error": "provider_selection_unavailable"})
@@ -155,7 +157,7 @@ class YukiConversationAPI:
 
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
-                    self.conversations.list, owner_id=user.user_id, limit=50
+                    self.conversations.list, owner_id=identity.actor_id, limit=50
                 )
                 return await self._respond(send, 200, {"conversations": items})
 
