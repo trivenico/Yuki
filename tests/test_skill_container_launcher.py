@@ -89,6 +89,27 @@ class SkillContainerLauncherArgvTests(unittest.TestCase):
                 input_schema_bytes=self.input_schema_bytes, output_schema_bytes=self.output_schema_bytes)
         popen.assert_not_called()
 
+    def test_rejects_write_capability_until_output_mount_is_supported(self):
+        from dataclasses import replace
+        with self.assertRaises(SkillContainerLaunchError):
+            build_skill_docker_argv(
+                replace(self.request, capabilities=("read_staged_input", "write_staged_output")),
+                container_name="yuki-skill-"+"a"*24,
+            )
+        with self.assertRaises(SkillContainerLaunchError):
+            build_skill_docker_argv(
+                replace(self.request, write_grants=("reports/result.json",)),
+                container_name="yuki-skill-"+"a"*24,
+            )
+
+    def test_rejects_mount_option_injection_path(self):
+        from dataclasses import replace
+        with self.assertRaises(SkillContainerLaunchError):
+            build_skill_docker_argv(
+                replace(self.request, workspace=self.tmp.name+",readonly=false"),
+                container_name="yuki-skill-"+"a"*24,
+            )
+
     def test_rejects_noncanonical_workspace(self):
         from dataclasses import replace
         with self.assertRaises(SkillContainerLaunchError):
