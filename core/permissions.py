@@ -35,6 +35,26 @@ class PermissionGate:
         self._session_id = session_id
         self._actor_role = actor_role
 
+    @classmethod
+    def from_authenticated_identity(cls, identity, approver, audit_log=None):
+        """Build a request-scoped gate from a server-verified identity.
+
+        End-user roles deliberately cannot approve privileged operations.
+        """
+        role = getattr(identity, "role", None)
+        if role not in {"admin", "operator"}:
+            raise PermissionError("This authenticated role cannot approve actions.")
+        actor_id = getattr(identity, "actor_id", None)
+        session_id = getattr(identity, "session_id", None)
+        if not isinstance(actor_id, str) or not actor_id.strip():
+            raise ValueError("Verified actor identity is required.")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("Verified session identity is required.")
+        return cls(
+            approver, audit_log, actor_id=actor_id,
+            session_id=session_id, actor_role=role,
+        )
+
     @property
     def actor_id(self) -> str:
         return self._actor_id
