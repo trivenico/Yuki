@@ -9,6 +9,7 @@ from core.skill_staging import stage_skill_artifact
 from core.skill_container_request import (
     SkillContainerRequestError,
     build_skill_container_request,
+    build_skill_runtime_input,
 )
 
 
