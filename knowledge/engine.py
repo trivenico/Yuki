@@ -224,6 +224,34 @@ class KnowledgeEngine:
             for row in rows
         ]
 
+    def get_chunks(self, chunk_ids: list[int]) -> list[KnowledgeResult]:
+        """Resolve candidate IDs against canonical indexed source rows."""
+        if not isinstance(chunk_ids, (list, tuple)) or len(chunk_ids) > 100:
+            raise ValueError("chunk_ids must contain at most 100 IDs.")
+        if any(type(item) is not int or item <= 0 for item in chunk_ids):
+            raise ValueError("chunk IDs must be positive integers.")
+        if not chunk_ids:
+            return []
+        placeholders = ",".join("?" for _ in chunk_ids)
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                f"""SELECT c.chunk_id, c.source_id, s.source_name, s.source_path,
+                           c.content
+                    FROM knowledge_chunks c
+                    JOIN knowledge_sources s ON s.source_id = c.source_id
+                    WHERE c.chunk_id IN ({placeholders})""",
+                tuple(chunk_ids),
+            ).fetchall()
+        by_id = {
+            row["chunk_id"]: KnowledgeResult(
+                chunk_id=row["chunk_id"], source_id=row["source_id"],
+                source_name=row["source_name"], source_path=row["source_path"],
+                content=row["content"], score=0.0,
+            )
+            for row in rows
+        }
+        return [by_id[item] for item in chunk_ids if item in by_id]
+
     def list_sources(self) -> list[dict]:
         with self._lock, self._connect() as db:
             rows = db.execute(
