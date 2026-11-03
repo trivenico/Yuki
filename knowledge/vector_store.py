@@ -101,7 +101,7 @@ class VectorStore:
         dimensions = {item[3] for item in prepared}
         if len(dimensions) != 1:
             raise ValueError("All vectors in a batch must have identical dimensions.")
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             db.executemany(
                 """INSERT INTO knowledge_vectors(chunk_id, source_id, model_id, dimensions, vector)
                    VALUES (?, ?, ?, ?, ?)
@@ -117,7 +117,7 @@ class VectorStore:
             raise ValueError("model_id is required.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100.")
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             rows = db.execute(
                 """SELECT chunk_id, source_id, dimensions, vector
                    FROM knowledge_vectors WHERE model_id=? AND dimensions=?""",
@@ -142,7 +142,7 @@ class VectorStore:
         if any(type(item) is not int or item <= 0 for item in keep_chunk_ids):
             raise ValueError("chunk IDs must be positive integers.")
         keep = sorted(set(keep_chunk_ids))
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             if not keep:
                 cursor = db.execute(
                     "DELETE FROM knowledge_vectors WHERE source_id=? AND model_id=?",
@@ -160,7 +160,7 @@ class VectorStore:
     def delete_source(self, source_id: str, *, model_id: str | None = None) -> int:
         if not isinstance(source_id, str) or not source_id.strip():
             raise ValueError("source_id is required.")
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             if model_id is None:
                 cursor = db.execute("DELETE FROM knowledge_vectors WHERE source_id=?", (source_id,))
             else:
