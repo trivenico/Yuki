@@ -99,3 +99,10 @@ The SHA-256 digest detects accidental corruption only; it is not a signature or 
 `core.cognitive_context.CognitiveContextEngine` composes the existing planner, optional versioned identity core, and optional consent-aware memory context builder into an immutable `CognitiveBrief`. It validates that identity remains configuration-only and cannot claim policy or tool authority. It emits a bounded deterministic task DAG and a serialized untrusted context brief for a downstream agent turn.
 
 This is deliberately a preparation layer, not a new model, autonomous reasoning claim, agent dispatcher, or tool executor. It does not submit work to `SpecialistAgentCoordinator`; the caller must explicitly review/authorize and translate the proposed `PlanTask` values into the coordinator's `SubtaskSpec` contract. Memory consent/backend failures produce warnings and planning continues without retrieved memory. The planner remains deterministic keyword-based until a model-backed planner with schema validation and evaluation is introduced.
+
+
+## Cognitive context in the authenticated conversation runtime
+
+`build_conversation_runtime(..., cognitive_context_engine=...)` optionally injects a `CognitiveContextEngine` into `ConversationService`. For each authenticated user turn, the service prepares a brief using the verified owner ID and the user goal, then passes its serialization to the agent loop as untrusted reference context. The agent loop applies its existing instruction-boundary wrapper. The brief is proposal-only: it does not dispatch the specialist coordinator or execute tools.
+
+Use either the composed cognitive context engine or the individual identity/memory integrations on a service, not both, to avoid duplicate retrieval and context injection. Existing deployments remain unchanged unless the engine is explicitly supplied.
