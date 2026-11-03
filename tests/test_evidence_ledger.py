@@ -112,6 +112,23 @@ class EvidenceLedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.ledger.create_claim("Unsupported claim.", [])
 
+    def test_stale_evidence_is_flagged_and_cannot_verify(self):
+        claim = self.ledger.create_claim(
+            "Yuki uses local semantic retrieval.",
+            [self.chunk_ids[0], self.chunk_ids[1]],
+        )
+        source = self.workspace / "one.md"
+        source.write_text("A replacement document with different content.", encoding="utf-8")
+        self.engine.ingest_file(source, workspace=self.workspace)
+        loaded = self.ledger.get_claim(claim["claim_id"])
+        stale = [item for item in loaded["evidence"] if not item["current"]]
+        self.assertEqual(len(stale), 1)
+        with self.assertRaisesRegex(ValueError, "current canonical evidence"):
+            self.ledger.review_claim(
+                claim["claim_id"], decision="verify", reviewer="operator",
+                method="manual", rationale="One cited source has been replaced.",
+            )
+
     def test_claims_persist_across_instances(self):
         claim = self.ledger.create_claim(
             "Yuki has an independent knowledge store.", [self.chunk_ids[0]]
