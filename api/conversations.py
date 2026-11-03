@@ -303,6 +303,7 @@ class YukiConversationAPI:
                     request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
+                    identity=identity,
                     on_text_delta=lambda text: publish({"type": "delta", "text": text}),
                     cancellation_requested=cancellation.is_set,
                 )
