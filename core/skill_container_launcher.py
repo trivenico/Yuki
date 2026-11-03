@@ -255,6 +255,8 @@ def launch_skill_container(
                 bytes(output), expected_invocation_id=request.invocation_id,
                 max_bytes=request.max_output_bytes,
             )
+            if response["status"] != "succeeded":
+                raise SkillContainerLaunchError("skill runtime reported an execution failure")
             validate_instance(response["output"], output_schema)
         except (SkillRuntimeProtocolError, SkillSchemaError) as exc:
             raise SkillContainerLaunchError("skill runtime returned an invalid or schema-incompatible response") from exc
