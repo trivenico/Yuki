@@ -155,3 +155,9 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 
 - Full Python 3.11 CI on the prior identity-propagation head exposed two cross-platform failures in the stale-admin-takeover tests. Root cause: the append-only audit event allowlist omitted `admin_reconciliation_takeover`, so the correctly fail-closed audit append rejected the new event after the atomic reservation.
 - Added the event type to the explicit audit allowlist. Tests were not weakened. Latest fix head: `cf0099b94c214d83326ac464846d7ae570a3ef57`; 39 exact-head checks registered, 15 running and 24 queued at initial inspection. Revalidation pending.
+
+## Phase 2 follow-up — request-scoped agent factory
+
+- Added `YukiCoreAgent.from_authenticated_identity`, constructing a fresh agent and fresh PermissionGate from the verified authenticated identity. This prevents accidental cross-session sharing when callers follow the documented request-scoped construction pattern.
+- Added regression coverage authenticating one admin twice and verifying separate agent/gate objects with distinct session pseudonyms.
+- Latest PR #498 head: `cd1efdd6ee669227ae00613de7ccbab831962f45`; 9 exact-head checks queued at initial inspection. Branch 116 ahead / 3 behind main. CI pending. Web chat tool execution remains disabled; this factory is not yet wired to enable multi-user web tools. End-to-end runtime integration and independent review remain open.
