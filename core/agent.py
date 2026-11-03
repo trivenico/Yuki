@@ -42,6 +42,32 @@ class YukiCoreAgent:
         self.emotion = EmotionState()
         self.max_steps = 3
 
+    @classmethod
+    def from_authenticated_identity(
+        cls,
+        identity,
+        *,
+        approver,
+        audit_log=None,
+        approval_coordinator=None,
+        skills=None,
+        registry=None,
+    ):
+        """Create an isolated agent whose approval authority is bound to one verified session.
+
+        Call once per authenticated request/session. Do not cache or share this agent
+        across users; shared durable stores/coordinators may be injected separately.
+        """
+        gate = PermissionGate.from_authenticated_identity(
+            identity, approver=approver, audit_log=audit_log
+        )
+        return cls(
+            skills=skills,
+            registry=registry,
+            permission_gate=gate,
+            approval_coordinator=approval_coordinator,
+        )
+
     @property
     def skills(self):
         return {name: self.registry.get(name) for name in self.registry.names()}
