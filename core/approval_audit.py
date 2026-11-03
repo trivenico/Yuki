@@ -12,7 +12,7 @@ from typing import Any
 
 from core.sqlite_security import prepare_sqlite_path, secure_sqlite_file
 
-_ALLOWED_EVENTS = frozenset({"requested", "consumed", "approved", "denied", "executed", "execution_failed", "reconciliation_completed", "reconciliation_failed", "reconciliation_uncertain"})
+_ALLOWED_EVENTS = frozenset({"requested", "consumed", "approved", "denied", "executed", "execution_failed", "reconciliation_completed", "reconciliation_failed", "reconciliation_uncertain", "admin_reconciliation_takeover"})
 _ZERO_HASH = "0" * 64
 
 
