@@ -66,6 +66,34 @@ class ConversationServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_conversation_service_adds_owner_scoped_memory_to_agent_context(self):
+        class Builder:
+            def __init__(self):
+                self.calls = []
+            def build(self, *, owner_id, query):
+                from core.memory_context import MemoryContext
+                self.calls.append((owner_id, query))
+                return MemoryContext(
+                    "UNTRUSTED MEMORY: project is Yuki",
+                    ("memory-id",),
+                    False,
+                )
+
+        builder = Builder()
+        service = ConversationService(self.store, self.loop, memory_context_builder=builder)
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="What is my project?",
+            request_id="memory-context-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(builder.calls, [("owner-a", "What is my project?")])
+        self.assertIn("UNTRUSTED MEMORY", self.observed[0][1]["content"])
+        self.assertEqual(self.observed[0][-1]["content"], "What is my project?")
+
     def test_idempotent_retry_replays_answer_without_second_model_call(self):
         first = self.send()
         replay = self.send()
