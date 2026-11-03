@@ -11,7 +11,6 @@ accepted by the build/release process:
 ```sh
 docker build \
   --build-arg PYTHON_BASE_IMAGE='python:3.11-slim@sha256:<verified-digest>' \
-  -f docker/skill-runtime/Dockerfile \
   -t yuki-skill-runtime:local docker/skill-runtime
 ```
 
