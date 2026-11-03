@@ -408,6 +408,11 @@ class OneShotInvocationApprovalStore:
             return token
 
     def renew_launch_lease(self, invocation_id: str, worker_id: str, fencing_token: int, *, lease_seconds: int = 30) -> bool:
+        try:
+            _identifier(invocation_id, "invocation_id")
+            _identifier(worker_id, "worker_id")
+        except InvocationApprovalError:
+            return False
         if (isinstance(fencing_token, bool) or not isinstance(fencing_token, int) or fencing_token < 1
                 or isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 300):
             return False

@@ -264,6 +264,25 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             binding.invocation_id, "worker-one", token + 1, lease_seconds=120
         ))
 
+    def test_worker_lease_renewal_rejects_invalid_identifiers(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        token = self.claim(binding)
+        self.assertFalse(self.store.renew_launch_lease(
+            "../invalid", "worker-one", token, lease_seconds=120
+        ))
+        self.assertFalse(self.store.renew_launch_lease(
+            binding.invocation_id, "../invalid", token, lease_seconds=120
+        ))
+        self.assertFalse(self.store.renew_launch_lease(
+            binding.invocation_id, "worker-one", True, lease_seconds=120
+        ))
+
     def test_recovery_marks_interrupted_launches_uncertain_without_replay(self):
         first_binding = self.binding()
         first_approval = self.issue(first_binding)
