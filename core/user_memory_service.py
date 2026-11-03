@@ -63,26 +63,10 @@ class UserMemoryService:
         if not self.consent.enabled(user_id):
             raise PermissionError("memory_consent_required")
         memory = self._memory(user)
-        existing = next((item for item in memory.list(limit=200)
-                         if item["id"] == memory_id), None)
-        if existing is None:
+        updated = memory._store.update(memory_id, text, category=category)
+        if updated is None:
             raise KeyError("memory_not_found")
-        # Validate and persist via existing store API while retaining the ID
-        # and creation timestamp; use the store's lock and atomic writer.
-        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
-            raise ValueError("Memory text must be 1-4000 characters.")
-        selected_category = category if category is not None else existing["category"]
-        if selected_category not in {"note", "preference", "lesson"}:
-            raise ValueError("invalid memory category")
-        with memory._store._lock:
-            entries = memory._store._load()
-            for item in entries:
-                if item["id"] == memory_id:
-                    item["text"] = text.strip()
-                    item["category"] = selected_category
-                    break
-            memory._store._save(entries)
-        return next(item for item in memory.list(limit=200) if item["id"] == memory_id)
+        return updated
 
     def forget(self, user: Any, memory_id: str) -> bool:
         return self._memory(user).forget(memory_id)
