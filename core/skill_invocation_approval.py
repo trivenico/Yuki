@@ -17,7 +17,7 @@ from pathlib import Path
 from contextlib import closing
 from typing import Any, Mapping
 
-from core.auth import AuthenticatedUser
+from core.auth import BuiltInAuthService
 from core.skill_execution_manifest import (
     SkillExecutionManifest, SkillManifestError, manifest_sha256,
 )
@@ -124,7 +124,8 @@ class SkillInvocationBinding:
 def build_invocation_binding(
     manifest: SkillExecutionManifest,
     *,
-    actor: AuthenticatedUser,
+    auth_service: BuiltInAuthService,
+    actor_session_token: str,
     tenant_id: str,
     task_id: str,
     invocation_id: str,
@@ -136,8 +137,11 @@ def build_invocation_binding(
     """Bind identity, manifest, canonical arguments, staging and grants."""
     if not isinstance(manifest, SkillExecutionManifest):
         raise InvocationApprovalError("a validated skill manifest is required")
-    if not isinstance(actor, AuthenticatedUser) or not actor.user_id:
-        raise InvocationApprovalError("an authenticated application principal is required")
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise InvocationApprovalError("trusted authentication service is required")
+    actor = auth_service.resolve_session(actor_session_token)
+    if actor is None:
+        raise InvocationApprovalError("a valid authenticated actor session is required")
     try:
         argument_bytes = _canonical(arguments)
     except InvocationApprovalError:
@@ -204,16 +208,19 @@ class OneShotInvocationApprovalStore:
         self,
         binding: SkillInvocationBinding,
         *,
-        approved_by: AuthenticatedUser,
+        auth_service: BuiltInAuthService,
+        approver_session_token: str,
         approval_revision: str,
         ttl_seconds: int = 300,
     ) -> str:
         if not isinstance(binding, SkillInvocationBinding):
             raise InvocationApprovalError("validated invocation binding required")
-        if (not isinstance(approved_by, AuthenticatedUser)
-                or "workflow:approve" not in approved_by.permissions):
-            raise InvocationApprovalError("an authenticated approver with workflow:approve permission is required")
-        approver_id = _identifier(approved_by.user_id, "approved_by")
+        if not isinstance(auth_service, BuiltInAuthService):
+            raise InvocationApprovalError("trusted authentication service is required")
+        approver = auth_service.resolve_session(approver_session_token)
+        if approver is None or "workflow:approve" not in approver.permissions:
+            raise InvocationApprovalError("a valid approver session with workflow:approve permission is required")
+        approver_id = _identifier(approver.user_id, "approved_by")
         _identifier(approval_revision, "approval_revision")
         if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 1 <= ttl_seconds <= 3600:
             raise InvocationApprovalError("approval TTL must be between 1 and 3600 seconds")
