@@ -83,6 +83,18 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         with self.assertRaises(InvocationApprovalError):
             self.binding(read_grants=("/etc/passwd",))
 
+    def test_rejects_windows_and_ambiguous_staging_paths(self):
+        for path in ("C:/secret.txt", "dir//file.txt", "dir/", "dir/./file.txt",
+                     "dir/../file.txt", "dir\\file.txt", "dir\x00file.txt"):
+            with self.subTest(path=path), self.assertRaises(InvocationApprovalError):
+                self.binding(read_grants=(path,))
+
+    def test_database_file_is_private_on_posix(self):
+        import os
+        if os.name == "nt":
+            self.skipTest("POSIX file mode is not available on Windows")
+        self.assertEqual(os.stat(self.store.database).st_mode & 0o777, 0o600)
+
     def test_write_grant_requires_manifest_capability(self):
         restricted = dict(self.manifest.as_dict())
         restricted["capabilities"] = ["read_staged_input"]
