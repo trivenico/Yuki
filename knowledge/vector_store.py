@@ -5,6 +5,7 @@ import math
 import sqlite3
 import struct
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
@@ -17,7 +18,7 @@ class VectorStore:
         self.database_path = Path(database_path).expanduser().resolve()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        with self._connect() as db:
+        with self._session() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS knowledge_vectors (
@@ -36,6 +37,14 @@ class VectorStore:
         db = sqlite3.connect(str(self.database_path), timeout=10.0)
         db.execute("PRAGMA busy_timeout=10000")
         return db
+
+    @contextmanager
+    def _session(self):
+        connection = self._connect()
+        try:
+            yield connection
+        finally:
+            connection.close()
 
     @staticmethod
     def _normalize(vector: Sequence[float]) -> list[float]:
@@ -61,7 +70,7 @@ class VectorStore:
             raise ValueError("model_id must be non-empty text of at most 300 characters.")
         values = self._normalize(vector)
         blob = struct.pack(f"<{len(values)}f", *values)
-        with self._lock, self._connect() as db:
+        with self._lock, self._session() as db:
             db.execute(
                 """INSERT INTO knowledge_vectors(chunk_id, source_id, model_id, dimensions, vector)
                    VALUES (?, ?, ?, ?, ?)
