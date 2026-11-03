@@ -15,7 +15,7 @@ def _write_response(fd: int, invocation_id: str, status: str, output: object) ->
         "status": status,
         "output": output,
     }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
-    if len(payload) > 16 * 1024 * 1024:
+    if len(payload) > 1_048_576:
         payload = json.dumps({
             "protocol_version": 1, "invocation_id": invocation_id,
             "status": "failed", "output": {"error": "output limit exceeded"},
