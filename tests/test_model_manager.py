@@ -22,10 +22,11 @@ class LocalModelManagerTests(unittest.TestCase):
         names = [item.model for item in recommend_models(profile)]
         self.assertIn("qwen3:1.7b", names)
 
-    def test_vram_can_inform_recommendation(self):
+    def test_large_vram_does_not_mask_low_host_memory(self):
         profile = HardwareProfile(8 * 1024**3, 2 * 1024**3, None, 8,
                                   "Test GPU", 12 * 1024**3)
-        self.assertIn("qwen3:8b", [x.model for x in recommend_models(profile)])
+        self.assertEqual([x.model for x in recommend_models(profile)],
+                         ["qwen3:0.6b", "gemma3:1b"])
 
     def test_unknown_memory_falls_back_conservatively(self):
         profile = HardwareProfile(None, None, None, 2)
