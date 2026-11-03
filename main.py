@@ -107,49 +107,89 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
+
+def parse_skill_command(command):
+    """Parse a /skill command without assuming its name or argument exists."""
+    parts = command.split(maxsplit=2)
+    if len(parts) < 2 or not parts[1].strip():
+        return None, ""
+    return parts[1].strip(), parts[2] if len(parts) > 2 else ""
+
+
+def run_skill_command(agent, command, emit=print):
+    """Run one explicitly requested skill and keep failures local to the command."""
+    name, argument = parse_skill_command(command)
+    if name is None:
+        emit("Yuki > Provide a skill name: /skill NAME [ARG]")
+        return False
+    try:
+        response = agent.run_skill(name, argument)
+        emit(f"Yuki > {response.message}")
+        if response.ok and response.data is not None:
+            emit(response.data)
+        return True
+    except Exception as exc:
+        emit(f"Yuki > Skill command failed safely ({type(exc).__name__}).")
+        return False
+
+
 def main():
-    config = load_config()
-    workspace = Path(config["workspace"])
-    workspace.mkdir(parents=True, exist_ok=True)
-    agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
-    task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    local_workers = build_local_worker_runtime(workspace, ai.provider)
-    memory_path = workspace / "yuki_memory.json"
-    memory = MemoryStore(memory_path)
-    searchable_memory = VectorMemory(memory_path)
-    indexer = KnowledgeIndexer(searchable_memory)
-    planner = Planner(max_steps=config["max_agent_steps"])
-    recovery_audit = RecoveryAuditLog(workspace / "recovery_audit.sqlite3")
-    recovery = SelfHealingEngine(
-        approve=lambda proposal: _confirm(
-            "recovery:" + proposal.action, proposal.reason, proposal.risk
+    try:
+        config = load_config()
+    except Exception as exc:
+        print(f"Yuki > Configuration unavailable ({type(exc).__name__}). Check your local config and try again.")
+        return
+
+    startup_stage = "workspace and agent"
+    try:
+        workspace = Path(config["workspace"])
+        workspace.mkdir(parents=True, exist_ok=True)
+        agent = build_agent(config)
+
+        startup_stage = "provider"
+        ai = YukiAgent(create_provider(config))
+        task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
+
+        startup_stage = "runtime services"
+        local_workers = build_local_worker_runtime(workspace, ai.provider)
+        memory_path = workspace / "yuki_memory.json"
+        memory = MemoryStore(memory_path)
+        searchable_memory = VectorMemory(memory_path)
+        indexer = KnowledgeIndexer(searchable_memory)
+        planner = Planner(max_steps=config["max_agent_steps"])
+        recovery_audit = RecoveryAuditLog(workspace / "recovery_audit.sqlite3")
+        recovery = SelfHealingEngine(
+            approve=lambda proposal: _confirm(
+                "recovery:" + proposal.action, proposal.reason, proposal.risk
+            )
         )
-    )
-    # This first registered handler is intentionally diagnostic-only: it proves
-    # the approval path end-to-end without mutating files, services, or settings.
-    recovery.register(
-        "readiness_refresh",
-        lambda: {"ok": isinstance(build_readiness_report().to_dict().get("capabilities"), dict)},
-        risk="low",
-    )
-    reminders = ReminderQueue(workspace / "yuki_reminders.json")
-    evolution = DailyEvolutionCycle(workspace)
-    tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
-                    backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
-    stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
-    wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
-    recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
-                      approver=lambda reason: _confirm("security:recon", reason, "high"))
-    sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
-                            enabled=config["sandbox_enabled"],
-                            approver=lambda reason: _confirm("sandbox:run", reason, "high"))
-    firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
-                               approver=lambda reason: _confirm("defense:firewall", reason, "high"))
-    detector = PortScanDetector()
-    sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
-    exploit_runner = ExploitRunner()
-    speaker_verifier = SpeakerVerifier(enabled=False)
+        # This first registered handler is intentionally diagnostic-only: it proves
+        # the approval path end-to-end without mutating files, services, or settings.
+        recovery.register(
+            "readiness_refresh",
+            lambda: {"ok": isinstance(build_readiness_report().to_dict().get("capabilities"), dict)},
+            risk="low",
+        )
+        reminders = ReminderQueue(workspace / "yuki_reminders.json")
+        evolution = DailyEvolutionCycle(workspace)
+        tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
+                        backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
+        stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
+        wakeword = WakeWordDetector(config["wakeword_model_path"], enabled=config["wakeword_enabled"]) if config["wakeword_model_path"] else None
+        recon = NmapRecon(enabled=config["security_lab_enabled"], allowlisted_targets=config["recon_allowlisted_targets"],
+                          approver=lambda reason: _confirm("security:recon", reason, "high"))
+        sandbox = DockerSandbox(workspace, allowed_images=config["sandbox_allowed_images"],
+                                enabled=config["sandbox_enabled"],
+                                approver=lambda reason: _confirm("sandbox:run", reason, "high"))
+        firewall = FirewallManager(enabled=config["firewall_enabled"], dry_run=config["firewall_dry_run"],
+                                   approver=lambda reason: _confirm("defense:firewall", reason, "high"))
+        detector = PortScanDetector()
+        sniffer = PacketSniffer(detector, enabled=config["security_lab_enabled"])
+        exploit_runner = ExploitRunner()
+        speaker_verifier = SpeakerVerifier(enabled=False)
+    except Exception as exc:
+        print(f"Yuki > Startup failed safely during {startup_stage} initialization ({type(exc).__name__}). Check local configuration, dependencies, workspace permissions, and provider availability.")
+        return
 
     def dashboard_command(command):
         if command == "/status":
@@ -266,13 +306,8 @@ def main():
                 print("Yuki > " + answer)
             except Exception as exc:
                 print(f"Yuki > Cloud request failed safely ({type(exc).__name__}).")
-        elif command.startswith("/skill "):
-            parts = command.split(maxsplit=2)
-            name, argument = parts[1], parts[2] if len(parts) > 2 else ""
-            response = agent.run_skill(name, argument)
-            print(f"Yuki > {response.message}")
-            if response.ok and response.data is not None:
-                print(response.data)
+        elif command == "/skill" or command.startswith("/skill "):
+            run_skill_command(agent, command)
         elif command.startswith("/plan "):
             goal = command[len("/plan "):].strip()
             try:
