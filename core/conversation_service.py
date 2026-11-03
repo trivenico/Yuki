@@ -49,6 +49,17 @@ class ConversationService:
         )
 
     def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], identity: AuthenticatedIdentity | None = None, system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
+        # Reject mismatched principals and unsafe tool execution before acquiring
+        # a lease or touching conversation state.
+        if identity is not None:
+            if not isinstance(identity, AuthenticatedIdentity) or identity.actor_id != owner_id:
+                raise PermissionError("Conversation identity does not match the authenticated owner.")
+        if not isinstance(tools, (list, tuple)) or len(tools) > 32:
+            raise ValueError("tools must contain at most 32 definitions.")
+        if tools and (identity is None or self.agent_loop_factory is None):
+            raise PermissionError(
+                "Tool execution requires a request-scoped agent loop factory and verified identity."
+            )
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         try:
