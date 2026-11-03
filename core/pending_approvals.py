@@ -72,7 +72,10 @@ class SQLitePendingApprovalStore:
                 actor_hash TEXT,
                 session_hash TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
-                updated_at TEXT
+                updated_at TEXT,
+                reconciliation_decision TEXT,
+                reconciliation_actor_hash TEXT,
+                reconciliation_session_hash TEXT
             )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(pending_approvals)")}
             if "actor_hash" not in columns:
@@ -83,6 +86,12 @@ class SQLitePendingApprovalStore:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
             if "updated_at" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN updated_at TEXT")
+            if "reconciliation_decision" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciliation_decision TEXT")
+            if "reconciliation_actor_hash" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciliation_actor_hash TEXT")
+            if "reconciliation_session_hash" not in columns:
+                db.execute("ALTER TABLE pending_approvals ADD COLUMN reconciliation_session_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
 
     @contextmanager
@@ -213,6 +222,68 @@ class SQLitePendingApprovalStore:
         with self._connect() as db:
             cursor = db.execute("""UPDATE pending_approvals SET status = ?, updated_at = ?
                 WHERE pending_id = ? AND status = ?""", (new_status, now, pending_id, expected))
+            return cursor.rowcount == 1
+
+    def begin_reconciliation(
+        self, pending_id: str, *, decision: str, actor: str, session_id: str
+    ) -> bool:
+        """Atomically reserve one recovery decision; retries must match its identity."""
+        if decision not in {"completed", "failed", "uncertain"}:
+            raise ValueError("Invalid reconciliation decision.")
+        if not all(isinstance(value, str) and value.strip() for value in (actor, session_id)):
+            raise ValueError("Reconciliation actor and session are required.")
+        actor_hash = self._identity_hash(actor)
+        session_hash = self._identity_hash(session_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status, reconciliation_decision, reconciliation_actor_hash, "
+                "reconciliation_session_hash FROM pending_approvals WHERE pending_id = ?",
+                (pending_id,),
+            ).fetchone()
+            if row is None:
+                db.execute("ROLLBACK")
+                return False
+            status, stored_decision, stored_actor, stored_session = row
+            if status == "recovery_required":
+                cursor = db.execute(
+                    """UPDATE pending_approvals
+                       SET status = 'reconciling', reconciliation_decision = ?,
+                           reconciliation_actor_hash = ?, reconciliation_session_hash = ?,
+                           updated_at = ?
+                       WHERE pending_id = ? AND status = 'recovery_required'""",
+                    (decision, actor_hash, session_hash, datetime.now(timezone.utc).isoformat(), pending_id),
+                )
+                db.execute("COMMIT")
+                return cursor.rowcount == 1
+            same_retry = (
+                status == "reconciling" and stored_decision == decision
+                and hmac.compare_digest(stored_actor or "", actor_hash)
+                and hmac.compare_digest(stored_session or "", session_hash)
+            )
+            db.execute("COMMIT")
+            return same_retry
+
+    def finish_reconciliation(self, pending_id: str, *, decision: str) -> bool:
+        """Finalize a reserved decision without allowing a competing operator to win."""
+        terminal = {
+            "completed": "reconciled_completed",
+            "failed": "reconciled_failed",
+            "uncertain": "recovery_required",
+        }
+        if decision not in terminal:
+            raise ValueError("Invalid reconciliation decision.")
+        with self._connect() as db:
+            cursor = db.execute(
+                """UPDATE pending_approvals
+                   SET status = ?, updated_at = ?,
+                       reconciliation_decision = NULL,
+                       reconciliation_actor_hash = NULL,
+                       reconciliation_session_hash = NULL
+                   WHERE pending_id = ? AND status = 'reconciling'
+                     AND reconciliation_decision = ?""",
+                (terminal[decision], datetime.now(timezone.utc).isoformat(), pending_id, decision),
+            )
             return cursor.rowcount == 1
 
     def list_recovery_required(self, *, limit: int = 100) -> list[dict[str, str]]:
