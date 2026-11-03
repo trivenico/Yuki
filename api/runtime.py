@@ -57,6 +57,7 @@ def build_conversation_runtime(
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     memory_service: UserMemoryService | None = None,
     identity_core: Any | None = None,
+    cognitive_context_engine: Any | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -74,6 +75,7 @@ def build_conversation_runtime(
         service = ConversationService(
             store, agent_loop, memory_context_builder=memory_context_builder,
             identity_core=identity_core,
+            cognitive_context_engine=cognitive_context_engine,
         )
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
