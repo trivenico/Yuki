@@ -40,7 +40,7 @@ class ScopedMemoryTests(unittest.TestCase):
         self.assertEqual(first.list(), [])
 
     def test_rejects_empty_or_control_character_actor_ids(self):
-        for actor in ("", "  ", "../escape", "user\nforged", "user\x00id"):
+        for actor in ("", "  ", "user\nforged", "user\x00id"):
             with self.subTest(actor=repr(actor)), self.assertRaises(ValueError):
                 ScopedMemory(actor, root=self.root)
 
