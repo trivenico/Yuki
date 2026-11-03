@@ -132,3 +132,26 @@ The adapter requires an explicitly verified claim, a recorded verification revie
 Synchronization is idempotent for the same claim, evidence and graph projection. A persisted plan hash rejects silent projection drift on retry. Graph JSON and the sync audit SQLite database are separate stores, so a process crash can leave graph writes without an audit record; graph entity/relation insertion is idempotent and retry can complete the audit record. This is not a cross-store atomic transaction. Sync records retain evidence IDs for traceability; consumers must re-read the claim before presenting graph facts as current. Reopening or rejecting a claim prevents new sync operations but does not automatically retract an existing graph projection. Retraction and reconciliation are explicit future work.
 
 Only trusted application code should call this adapter after reviewer authorization. Reviewer authentication, graph write authorization, provenance-aware graph reads and revocation are not provided by this module.
+
+## Bounded autonomous research planning
+
+`ResearchPlanner` creates durable, inspectable research plans in its own SQLite database. It defines seven ordered stages: scope, local retrieval, gap analysis, authorized source discovery, evidence analysis, synthesis and report generation.
+
+```python
+from research import ResearchPlanner
+
+planner = ResearchPlanner("YukiData/research-plans.sqlite3")
+plan = planner.create_plan(
+    "Evaluate local-first AI assistant architectures.",
+    questions=[
+        "Which local inference runtimes are supported?",
+        "How is evidence-backed memory maintained?",
+    ],
+)
+```
+
+Plan creation is proposal-only. It does not call a model, access the network, execute tools, ingest documents, or mutate the knowledge graph. The plan explicitly labels network reads, knowledge writes and report writes as side-effect boundaries.
+
+An optional configured `TaskStore` allows `enqueue_for_approval(plan_id)` to submit a bounded `research.investigate` task with an idempotency key, retry limit, token/time budgets and `approval_required=True`. Queue submission is not execution. A worker must independently authenticate the actor, enforce connector/source policy, validate every step and tool, and require review before evidence or graph writes. The plan/task stores are separate databases; idempotency makes retry safe after partial failure, but does not provide a cross-database transaction. Cancelling a queued plan must use the authorized TaskStore cancellation path.
+
+The planner intentionally does not contain model-specific prompt code. Local model orchestration, worker implementation, source connector authorization, checkpointed step execution and report publication are separate integration work.
