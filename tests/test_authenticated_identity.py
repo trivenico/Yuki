@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.auth import BuiltInAuthService
+from core.agent import YukiCoreAgent
 from core.identity import AuthenticatedIdentity
 from core.permissions import PermissionGate
 
@@ -39,6 +40,25 @@ class AuthenticatedIdentityTests(unittest.TestCase):
         self.assertEqual(gate.actor_id, identity.actor_id)
         self.assertEqual(gate.session_id, identity.session_id)
         self.assertTrue(gate.is_admin)
+
+    def test_agent_factory_binds_each_agent_to_one_verified_session(self):
+        self.auth.bootstrap_admin("identity-admin", "a-long-test-password-123")
+        first = self.auth.authenticate("identity-admin", "a-long-test-password-123")
+        second = self.auth.authenticate("identity-admin", "a-long-test-password-123")
+        first_identity = AuthenticatedIdentity.from_session(self.auth, first.token)
+        second_identity = AuthenticatedIdentity.from_session(self.auth, second.token)
+
+        first_agent = YukiCoreAgent.from_authenticated_identity(
+            first_identity, approver=lambda request: True, skills=[]
+        )
+        second_agent = YukiCoreAgent.from_authenticated_identity(
+            second_identity, approver=lambda request: True, skills=[]
+        )
+
+        self.assertEqual(first_agent.permission_gate.actor_id, second_agent.permission_gate.actor_id)
+        self.assertNotEqual(first_agent.permission_gate.session_id, second_agent.permission_gate.session_id)
+        self.assertIsNot(first_agent, second_agent)
+        self.assertIsNot(first_agent.permission_gate, second_agent.permission_gate)
 
     def test_end_user_cannot_construct_privileged_permission_gate(self):
         self.auth.create_account("ordinary-user", "a-long-test-password-123")
