@@ -124,6 +124,7 @@ def build_skill_container_request(
         (binding.artifact_sha256, manifest.artifact_sha256),
         (binding.argument_sha256, binding.argument_sha256),
         (binding.input_schema_sha256, manifest.input_schema_sha256),
+        (binding.output_schema_sha256, manifest.output_schema_sha256),
         (binding.runtime_image, manifest.runtime_image),
         (binding.entrypoint, manifest.entrypoint),
         (binding.capabilities, manifest.capabilities),
