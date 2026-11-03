@@ -221,7 +221,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         self.assertTrue(self.transition(binding, "worker-one", token, "succeeded"))
         self.assertFalse(self.transition(binding, "worker-one", token, "failed"))
 
-    def test_worker_fencing_rejects_stale_worker_after_lease_reclaim(self):
+    def test_expired_launch_lease_is_not_reassigned_automatically(self):
         binding = self.binding()
         approval = self.issue(binding)
         self.store.authorize_launch(
@@ -230,25 +230,19 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             current_approval_revision="revision-1",
         )
         first = self.claim(binding, "worker-old")
-        self.assertTrue(self.store.transition_launch(
-            binding.invocation_id, binding.binding_sha256,
-            worker_id="worker-old", fencing_token=first, new_state="running",
-        ))
         with self.store._connect() as db:
             db.execute(
                 "UPDATE skill_invocation_launch_intents SET lease_until=? WHERE invocation_id=?",
                 ("2000-01-01T00:00:00+00:00", binding.invocation_id),
             )
-        second = self.claim(binding, "worker-new")
-        self.assertGreater(second, first)
+        self.assertIsNone(self.store.claim_launch(
+            binding.invocation_id, "worker-new", lease_seconds=120
+        ))
         self.assertFalse(self.store.transition_launch(
             binding.invocation_id, binding.binding_sha256,
             worker_id="worker-old", fencing_token=first, new_state="succeeded",
         ))
-        self.assertTrue(self.store.transition_launch(
-            binding.invocation_id, binding.binding_sha256,
-            worker_id="worker-new", fencing_token=second, new_state="running",
-        ))
+        self.assertEqual(self.store.get_launch_intent(binding.invocation_id)["state"], "launching")
 
     def test_worker_lease_renewal_requires_current_fence(self):
         binding = self.binding()
