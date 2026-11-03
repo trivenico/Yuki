@@ -19,7 +19,6 @@ from typing import Callable
 from core.skill_container_request import (
     SkillContainerRequest,
     SkillContainerRequestError,
-    build_skill_runtime_input,
 )
 
 
@@ -131,11 +130,28 @@ def launch_skill_container(
     if not callable(authorize):
         raise SkillContainerLaunchError("live approval and lease revalidation is required")
     try:
-        payload = build_skill_runtime_input(
-            _binding_view(request), arguments, max_input_bytes=request.max_input_bytes
-        )
-    except (SkillContainerRequestError, AttributeError, TypeError, ValueError) as exc:
-        raise SkillContainerLaunchError("runtime input does not match approved request") from exc
+        argument_bytes = json.dumps(
+            arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        if hashlib.sha256(argument_bytes).hexdigest() != request.argument_sha256:
+            raise SkillContainerLaunchError("runtime arguments do not match approved digest")
+        payload = json.dumps({
+            "protocol_version": 1,
+            "invocation_id": request.invocation_id,
+            "skill_id": request.skill_id,
+            "entrypoint": request.entrypoint,
+            "input_schema_sha256": request.input_schema_sha256,
+            "output_schema_sha256": request.output_schema_sha256,
+            "arguments": arguments,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False).encode("utf-8")
+        if len(payload) > request.max_input_bytes:
+            raise SkillContainerLaunchError("runtime input exceeds approved byte limit")
+    except SkillContainerLaunchError:
+        raise
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise SkillContainerLaunchError("runtime input must be finite JSON data") from exc
     name = "yuki-skill-" + secrets.token_hex(12)
     argv = build_skill_docker_argv(request, container_name=name)
     try:
@@ -232,14 +248,3 @@ def launch_skill_container(
         duration_seconds=max(0.0, time.monotonic() - started),
     )
 
-
-def _binding_view(request: SkillContainerRequest):
-    """Minimal adapter to reuse the existing canonical input digest verifier."""
-    class BindingView:
-        argument_sha256 = request.argument_sha256
-        invocation_id = request.invocation_id
-        skill_id = request.skill_id
-        entrypoint = request.entrypoint
-        input_schema_sha256 = request.input_schema_sha256
-        output_schema_sha256 = request.output_schema_sha256
-    return BindingView()
