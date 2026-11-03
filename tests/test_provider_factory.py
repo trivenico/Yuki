@@ -9,8 +9,14 @@ from providers.ollama import OllamaProvider
 
 
 class ProviderFactoryTests(unittest.TestCase):
-    def test_default_factory_uses_real_openai_provider(self):
-        self.assertIsInstance(create_provider({}), OpenAICompatibleProvider)
+    def test_default_factory_uses_local_ollama_provider(self):
+        provider = create_provider({"ollama_model": "qwen3:8b"}, environ={})
+        self.assertIsInstance(provider, OllamaProvider)
+        self.assertEqual(provider.model, "qwen3:8b")
+
+    def test_openai_requires_explicit_provider_selection(self):
+        provider = create_provider({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-key"})
+        self.assertIsInstance(provider, OpenAICompatibleProvider)
 
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):

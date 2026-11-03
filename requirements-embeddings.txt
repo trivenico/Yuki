@@ -1,0 +1,4 @@
+# Optional local semantic retrieval dependencies.
+# Install only when enabling the offline SentenceTransformerEmbedder.
+sentence-transformers>=3.0,<6
+huggingface-hub>=0.24,<2

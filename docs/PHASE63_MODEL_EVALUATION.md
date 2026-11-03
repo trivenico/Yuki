@@ -64,3 +64,20 @@ Expected-term coverage is deliberately transparent but limited. It can reward sh
 ## Next evaluation improvements
 
 For production-grade selection, expand this starter harness with a versioned Yuki task dataset, deterministic structured-output validators, code/test execution in a sandbox, rubric-based human review, security/prompt-injection suites, repeat runs and confidence intervals, model/license/runtime compatibility checks, and per-provider cost telemetry. Recommendations should be generated from these measured results and never silently change the active model.
+
+
+## Local-first evaluation path
+
+The remote Hugging Face Inference Router runner above is optional and may incur provider usage charges. For Yuki's default local-first architecture, use the local Ollama runner instead:
+
+```bash
+python yuki_evaluate_local.py \
+  --model qwen3:4b \
+  --benchmark benchmarks/model_evaluation_starter.json \
+  --timeout 45 \
+  --output evaluation-local-report.json
+```
+
+The local runner requires the named model to already be installed in the configured Ollama instance. It does not pull models or change the active provider. Reports include the benchmark's SHA-256 fingerprint, case-level latency, aggregate pass metrics, and explicit limitations. The starter checks are deterministic substring assertions only; they are not semantic or safety evaluations. The report omits prompts and generated answers. The report file is created exclusively with owner-only permissions and is never overwritten.
+
+The evaluator's suite deadline is observational for synchronous calls. The provider's own request timeout is the enforceable per-request deadline. A successful report does not certify factuality, reasoning, security, licensing, or general intelligence and never activates a model.

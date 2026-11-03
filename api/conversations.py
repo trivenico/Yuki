@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
+from core.user_memory_service import UserMemoryService
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -36,6 +37,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        memory_service: UserMemoryService | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -52,6 +54,9 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if memory_service is not None and not isinstance(memory_service, UserMemoryService):
+            raise TypeError("memory_service must be a UserMemoryService.")
+        self.memory = memory_service
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -97,6 +102,75 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
                 })
+
+            if path.startswith("/v1/memory"):
+                if self.memory is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                if method == "GET" and path == "/v1/memory/consent":
+                    return await self._respond(send, 200, self.memory.status(user))
+                if method == "PUT" and path == "/v1/memory/consent":
+                    payload = await self._body(receive)
+                    if set(payload) != {"enabled"} or type(payload.get("enabled")) is not bool:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    state = await asyncio.to_thread(self.memory.set_enabled, user, payload["enabled"])
+                    return await self._respond(send, 200, state)
+                if method == "GET" and path == "/v1/memory":
+                    query = self._query(scope)
+                    try:
+                        limit = int(query.get("limit", "50"))
+                        items = await asyncio.to_thread(self.memory.list, user, limit=limit)
+                    except (ValueError, TypeError):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    return await self._respond(send, 200, {"memories": items})
+                if method == "POST" and path == "/v1/memory":
+                    payload = await self._body(receive)
+                    if set(payload) - {"text", "category"} or not isinstance(payload.get("text"), str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        item = await asyncio.to_thread(
+                            self.memory.remember, user, payload["text"],
+                            category=payload.get("category", "note"),
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "memory_consent_required"})
+                    except ValueError:
+                        return await self._respond(send, 400, {"error": "invalid_memory"})
+                    return await self._respond(send, 201, {"memory": item})
+                if method == "GET" and path == "/v1/memory/search":
+                    query = self._query(scope)
+                    try:
+                        limit = int(query.get("limit", "5"))
+                        items = await asyncio.to_thread(
+                            self.memory.search, user, query.get("q", ""),
+                            limit=limit, category=query.get("category"),
+                        )
+                    except ValueError:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    return await self._respond(send, 200, {"memories": items})
+                if method == "GET" and path == "/v1/memory/export":
+                    result = await asyncio.to_thread(self.memory.export, user)
+                    return await self._respond(send, 200, result)
+                memory_match = re.fullmatch(r"/v1/memory/([a-f0-9]{32})", path)
+                if memory_match and method == "PATCH":
+                    payload = await self._body(receive)
+                    if set(payload) - {"text", "category"} or not isinstance(payload.get("text"), str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        item = await asyncio.to_thread(
+                            self.memory.edit, user, memory_match.group(1),
+                            payload["text"], category=payload.get("category"),
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "memory_consent_required"})
+                    except KeyError:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    except ValueError:
+                        return await self._respond(send, 400, {"error": "invalid_memory"})
+                    return await self._respond(send, 200, {"memory": item})
+                if memory_match and method == "DELETE":
+                    deleted = await asyncio.to_thread(self.memory.forget, user, memory_match.group(1))
+                    return await self._respond(send, 200, {"deleted": deleted})
+                return await self._respond(send, 404, {"error": "not_found"})
 
             if method == "PUT" and path == "/v1/providers/active":
                 if user.role != "admin":

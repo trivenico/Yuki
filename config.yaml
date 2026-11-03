@@ -1,10 +1,12 @@
 # Safe defaults; all privileged/integration features remain disabled.
 name: Yuki
 workspace: ./yuki_workspace
-provider: openai
-openai_model: gpt-4.1-mini
+# Local-first personal assistant. No cloud API key is required.
+provider: ollama
 ollama_base_url: http://127.0.0.1:11434
-ollama_model: ""
+ollama_model: qwen3:8b
+# Optional cloud adapters are used only when explicitly selected.
+openai_model: gpt-4.1-mini
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect

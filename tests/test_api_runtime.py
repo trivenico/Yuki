@@ -23,6 +23,61 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+
+    def test_runtime_injects_identity_core_into_conversation_service(self):
+        class FakeIdentity:
+            def snapshot(self):
+                return {"profile": {
+                    "display_name": "Yuki", "greeting": "Hello",
+                    "voice_style": "calm", "interaction_style": "helpful",
+                }}
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            identity = FakeIdentity()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), identity_core=identity,
+            )
+            self.assertIs(runtime.app.conversations.identity_core, identity)
+            runtime.close()
+
+
+    def test_runtime_injects_cognitive_context_engine(self):
+        class Engine:
+            def prepare(self, **kwargs):
+                raise AssertionError("preparation occurs on a conversation turn")
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            engine = Engine()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                cognitive_context_engine=engine,
+            )
+            self.assertIs(runtime.app.conversations.cognitive_context_engine, engine)
+            runtime.close()
+
+
+    def test_runtime_composes_cognitive_agent_adapter(self):
+        class Engine:
+            def prepare(self, **kwargs):
+                raise AssertionError("not called during composition")
+        class Adapter:
+            def submit_proposal(self, **kwargs):
+                raise AssertionError("not called during composition")
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            engine, adapter = Engine(), Adapter()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                cognitive_context_engine=engine,
+                cognitive_agent_adapter=adapter,
+            )
+            self.assertIs(runtime.app.conversations.cognitive_context_engine, engine)
+            self.assertIs(runtime.app.conversations.cognitive_agent_adapter, adapter)
+            runtime.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

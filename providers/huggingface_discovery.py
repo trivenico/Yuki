@@ -27,7 +27,8 @@ class DiscoveryError(RuntimeError):
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    """Keep optional bearer credentials and requests on the fixed Hub endpoint."""
+    """Do not forward optional bearer credentials to redirected hosts."""
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
@@ -43,12 +44,23 @@ def _clean_text(value, limit=240):
     return value[:limit] if value else None
 
 
+def _gated_status(value):
+    if value is True:
+        return "gated"
+    if value is False:
+        return "ungated"
+    if isinstance(value, str) and value.lower() in {"auto", "manual"}:
+        return "gated"
+    return "unknown"
+
+
 def normalize_model(item):
     """Normalize one Hub model object to safe, reviewable metadata."""
     if not isinstance(item, dict):
         return None
     model_id = item.get("id") or item.get("modelId")
-    if not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id):
+    if (not isinstance(model_id, str) or not _MODEL_ID.fullmatch(model_id)
+            or any(part in {".", ".."} for part in model_id.split("/"))):
         return None
     tags = item.get("tags") if isinstance(item.get("tags"), list) else []
     tags = [_clean_text(tag, 100) for tag in tags if isinstance(tag, str)]
@@ -59,25 +71,41 @@ def normalize_model(item):
                               if (match := _LICENSE_TAG.fullmatch(tag))), None)
     task = _clean_text(item.get("pipeline_tag"), 80)
     license_known = bool(license_value)
+    gated = _gated_status(item.get("gated"))
+    private = item.get("private") is True
+    safetensors = item.get("safetensors") if isinstance(item.get("safetensors"), dict) else {}
+    parameters = safetensors.get("parameters")
+    parameter_count = None
+    if isinstance(parameters, dict):
+        parameter_count = sum(_bounded_int(v) for v in parameters.values())
     return {
         "model_id": model_id,
         "url": "https://huggingface.co/" + model_id,
         "task": task,
+        "library_name": _clean_text(item.get("library_name"), 80),
         "license": license_value,
         "license_known": license_known,
+        "gated_status": gated,
+        "private": private,
         "downloads": _bounded_int(item.get("downloads")),
         "likes": _bounded_int(item.get("likes")),
         "last_modified": _clean_text(item.get("lastModified"), 40),
         "tags": tags[:40],
+        "safetensors_parameter_count": parameter_count,
         "review_status": "needs_human_review",
         "automatic_activation": False,
-        "review_flags": (["license_not_reported"] if not license_known else [])
-                        + (["task_not_allowlisted"] if task not in _ALLOWED_TASKS else []),
+        "review_flags": (
+            (["license_not_reported"] if not license_known else [])
+            + (["task_not_allowlisted"] if task not in _ALLOWED_TASKS else [])
+            + (["gated_model_access_review_required"] if gated != "ungated" else [])
+            + (["private_model_not_eligible_for_public_discovery"] if private else [])
+            + (["safetensors_metadata_unavailable"] if parameter_count is None else [])
+        ),
     }
 
 
 class HuggingFaceDiscovery:
-    """Discover public Hub model metadata with an allow-listed HTTPS endpoint."""
+    """Discover public Hub model metadata with a fixed HTTPS endpoint."""
 
     def __init__(self, *, timeout=10, max_results=20, opener=None):
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 30:
@@ -95,10 +123,10 @@ class HuggingFaceDiscovery:
             raise ValueError("sort must be downloads, likes, or lastModified")
         params = urllib.parse.urlencode({
             "filter": task, "sort": sort, "direction": "-1",
-            "limit": str(self.max_results), "full": "false",
+            "limit": str(self.max_results), "full": "true",
         })
         url = HUB_API + "?" + params
-        headers = {"Accept": "application/json", "User-Agent": "Yuki-ModelDiscovery/1.0"}
+        headers = {"Accept": "application/json", "User-Agent": "Yuki-ModelDiscovery/1.1"}
         if token:
             if not isinstance(token, str) or len(token) > 4096 or any(c in token for c in "\r\n"):
                 raise ValueError("Hugging Face token format is invalid")
@@ -121,7 +149,7 @@ class HuggingFaceDiscovery:
         seen = set()
         for entry in payload[:self.max_results]:
             model = normalize_model(entry)
-            if model and model["model_id"] not in seen:
+            if model and not model["private"] and model["model_id"] not in seen:
                 seen.add(model["model_id"])
                 models.append(model)
         return {

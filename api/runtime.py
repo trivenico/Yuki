@@ -8,6 +8,8 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
+from core.user_memory_service import UserMemoryService
+from core.memory_context import MemoryContextBuilder
 from api.web import YukiWebApplication
 
 
@@ -53,6 +55,10 @@ def build_conversation_runtime(
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
+    memory_service: UserMemoryService | None = None,
+    identity_core: Any | None = None,
+    cognitive_context_engine: Any | None = None,
+    cognitive_agent_adapter: Any | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -66,10 +72,17 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     store = create_conversation_store(config)
     try:
-        service = ConversationService(store, agent_loop)
+        memory_context_builder = MemoryContextBuilder(memory_service) if memory_service is not None else None
+        service = ConversationService(
+            store, agent_loop, memory_context_builder=memory_context_builder,
+            identity_core=identity_core,
+            cognitive_context_engine=cognitive_context_engine,
+            cognitive_agent_adapter=cognitive_agent_adapter,
+        )
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            memory_service=memory_service,
         )
         return ConversationRuntime(app, store)
     except Exception:

@@ -174,3 +174,54 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Ubuntu Python 3.11 surfaced two errors in the request-scoped conversation tests. A fixture used a placeholder conversation owner rather than the authenticated account ID; the second exposed that principal mismatch was detected only after generation lease acquisition.
 - Moved verified-principal and tool-execution preconditions ahead of lease acquisition and corrected the fixture to use the authenticated actor ID. No tests were weakened or removed.
 - Latest PR #498 head: `d90a813f7f86d9d7d1ffa7275f9b64828c48eb2c`; 5 exact-head checks queued at initial inspection. Revalidation pending.
+
+
+## Knowledge intelligence workstream: evidence ledger
+
+This workstream is tracked independently of serial phase numbering while the historical phase gaps above remain unresolved.
+
+| Item | Evidence | Status | Disposition |
+|---|---|---|---|
+| Source-grounded claim ledger | `knowledge/evidence_ledger.py`; `tests/test_evidence_ledger.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Proposed claims, canonical chunk provenance, explicit review history, two-distinct-source verification gate, contradiction blocking, stale-evidence detection. Exact-head CI, security review, reviewer authentication boundary, and cross-database lifecycle reconciliation remain open. |
+| Verified knowledge graph projection | `knowledge/verified_graph_sync.py`; `tests/test_verified_graph_sync.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Only explicitly reviewed claims with current multi-source evidence may be projected; graph projection plan drift is rejected and retries are idempotent. Exact-head CI, trusted caller authorization, provenance-aware graph reads, retraction/reconciliation, and cross-store atomicity remain open. |
+| Bounded autonomous research planner | `research/planner.py`; `tests/test_research_planner.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Durable seven-stage research proposals and optional approval-gated TaskStore enqueue with idempotency, no application token quota and no wall-clock quota. Model-backed step execution, worker policy enforcement, authorized source discovery, checkpoints, report publication and cross-database reconciliation remain open. |
+| Local research retrieval worker | `research/local_worker.py`; `tests/test_local_research_worker.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Read-only local lexical retrieval with source provenance, unanswered-question reporting, resource-bounded result sets and idempotent persisted runs. Model reasoning, TaskStore worker integration, index freshness invalidation, evidence extraction, network discovery and report generation remain open. |
+
+
+| Local-first provider default | `providers/factory.py`; `providers/catalog.py`; `config.yaml`; `tests/test_provider_factory.py`; `tests/test_provider_catalog.py` | `in_progress` | Ollama is now the factory/config/catalog default; cloud providers require explicit selection. Hardware-aware model installation, first-run onboarding, runtime resource management, and exact-head CI remain open. |
+
+
+| Hardware-aware local model manager | `providers/model_manager.py`; `tests/test_model_manager.py`; `providers/__init__.py`; `docs/KNOWLEDGE_ENGINE.md` | `in_progress` | Hardware inspection, conservative RAM-based recommendations, loopback-only Ollama inventory, no implicit downloads and explicit-approval policy. Platform-specific GPU detection, model metadata/license catalog, secure download/verification, benchmark, onboarding and exact-head CI remain open. |
+
+
+| Hugging Face metadata governance hardening | `providers/huggingface_discovery.py`; `tests/test_huggingface_discovery.py`; `docs/PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | `in_progress` | Adds gated/private/library/safetensors metadata, conservative review flags, private-candidate exclusion, path-segment validation, and tests for token validation and response-size bounds. Human license/model-card review, model benchmark, hardware compatibility, download and activation approval remain separate gates. |
+
+
+| Local Ollama evaluation laboratory | `evaluation/local_benchmark.py`; `yuki_evaluate_local.py`; `tests/test_local_benchmark.py`; `docs/PHASE63_MODEL_EVALUATION.md` | `in_progress` | Adds reproducible versioned benchmark loading, dataset SHA-256 fingerprint, local Ollama runner, redacted report, no-overwrite owner-only output and explicit non-activation policy. Exact-head CI, semantic/human rubric, repeated-run confidence intervals, throughput/token accounting and task-specific safety suites remain open. |
+
+
+| Consent-aware learning proposal service | `core/learning_service.py`; `tests/test_learning_service.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds per-owner pending lesson proposals, best-effort secret redaction, consent gates, explicit approve/reject, owner isolation and idempotent completed approval. Not yet wired into HTTP/agent loop. SQLite proposal metadata and JSON personal memory are separate stores; crash-window reconciliation and transactional outbox remain open. |
+
+
+| Episodic memory and context integration | `core/episodic_memory.py`; `tests/test_episodic_memory.py`; `core/memory_context.py`; `tests/test_memory_context.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds consent-gated per-owner episode journal, explicit summaries/outcomes/tags, bounded retention, lexical retrieval, deletion and optional injection into bounded untrusted reasoning context. Not automatically wired to task completion; caller must submit a distilled summary. No raw transcript capture, embeddings, causal reasoning or transactional unification yet. |
+
+
+| Versioned identity core | `companion/identity_core.py`; `tests/test_identity_core.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds stable identity profile, schema/revision, strict field allowlist, explicit approval, optimistic concurrency, corruption detection, atomic owner-only writes and policy/permission non-authority. Local single-process file store; digest is not authentication and multi-process locking is open. |
+
+
+| Identity-to-conversation integration | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Optional IdentityCore injection into ASGI composition and each model turn as JSON-encoded descriptive system metadata. Identity preferences are explicitly non-authoritative and cannot grant tools or override policy. Not enabled by default; caller must supply the core. |
+
+
+| Cognitive context preparation | `core/cognitive_context.py`; `tests/test_cognitive_context.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Composes existing planner, optional identity and consent-aware memory into an immutable inspectable brief and bounded specialist DAG. Proposal-only: no agent dispatch or tool execution. Model-backed reasoning and coordinator adapter remain follow-ups. |
+
+
+| Cognitive context runtime integration | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Optional cognitive engine injection into authenticated conversation service. Each turn builds a brief from verified owner and goal and supplies it as untrusted context; no automatic agent dispatch. Mutually exclusive with separately injected identity/memory sources to avoid duplicate context. |
+
+
+| Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval while never inferring permissions. Persists/routs proposal through authorized submit only; no advance/worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
+
+
+| Cognitive-to-agent proposal adapter | `automation/cognitive_agent_adapter.py`; `tests/test_cognitive_agent_adapter.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Maps revalidated cognitive DAGs to existing coordinator SubtaskSpec, preserving dependencies and approval. Persists/routes proposal through authorized submit only; no advance or worker dispatch. Caller supplies authenticated actor ID. Exact-head CI and runtime composition remain open. |
+
+
+| Authenticated cognitive proposal service | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds explicit owner-scoped proposal operation and optional runtime composition for cognitive engine + coordinator adapter. It is not triggered by chat turns and does not dispatch workers. API route exposure and exact-head CI remain open. |
