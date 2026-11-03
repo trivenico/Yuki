@@ -23,7 +23,7 @@ class AgentExecutionLoopTests(unittest.TestCase):
             "type": "function",
             "function": {"name": "echo", "description": "Echo input",
                          "parameters": {"type": "object", "properties": {
-                             "value": {"type": "string"}}, "required": ["value"]}},
+                             "value": {"type": "string"}}, "required": ["value"], "additionalProperties": False}},
         }]
 
     def test_tool_result_is_returned_to_model_before_final_answer(self):
