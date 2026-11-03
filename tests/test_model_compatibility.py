@@ -32,10 +32,10 @@ class ModelCompatibilityTests(unittest.TestCase):
 
     def test_hybrid_requires_explicit_runtime_support(self):
         device = inventory(ram=8_000, gpu=4_000)
-        result = self.engine.evaluate(device, estimate(memory=10_000),
+        result = self.engine.evaluate(device, estimate(memory=9_000),
                                       runtime_supported=True, hybrid_supported=True)
         self.assertEqual(result.status, "compatible_hybrid")
-        blocked = self.engine.evaluate(device, estimate(memory=10_000),
+        blocked = self.engine.evaluate(device, estimate(memory=9_000),
                                        runtime_supported=True, hybrid_supported=False)
         self.assertEqual(blocked.status, "incompatible")
 
