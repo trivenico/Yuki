@@ -207,3 +207,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Versioned identity core | `companion/identity_core.py`; `tests/test_identity_core.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds stable identity profile, schema/revision, strict field allowlist, explicit approval, optimistic concurrency, corruption detection, atomic owner-only writes and policy/permission non-authority. Local single-process file store; digest is not authentication and multi-process locking is open. |
+
+
+| Identity-to-conversation integration | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Optional IdentityCore injection into ASGI composition and each model turn as JSON-encoded descriptive system metadata. Identity preferences are explicitly non-authoritative and cannot grant tools or override policy. Not enabled by default; caller must supply the core. |
