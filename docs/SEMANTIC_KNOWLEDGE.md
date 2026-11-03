@@ -60,3 +60,23 @@ result = coordinator.index_file("docs/architecture.md", workspace=".")
 The coordinator embeds canonical chunks in bounded batches, upserts the new vectors, and only then prunes stale vectors for that source/model. Source removal also removes vectors for the configured model. If embedding fails, indexing raises rather than reporting success. The lexical source and vector databases are separate SQLite files, so a process crash between ingestion and vector synchronization can leave stale or missing vectors; hybrid retrieval validates every semantic candidate against canonical chunks and ignores stale IDs. Re-run indexing to reconcile the source.
 
 The example model name is illustrative: cache the model explicitly before runtime. Model suitability, multilingual support, license, and performance must be validated before selecting a production default.
+
+## Document parsing adapters
+
+`DocumentParser` supports UTF-8 text/Markdown/RST/code/config files, HTML, DOCX and PDF. HTML scripts/styles and non-content tags are excluded. DOCX text is extracted from the main document XML without unpacking files to disk. PDF extraction is optional through `pypdf`; encrypted PDFs are rejected. Scanned PDFs do not yet receive OCR and therefore may produce no extractable text.
+
+Install PDF support when needed:
+
+```bash
+pip install -r requirements-documents.txt
+```
+
+Use the coordinator to parse, validate and index an approved file:
+
+```python
+result = coordinator.index_file("research/paper.pdf", workspace=".")
+```
+
+The parser enforces workspace containment, rejects symlinks, limits input to 20 MB, caps DOCX expanded archive size and entry count, caps PDFs at 500 pages, and caps extracted text at 200,000 characters. Parsing is offline and does not execute document content. Before indexing, the knowledge engine verifies that the source file hash has not changed since parsing.
+
+OCR, remote URL ingestion and automatic directory crawling are intentionally not enabled.
