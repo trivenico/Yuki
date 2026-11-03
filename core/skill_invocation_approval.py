@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 import re
 import secrets
 import sqlite3
 from pathlib import Path
+from contextlib import closing
 from typing import Any, Mapping
 
 from core.skill_execution_manifest import (
@@ -63,8 +65,9 @@ def _grants(values: Any, field: str) -> tuple[str, ...]:
     if not isinstance(values, (tuple, list)) or len(values) > _MAX_GRANTS:
         raise InvocationApprovalError(f"{field} must contain at most 64 paths")
     if any(not isinstance(item, str) or not item or len(item) > 256
-           or item.startswith(("/", "\\")) or "\x00" in item
-           or any(part in {".", ".."} for part in item.replace("\\", "/").split("/"))
+           or item.startswith("/") or "\\" in item or ":" in item
+           or any(ord(char) < 32 or ord(char) == 127 for char in item)
+           or any(part in {"", ".", ".."} for part in item.split("/"))
            for item in values):
         raise InvocationApprovalError(f"{field} contains an unsafe relative path")
     normalized = tuple(sorted(set(values)))
@@ -172,7 +175,7 @@ class OneShotInvocationApprovalStore:
             raise ValueError("database must be a non-empty path")
         self.database = str(Path(database).expanduser())
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS skill_invocation_approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -185,6 +188,8 @@ class OneShotInvocationApprovalStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_skill_invocation_binding ON skill_invocation_approvals(binding_sha256)")
+        if os.name != "nt":
+            os.chmod(self.database, 0o600)
 
     def _connect(self):
         connection = sqlite3.connect(self.database, timeout=5.0, isolation_level=None)
