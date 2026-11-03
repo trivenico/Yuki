@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import tempfile
+import unicodedata
 import zipfile
 from typing import Iterator
 
@@ -159,7 +160,7 @@ def stage_skill_artifact(
                 raise SkillStagingError("archive entry count is outside permitted bounds")
             for info in infos:
                 parts = _safe_member_name(info.filename)
-                key = "/".join(parts).casefold()
+                key = unicodedata.normalize("NFC", "/".join(parts)).casefold()
                 if key in seen:
                     raise SkillStagingError("archive contains duplicate or case-colliding paths")
                 seen.add(key)
