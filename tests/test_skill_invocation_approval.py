@@ -4,6 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
+from core.auth import AuthenticatedUser
 from core.skill_execution_manifest import validate_manifest
 from core.skill_invocation_approval import (
     InvocationApprovalError, OneShotInvocationApprovalStore,
@@ -26,7 +27,9 @@ class SkillInvocationApprovalTests(unittest.TestCase):
                 "max_processes": 16, "max_input_bytes": 65536, "max_output_bytes": 262144},
             "network": "none", "mount_policy": "invocation_staging_only",
         })
-        self.kwargs = dict(actor_id="user-1", tenant_id="tenant-1", task_id="task-1",
+        self.actor = AuthenticatedUser("user-1", "user.one", "user", frozenset({"workflow:read"}))
+        self.approver = AuthenticatedUser("operator-1", "operator.one", "operator", frozenset({"workflow:read", "workflow:approve"}))
+        self.kwargs = dict(actor=self.actor, tenant_id="tenant-1", task_id="task-1",
             invocation_id="invocation-1", arguments={"report": "monthly", "count": 3},
             staging_sha256=hashlib.sha256(b"stage").hexdigest(),
             read_grants=("input/report.json",), write_grants=("output/report.json",))
@@ -37,8 +40,20 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         return build_invocation_binding(self.manifest, **args)
 
     def issue(self, binding=None):
-        return self.store.issue(binding or self.binding(), approved_by="operator-1",
+        return self.store.issue(binding or self.binding(), approved_by=self.approver,
             approval_revision="revision-1", ttl_seconds=300)
+
+    def test_binding_requires_authenticated_principal(self):
+        with self.assertRaises(InvocationApprovalError):
+            build_invocation_binding(self.manifest, **dict(self.kwargs, actor="user-1"))
+
+    def test_approval_issue_requires_authenticated_approver_permission(self):
+        with self.assertRaises(InvocationApprovalError):
+            self.store.issue(self.binding(), approved_by=self.actor,
+                approval_revision="revision-1", ttl_seconds=300)
+        with self.assertRaises(InvocationApprovalError):
+            self.store.issue(self.binding(), approved_by="operator-1",
+                approval_revision="revision-1", ttl_seconds=300)
 
     def test_exact_binding_is_consumed_once(self):
         binding = self.binding()
@@ -50,7 +65,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         binding = self.binding()
         approval = self.issue(binding)
         for changed in (
-            self.binding(actor_id="user-2"),
+            self.binding(actor=AuthenticatedUser("user-2", "user.two", "user", frozenset({"workflow:read"}))),
             self.binding(tenant_id="tenant-2"),
             self.binding(task_id="task-2"),
             self.binding(invocation_id="invocation-2"),
@@ -127,7 +142,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         with self.assertRaises(InvocationApprovalError):
             self.binding(arguments={"bad": float("nan")})
         with self.assertRaises(InvocationApprovalError):
-            self.store.issue(self.binding(), approved_by="operator-1",
+            self.store.issue(self.binding(), approved_by=self.approver,
                 approval_revision="revision-1", ttl_seconds=0)
 
 
