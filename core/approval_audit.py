@@ -130,7 +130,7 @@ class SQLiteApprovalAuditLog:
         return hmac.new(self._identity_key, encoded, hashlib.sha256).hexdigest()
 
     @classmethod
-    def _event_hash(cls, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, previous_hash):
+    def _event_hash(cls, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, previous_hash, event_key=None):
         event = {
             "event_type": event_type,
             "pending_id_hash": pending_id_hash,
@@ -139,6 +139,7 @@ class SQLiteApprovalAuditLog:
             "skill_id": skill_id,
             "created_at": created_at,
             "previous_hash": previous_hash,
+            "event_key": event_key,
         }
         return cls._digest(json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
@@ -146,17 +147,17 @@ class SQLiteApprovalAuditLog:
     def _rebuild_chain(cls, db):
         previous_hash = _ZERO_HASH
         rows = db.execute(
-            "SELECT event_id, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at "
+            "SELECT event_id, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, event_key "
             "FROM approval_audit_events ORDER BY event_id ASC"
         ).fetchall()
-        for event_id, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at in rows:
+        for event_id, event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, event_key in rows:
             # If a partially migrated row is encountered, hash its redacted legacy value.
             if not pending_id_hash:
                 pending_id_hash = cls._digest("[redacted]")
                 db.execute("UPDATE approval_audit_events SET pending_id_hash = ? WHERE event_id = ?",
                            (pending_id_hash, event_id))
             event_hash = cls._event_hash(
-                event_type, pending_id_hash, actor_hash, session_hash or cls._digest("legacy-session-unspecified"), skill_id, created_at, previous_hash
+                event_type, pending_id_hash, actor_hash, session_hash or cls._digest("legacy-session-unspecified"), skill_id, created_at, previous_hash, event_key
             )
             db.execute(
                 "UPDATE approval_audit_events SET previous_hash = ?, event_hash = ? WHERE event_id = ?",
@@ -190,7 +191,7 @@ class SQLiteApprovalAuditLog:
                 ).fetchone()
                 previous_hash = previous[0] if previous else _ZERO_HASH
                 event_hash = self._event_hash(
-                    event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, previous_hash
+                    event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, previous_hash, idempotency_key
                 )
                 cursor = db.execute(
                     """INSERT OR IGNORE INTO approval_audit_events
@@ -222,29 +223,29 @@ class SQLiteApprovalAuditLog:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT event_id, event_type, pending_id_hash, actor_hash, session_hash, skill_id,
-                          created_at, previous_hash, event_hash
+                          created_at, previous_hash, event_hash, event_key
                    FROM approval_audit_events ORDER BY event_id DESC LIMIT ?""", (limit,)
             ).fetchall()
         keys = ("event_id", "event_type", "pending_id_hash", "actor_hash", "session_hash", "skill_id",
-                "created_at", "previous_hash", "event_hash")
+                "created_at", "previous_hash", "event_hash", "event_key")
         return [dict(zip(keys, row)) for row in rows]
 
     def verify_chain(self) -> bool:
         with self._connect() as db:
             rows = db.execute(
                 """SELECT event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at,
-                          previous_hash, event_hash
+                          previous_hash, event_hash, event_key
                    FROM approval_audit_events ORDER BY event_id ASC"""
             ).fetchall()
         previous_hash = _ZERO_HASH
-        for event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, stored_previous, stored_hash in rows:
+        for event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, stored_previous, stored_hash, event_key in rows:
             if not all(isinstance(value, str) for value in
                        (pending_id_hash, actor_hash, session_hash, skill_id, created_at, stored_previous, stored_hash)):
                 return False
             if not hmac.compare_digest(stored_previous, previous_hash):
                 return False
             expected = self._event_hash(
-                event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, stored_previous
+                event_type, pending_id_hash, actor_hash, session_hash, skill_id, created_at, stored_previous, event_key
             )
             if not hmac.compare_digest(expected, stored_hash):
                 return False
