@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from research.planner import ResearchPlanner
+from yuki_agent_runtime import TaskStore
 
 
 class FakeTaskStore:
@@ -76,6 +77,20 @@ class ResearchPlannerTests(unittest.TestCase):
         self.assertEqual(first["task_id"], second["task_id"])
         self.assertEqual(self.tasks.submissions, 2)
         self.assertEqual(len(self.tasks.tasks), 1)
+
+    def test_real_task_store_accepts_unmetered_personal_research_task(self):
+        store = TaskStore(Path(self.temp.name) / "agent-tasks.sqlite3")
+        planner = ResearchPlanner(
+            Path(self.temp.name) / "real-store-plans.sqlite3", task_store=store
+        )
+        plan = planner.create_plan("Research local AI memory architecture.")
+        queued = planner.enqueue_for_approval(plan["plan_id"])
+        task = store.get(queued["task_id"])
+        self.assertTrue(task["approval_required"])
+        self.assertIsNone(task["budget_tokens"])
+        self.assertIsNone(task["budget_seconds"])
+        self.assertEqual(task["max_attempts"], 3)
+        self.assertEqual(task["status"], "queued")
 
     def test_requires_task_store_to_enqueue(self):
         planner = ResearchPlanner(Path(self.temp.name) / "without-tasks.sqlite3")
