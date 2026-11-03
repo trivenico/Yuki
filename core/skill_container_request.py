@@ -204,14 +204,30 @@ def build_skill_runtime_input(
             or not 1 <= max_input_bytes <= 1_048_576):
         raise SkillContainerRequestError("invalid runtime input bound")
     try:
-        encoded = json.dumps(
+        argument_bytes = json.dumps(
             arguments, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError) as exc:
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise SkillContainerRequestError("runtime input must be finite JSON data") from exc
+    if hashlib.sha256(argument_bytes).hexdigest() != binding.argument_sha256:
+        raise SkillContainerRequestError("runtime input does not match approved argument digest")
+    envelope = {
+        "protocol_version": 1,
+        "invocation_id": binding.invocation_id,
+        "skill_id": binding.skill_id,
+        "entrypoint": binding.entrypoint,
+        "input_schema_sha256": binding.input_schema_sha256,
+        "output_schema_sha256": binding.output_schema_sha256,
+        "arguments": arguments,
+    }
+    try:
+        encoded = json.dumps(
+            envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise SkillContainerRequestError("runtime protocol envelope is invalid") from exc
     if len(encoded) > max_input_bytes:
         raise SkillContainerRequestError("runtime input exceeds approved byte limit")
-    if hashlib.sha256(encoded).hexdigest() != binding.argument_sha256:
-        raise SkillContainerRequestError("runtime input does not match approved argument digest")
     return encoded
