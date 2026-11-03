@@ -81,6 +81,17 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         args.update(overrides)
         return self.store.consume(approval, binding, **args)
 
+    def claim(self, binding, worker_id="worker-one"):
+        token = self.store.claim_launch(binding.invocation_id, worker_id, lease_seconds=120)
+        self.assertIsNotNone(token)
+        return token
+
+    def transition(self, binding, worker_id, token, new_state):
+        return self.store.transition_launch(
+            binding.invocation_id, binding.binding_sha256,
+            worker_id=worker_id, fencing_token=token, new_state=new_state,
+        )
+
     def issue(self, binding=None, **overrides):
         args = {
             "auth_service": self.auth,
@@ -174,46 +185,85 @@ class SkillInvocationApprovalTests(unittest.TestCase):
     def test_recovery_does_not_sweep_unrelated_live_launches(self):
         bindings = [self.binding(invocation_id=f"invocation-{i}", task_id=f"task-{i}") for i in (1, 2)]
         approvals = [self.issue(binding) for binding in bindings]
+        tokens = []
         for binding, approval in zip(bindings, approvals):
             self.store.authorize_launch(
                 approval, binding, auth_service=self.auth,
                 actor_session_token=self.actor_session,
                 current_approval_revision="revision-1",
             )
-            self.store.transition_launch(
-                binding.invocation_id, binding.binding_sha256, new_state="launching"
-            )
-        self.assertEqual(self.store.recover_interrupted_launches([bindings[0].invocation_id]), 1)
+            tokens.append(self.claim(binding, f"worker-{binding.task_id}"))
+        self.assertEqual(self.store.recover_interrupted_launches(
+            [bindings[0].invocation_id], dead_worker_id="worker-task-1",
+            fencing_token=tokens[0],
+        ), 1)
         self.assertEqual(self.store.get_launch_intent(bindings[0].invocation_id)["state"], "uncertain")
         self.assertEqual(self.store.get_launch_intent(bindings[1].invocation_id)["state"], "launching")
 
     def test_recovery_rejects_empty_or_invalid_worker_inventory(self):
-        self.assertEqual(self.store.recover_interrupted_launches([]), 0)
-        self.assertEqual(self.store.recover_interrupted_launches(["../invalid"]), 0)
+        self.assertEqual(self.store.recover_interrupted_launches(
+            [], dead_worker_id="worker-one", fencing_token=1
+        ), 0)
+        self.assertEqual(self.store.recover_interrupted_launches(
+            ["../invalid"], dead_worker_id="worker-one", fencing_token=1
+        ), 0)
 
     def test_launch_state_machine_is_one_way_and_terminal(self):
         binding = self.binding()
         approval = self.issue(binding)
-        intent = self.store.authorize_launch(
+        self.store.authorize_launch(
             approval, binding, auth_service=self.auth,
             actor_session_token=self.actor_session,
             current_approval_revision="revision-1",
         )
-        digest = binding.binding_sha256
+        token = self.claim(binding)
+        self.assertTrue(self.transition(binding, "worker-one", token, "running"))
+        self.assertTrue(self.transition(binding, "worker-one", token, "succeeded"))
+        self.assertFalse(self.transition(binding, "worker-one", token, "failed"))
+
+    def test_worker_fencing_rejects_stale_worker_after_lease_reclaim(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        first = self.claim(binding, "worker-old")
         self.assertTrue(self.store.transition_launch(
-            binding.invocation_id, digest, new_state="launching"
+            binding.invocation_id, binding.binding_sha256,
+            worker_id="worker-old", fencing_token=first, new_state="running",
         ))
-        self.assertTrue(self.store.transition_launch(
-            binding.invocation_id, digest, new_state="running"
-        ))
-        self.assertTrue(self.store.transition_launch(
-            binding.invocation_id, digest, new_state="succeeded"
-        ))
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE skill_invocation_launch_intents SET lease_until=? WHERE invocation_id=?",
+                ("2000-01-01T00:00:00+00:00", binding.invocation_id),
+            )
+        second = self.claim(binding, "worker-new")
+        self.assertGreater(second, first)
         self.assertFalse(self.store.transition_launch(
-            binding.invocation_id, digest, new_state="launching"
+            binding.invocation_id, binding.binding_sha256,
+            worker_id="worker-old", fencing_token=first, new_state="succeeded",
         ))
-        self.assertFalse(self.store.transition_launch(
-            binding.invocation_id, digest, new_state="failed"
+        self.assertTrue(self.store.transition_launch(
+            binding.invocation_id, binding.binding_sha256,
+            worker_id="worker-new", fencing_token=second, new_state="running",
+        ))
+
+    def test_worker_lease_renewal_requires_current_fence(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        self.store.authorize_launch(
+            approval, binding, auth_service=self.auth,
+            actor_session_token=self.actor_session,
+            current_approval_revision="revision-1",
+        )
+        token = self.claim(binding)
+        self.assertTrue(self.store.renew_launch_lease(
+            binding.invocation_id, "worker-one", token, lease_seconds=120
+        ))
+        self.assertFalse(self.store.renew_launch_lease(
+            binding.invocation_id, "worker-one", token + 1, lease_seconds=120
         ))
 
     def test_recovery_marks_interrupted_launches_uncertain_without_replay(self):
@@ -231,12 +281,12 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             actor_session_token=self.actor_session,
             current_approval_revision="revision-1",
         )
-        self.assertTrue(self.store.transition_launch(
-            first_binding.invocation_id, first_binding.binding_sha256,
-            new_state="launching",
-        ))
+        token = self.claim(first_binding, "worker-first")
         self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "launching")
-        self.assertEqual(self.store.recover_interrupted_launches([first_binding.invocation_id]), 1)
+        self.assertEqual(self.store.recover_interrupted_launches(
+            [first_binding.invocation_id], dead_worker_id="worker-first",
+            fencing_token=token,
+        ), 1)
         self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "uncertain")
         self.assertFalse(self.store.transition_launch(
             first_binding.invocation_id, first_binding.binding_sha256,
