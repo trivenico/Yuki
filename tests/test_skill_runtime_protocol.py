@@ -36,6 +36,25 @@ class SkillRuntimeProtocolTests(unittest.TestCase):
         with self.assertRaises(SkillRuntimeProtocolError):
             parse_runtime_request(raw, max_bytes=4096)
 
+    def test_rejects_nonfinite_exponents_and_invalid_bounds(self):
+        with self.assertRaises(SkillRuntimeProtocolError):
+            parse_runtime_request(b'{"value":1e999}', max_bytes=4096)
+        with self.assertRaises(SkillRuntimeProtocolError):
+            parse_runtime_request(b"{}", max_bytes=1_048_577)
+        with self.assertRaises(SkillRuntimeProtocolError):
+            parse_runtime_request(b"{}", max_bytes=True)
+
+    def test_rejects_null_bytes_and_non_string_status(self):
+        with self.assertRaises(SkillRuntimeProtocolError):
+            parse_runtime_response(
+                b'{"protocol_version":1,"invocation_id":"inv-1","status":"succeeded","output":{}}',
+                expected_invocation_id="inv-1\\x00", max_bytes=1024,
+            )
+        with self.assertRaises(SkillRuntimeProtocolError):
+            build_runtime_response(
+                invocation_id="inv-1", status={"succeeded": True}, output={}, max_bytes=1024,
+            )
+
     def test_response_is_bounded_and_bound_to_invocation(self):
         raw = build_runtime_response(
             invocation_id="inv-1", status="succeeded", output={"ok": True}, max_bytes=1024,
