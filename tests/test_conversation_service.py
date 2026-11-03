@@ -147,7 +147,8 @@ class ConversationServiceTests(unittest.TestCase):
                 raise AssertionError("not called")
         with self.assertRaisesRegex(ValueError, "not both"):
             ConversationService(
-                self.store, self.loop, identity_core=object(),
+                self.store, self.loop,
+                identity_core=type("ValidIdentity", (), {"snapshot": lambda self: {}})(),
                 cognitive_context_engine=Engine(),
             )
 
