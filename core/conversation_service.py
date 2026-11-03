@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
+from core.identity import AuthenticatedIdentity
 
 
 class ConversationService:
@@ -20,13 +21,16 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_factory=None):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
+        if agent_loop_factory is not None and not callable(agent_loop_factory):
+            raise TypeError("agent_loop_factory must be callable.")
         self.store = store
         self.agent_loop = agent_loop
+        self.agent_loop_factory = agent_loop_factory
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -44,18 +48,19 @@ class ConversationService:
             limit=limit, after_sequence=after_sequence,
         )
 
-    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
+    def reply(self, *, owner_id: str, conversation_id: str, user_text: str, request_id: str, expected_version: int, tools: Sequence[dict[str, Any]], identity: AuthenticatedIdentity | None = None, system_text: str | None = None, on_text_delta=None, cancellation_requested=None) -> dict[str, Any]:
         token = str(uuid.uuid4())
         self.store.acquire_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token, ttl_seconds=3600)
         try:
-            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
+            return self._reply_unleased(owner_id=owner_id, conversation_id=conversation_id, user_text=user_text, request_id=request_id, expected_version=expected_version, tools=tools, identity=identity, system_text=system_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested)
         finally:
             self.store.release_generation_lease(owner_id=owner_id, conversation_id=conversation_id, lease_token=token)
 
     def _reply_unleased(
         self, *, owner_id: str, conversation_id: str, user_text: str,
         request_id: str, expected_version: int,
-        tools: Sequence[dict[str, Any]], system_text: str | None = None,
+        tools: Sequence[dict[str, Any]], identity: AuthenticatedIdentity | None = None,
+        system_text: str | None = None,
         on_text_delta=None, cancellation_requested=None,
     ) -> dict[str, Any]:
         if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 160:
@@ -66,6 +71,13 @@ class ConversationService:
             raise ValueError("user_text must be non-empty text of at most 20000 characters.")
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
+        if identity is not None:
+            if not isinstance(identity, AuthenticatedIdentity) or identity.actor_id != owner_id:
+                raise PermissionError("Conversation identity does not match the authenticated owner.")
+        if tools and (identity is None or self.agent_loop_factory is None):
+            raise PermissionError(
+                "Tool execution requires a request-scoped agent loop factory and verified identity."
+            )
 
         with self._lock:
             starting_version = self.store.get_conversation(
@@ -168,7 +180,14 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                active_loop = (
+                    self.agent_loop_factory(identity)
+                    if self.agent_loop_factory is not None and identity is not None
+                    else self.agent_loop
+                )
+                if not isinstance(active_loop, AgentExecutionLoop):
+                    raise TypeError("agent_loop_factory must return an AgentExecutionLoop.")
+                result = active_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
