@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 
-from core.auth import AuthenticatedUser
+from core.auth import BuiltInAuthService
 
 
 @dataclass(frozen=True)
@@ -18,11 +18,14 @@ class AuthenticatedIdentity:
     role: str
 
     @classmethod
-    def from_session(cls, user: AuthenticatedUser, token: str) -> "AuthenticatedIdentity":
-        if not isinstance(user, AuthenticatedUser):
-            raise TypeError("user must be resolved by BuiltInAuthService.")
+    def from_session(cls, auth_service: BuiltInAuthService, token: str) -> "AuthenticatedIdentity":
+        if not isinstance(auth_service, BuiltInAuthService):
+            raise TypeError("auth_service must be a BuiltInAuthService.")
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             raise ValueError("A valid bearer session token is required.")
+        user = auth_service.resolve_session(token)
+        if user is None:
+            raise ValueError("Bearer session is invalid, expired, or revoked.")
         if user.role not in {"admin", "operator", "user"}:
             raise ValueError("Authenticated user has an invalid role.")
         # Never persist or pass the bearer secret into audit or approval storage.
