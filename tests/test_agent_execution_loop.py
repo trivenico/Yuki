@@ -268,5 +268,59 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(deltas, ["partial"])
 
+
+    def test_unadvertised_tool_is_rejected_before_any_dispatch(self):
+        response = {"text": "", "tool_calls": {"tool_calls": [
+            {"id": "call_1", "name": "delete_files", "arguments": {"path": "x"}}
+        ]}}
+        with self.assertRaises(AgentExecutionError):
+            AgentExecutionLoop(lambda **kwargs: response, self.protocol).run(
+                "Do it", tools=self.tools
+            )
+        self.assertEqual(self.invocations, [])
+
+    def test_invalid_tool_arguments_are_rejected_before_dispatch(self):
+        invalid_arguments = [
+            {},
+            {"value": 42},
+            {"value": "x", "extra": True},
+        ]
+        for arguments in invalid_arguments:
+            response = {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_1", "name": "echo", "arguments": arguments}
+            ]}}
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(AgentExecutionError):
+                    AgentExecutionLoop(lambda **kwargs: response, self.protocol).run(
+                        "Do it", tools=self.tools
+                    )
+        self.assertEqual(self.invocations, [])
+
+    def test_entire_tool_batch_is_schema_validated_before_dispatch(self):
+        response = {"text": "", "tool_calls": {"tool_calls": [
+            {"id": "call_1", "name": "echo", "arguments": {"value": "valid"}},
+            {"id": "call_2", "name": "echo", "arguments": {"value": "invalid", "extra": True}},
+        ]}}
+        with self.assertRaises(AgentExecutionError):
+            AgentExecutionLoop(lambda **kwargs: response, self.protocol).run(
+                "Do both", tools=self.tools
+            )
+        self.assertEqual(self.invocations, [])
+
+    def test_invalid_tool_definition_is_rejected_before_model_call(self):
+        calls = []
+        invalid = [{
+            "type": "function",
+            "function": {"name": "echo", "parameters": {
+                "type": "object", "properties": {"value": {"type": "string"}},
+                "required": ["missing"],
+            }},
+        }]
+        with self.assertRaises(ValueError):
+            AgentExecutionLoop(
+                lambda **kwargs: calls.append(True), self.protocol
+            ).run("Do it", tools=invalid)
+        self.assertEqual(calls, [])
+
 if __name__ == "__main__":
     unittest.main()
