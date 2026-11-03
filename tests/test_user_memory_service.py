@@ -60,6 +60,15 @@ class UserMemoryServiceTests(unittest.TestCase):
         # Explicit deletion remains available while disabled.
         self.assertTrue(self.service.forget(self.alice, item["id"]))
 
+    def test_edit_rejects_invalid_category_types_without_corrupting_memory(self):
+        self.service.set_enabled(self.alice, True)
+        item = self.service.remember(self.alice, "stable memory")
+        with self.assertRaises(ValueError):
+            self.service.edit(self.alice, item["id"], "changed", category=["invalid"])
+        current = self.service.list(self.alice)[0]
+        self.assertEqual(current["text"], "stable memory")
+        self.assertEqual(current["category"], "note")
+
     def test_rejects_unverified_actor_shapes(self):
         with self.assertRaises(PermissionError):
             self.service.status(SimpleNamespace(user_id=""))
