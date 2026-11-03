@@ -72,7 +72,7 @@ Other open product tracks that must be assigned to a phase only after scope/depe
 
 PR #497 is marked ready for review. Phase 1 remains `in_progress` until an independent review is recorded and the replacement is merged. No phase completion claim is made from CI alone.
 
-## Phase 2 preliminary reconciliation (do not advance until Phase 1 closes)
+## Phase 2 preliminary reconciliation and implementation (user-directed parallel start)
 
 Static comparison of open draft PRs #27 and #30 against current `main` (2026-11-02):
 
@@ -83,7 +83,14 @@ Static comparison of open draft PRs #27 and #30 against current `main` (2026-11-
 
 Current-main evidence: `core/approval_audit.py` already implements allowed event types, hashed identifiers, a hash chain, explicit transaction handling and a legacy migration; `core/pending_approvals.py` already uses bounded JSON serialization, TTL/capacity controls, actor/session binding and explicit connection closing. This means Phase 2 must be judged by its acceptance requirements, not by whether the old draft PRs merge.
 
-**Serial gate:** this is preparatory analysis only. Phase 1 (#497) remains open awaiting independent review; do not start Phase 2 implementation or mark Phase 2 complete until Phase 1 has been reviewed and merged/dispositioned.
+**Sequencing exception (2026-11-02):** the project owner explicitly directed work to proceed on Phase 2 while Phase 1 is deferred for later remediation. Phase 1 (#497) remains `in_progress`; this exception authorizes Phase 2 implementation work only. It does not waive independent review, acceptance testing, or the requirement to reconcile the Phase 1/2 integration before either phase is declared complete or merged out of order.
+
+| Item | Evidence | Status | Disposition |
+|---|---|---|---|
+| Focused Phase 2 implementation | PR #498, head `22b36ceadb4c1900b4d23aac055273edef69aee8` | `in_progress` | Durable SQLite approval lifecycle, rotating logs, HMAC actor/session pseudonyms, append-only hash-chain audit, private file handling, durable coordinator on the real CLI skill path, read-only recovery queue, and explicit operator resolution. Reconciliation now reserves a receipt using `BEGIN IMMEDIATE`, persists decision/actor/session hashes, rejects competing decisions or identities, remains visible after interruption, and can resume after audit-write failure using idempotent audit events. Tests cover lifecycle, process claims, identity-bound reservation, interrupted lookup, retry, denial, and audit integrity. Exact-head CI, mainline reconciliation, administrative takeover/release design, and independent security review remain open. |
+| Historical Phase 2 PR | #27 | `superseded` in approach, not yet closed | Contains a parallel JSONL audit store and older persistence changes. Retain as source evidence; do not merge wholesale. |
+| Phase 2 hardening PR | #30 | `superseded` in approach, not yet closed | Targets an older audit schema; current main already hashes pending IDs/actors and verifies a hash chain. Its trigger migration is not a drop-in. |
+| Remaining acceptance gaps | PR #498 body and CI | `in_progress` | Latest head `22b36ceadb4c1900b4d23aac055273edef69aee8`; 7 exact-head checks registered (1 running, 6 queued, 0 failures at inspection). Branch is diverged from main (98 ahead, 20 behind); integrate/reconcile main before merge. Independent security review outstanding. CLI actor is process-level `local-cli`, not verified human identity; web/API principal propagation remains open. Administrative takeover for abandoned `reconciling` reservations, multi-host storage validation, recovery crash/race tests, operational runbook, retention/archival policy, and deployment parent-directory ownership remain open. SQLite triggers/file modes are not administrator-proof tamper resistance.
 
 ## Earlier PR backlog evidence (verified 2026-11-02)
 
@@ -107,9 +114,9 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 
 ## Next serial execution order
 
-1. Finish Phase 1 PR #497 independent review and merge; then close or explicitly supersede stale PR #24. Do not advance phase status before review/merge evidence.
-2. Reconcile Phase 2 PRs #27/#30 against current `main`; inspect exact-head CI, reviews, conflicts, and whether later merged work supersedes their changes. Do not bulk-merge stale drafts.
-3. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
+1. **Phase 1 is explicitly deferred by the owner**: keep PR #497 open and unmerged; return to its independent review, acceptance gaps, and stale PR #24 disposition before Phase 3 or any later serial is declared complete. The owner has asked to continue Phase 2 in the meantime.
+2. Finish Phase 2 PR #498 against current `main`: exact-head cross-platform CI, independent security review, actor-attribution decision, storage-permission validation, and acceptance evidence. Close or supersede historical PRs #27/#30 only after the replacement is accepted; do not bulk-merge stale drafts.
+3. Reconcile Phase 1 and Phase 2 integration and close their outstanding gates before starting Phase 3. Resolve duplicate Phase 3 tracks (#2 and #28), then Phase 4–8 in serial order (#3–#7), recording moved/superseded scope and acceptance evidence.
 4. Reconcile Phase 9 PR #8 and issue #9 with later specialist-agent implementation; close or supersede only with evidence.
 5. Continue the full historical serial audit, including undocumented ranges and Phase 154.
 6. Complete explicit security/release blockers (#269, #317/#331) at their correct serial positions after confirming their original phase mapping.
@@ -118,3 +125,14 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 ## Change log
 
 - 2026-11-02: Initial ledger created from docs inventory and verified open issues/PR discussions. This is a baseline, not a completed historical audit.
+- 2026-11-02: Owner-directed sequencing exception recorded: Phase 1 deferred, Phase 2 active; both must be reconciled before Phase 3.
+
+
+## External platform assessment — Agent37 (2026-11-03)
+
+- Added [docs/AGENT37_PLATFORM_ASSESSMENT.md](AGENT37_PLATFORM_ASSESSMENT.md), assessing Agent37's persistent sandboxes, agent provisioning/lifecycle API, durable workspaces, streaming, scheduling, integrations, observability and usage controls.
+- Repository audit found existing Yuki foundations in Phases 69, 70, 74, 83, 84 and 142, including durable task journals, specialist coordination, finite-cycle worker supervision, a Docker command builder, and an approval-gated bounded coding-task runner.
+- Key gap: Yuki does not yet have a tenant-isolated persistent agent-instance control plane with a hardened multi-tenant execution backend, workspace backup/restore, authenticated lifecycle API, or usage metering.
+- Recommendation: reuse existing task/runtime and sandbox foundations; do not introduce a second task engine. Finish Phase 2 identity/approval/recovery gates first. Then reconcile earlier phase serials before assigning any new numbered phase to agent hosting.
+- Security boundary: current Docker runner is not equivalent to a hardened multi-tenant sandbox or a gVisor/microVM boundary. No production parity claim is made.
+- This is a research/architecture artifact only; it does not mark any phase complete or waive Phase 1/2 gates.
