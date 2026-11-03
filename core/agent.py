@@ -106,7 +106,7 @@ class YukiCoreAgent:
             reason=(
                 f"Operator reconciliation only; this does not execute or retry the skill. "
                 f"Skill: {record['skill_id']}; current state: {record['status']}; "
-                f"decision: {decision}; note: {note or '[none]'}. "
+                f"decision: {decision}. "
                 "Confirm only after independently verifying external side effects."
             ),
             risk="high",
