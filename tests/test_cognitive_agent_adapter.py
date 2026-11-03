@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock
 
-from automation.agent_coordinator import AgentPlan, PlannedSubtask
+from automation.agent_coordinator import AgentPlan, PlannedSubtask, SpecialistAgentCoordinator
 from automation.cognitive_agent_adapter import CognitiveAgentAdapter
 from core.cognitive_context import CognitiveBrief
 from core.planner import Plan, PlanTask
@@ -22,7 +22,7 @@ def make_brief(tasks):
 
 class CognitiveAgentAdapterTests(unittest.TestCase):
     def setUp(self):
-        self.coordinator = Mock()
+        self.coordinator = Mock(spec=SpecialistAgentCoordinator)
         self.adapter = CognitiveAgentAdapter(self.coordinator)
 
     def test_maps_dependencies_approval_and_no_permission_requests(self):
