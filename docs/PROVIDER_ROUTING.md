@@ -41,3 +41,23 @@ Set `OPENAI_API_KEY` and optionally `YUKI_OPENAI_MODEL` before using OpenAI. The
 - Provider routing selects a provider adapter, not a guaranteed model capability. Yuki does not infer multimodal, tool-calling, or context-window support from provider names.
 
 The older `provider` argument to `build_local_worker_runtime` remains available for callers that explicitly construct and pass an adapter themselves. That direct injection path bypasses catalog-based provider selection because the caller has already supplied the adapter.
+
+
+## OpenAI Responses API
+
+For reasoning models and Responses API features, configure the separate
+`openai_responses` provider:
+
+```bash
+export OPENAI_API_KEY="..."
+export YUKI_OPENAI_RESPONSES_MODEL="gpt-6-astra"
+export YUKI_OPENAI_REASONING_EFFORT="high"
+```
+
+Then select `provider: openai_responses` in trusted Yuki configuration. The
+Responses adapter is distinct from Chat Completions. Model IDs and reasoning
+effort support are project- and model-dependent; verify access before enabling.
+The initial adapter only generates text. It does not execute tools or accept
+model-selected endpoints. Future tool use must pass through Yuki's existing
+authorized worker and approval controls. See
+[OpenAI Responses provider](OPENAI_RESPONSES_PROVIDER.md).
