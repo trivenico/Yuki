@@ -143,3 +143,10 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Added an admin-only, high-risk-confirmed takeover for stale `reconciling` approvals. A SQLite transaction replaces the old reservation with an admin-owned `uncertain` reservation, idempotent audit records the takeover, and successful completion returns the receipt to the recovery queue. Original skill execution is never retried.
 - Same-admin retry after audit outage is supported. Tests cover role denial, fresh reservation denial, stale takeover, audit integrity, and audit-failure retry.
 - Latest PR #498 head: `596cd7779638588b8f0139ca2aabd7020636241d`; 8 exact-head checks queued at inspection. Independent review, trusted API identity propagation, and production authorization integration remain open. No phase completion claimed.
+
+## Phase 2 follow-up — verified authenticated identity propagation
+
+- Added `core.identity.AuthenticatedIdentity`, deriving actor ID, role, and SHA-256 session pseudonym only after resolving the bearer token through `BuiltInAuthService`. Actor and session are resolved as one pair; invalid, expired, or revoked sessions are rejected.
+- Authenticated API conversation ownership, cancellation keys, streaming and history now consistently use the verified identity actor ID. Provider selection admin checks use the resolved identity role.
+- Added `PermissionGate.from_authenticated_identity`; only admin/operator roles may create an approval gate. End-user role is denied. Added six focused tests for pairing, role policy, forged objects, revoked sessions, malformed tokens and bearer non-disclosure.
+- Latest PR #498 head: `59f2ea5dcb85825b69396f0102257a310f894908`; 15 exact-head checks queued at inspection, none failed. Branch 113 ahead / 1 behind main. CI and mainline reconciliation remain open. This is an integration seam: existing CLI approvals are not yet a multi-user web approval workflow. No phase completion claimed.
