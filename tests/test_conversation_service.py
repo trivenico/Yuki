@@ -94,6 +94,25 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("UNTRUSTED MEMORY", self.observed[0][1]["content"])
         self.assertEqual(self.observed[0][-1]["content"], "What is my project?")
 
+    def test_memory_backend_failure_does_not_break_conversation(self):
+        class UnavailableBuilder:
+            def build(self, **kwargs):
+                raise OSError("memory disk unavailable")
+
+        service = ConversationService(
+            self.store, self.loop, memory_context_builder=UnavailableBuilder()
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Continue without memory",
+            request_id="memory-outage-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(self.observed[0][-1]["content"], "Continue without memory")
+
     def test_idempotent_retry_replays_answer_without_second_model_call(self):
         first = self.send()
         replay = self.send()
