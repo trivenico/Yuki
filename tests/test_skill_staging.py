@@ -42,7 +42,11 @@ class SkillStagingTests(unittest.TestCase):
             self.assertEqual(staged.file_count, 2)
             self.assertTrue((staged.root / "package/entry.py").is_file())
             self.assertEqual(len(staged.tree_sha256), 64)
-            self.assertFalse((staged.root / "package/entry.py").stat().st_mode & 0o222)
+            if os.name != "nt":
+                self.assertFalse((staged.root / "package/entry.py").stat().st_mode & 0o222)
+            else:
+                # Windows chmod/stat does not expose POSIX write-bit semantics.
+                self.assertTrue((staged.root / "package/entry.py").is_file())
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
 
     def test_rejects_changed_artifact_before_staging(self):
