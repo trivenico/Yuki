@@ -370,6 +370,8 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 audit.append(**{**kwargs, "skill_id": "different.skill"})
+            with self.assertRaises(ValueError):
+                audit.append(**{**kwargs, "actor": "different-operator"})
             self.assertEqual(len(audit.list_events()), 1)
             self.assertTrue(audit.verify_chain())
 
