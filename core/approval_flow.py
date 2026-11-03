@@ -71,12 +71,12 @@ class ApprovalCoordinator:
                     "actor": actor, "session_id": session_id,
                 }
         try:
-            self._audit("requested", pending_id, actor, skill_id)
+            self._audit("requested", pending_id, actor, session_id, skill_id)
         except Exception as exc:
             # Never leave an un-audited approval request available for later execution.
             if self.pending_store is not None:
                 try:
-                    self.pending_store.deny(pending_id)
+                    self.pending_store.discard_pending(pending_id)
                 except Exception:
                     pass
             else:
@@ -92,6 +92,13 @@ class ApprovalCoordinator:
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
             return ApprovalOutcome(False, "pending_not_found", pending_id=pending_id if isinstance(pending_id, str) else None)
+        # Record one-time receipt consumption before confirmation or execution.
+        # If persistence fails, the request remains consumed and no action runs.
+        try:
+            self._audit("consumed", pending_id, actor, session_id, pending["skill_id"])
+        except Exception:
+            self._mark_recovery(pending_id, "claimed")
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
         action = pending["action"]
         import json
         display_action = json.loads(json.dumps(action))
@@ -101,14 +108,19 @@ class ApprovalCoordinator:
             confirmed = False
         if not confirmed:
             try:
-                self._audit("denied", pending_id, actor, pending["skill_id"])
+                self._audit("denied", pending_id, actor, session_id, pending["skill_id"])
+                self._transition(pending_id, "claimed", "denied")
             except Exception:
+                self._mark_recovery(pending_id, "claimed")
                 return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
             return ApprovalOutcome(False, "approval_denied", pending_id=pending_id)
 
         try:
-            self._audit("approved", pending_id, actor, pending["skill_id"])
+            self._audit("approved", pending_id, actor, session_id, pending["skill_id"])
+            self._transition(pending_id, "claimed", "approved")
+            self._transition(pending_id, "approved", "executing")
         except Exception:
+            self._mark_recovery(pending_id, "approved")
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
         try:
@@ -119,22 +131,37 @@ class ApprovalCoordinator:
             )
         except Exception as exc:
             try:
-                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+                self._audit("execution_failed", pending_id, actor, session_id, pending["skill_id"])
+                # An exception does not prove that no side effect occurred. Keep
+                # the receipt in manual-reconciliation state; never auto-retry.
+                self._transition(pending_id, "executing", "recovery_required")
             except Exception:
+                self._mark_recovery(pending_id, "executing")
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
                     result={"execution_error": type(exc).__name__, "audit": "unavailable"},
                 )
-            return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
+            return ApprovalOutcome(
+                False, "recovery_required", pending_id=pending_id,
+                result={"execution_error": type(exc).__name__, "reconciliation_required": True},
+            )
 
+        succeeded = bool(getattr(result, "ok", True))
+        terminal_event = "executed" if succeeded else "execution_failed"
+        terminal_state = "completed" if succeeded else "execution_failed"
         try:
-            self._audit("executed", pending_id, actor, pending["skill_id"])
+            self._audit(terminal_event, pending_id, actor, session_id, pending["skill_id"])
+            self._transition(pending_id, "executing", terminal_state)
         except Exception:
+            self._mark_recovery(pending_id, "executing")
             return ApprovalOutcome(
                 False, "recovery_required", pending_id=pending_id,
                 result={"execution_result": result, "audit": "unavailable"},
             )
-        return ApprovalOutcome(bool(getattr(result, "ok", True)), "completed", pending_id=pending_id, result=result)
+        return ApprovalOutcome(
+            succeeded, "completed" if succeeded else "execution_failed",
+            pending_id=pending_id, result=result,
+        )
 
     def _consume(self, pending_id, *, actor, session_id):
         if not isinstance(pending_id, str) or not pending_id:
@@ -142,7 +169,7 @@ class ApprovalCoordinator:
         if not isinstance(actor, str) or not isinstance(session_id, str):
             return None
         if self.pending_store is not None:
-            item = self.pending_store.consume(pending_id, actor=actor, session_id=session_id)
+            item = self.pending_store.claim(pending_id, actor=actor, session_id=session_id)
             if item is None:
                 return None
             return {"skill_id": item.skill_id, "arguments": item.arguments,
@@ -155,7 +182,29 @@ class ApprovalCoordinator:
                 return None
             return self._pending.pop(pending_id)
 
-    def _audit(self, event_type, pending_id, actor, skill_id):
+    def _transition(self, pending_id, expected, new_status):
+        if self.pending_store is not None:
+            if not self.pending_store.transition(
+                pending_id, expected=expected, new_status=new_status
+            ):
+                raise RuntimeError("Approval lifecycle state changed unexpectedly.")
+
+    def _mark_recovery(self, pending_id, expected):
+        if self.pending_store is not None:
+            # An audit write may fail before or after a lifecycle compare-and-set.
+            # Try each nonterminal state, but never move a terminal state backwards.
+            candidates = [expected, "claimed", "approved", "executing"]
+            for state in dict.fromkeys(candidates):
+                try:
+                    if self.pending_store.transition(
+                        pending_id, expected=state, new_status="recovery_required"
+                    ):
+                        return
+                except Exception:
+                    # Preserve the last durable state for operator reconciliation.
+                    return
+
+    def _audit(self, event_type, pending_id, actor, session_id, skill_id):
         if self.audit_log is not None:
             self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                                  actor=actor, skill_id=skill_id)
+                                  actor=actor, session_id=session_id, skill_id=skill_id)

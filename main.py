@@ -1,6 +1,7 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 import shlex
 
 from companion import DEFAULT_PERSONA
@@ -10,6 +11,11 @@ from companion.evolution import DailyEvolutionCycle
 from core.agent import YukiCoreAgent
 from core.config import load_config
 from core.permissions import ApprovalRequest, PermissionGate
+from core.approval_audit import SQLiteApprovalAuditLog
+from core.approval_flow import ApprovalCoordinator
+from core.pending_approvals import SQLitePendingApprovalStore
+from core.logging_setup import configure_logging, log_event
+import logging
 from core.planner import Planner
 from core.vector_memory import VectorMemory
 from defense.firewall import FirewallManager, FirewallError
@@ -60,7 +66,21 @@ def build_agent(config):
         github_allowed_roots=config.get("github_allowed_roots", []),
         mcp_servers=config.get("mcp_servers", []),
     )
-    return YukiCoreAgent(registry=registry, permission_gate=PermissionGate(_ask_approval))
+    audit_log = SQLiteApprovalAuditLog(str(workspace / "approval_audit.sqlite3"))
+    pending_store = SQLitePendingApprovalStore(
+        str(workspace / "pending_approvals.sqlite3")
+    )
+    coordinator = ApprovalCoordinator(
+        pending_store=pending_store, audit_log=audit_log
+    )
+    # CLI attribution is a local runtime identity, not an authenticated account.
+    # Web/API adapters must inject a verified principal and session explicitly.
+    permission_gate = PermissionGate(_ask_approval, actor_id="local-cli")
+    return YukiCoreAgent(
+        registry=registry,
+        permission_gate=permission_gate,
+        approval_coordinator=coordinator,
+    )
 
 
 def print_help():
@@ -72,6 +92,7 @@ def print_help():
   /recovery actions               List approved recovery handlers
   /recovery run NAME | REASON     Request approval for a recovery handler
   /skills                        List registered skills
+  /approvals recovery            List interrupted approvals; does not retry them
   /ask PROMPT                    Ask the configured AI provider (no tools executed)
   /task GOAL                      Bounded model-guided task; approve each skill call
   /ask-cloud TASK | PROMPT       Explicitly send an allow-listed task prompt to cloud
@@ -109,8 +130,10 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 def main():
     config = load_config()
-    workspace = Path(config["workspace"])
+    workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
+    logger = configure_logging(workspace / "logs")
+    log_event(logger, logging.INFO, "runtime_starting", component="runtime")
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
@@ -171,6 +194,7 @@ def main():
         if not command:
             continue
         if command in {"/quit", "/exit"}:
+            log_event(logger, logging.INFO, "runtime_stopped", component="runtime")
             print("Yuki > Goodbye.")
             return
         if command == "/help":
@@ -227,6 +251,34 @@ def main():
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
+        elif command == "/approvals recovery":
+            try:
+                records = agent.list_approval_recovery(limit=100)
+                if not records:
+                    print("Yuki > No interrupted approvals require reconciliation.")
+                else:
+                    print("Yuki > Interrupted approvals (not retried automatically):")
+                    for item in records:
+                        print(
+                            f"- ref=…{item['reference']} | skill={item['skill_id']} "
+                            f"| status={item['status']} | updated={item['updated_at']}"
+                        )
+                    print("Yuki > Verify external side effects before any manual retry.")
+            except Exception as exc:
+                print(f"Yuki > Recovery queue unavailable ({type(exc).__name__}).")
+        elif command.startswith("/approvals resolve "):
+            parts = command.split()
+            if len(parts) != 4:
+                print("Yuki > Usage: /approvals resolve REF completed|failed|uncertain")
+            else:
+                try:
+                    resolved = agent.resolve_approval_recovery(parts[2], parts[3])
+                    if resolved:
+                        print("Yuki > Operator decision recorded. No skill was executed or retried.")
+                    else:
+                        print("Yuki > Resolution not recorded. Check the reference, current state, and explicit operator confirmation.")
+                except Exception as exc:
+                    print(f"Yuki > Recovery resolution unavailable ({type(exc).__name__}).")
         elif command.startswith("/task "):
             goal = command[len("/task "):].strip()
             if not goal:

@@ -14,6 +14,7 @@ import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
+from core.identity import AuthenticatedIdentity
 from core.conversation_service import ConversationService
 from core.conversation_store import (
     ConversationConflict,
@@ -89,8 +90,11 @@ class YukiConversationAPI:
                 await asyncio.to_thread(self.auth.revoke_session, token)
                 return await self._respond(send, 200, {"logged_out": True})
 
-            user, _ = await self._principal(scope)
+            user, session_token = await self._principal(scope)
             if user is None:
+                return await self._respond(send, 401, {"error": "authentication_required"})
+            identity = AuthenticatedIdentity.from_session(self.auth, session_token)
+            if identity.actor_id != user.user_id:
                 return await self._respond(send, 401, {"error": "authentication_required"})
 
             if method == "GET" and path == "/v1/auth/me":
@@ -99,7 +103,7 @@ class YukiConversationAPI:
                 })
 
             if method == "PUT" and path == "/v1/providers/active":
-                if user.role != "admin":
+                if not identity.is_admin:
                     return await self._respond(send, 403, {"error": "administrator_required"})
                 if self.provider_selector is None:
                     return await self._respond(send, 503, {"error": "provider_selection_unavailable"})
@@ -155,7 +159,7 @@ class YukiConversationAPI:
 
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
-                    self.conversations.list, owner_id=user.user_id, limit=50
+                    self.conversations.list, owner_id=identity.actor_id, limit=50
                 )
                 return await self._respond(send, 200, {"conversations": items})
 
@@ -165,7 +169,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 conversation = await asyncio.to_thread(
                     self.conversations.create,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     title=payload.get("title", "New conversation"),
                 )
                 return await self._respond(send, 201, conversation)
@@ -183,9 +187,9 @@ class YukiConversationAPI:
                 # another user's generation by guessing a conversation or request ID.
                 await asyncio.to_thread(
                     self.conversations.store.get_conversation,
-                    owner_id=user.user_id, conversation_id=conversation_id,
+                    owner_id=identity.actor_id, conversation_id=conversation_id,
                 )
-                key = (user.user_id, conversation_id, payload["request_id"])
+                key = (identity.actor_id, conversation_id, payload["request_id"])
                 with self._active_lock:
                     cancellation = self._active_generations.get(key)
                     if cancellation is not None:
@@ -209,8 +213,8 @@ class YukiConversationAPI:
                 if not isinstance(tools, list) or len(tools) > 32:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 return await self._stream_reply(
-                    send, receive=receive, owner_id=user.user_id, conversation_id=conversation_id,
-                    payload=payload, tools=tools,
+                    send, receive=receive, owner_id=identity.actor_id, identity=identity,
+                    conversation_id=conversation_id, payload=payload, tools=tools,
                 )
 
             if match and method == "GET":
@@ -222,7 +226,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 400, {"error": "invalid_pagination"})
                 messages = await asyncio.to_thread(
                     self.conversations.history,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     conversation_id=match.group(1),
                     limit=100,
                     after_sequence=after_sequence,
@@ -243,12 +247,13 @@ class YukiConversationAPI:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 result = await asyncio.to_thread(
                     self.conversations.reply,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     conversation_id=match.group(1),
                     user_text=payload["content"],
                     request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
+                    identity=identity,
                 )
                 return await self._respond(send, 200, result)
 
@@ -263,7 +268,7 @@ class YukiConversationAPI:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
 
-    async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
+    async def _stream_reply(self, send, *, receive, owner_id, identity, conversation_id, payload, tools):
         """Run synchronous generation off-loop and emit bounded SSE events."""
         loop = asyncio.get_running_loop()
         events = asyncio.Queue(maxsize=64)
