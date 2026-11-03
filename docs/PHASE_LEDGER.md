@@ -201,3 +201,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Consent-aware learning proposal service | `core/learning_service.py`; `tests/test_learning_service.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds per-owner pending lesson proposals, best-effort secret redaction, consent gates, explicit approve/reject, owner isolation and idempotent completed approval. Not yet wired into HTTP/agent loop. SQLite proposal metadata and JSON personal memory are separate stores; crash-window reconciliation and transactional outbox remain open. |
+
+
+| Episodic memory and context integration | `core/episodic_memory.py`; `tests/test_episodic_memory.py`; `core/memory_context.py`; `tests/test_memory_context.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds consent-gated per-owner episode journal, explicit summaries/outcomes/tags, bounded retention, lexical retrieval, deletion and optional injection into bounded untrusted reasoning context. Not automatically wired to task completion; caller must submit a distilled summary. No raw transcript capture, embeddings, causal reasoning or transactional unification yet. |
