@@ -36,9 +36,6 @@ class SkillContainerRequestTests(unittest.TestCase):
             "network":"none","mount_policy":"invocation_staging_only",
         })
 
-    def _binding(self, tree_sha):
-        return build_invocation_binding.__wrapped__(self.manifest, staging_sha256=tree_sha)  # pragma: no cover
-
     def test_builds_fixed_restrictive_request_from_matching_binding(self):
         from core.auth import BuiltInAuthService
         auth = BuiltInAuthService(str(Path(self.tmp.name)/"auth.db"), password_iterations=100_000)
