@@ -32,7 +32,7 @@ if not exist ".venv\Scripts\python.exe" (
 echo [2/4] Updating pip...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
-  echo WARNING: pip upgrade failed. Continuing because Yuki has no third-party dependencies.
+  echo WARNING: pip upgrade failed. Continuing with the existing pip; the required dependency installation below must still succeed.
 )
 
 echo [3/4] Checking declared dependencies...
