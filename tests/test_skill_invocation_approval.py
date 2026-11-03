@@ -4,7 +4,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from core.auth import AuthenticatedUser
+from core.auth import BuiltInAuthService
 from core.skill_execution_manifest import validate_manifest
 from core.skill_invocation_approval import (
     InvocationApprovalError, OneShotInvocationApprovalStore,
@@ -16,7 +16,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = OneShotInvocationApprovalStore(Path(self.temp.name) / "approvals.db")
+        self.auth = BuiltInAuthService(str(Path(self.temp.name) / "auth.db"), password_iterations=100_000)\n        self.actor = self.auth.create_account("user.one", "correct-horse-battery-staple")\n        self.auth.create_account("user.two", "correct-horse-battery-staple")\n        self.approver = self.auth.bootstrap_admin("operator.one", "another-correct-horse-battery")\n        self.actor_session = self.auth.authenticate("user.one", "correct-horse-battery-staple").token\n        self.approver_session = self.auth.authenticate("operator.one", "another-correct-horse-battery").token\n        self.store = OneShotInvocationApprovalStore(Path(self.temp.name) / "approvals.db")
         self.manifest = validate_manifest({
             "protocol_version": 1, "skill_id": "report_builder", "skill_version": "1.0.0",
             "artifact_sha256": "a" * 64, "entrypoint": "package.entry:run",
@@ -40,12 +40,24 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         return build_invocation_binding(self.manifest, **args)
 
     def issue(self, binding=None):
-        return self.store.issue(binding or self.binding(), approved_by=self.approver,
+        return self.store.issue(binding or self.binding(), auth_service=self.auth, approver_session_token=self.approver_session,
             approval_revision="revision-1", ttl_seconds=300)
 
     def test_binding_requires_authenticated_principal(self):
         with self.assertRaises(InvocationApprovalError):
-            build_invocation_binding(self.manifest, **dict(self.kwargs, actor="user-1"))
+            build_invocation_binding(self.manifest, **dict(self.kwargs, actor_session_token="forged-session-token"))
+
+    def test_revoked_actor_and_approver_sessions_are_rejected(self):
+        binding = self.binding()
+        revoked_actor = self.auth.authenticate("user.one", "correct-horse-battery-staple").token
+        self.auth.revoke_session(revoked_actor)
+        with self.assertRaises(InvocationApprovalError):
+            build_invocation_binding(self.manifest, **dict(self.kwargs, actor_session_token=revoked_actor))
+        revoked_approver = self.auth.authenticate("operator.one", "another-correct-horse-battery").token
+        self.auth.revoke_session(revoked_approver)
+        with self.assertRaises(InvocationApprovalError):
+            self.store.issue(binding, auth_service=self.auth, approver_session_token=revoked_approver,
+                approval_revision="revision-1", ttl_seconds=300)
 
     def test_approval_issue_requires_authenticated_approver_permission(self):
         with self.assertRaises(InvocationApprovalError):
@@ -65,7 +77,7 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         binding = self.binding()
         approval = self.issue(binding)
         for changed in (
-            self.binding(actor=AuthenticatedUser("user-2", "user.two", "user", frozenset({"workflow:read"}))),
+            self.binding(actor_session_token=self.auth.authenticate("user.two", "correct-horse-battery-staple").token),
             self.binding(tenant_id="tenant-2"),
             self.binding(task_id="task-2"),
             self.binding(invocation_id="invocation-2"),
