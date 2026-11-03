@@ -90,6 +90,7 @@ class SkillInvocationBinding:
     entrypoint: str
     argument_sha256: str
     input_schema_sha256: str
+    output_schema_sha256: str
     capabilities: tuple[str, ...]
     resource_limits: tuple[tuple[str, int], ...]
     staging_sha256: str
@@ -109,6 +110,7 @@ class SkillInvocationBinding:
             "entrypoint": self.entrypoint,
             "argument_sha256": self.argument_sha256,
             "input_schema_sha256": self.input_schema_sha256,
+            "output_schema_sha256": self.output_schema_sha256,
             "capabilities": list(self.capabilities),
             "resource_limits": dict(self.resource_limits),
             "staging_sha256": self.staging_sha256,
@@ -166,6 +168,7 @@ def build_invocation_binding(
         entrypoint=manifest.entrypoint,
         argument_sha256=hashlib.sha256(argument_bytes).hexdigest(),
         input_schema_sha256=manifest.input_schema_sha256,
+        output_schema_sha256=manifest.output_schema_sha256,
         capabilities=capabilities,
         resource_limits=manifest.resource_limits,
         staging_sha256=_digest(staging_sha256, "staging_sha256"),
