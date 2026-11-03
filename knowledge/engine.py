@@ -6,14 +6,12 @@ only the Python standard library and SQLite; it never calls an AI API.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(frozen=True)
