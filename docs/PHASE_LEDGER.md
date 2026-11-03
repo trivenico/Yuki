@@ -204,3 +204,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Episodic memory and context integration | `core/episodic_memory.py`; `tests/test_episodic_memory.py`; `core/memory_context.py`; `tests/test_memory_context.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds consent-gated per-owner episode journal, explicit summaries/outcomes/tags, bounded retention, lexical retrieval, deletion and optional injection into bounded untrusted reasoning context. Not automatically wired to task completion; caller must submit a distilled summary. No raw transcript capture, embeddings, causal reasoning or transactional unification yet. |
+
+
+| Versioned identity core | `companion/identity_core.py`; `tests/test_identity_core.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Adds stable identity profile, schema/revision, strict field allowlist, explicit approval, optimistic concurrency, corruption detection, atomic owner-only writes and policy/permission non-authority. Local single-process file store; digest is not authentication and multi-process locking is open. |
