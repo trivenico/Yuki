@@ -213,3 +213,6 @@ This workstream is tracked independently of serial phase numbering while the his
 
 
 | Cognitive context preparation | `core/cognitive_context.py`; `tests/test_cognitive_context.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Composes existing planner, optional identity and consent-aware memory into an immutable inspectable brief and bounded specialist DAG. Proposal-only: no agent dispatch or tool execution. Model-backed reasoning and coordinator adapter remain follow-ups. |
+
+
+| Cognitive context runtime integration | `core/conversation_service.py`; `api/runtime.py`; `tests/test_conversation_service.py`; `tests/test_api_runtime.py`; `docs/AUTHENTICATED_MEMORY_API.md` | `in_progress` | Optional cognitive engine injection into authenticated conversation service. Each turn builds a brief from verified owner and goal and supplies it as untrusted context; no automatic agent dispatch. Mutually exclusive with separately injected identity/memory sources to avoid duplicate context. |
