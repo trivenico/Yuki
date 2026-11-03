@@ -215,7 +215,7 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             records = agent.list_approval_recovery()
 
             self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["reference"], item.pending_id[-6:])
+            self.assertEqual(records[0]["reference"], item.pending_id[-12:])
             self.assertNotIn(item.pending_id, str(records))
             self.assertEqual(records[0]["skill_id"], "files.write")
             self.assertEqual(records[0]["status"], "recovery_required")
