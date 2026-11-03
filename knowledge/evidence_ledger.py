@@ -152,7 +152,7 @@ class EvidenceLedger:
         if current["status"] in {"verified", "rejected"}:
             return current["status"]
         supporting, refuting = row["supporting"] or 0, row["refuting"] or 0
-        status = "contested" if supporting and refuting else "supported" if supporting else "proposed"
+        status = "contested" if refuting else "supported" if supporting else "proposed"
         db.execute(
             """UPDATE knowledge_claims SET status=?,
                updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
