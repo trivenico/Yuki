@@ -187,6 +187,44 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             )
             self.assertTrue(audit.verify_chain())
 
+    def test_recovery_queue_lists_interrupted_actions_without_full_bearer_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            item = store.put(
+                "files.write",
+                {"argument": "approved snapshot"},
+                {"skill_id": "files.write", "arguments": {"argument": "approved snapshot"}},
+                actor="local-cli",
+                session_id="cli-session",
+            )
+            claimed = store.claim(
+                item.pending_id, actor="local-cli", session_id="cli-session"
+            )
+            self.assertIsNotNone(claimed)
+            self.assertTrue(store.transition(
+                item.pending_id, expected="claimed", new_status="recovery_required"
+            ))
+            agent = YukiCoreAgent(
+                skills=[],
+                permission_gate=PermissionGate(lambda _request: False),
+                approval_coordinator=coordinator,
+            )
+
+            records = agent.list_approval_recovery()
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["reference"], item.pending_id[-6:])
+            self.assertNotIn(item.pending_id, str(records))
+            self.assertEqual(records[0]["skill_id"], "files.write")
+            self.assertEqual(records[0]["status"], "recovery_required")
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+
+    def test_recovery_queue_is_empty_without_durable_store(self):
+        agent = YukiCoreAgent(skills=[])
+        self.assertEqual(agent.list_approval_recovery(), [])
+
     def test_agent_surfaces_recovery_when_terminal_audit_fails_after_execution(self):
         class EchoSkill:
             name = "echo"
