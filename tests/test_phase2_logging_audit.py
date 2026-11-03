@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,17 @@ from core.approval_flow import ApprovalCoordinator
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.permissions import PermissionGate
 
+
+
+
+def _reserve_reconciliation_process(database_path, pending_id, actor, session_id, result_queue):
+    try:
+        store = SQLitePendingApprovalStore(database_path)
+        result_queue.put(store.begin_reconciliation(
+            pending_id, decision="completed", actor=actor, session_id=session_id
+        ))
+    except Exception as exc:
+        result_queue.put(("error", str(exc)))
 
 class PhaseTwoLoggingAuditTests(unittest.TestCase):
     @staticmethod
@@ -313,6 +325,40 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             self.assertTrue(store.finish_reconciliation(item.pending_id, decision="completed"))
             self.assertEqual(store.get_status(item.pending_id), "reconciled_completed")
             self.assertFalse(store.finish_reconciliation(item.pending_id, decision="completed"))
+
+    def test_two_processes_cannot_reserve_same_recovery_for_different_operators(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = str(Path(tmp) / "pending.sqlite3")
+            store = SQLitePendingApprovalStore(database_path)
+            item = store.put(
+                "files.write", {"argument": "x"},
+                {"skill_id": "files.write", "arguments": {"argument": "x"}},
+                actor="creator", session_id="creator-session",
+            )
+            store.claim(item.pending_id, actor="creator", session_id="creator-session")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+
+            context = multiprocessing.get_context("spawn")
+            result_queue = context.Queue()
+            processes = [
+                context.Process(
+                    target=_reserve_reconciliation_process,
+                    args=(database_path, item.pending_id, f"operator-{index}", f"session-{index}", result_queue),
+                )
+                for index in (1, 2)
+            ]
+            for process in processes:
+                process.start()
+            results = [result_queue.get(timeout=15) for _ in processes]
+            for process in processes:
+                process.join(timeout=15)
+                if process.is_alive():
+                    process.terminate()
+                    process.join()
+                self.assertEqual(process.exitcode, 0)
+
+            self.assertEqual(sorted(results), [False, True])
+            self.assertEqual(store.get_status(item.pending_id), "reconciling")
 
     def test_reconciliation_can_resume_after_audit_failure_without_duplicate_event(self):
         class FailOnceAudit:
