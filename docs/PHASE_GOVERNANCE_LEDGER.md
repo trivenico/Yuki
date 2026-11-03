@@ -28,7 +28,7 @@ The following phase documents were present in `docs/` at the baseline commit. Th
 | Serial | Evidence document | Initial ledger status | Notes |
 |---:|---|---|---|
 | 1–7 | No `PHASE1`–`PHASE7` documents found | unknown | Historical scope not recovered in this audit |
-| 8 | `PHASE8_UPSTREAM_INTEGRATION_AUDIT.md` | in_progress | Related open upstream reuse audit: issue #55; verify exact acceptance state |
+| 8 | `PHASE8_UPSTREAM_INTEGRATION_AUDIT.md` | unknown | Audit implementation and acceptance evidence; issue #55 is a related but separately scoped upstream reuse audit |
 | 9–45 | No phase documents found | unknown | Includes issue #9 for Phase 9; other serials need historical classification |
 | 46 | `PHASE46_READINESS.md` | unknown | Audit implementation/tests/CI |
 | 47 | `PHASE47_LIVE_SMOKE_TEST.md` | unknown | Audit runtime evidence |
@@ -46,7 +46,7 @@ The following phase documents were present in `docs/` at the baseline commit. Th
 | 59 | `PHASE59_CONNECTOR_MANAGEMENT.md` | unknown | Audit implementation/tests |
 | 60 | `PHASE60_PROVIDER_MODEL_CATALOG.md` | unknown | Audit implementation/tests |
 | 61 | No phase document found | unknown | Historical scope not recovered |
-| 62 | `PHASE62_HUGGINGFACE_DISCOVERY.md` and `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | moved | Duplicate serial; see reconciliation below |
+| 62 | `PHASE62_HUGGINGFACE_DISCOVERY.md` and `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | in_progress | Duplicate serial; relationship documented below, file-level reconciliation still pending |
 | 63 | `PHASE63_MODEL_EVALUATION.md` | unknown | Audit implementation/tests |
 | 64 | `PHASE64_MODEL_RECOMMENDATIONS.md` | unknown | Audit implementation/tests |
 | 65 | `PHASE65_HF_MODEL_SCOUT.md` | unknown | Audit implementation/tests |
