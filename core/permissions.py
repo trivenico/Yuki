@@ -19,6 +19,7 @@ class PermissionGate:
         *,
         actor_id: str = "local-cli",
         session_id: str | None = None,
+        actor_role: str = "operator",
     ):
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
             raise ValueError("actor_id must be a non-empty bounded string.")
@@ -26,10 +27,13 @@ class PermissionGate:
             session_id = secrets.token_urlsafe(24)
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
             raise ValueError("session_id must be a non-empty bounded string.")
+        if actor_role not in {"operator", "admin"}:
+            raise ValueError("actor_role must be operator or admin.")
         self._approver = approver
         self._audit_log = audit_log
         self._actor_id = actor_id
         self._session_id = session_id
+        self._actor_role = actor_role
 
     @property
     def actor_id(self) -> str:
@@ -38,6 +42,11 @@ class PermissionGate:
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def is_admin(self) -> bool:
+        """True only when the trusted application boundary assigned the admin role."""
+        return self._actor_role == "admin"
 
     def confirm_durable_action(self, *, action: str, reason: str, risk: str = "low") -> bool:
         """Ask the configured human approver without writing a parallel audit trail.
