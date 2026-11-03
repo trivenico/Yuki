@@ -7,6 +7,7 @@ step before this protocol can be used to execute skills.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -30,13 +31,20 @@ def _reject_constant(_value: str):
     raise SkillRuntimeProtocolError("non-finite JSON numbers are forbidden")
 
 
+def _finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise SkillRuntimeProtocolError("non-finite JSON numbers are forbidden")
+    return parsed
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     try:
         return json.dumps(
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError) as exc:
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise SkillRuntimeProtocolError("message must contain finite JSON data") from exc
 
 
@@ -47,7 +55,7 @@ def parse_bounded_json(raw: bytes, *, max_bytes: int) -> Any:
     if len(raw) > max_bytes:
         raise SkillRuntimeProtocolError("runtime protocol message exceeds byte limit")
     try:
-        return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant, parse_float=_finite_float)
     except SkillRuntimeProtocolError:
         raise
     except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
