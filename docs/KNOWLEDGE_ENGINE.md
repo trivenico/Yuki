@@ -11,11 +11,13 @@ The local knowledge engine stores reference documents independently from persona
 
 ## Supported sources
 
-The first implementation accepts explicitly selected UTF-8 text files: TXT, Markdown, reStructuredText, Python, JSON, YAML and YML.
+The low-level `KnowledgeEngine.ingest_file()` API accepts explicitly selected UTF-8 TXT, Markdown, RST, Python, JSON, YAML and YML files.
 
-It does not crawl directories, download URLs, execute source code, or parse PDFs/DOCX yet. Those require separate opt-in ingestion adapters and their own security review.
+The `DocumentParser` and `SemanticIndexCoordinator` pipeline additionally supports HTML, DOCX and PDF. PDF extraction requires the optional `requirements-documents.txt` dependency. Scanned PDFs do not yet receive OCR. HTML and DOCX parsing use local standard-library parsers.
 
-## Example
+No directory crawling, remote URL downloading, source-code execution or automatic web ingestion is enabled.
+
+## Example: lexical ingestion
 
 ```python
 from knowledge import KnowledgeEngine
@@ -31,20 +33,45 @@ for match in engine.search("local inference architecture", limit=5):
     print(match.source_name, match.source_path, match.content)
 ```
 
+## Example: document and semantic ingestion
+
+```python
+from knowledge import (
+    KnowledgeEngine, VectorStore, SentenceTransformerEmbedder,
+    SemanticIndexCoordinator,
+)
+
+engine = KnowledgeEngine()
+vectors = VectorStore("YukiData/knowledge-vectors.sqlite3")
+embedder = SentenceTransformerEmbedder.from_local_cache(
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
+coordinator = SemanticIndexCoordinator(engine, vectors, embedder)
+result = coordinator.index_file("research/paper.pdf", workspace=".")
+```
+
+Cache the selected Hugging Face model explicitly before runtime. Runtime model loading is local-only and does not silently download weights.
+
 ## Safety and limits
 
 - A caller must explicitly select a file and approved workspace.
 - Files outside the workspace and symbolic links are rejected.
 - Supported extensions are allowlisted.
-- File size is capped at 2 MB and decoded document text at 200,000 characters.
+- The lexical engine limits input files to 2 MB; the document parser limits inputs to 20 MB.
+- The document parser limits DOCX expanded archive size, archive entry count, PDF page count and extracted text.
+- Extracted document text is capped at 200,000 characters.
 - Text is split into overlapping chunks of at most 2,000 characters.
 - SQLite parameter binding is used for all values; search terms are tokenized and quoted before FTS5 matching.
 - Search returns source IDs, source names, source paths, chunk IDs and relevance scores for provenance.
 - Unchanged source content is detected by SHA-256 and is not re-indexed.
 - Re-indexing changed content replaces its prior chunks transactionally.
-- Source deletion removes its chunks and full-text index rows.
-- SQLite FTS5 is required. No embedding model, external AI API, network call, or training operation is used.
+- Embeddings are generated before canonical replacement, so parsing or embedding failure preserves the previous source index.
+- Lexical and vector databases are separate SQLite files; a crash or vector-store failure after canonical replacement can require re-indexing to reconcile.
+- Source deletion removes its chunks and full-text index rows; the semantic coordinator also deletes vectors for its configured embedding model.
+- SQLite FTS5 is required. The core lexical engine needs no embedding model, external AI API, network call or training operation.
 
 ## Current limitations
 
-This is a local lexical retrieval foundation, not a complete RAG pipeline. It does not yet perform semantic embeddings, OCR, PDF/DOCX extraction, web crawling, claim verification, freshness evaluation, or automatic knowledge-graph extraction. Retrieved content must be treated as untrusted evidence by downstream reasoning and must never authorize tools or override policy.
+This is a local retrieval foundation, not a complete RAG pipeline. OCR, web crawling, claim verification, freshness evaluation, automatic knowledge-graph extraction and training data curation remain future work. Semantic vector search currently performs an exact local scan and should be benchmarked before scaling to very large corpora.
+
+Retrieved content is untrusted evidence. It must never authorize tools, override system policy or execute instructions embedded in documents.
