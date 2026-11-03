@@ -106,6 +106,18 @@ class SkillStagingTests(unittest.TestCase):
             with stage_skill_artifact(artifact, manifest, staging_parent=self.tmp.name):
                 self.fail("symlink staged")
 
+    @unittest.skipIf(os.name == "nt", "POSIX ownership and mode policy")
+    def test_rejects_group_or_world_writable_staging_parent(self):
+        insecure = Path(self.tmp.name) / "insecure"
+        insecure.mkdir()
+        insecure.chmod(0o777)
+        try:
+            with self.assertRaises(SkillStagingError):
+                with stage_skill_artifact(self.artifact, self.manifest, staging_parent=insecure):
+                    self.fail("insecure staging parent accepted")
+        finally:
+            insecure.chmod(0o700)
+
     def test_rejects_symlink_staging_parent(self):
         link = Path(self.tmp.name) / "link"
         target = Path(self.tmp.name) / "target"
