@@ -86,13 +86,11 @@ class YukiCoreAgent:
         ]
 
     def resolve_approval_recovery(self, reference: str, decision: str) -> bool:
-        """Record an operator decision; this method never retries the approved action."""
+        """Record an operator decision; retries are identity-bound and never rerun skills."""
         coordinator = self.approval_coordinator
         store = getattr(coordinator, "pending_store", None)
         audit = getattr(coordinator, "audit_log", None)
-        if store is None or audit is None:
-            return False
-        if decision not in {"completed", "failed", "uncertain"}:
+        if store is None or audit is None or decision not in {"completed", "failed", "uncertain"}:
             return False
         record = store.find_recovery_by_reference(reference)
         if record is None:
@@ -104,21 +102,26 @@ class YukiCoreAgent:
         confirmed = self.permission_gate.confirm_durable_action(
             action=f"approval-recovery:{reference}:{decision}",
             reason=(
-                f"Operator reconciliation only; this does not execute or retry the skill. "
+                "Operator reconciliation only; this does not execute or retry the skill. "
                 f"Skill: {record['skill_id']}; current state: {record['status']}; "
-                f"decision: {decision}. "
-                "Confirm only after independently verifying external side effects."
+                f"decision: {decision}. Confirm only after independently verifying external side effects."
             ),
             risk="high",
         )
         if not confirmed:
             return False
-        event = {
-            "completed": "reconciliation_completed",
-            "failed": "reconciliation_failed",
-            "uncertain": "reconciliation_uncertain",
-        }[decision]
         try:
+            # A compare-and-set reservation prevents competing operators/decisions.
+            # Same actor/session/decision may resume after a crash.
+            if not store.begin_reconciliation(
+                record["pending_id"], decision=decision, actor=actor, session_id=session_id
+            ):
+                return False
+            event = {
+                "completed": "reconciliation_completed",
+                "failed": "reconciliation_failed",
+                "uncertain": "reconciliation_uncertain",
+            }[decision]
             audit.append(
                 event_type=event,
                 pending_id=record["pending_id"],
@@ -129,21 +132,10 @@ class YukiCoreAgent:
                     f"approval-reconciliation:{record['pending_id']}:{decision}".encode("utf-8")
                 ).hexdigest(),
             )
+            return store.finish_reconciliation(record["pending_id"], decision=decision)
         except Exception:
-            return False
-        if decision == "uncertain":
-            # Keep it visible in the recovery queue; uncertainty is not resolution.
-            return True
-        terminal = "reconciled_completed" if decision == "completed" else "reconciled_failed"
-        try:
-            return store.transition(
-                record["pending_id"],
-                expected=record["status"],
-                new_status=terminal,
-            )
-        except Exception:
-            # The append-only audit records the operator's attempted decision;
-            # the still-visible recovery row must be inspected again.
+            # Keep the reservation visible. The same operator can safely retry;
+            # a different decision/operator cannot steal an in-flight resolution.
             return False
 
     def _execute_registered_skill(self, name: str, argument: str) -> AgentResponse:
