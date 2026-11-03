@@ -126,3 +126,13 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 
 - 2026-11-02: Initial ledger created from docs inventory and verified open issues/PR discussions. This is a baseline, not a completed historical audit.
 - 2026-11-02: Owner-directed sequencing exception recorded: Phase 1 deferred, Phase 2 active; both must be reconciled before Phase 3.
+
+
+## External platform assessment — Agent37 (2026-11-03)
+
+- Added [docs/AGENT37_PLATFORM_ASSESSMENT.md](AGENT37_PLATFORM_ASSESSMENT.md), assessing Agent37's persistent sandboxes, agent provisioning/lifecycle API, durable workspaces, streaming, scheduling, integrations, observability and usage controls.
+- Repository audit found existing Yuki foundations in Phases 69, 70, 74, 83, 84 and 142, including durable task journals, specialist coordination, finite-cycle worker supervision, a Docker command builder, and an approval-gated bounded coding-task runner.
+- Key gap: Yuki does not yet have a tenant-isolated persistent agent-instance control plane with a hardened multi-tenant execution backend, workspace backup/restore, authenticated lifecycle API, or usage metering.
+- Recommendation: reuse existing task/runtime and sandbox foundations; do not introduce a second task engine. Finish Phase 2 identity/approval/recovery gates first. Then reconcile earlier phase serials before assigning any new numbered phase to agent hosting.
+- Security boundary: current Docker runner is not equivalent to a hardened multi-tenant sandbox or a gVisor/microVM boundary. No production parity claim is made.
+- This is a research/architecture artifact only; it does not mark any phase complete or waive Phase 1/2 gates.
