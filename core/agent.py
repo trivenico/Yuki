@@ -125,6 +125,9 @@ class YukiCoreAgent:
                 actor=actor,
                 session_id=session_id,
                 skill_id=record["skill_id"],
+                idempotency_key=hashlib.sha256(
+                    f"approval-reconciliation:{record['pending_id']}:{decision}".encode("utf-8")
+                ).hexdigest(),
             )
         except Exception:
             return False
