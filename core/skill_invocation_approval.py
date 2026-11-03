@@ -23,7 +23,7 @@ from core.skill_execution_manifest import (
 )
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}$")
+_ID = re.compile(r"^[A-Za-z0-9_.:@+-]{1,128}$")
 _MAX_ARGUMENT_BYTES = 1_048_576
 _MAX_GRANTS = 64
 
