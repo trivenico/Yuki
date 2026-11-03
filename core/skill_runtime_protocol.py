@@ -7,7 +7,10 @@ step before this protocol can be used to execute skills.
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping
+from typing import Any
+
+
+MAX_PROTOCOL_BYTES = 1_048_576
 
 
 class SkillRuntimeProtocolError(ValueError):
@@ -38,7 +41,8 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 
 def parse_bounded_json(raw: bytes, *, max_bytes: int) -> Any:
-    if not isinstance(raw, bytes) or isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+    if (not isinstance(raw, bytes) or isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int) or not 1 <= max_bytes <= MAX_PROTOCOL_BYTES):
         raise SkillRuntimeProtocolError("invalid bounded JSON input")
     if len(raw) > max_bytes:
         raise SkillRuntimeProtocolError("runtime protocol message exceeds byte limit")
@@ -46,7 +50,7 @@ def parse_bounded_json(raw: bytes, *, max_bytes: int) -> Any:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
     except SkillRuntimeProtocolError:
         raise
-    except (UnicodeError, ValueError, TypeError) as exc:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         raise SkillRuntimeProtocolError("runtime protocol message is invalid JSON") from exc
 
 
@@ -61,7 +65,8 @@ def parse_runtime_request(raw: bytes, *, max_bytes: int) -> dict[str, Any]:
     if type(value["protocol_version"]) is not int or value["protocol_version"] != 1:
         raise SkillRuntimeProtocolError("unsupported runtime request protocol")
     for field in ("invocation_id", "skill_id", "entrypoint", "input_schema_sha256", "output_schema_sha256"):
-        if not isinstance(value[field], str) or not value[field] or len(value[field]) > 512:
+        if (not isinstance(value[field], str) or not value[field] or len(value[field]) > 512
+                or "\\x00" in value[field]):
             raise SkillRuntimeProtocolError("runtime request contains an invalid identifier")
     for field in ("input_schema_sha256", "output_schema_sha256"):
         digest = value[field]
@@ -71,9 +76,10 @@ def parse_runtime_request(raw: bytes, *, max_bytes: int) -> dict[str, Any]:
 
 
 def build_runtime_response(*, invocation_id: str, status: str, output: Any, max_bytes: int) -> bytes:
-    if not isinstance(invocation_id, str) or not invocation_id or len(invocation_id) > 512:
+    if (not isinstance(invocation_id, str) or not invocation_id
+            or len(invocation_id) > 512 or "\\x00" in invocation_id):
         raise SkillRuntimeProtocolError("invalid invocation identifier")
-    if status not in {"succeeded", "failed"}:
+    if not isinstance(status, str) or status not in {"succeeded", "failed"}:
         raise SkillRuntimeProtocolError("invalid runtime response status")
     encoded = canonical_json_bytes({
         "protocol_version": 1,
@@ -81,20 +87,24 @@ def build_runtime_response(*, invocation_id: str, status: str, output: Any, max_
         "status": status,
         "output": output,
     })
-    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1 or len(encoded) > max_bytes:
+    if (isinstance(max_bytes, bool) or not isinstance(max_bytes, int)
+            or not 1 <= max_bytes <= MAX_PROTOCOL_BYTES or len(encoded) > max_bytes):
         raise SkillRuntimeProtocolError("runtime response exceeds byte limit")
     return encoded
 
 
 def parse_runtime_response(raw: bytes, *, expected_invocation_id: str, max_bytes: int) -> dict[str, Any]:
+    if (not isinstance(expected_invocation_id, str) or not expected_invocation_id
+            or len(expected_invocation_id) > 512 or "\\x00" in expected_invocation_id):
+        raise SkillRuntimeProtocolError("invalid expected invocation identifier")
     value = parse_bounded_json(raw, max_bytes=max_bytes)
     fields = {"protocol_version", "invocation_id", "status", "output"}
     if not isinstance(value, dict) or set(value) != fields:
         raise SkillRuntimeProtocolError("runtime response fields do not match protocol v1")
     if type(value["protocol_version"]) is not int or value["protocol_version"] != 1:
         raise SkillRuntimeProtocolError("unsupported runtime response protocol")
-    if value["invocation_id"] != expected_invocation_id:
+    if not isinstance(value["invocation_id"], str) or value["invocation_id"] != expected_invocation_id:
         raise SkillRuntimeProtocolError("runtime response invocation mismatch")
-    if value["status"] not in {"succeeded", "failed"}:
+    if not isinstance(value["status"], str) or value["status"] not in {"succeeded", "failed"}:
         raise SkillRuntimeProtocolError("invalid runtime response status")
     return value
