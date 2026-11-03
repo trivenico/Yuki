@@ -42,7 +42,8 @@ class VectorStore:
     def _session(self):
         connection = self._connect()
         try:
-            yield connection
+            with connection:
+                yield connection
         finally:
             connection.close()
 
