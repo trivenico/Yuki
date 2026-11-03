@@ -84,13 +84,16 @@ class DocumentParser:
 
     @classmethod
     def _safe_file(cls, path, workspace):
-        root = Path(workspace).expanduser().resolve(strict=True)
+        workspace_path = Path(workspace).expanduser()
+        workspace_lexical = workspace_path.absolute()
+        root = workspace_path.resolve(strict=True)
         supplied = Path(path).expanduser()
-        candidate = supplied if supplied.is_absolute() else root / supplied
+        candidate = supplied if supplied.is_absolute() else workspace_lexical / supplied
         try:
-            relative = candidate.absolute().relative_to(root)
+            relative = candidate.absolute().relative_to(workspace_lexical)
         except ValueError as exc:
             raise ValueError("Document must be inside the approved workspace.") from exc
+        candidate = root / relative
         cursor = root
         for part in relative.parts:
             cursor = cursor / part
