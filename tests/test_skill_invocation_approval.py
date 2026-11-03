@@ -72,6 +72,15 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         args.update(overrides)
         return build_invocation_binding(self.manifest, **args)
 
+    def consume(self, approval, binding, **overrides):
+        args = {
+            "auth_service": self.auth,
+            "actor_session_token": self.actor_session,
+            "current_approval_revision": "revision-1",
+        }
+        args.update(overrides)
+        return self.consume(approval, binding, **args)
+
     def issue(self, binding=None, **overrides):
         args = {
             "auth_service": self.auth,
@@ -115,6 +124,15 @@ class SkillInvocationApprovalTests(unittest.TestCase):
         self.assertTrue(self.store.consume(
             approval, binding, current_approval_revision="revision-1"
         ))
+
+    def test_consumption_rejects_revoked_or_wrong_actor_session(self):
+        binding = self.binding()
+        approval = self.issue(binding)
+        self.assertFalse(self.consume(approval, binding, actor_session_token=self.other_actor_session))
+        revoked = self.auth.authenticate("user.one", "correct-horse-battery-staple").token
+        self.assertTrue(self.auth.revoke_session(revoked))
+        self.assertFalse(self.consume(approval, binding, actor_session_token=revoked))
+        self.assertTrue(self.consume(approval, binding))
 
     def test_revoked_actor_session_is_rejected(self):
         token = self.auth.authenticate(
