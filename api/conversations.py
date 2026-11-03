@@ -167,7 +167,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 conversation = await asyncio.to_thread(
                     self.conversations.create,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     title=payload.get("title", "New conversation"),
                 )
                 return await self._respond(send, 201, conversation)
@@ -185,9 +185,9 @@ class YukiConversationAPI:
                 # another user's generation by guessing a conversation or request ID.
                 await asyncio.to_thread(
                     self.conversations.store.get_conversation,
-                    owner_id=user.user_id, conversation_id=conversation_id,
+                    owner_id=identity.actor_id, conversation_id=conversation_id,
                 )
-                key = (user.user_id, conversation_id, payload["request_id"])
+                key = (identity.actor_id, conversation_id, payload["request_id"])
                 with self._active_lock:
                     cancellation = self._active_generations.get(key)
                     if cancellation is not None:
@@ -211,7 +211,7 @@ class YukiConversationAPI:
                 if not isinstance(tools, list) or len(tools) > 32:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 return await self._stream_reply(
-                    send, receive=receive, owner_id=user.user_id, conversation_id=conversation_id,
+                    send, receive=receive, owner_id=identity.actor_id, conversation_id=conversation_id,
                     payload=payload, tools=tools,
                 )
 
@@ -224,7 +224,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 400, {"error": "invalid_pagination"})
                 messages = await asyncio.to_thread(
                     self.conversations.history,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     conversation_id=match.group(1),
                     limit=100,
                     after_sequence=after_sequence,
@@ -245,7 +245,7 @@ class YukiConversationAPI:
                     return await self._respond(send, 500, {"error": "tool_configuration_error"})
                 result = await asyncio.to_thread(
                     self.conversations.reply,
-                    owner_id=user.user_id,
+                    owner_id=identity.actor_id,
                     conversation_id=match.group(1),
                     user_text=payload["content"],
                     request_id=payload["request_id"],
