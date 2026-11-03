@@ -221,6 +221,88 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             self.assertEqual(records[0]["status"], "recovery_required")
             self.assertEqual(store.get_status(item.pending_id), "recovery_required")
 
+    def test_operator_can_resolve_recovery_without_reexecuting_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            item = store.put(
+                "files.write", {"argument": "redacted"},
+                {"skill_id": "files.write", "arguments": {"argument": "redacted"}},
+                actor="local-cli", session_id="session-1",
+            )
+            self.assertIsNotNone(store.claim(
+                item.pending_id, actor="local-cli", session_id="session-1"
+            ))
+            self.assertTrue(store.transition(
+                item.pending_id, expected="claimed", new_status="recovery_required"
+            ))
+            confirmations = []
+            agent = YukiCoreAgent(
+                skills=[],
+                permission_gate=PermissionGate(
+                    lambda request: confirmations.append(request) or True,
+                    actor_id="operator-1", session_id="operator-session",
+                ),
+                approval_coordinator=coordinator,
+            )
+
+            resolved = agent.resolve_approval_recovery(
+                item.pending_id[-12:], "completed", note="Verified output in destination."
+            )
+
+            self.assertTrue(resolved)
+            self.assertEqual(store.get_status(item.pending_id), "reconciled_completed")
+            self.assertEqual(len(confirmations), 1)
+            self.assertIn("does not execute or retry", confirmations[0].reason)
+            events = list(reversed(audit.list_events()))
+            self.assertEqual(events[-1]["event_type"], "reconciliation_completed")
+            self.assertTrue(audit.verify_chain())
+
+    def test_uncertain_recovery_decision_remains_visible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            item = store.put(
+                "files.write", {"argument": "redacted"},
+                {"skill_id": "files.write", "arguments": {"argument": "redacted"}},
+                actor="local-cli", session_id="session-1",
+            )
+            store.claim(item.pending_id, actor="local-cli", session_id="session-1")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            agent = YukiCoreAgent(
+                skills=[],
+                permission_gate=PermissionGate(lambda _request: True),
+                approval_coordinator=coordinator,
+            )
+
+            self.assertTrue(agent.resolve_approval_recovery(item.pending_id[-12:], "uncertain"))
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+            self.assertEqual(len(agent.list_approval_recovery()), 1)
+            self.assertEqual(audit.list_events()[0]["event_type"], "reconciliation_uncertain")
+
+    def test_recovery_resolution_requires_operator_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+            item = store.put(
+                "files.write", {"argument": "redacted"},
+                {"skill_id": "files.write", "arguments": {"argument": "redacted"}},
+                actor="local-cli", session_id="session-1",
+            )
+            store.claim(item.pending_id, actor="local-cli", session_id="session-1")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            agent = YukiCoreAgent(
+                skills=[], permission_gate=PermissionGate(lambda _request: False),
+                approval_coordinator=coordinator,
+            )
+
+            self.assertFalse(agent.resolve_approval_recovery(item.pending_id[-12:], "failed"))
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+            self.assertEqual(audit.list_events(), [])
+
     def test_recovery_queue_is_empty_without_durable_store(self):
         agent = YukiCoreAgent(skills=[])
         self.assertEqual(agent.list_approval_recovery(), [])
