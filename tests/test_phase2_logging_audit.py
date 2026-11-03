@@ -403,6 +403,96 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             self.assertEqual(len(events), 1)
             self.assertTrue(audit.verify_chain())
 
+    def test_admin_takeover_requires_role_and_stale_reservation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            item = store.put(
+                "files.write", {"argument": "x"},
+                {"skill_id": "files.write", "arguments": {"argument": "x"}},
+                actor="creator", session_id="creator-session",
+            )
+            store.claim(item.pending_id, actor="creator", session_id="creator-session")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            self.assertTrue(store.begin_reconciliation(
+                item.pending_id, decision="completed", actor="operator-a", session_id="session-a"
+            ))
+            coordinator = ApprovalCoordinator(pending_store=store, audit_log=audit)
+
+            ordinary_operator = YukiCoreAgent(
+                skills=[], permission_gate=PermissionGate(
+                    lambda request: True, actor_id="operator-b", session_id="session-b"
+                ), approval_coordinator=coordinator,
+            )
+            self.assertFalse(ordinary_operator.take_over_stale_approval_recovery(item.pending_id[-12:]))
+            self.assertEqual(store.get_status(item.pending_id), "reconciling")
+
+            admin = YukiCoreAgent(
+                skills=[], permission_gate=PermissionGate(
+                    lambda request: True, actor_id="admin-a", session_id="admin-session",
+                    actor_role="admin",
+                ), approval_coordinator=coordinator,
+            )
+            self.assertFalse(admin.take_over_stale_approval_recovery(item.pending_id[-12:]))
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET updated_at = ? WHERE pending_id = ?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            self.assertTrue(admin.take_over_stale_approval_recovery(item.pending_id[-12:]))
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+            events = [event for event in audit.list_events() if event["event_type"] == "admin_reconciliation_takeover"]
+            self.assertEqual(len(events), 1)
+            self.assertTrue(audit.verify_chain())
+
+    def test_admin_takeover_resumes_after_audit_failure(self):
+        class FailOnceAudit:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+                self.fail = True
+
+            def append(self, **kwargs):
+                if self.fail:
+                    self.fail = False
+                    raise OSError("simulated audit outage")
+                return self.wrapped.append(**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            item = store.put(
+                "files.write", {"argument": "x"},
+                {"skill_id": "files.write", "arguments": {"argument": "x"}},
+                actor="creator", session_id="creator-session",
+            )
+            store.claim(item.pending_id, actor="creator", session_id="creator-session")
+            store.transition(item.pending_id, expected="claimed", new_status="recovery_required")
+            self.assertTrue(store.begin_reconciliation(
+                item.pending_id, decision="completed", actor="abandoned-operator", session_id="old-session"
+            ))
+            with store._connect() as db:
+                db.execute(
+                    "UPDATE pending_approvals SET updated_at = ? WHERE pending_id = ?",
+                    ("2000-01-01T00:00:00+00:00", item.pending_id),
+                )
+            coordinator = ApprovalCoordinator(
+                pending_store=store, audit_log=FailOnceAudit(audit)
+            )
+            admin = YukiCoreAgent(
+                skills=[], permission_gate=PermissionGate(
+                    lambda request: True, actor_id="admin-a", session_id="admin-session",
+                    actor_role="admin",
+                ), approval_coordinator=coordinator,
+            )
+            reference = item.pending_id[-12:]
+            self.assertFalse(admin.take_over_stale_approval_recovery(reference))
+            self.assertEqual(store.get_status(item.pending_id), "reconciling")
+            self.assertTrue(admin.take_over_stale_approval_recovery(reference))
+            self.assertEqual(store.get_status(item.pending_id), "recovery_required")
+            events = [event for event in audit.list_events() if event["event_type"] == "admin_reconciliation_takeover"]
+            self.assertEqual(len(events), 1)
+            self.assertTrue(audit.verify_chain())
+
     def test_recovery_resolution_requires_operator_confirmation(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
