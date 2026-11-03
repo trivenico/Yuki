@@ -46,7 +46,7 @@ The following phase documents were present in `docs/` at the baseline commit. Th
 | 59 | `PHASE59_CONNECTOR_MANAGEMENT.md` | unknown | Audit implementation/tests |
 | 60 | `PHASE60_PROVIDER_MODEL_CATALOG.md` | unknown | Audit implementation/tests |
 | 61 | No phase document found | unknown | Historical scope not recovered |
-| 62 | `PHASE62_HUGGINGFACE_DISCOVERY.md` and `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | in_progress | Duplicate serial; relationship documented below, file-level reconciliation still pending |
+| 62 | `PHASE62_HUGGINGFACE_DISCOVERY.md` and `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` | in_progress | Reconciled as overview + canonical technical/security specification; implementation/test audit remains separate |
 | 63 | `PHASE63_MODEL_EVALUATION.md` | unknown | Audit implementation/tests |
 | 64 | `PHASE64_MODEL_RECOMMENDATIONS.md` | unknown | Audit implementation/tests |
 | 65 | `PHASE65_HF_MODEL_SCOUT.md` | unknown | Audit implementation/tests |
@@ -147,12 +147,12 @@ This evidence supersedes the earlier blanket note that serials 1–9 had no hist
 
 ### Duplicate Phase 62 documents
 
-Both files describe the same Hugging Face discovery phase and overlap in purpose. Preserve both historical files for now; do not delete either in this audit-only change.
+Both files describe the same Hugging Face discovery phase. They have now been reconciled without deleting either file.
 
-- `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` is the detailed implementation/security contract: bounded tasks/sort/limits, timeout and response caps, token handling, review-first policy, and mocked tests.
-- `PHASE62_HUGGINGFACE_DISCOVERY.md` is the concise overview and operational entry point.
+- `PHASE62_HUGGINGFACE_DISCOVERY.md` is the concise overview and CLI quick start, linking to the canonical specification.
+- `PHASE62_HUGGINGFACE_MODEL_DISCOVERY.md` is the canonical technical/security contract and links back to the overview.
 
-Treat the detailed document as the canonical technical specification and the shorter document as its overview. A later documentation-only cleanup may add a pointer between them, but must not discard unique requirements.
+The reconciliation preserves the detailed bounds, task allowlist, token handling, review-first policy, and mocked test requirements. Implementation and test behavior still require an independent phase audit.
 
 ### Phase 154
 
