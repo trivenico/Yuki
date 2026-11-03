@@ -69,6 +69,19 @@ class SkillStagingTests(unittest.TestCase):
                 with stage_skill_artifact(artifact, manifest, staging_parent=self.tmp.name):
                     self.fail("duplicate paths staged")
 
+    def test_rejects_unicode_normalization_collisions(self):
+        artifact = make_zip([
+            ("package/café.py", b"first"),
+            ("package/cafe\u0301.py", b"second"),
+        ])
+        manifest = validate_manifest(dict(
+            self.manifest.as_dict(),
+            artifact_sha256=hashlib.sha256(artifact).hexdigest(),
+        ))
+        with self.assertRaises(SkillStagingError):
+            with stage_skill_artifact(artifact, manifest, staging_parent=self.tmp.name):
+                self.fail("Unicode-equivalent paths staged")
+
     def test_rejects_missing_entrypoint(self):
         artifact = make_zip([("package/other.py", b"pass")])
         manifest = validate_manifest(dict(self.manifest.as_dict(), artifact_sha256=hashlib.sha256(artifact).hexdigest()))
