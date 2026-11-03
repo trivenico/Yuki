@@ -264,6 +264,63 @@ class SQLitePendingApprovalStore:
             db.execute("COMMIT")
             return same_retry
 
+    def takeover_reconciliation(
+        self,
+        pending_id: str,
+        *,
+        actor: str,
+        session_id: str,
+        stale_before: str,
+    ) -> bool:
+        """Atomically replace a stale reservation with an admin-owned uncertain review."""
+        if not all(isinstance(value, str) and value.strip() for value in (actor, session_id, stale_before)):
+            raise ValueError("Admin identity and stale cutoff are required.")
+        try:
+            cutoff = datetime.fromisoformat(stale_before)
+        except ValueError as exc:
+            raise ValueError("Invalid stale reconciliation cutoff.") from exc
+        if cutoff.tzinfo is None:
+            raise ValueError("Stale reconciliation cutoff must include a timezone.")
+        actor_hash = self._identity_hash(actor)
+        session_hash = self._identity_hash(session_id)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status, reconciliation_decision, reconciliation_actor_hash, "
+                "reconciliation_session_hash, updated_at FROM pending_approvals WHERE pending_id = ?",
+                (pending_id,),
+            ).fetchone()
+            if row is None:
+                db.execute("ROLLBACK")
+                return False
+            status, decision, stored_actor, stored_session, updated_at = row
+            # Allow an interrupted takeover to resume only for the same admin identity.
+            if (
+                status == "reconciling" and decision == "uncertain"
+                and hmac.compare_digest(stored_actor or "", actor_hash)
+                and hmac.compare_digest(stored_session or "", session_hash)
+            ):
+                db.execute("COMMIT")
+                return True
+            try:
+                last_update = datetime.fromisoformat(updated_at) if updated_at else None
+            except ValueError:
+                last_update = None
+            if status != "reconciling" or last_update is None or last_update.tzinfo is None or last_update > cutoff:
+                db.execute("ROLLBACK")
+                return False
+            cursor = db.execute(
+                """UPDATE pending_approvals
+                   SET reconciliation_decision = 'uncertain',
+                       reconciliation_actor_hash = ?, reconciliation_session_hash = ?,
+                       updated_at = ?
+                   WHERE pending_id = ? AND status = 'reconciling' AND updated_at = ?""",
+                (actor_hash, session_hash, now, pending_id, updated_at),
+            )
+            db.execute("COMMIT")
+            return cursor.rowcount == 1
+
     def finish_reconciliation(self, pending_id: str, *, decision: str) -> bool:
         """Finalize a reserved decision without allowing a competing operator to win."""
         terminal = {
