@@ -56,3 +56,20 @@ The context builder returns memory IDs and truncation metadata for future observ
 ### Trust boundary
 
 Retrieved memory is user-controlled data and may contain malicious instructions. Delimiter characters are escaped and the content is clearly marked as untrusted, but prompt wording is not a security boundary by itself. Tool authorization, filesystem/network isolation, and approval checks must remain enforced outside the model. Do not use memory content to modify policy or grant permissions.
+
+
+## Approved learning proposals
+
+`core.learning_service.LearningService` adds a separate, per-authenticated-user proposal queue for lessons learned from completed tasks. It is a service layer, not an HTTP endpoint and is not automatically called by the agent loop.
+
+1. A trusted caller submits a task reference and proposed lesson.
+2. The service requires memory consent and stores a redacted, bounded pending proposal.
+3. The owner can list pending proposals and explicitly approve or reject each one.
+4. Approval writes the lesson to that owner's existing memory namespace using category `lesson`.
+5. Rejection does not write personal memory. Approval is idempotent after the proposal has reached its approved state.
+
+The service hashes the verified user ID for proposal ownership and never accepts a caller-selected owner ID. It redacts common API-key, bearer-token and password-like patterns, but redaction is best-effort and is not a substitute for avoiding secrets in task summaries.
+
+**Important consistency boundary:** proposal metadata and personal memory currently live in separate storage systems (SQLite and the scoped JSON memory store). The approval operation serializes local calls and uses a SQLite write transaction, but cannot provide a true atomic transaction across both stores. A process or disk failure between the memory write and proposal commit can leave an orphaned lesson or require manual reconciliation. Do not claim distributed exactly-once semantics. A future transactional memory backend or durable outbox/idempotency key is required before multi-process production use.
+
+The service does not train or fine-tune a model, change system prompts, alter identity/policies, grant tools, or autonomously modify Yuki. Approved lessons are retrievable personal reference data only.
