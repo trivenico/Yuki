@@ -77,9 +77,10 @@ class ConversationServiceTests(unittest.TestCase):
             observed.append(received_identity)
             return self.loop
 
+        scoped_conversation = self.store.create_conversation(owner_id=identity.actor_id)
         service = ConversationService(self.store, self.loop, agent_loop_factory=factory)
         result = service.reply(
-            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            owner_id=identity.actor_id, conversation_id=scoped_conversation["conversation_id"],
             user_text="Scoped request", request_id="scoped-request", expected_version=0,
             tools=[], identity=identity,
         )
