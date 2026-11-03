@@ -1,5 +1,7 @@
 """Conservative model/device compatibility planning.
 
+Depends on the hardware inventory contract introduced by PR #528.
+
 This is a preflight estimator, not a runtime guarantee. It never loads a model,
 downloads artifacts, changes devices, or selects a provider. Actual runtime
 compatibility and live free memory must be independently verified.
