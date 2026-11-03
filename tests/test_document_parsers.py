@@ -15,6 +15,11 @@ class FakeEmbedder:
         return [[float(len(text) % 7 + 1), 1.0, 0.5] for text in texts]
 
 
+class FailingEmbedder(FakeEmbedder):
+    def embed(self, texts):
+        raise RuntimeError("local embedding model unavailable")
+
+
 class DocumentParserTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -106,6 +111,32 @@ class DocumentCoordinatorTests(unittest.TestCase):
         second = self.coordinator.index_file(docx_file, workspace=self.workspace)
         self.assertEqual(second["document_format"], "docx")
         self.assertGreater(second["vectors_indexed"], 0)
+
+    def test_embedding_failure_preserves_existing_source_and_vectors(self):
+        source = self.workspace / "stable.md"
+        source.write_text("Original Yuki knowledge stays indexed.", encoding="utf-8")
+        first = self.coordinator.index_file(source, workspace=self.workspace)
+        original_chunks = self.engine.get_source_chunks(first["source_id"])
+        original_ids = [chunk.chunk_id for chunk in original_chunks]
+        original_vectors = self.vectors.search(
+            [1.0, 0.0, 0.0], model_id=FakeEmbedder.model_id, limit=100
+        )
+        source.write_text("Replacement knowledge should not be committed.", encoding="utf-8")
+        failing = SemanticIndexCoordinator(
+            self.engine, self.vectors, FailingEmbedder()
+        )
+        with self.assertRaisesRegex(RuntimeError, "model unavailable"):
+            failing.index_file(source, workspace=self.workspace)
+        current = self.engine.get_source_chunks(first["source_id"])
+        self.assertEqual([chunk.chunk_id for chunk in current], original_ids)
+        self.assertIn("Original Yuki knowledge", current[0].content)
+        current_vectors = self.vectors.search(
+            [1.0, 0.0, 0.0], model_id=FakeEmbedder.model_id, limit=100
+        )
+        self.assertEqual(
+            {item["chunk_id"] for item in current_vectors},
+            {item["chunk_id"] for item in original_vectors},
+        )
 
     def test_detects_source_changed_between_parse_and_ingestion(self):
         source = self.workspace / "notes.md"
