@@ -1,6 +1,7 @@
 import json
 import unittest
 from unittest.mock import patch
+
 from providers.huggingface_discovery import (
     DiscoveryError, HuggingFaceDiscovery, normalize_model,
 )
@@ -9,10 +10,13 @@ from providers.huggingface_discovery import (
 class _Response:
     def __init__(self, data):
         self.data = data
+
     def __enter__(self):
         return self
+
     def __exit__(self, *args):
         return False
+
     def read(self, limit=-1):
         return self.data[:limit]
 
@@ -22,6 +26,7 @@ class _Opener:
         self.payload = payload
         self.request = None
         self.timeout = None
+
     def open(self, request, timeout):
         self.request, self.timeout = request, timeout
         return _Response(self.payload)
@@ -29,34 +34,51 @@ class _Opener:
 
 class HuggingFaceDiscoveryTests(unittest.TestCase):
     def test_normalizes_model_and_flags_unknown_license(self):
-        item = normalize_model({"id":"org/model","pipeline_tag":"text-generation",
-            "downloads":123,"likes":9,"tags":["license:apache-2.0","transformers"]})
+        item = normalize_model({
+            "id": "org/model", "pipeline_tag": "text-generation",
+            "downloads": 123, "likes": 9,
+            "tags": ["license:apache-2.0", "transformers"],
+            "gated": False, "library_name": "transformers",
+            "safetensors": {"parameters": {"BF16": 7000000000}},
+        })
         self.assertEqual(item["model_id"], "org/model")
         self.assertEqual(item["license"], "apache-2.0")
         self.assertEqual(item["review_status"], "needs_human_review")
         self.assertFalse(item["automatic_activation"])
+        self.assertEqual(item["gated_status"], "ungated")
+        self.assertEqual(item["safetensors_parameter_count"], 7000000000)
 
-        unknown = normalize_model({"id":"org/unknown","pipeline_tag":"text-generation"})
+        unknown = normalize_model({"id": "org/unknown", "pipeline_tag": "text-generation"})
         self.assertIn("license_not_reported", unknown["review_flags"])
+        self.assertIn("gated_model_access_review_required", unknown["review_flags"])
 
     def test_invalid_model_ids_are_rejected(self):
-        self.assertIsNone(normalize_model({"id":"../../etc/passwd"}))
-        self.assertIsNone(normalize_model({"id":"org/model?revision=main"}))
+        for model_id in ("../../etc/passwd", "org/model?revision=main", "org/..", "org/."):
+            self.assertIsNone(normalize_model({"id": model_id}))
         self.assertIsNone(normalize_model("not-an-object"))
+
+    def test_gated_and_private_metadata_is_explicit(self):
+        gated = normalize_model({"id": "org/gated", "gated": "manual"})
+        self.assertEqual(gated["gated_status"], "gated")
+        self.assertIn("gated_model_access_review_required", gated["review_flags"])
+        private = normalize_model({"id": "org/private", "private": True})
+        self.assertTrue(private["private"])
 
     def test_discovery_is_bounded_deduplicated_and_source_attributed(self):
         payload = json.dumps([
-            {"id":"org/model","pipeline_tag":"text-generation","downloads":5},
-            {"id":"org/model","pipeline_tag":"text-generation","downloads":5},
-            {"id":"org/second","pipeline_tag":"text-generation","downloads":2},
+            {"id": "org/model", "pipeline_tag": "text-generation", "downloads": 5},
+            {"id": "org/model", "pipeline_tag": "text-generation", "downloads": 5},
+            {"id": "org/second", "pipeline_tag": "text-generation", "downloads": 2},
+            {"id": "org/private", "private": True},
         ]).encode()
         opener = _Opener(payload)
-        result = HuggingFaceDiscovery(max_results=3, opener=opener).discover()
+        result = HuggingFaceDiscovery(max_results=4, opener=opener).discover()
         self.assertEqual(result["count"], 2)
         self.assertEqual(result["source"], "huggingface_hub_public_model_metadata")
         self.assertEqual(result["activation_policy"], "manual_review_required")
         self.assertEqual(opener.timeout, 10)
         self.assertIn("filter=text-generation", opener.request.full_url)
+        self.assertIn("full=true", opener.request.full_url)
         self.assertEqual(opener.request.get_method(), "GET")
 
     def test_task_sort_and_bounds_are_validated(self):
@@ -76,9 +98,20 @@ class HuggingFaceDiscoveryTests(unittest.TestCase):
         self.assertNotIn("hf_test_token", opener.request.full_url)
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer hf_test_token")
 
-    def test_invalid_json_fails_closed(self):
+    def test_invalid_token_is_rejected(self):
+        for token in ("bad\r\nheader", "x" * 4097, 123):
+            with self.subTest(token=type(token).__name__), self.assertRaises(ValueError):
+                HuggingFaceDiscovery(opener=_Opener(b"[]")).discover(token=token)
+
+    def test_invalid_json_and_non_list_fail_closed(self):
         with self.assertRaises(DiscoveryError):
             HuggingFaceDiscovery(opener=_Opener(b"not-json")).discover()
+        with self.assertRaises(DiscoveryError):
+            HuggingFaceDiscovery(opener=_Opener(b'{"models":[]}')).discover()
+
+    def test_response_size_is_bounded(self):
+        with self.assertRaises(DiscoveryError):
+            HuggingFaceDiscovery(opener=_Opener(b"x" * 1_500_001)).discover()
 
     @patch("providers.huggingface_discovery.datetime")
     def test_discovery_timestamp_is_utc(self, mock_datetime):
