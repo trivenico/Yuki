@@ -156,6 +156,15 @@ An optional configured `TaskStore` allows `enqueue_for_approval(plan_id)` to sub
 
 The planner intentionally does not contain model-specific prompt code. Local model orchestration, worker implementation, source connector authorization, checkpointed step execution and report publication are separate integration work.
 
+
+## Local-first provider default
+
+Yuki's default provider is now Ollama. `config.yaml` selects `provider: ollama` and a configurable starter model (`qwen3:8b`); the factory also defaults to Ollama when no provider key is supplied. Cloud providers remain available only through explicit provider selection or an explicitly configured hybrid task allow-list. There is no implicit cloud fallback.
+
+The configured model is not automatically downloaded by provider construction. First-run setup must inspect host hardware, check whether Ollama is installed and reachable, estimate a compatible model size, present the model/license/storage choice, and obtain user approval before downloading. The current default model may be too large for some computers; users should choose a smaller quantization/model when RAM or VRAM is limited. Model selection must be validated against the actual machine, not assumed from this config value.
+
+This is a personal-use, unmetered application policy: no application-level message/token quota is imposed. Physical limits still apply (model context window, RAM/VRAM, disk, throughput, thermal envelope and OS process limits). Runtime resource management should prefer streaming, checkpointing, context compaction and graceful backpressure, not artificial usage metering. Cloud API costs, if a user explicitly enables a cloud provider, remain controlled by that external provider.
+
 ## Local research retrieval worker
 
 `LocalResearchWorker` executes the local retrieval stage against the canonical `KnowledgeEngine` lexical index. It accepts an existing research plan, searches each question, de-duplicates chunks, preserves canonical source and chunk provenance, records unanswered questions, and persists an idempotent run record.
