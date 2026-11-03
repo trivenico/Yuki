@@ -389,7 +389,9 @@ class OneShotInvocationApprovalStore:
             if row[2] is not None and row[2] > _iso(now):
                 db.rollback()
                 return None
-            if row[0] not in {"launch_intent", "launching", "running"}:
+            # Once a worker has claimed the intent, a lease expiry is not proof
+            # that its external side effects stopped. Never reassign it here.
+            if row[0] != "launch_intent":
                 db.rollback()
                 return None
             token = int(row[3]) + 1
