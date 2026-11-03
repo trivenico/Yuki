@@ -199,11 +199,13 @@ class SQLitePendingApprovalStore:
                 raise
 
     def transition(self, pending_id: str, *, expected: str, new_status: str) -> bool:
+        reconciled = {"reconciled_completed", "reconciled_failed", "reconciled_uncertain"}
         allowed = {
             "pending": {"denied"},
-            "claimed": {"approved", "denied", "recovery_required"},
-            "approved": {"executing", "recovery_required"},
-            "executing": {"completed", "execution_failed", "recovery_required"},
+            "claimed": {"approved", "denied", "recovery_required"} | reconciled,
+            "approved": {"executing", "recovery_required"} | reconciled,
+            "executing": {"completed", "execution_failed", "recovery_required"} | reconciled,
+            "recovery_required": reconciled,
         }
         if new_status not in allowed.get(expected, set()):
             raise ValueError("Invalid approval lifecycle transition.")
@@ -229,6 +231,29 @@ class SQLitePendingApprovalStore:
             {"pending_id": row[0], "skill_id": row[1], "status": row[2], "updated_at": row[3] or ""}
             for row in rows
         ]
+
+    def find_recovery_by_reference(self, reference: str) -> dict[str, str] | None:
+        """Resolve a non-bearer 12-character suffix only when it is unambiguous."""
+        if not isinstance(reference, str) or len(reference) != 12 or not reference.isalnum():
+            return None
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT pending_id, skill_id, status, updated_at
+                   FROM pending_approvals
+                   WHERE substr(pending_id, -12) = ?
+                     AND status IN ('claimed', 'approved', 'executing', 'recovery_required')
+                   LIMIT 2""",
+                (reference,),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        return {
+            "pending_id": row[0],
+            "skill_id": row[1],
+            "status": row[2],
+            "updated_at": row[3] or "",
+        }
 
     def get_status(self, pending_id: str) -> str | None:
         with self._connect() as db:
