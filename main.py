@@ -267,24 +267,16 @@ def main():
             except Exception as exc:
                 print(f"Yuki > Recovery queue unavailable ({type(exc).__name__}).")
         elif command.startswith("/approvals resolve "):
-            parts = command.split(maxsplit=4)
-            if len(parts) < 4:
-                print("Yuki > Usage: /approvals resolve REF completed|failed|uncertain [note]")
+            parts = command.split()
+            if len(parts) != 4:
+                print("Yuki > Usage: /approvals resolve REF completed|failed|uncertain")
             else:
-                note = parts[4] if len(parts) == 5 else ""
                 try:
-                    resolved = agent.resolve_approval_recovery(
-                        parts[2], parts[3], note=note
-                    )
+                    resolved = agent.resolve_approval_recovery(parts[2], parts[3])
                     if resolved:
-                        print(
-                            "Yuki > Operator decision recorded. No skill was executed or retried."
-                        )
+                        print("Yuki > Operator decision recorded. No skill was executed or retried.")
                     else:
-                        print(
-                            "Yuki > Resolution not recorded. Check the reference, current state, "
-                            "and explicit operator confirmation."
-                        )
+                        print("Yuki > Resolution not recorded. Check the reference, current state, and explicit operator confirmation.")
                 except Exception as exc:
                     print(f"Yuki > Recovery resolution unavailable ({type(exc).__name__}).")
         elif command.startswith("/task "):
