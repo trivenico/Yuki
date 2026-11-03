@@ -32,6 +32,7 @@ class SkillContainerLaunchError(RuntimeError):
 class SkillContainerResult:
     returncode: int
     stdout: bytes
+    status: str
     timed_out: bool
     output_truncated: bool
     duration_seconds: float
@@ -260,10 +261,19 @@ def launch_skill_container(
             validate_instance(response["output"], output_schema)
         except (SkillRuntimeProtocolError, SkillSchemaError) as exc:
             raise SkillContainerLaunchError("skill runtime returned an invalid or schema-incompatible response") from exc
-    # Nonzero exits and timeouts remain explicit; they are never success.
+    # Return an explicit outcome so a supervisor cannot mistake an exit code
+    # or truncated protocol stream for a successful skill result.
+    if timed_out:
+        status = "timed_out"
+    elif output_limit_hit.is_set():
+        status = "output_limit_exceeded"
+    elif returncode != 0:
+        status = "failed"
+    else:
+        status = "succeeded"
     return SkillContainerResult(
-        returncode=int(returncode), stdout=bytes(output), timed_out=timed_out,
-        output_truncated=output_limit_hit.is_set(),
+        returncode=int(returncode), stdout=bytes(output), status=status,
+        timed_out=timed_out, output_truncated=output_limit_hit.is_set(),
         duration_seconds=max(0.0, time.monotonic() - started),
     )
 
