@@ -28,6 +28,11 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertFalse(unconfigured["ready"])
         self.assertEqual(unconfigured["status"], "api_key_not_configured")
 
+    def test_catalog_defaults_to_local_first_provider(self):
+        catalog = build_provider_catalog(config={}, environ={})
+        selected = [item["name"] for item in catalog if item["selected"]]
+        self.assertEqual(selected, ["ollama"])
+
     def test_ollama_requires_model_configuration(self):
         catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})
         item = next(x for x in catalog if x["name"] == "ollama")
