@@ -136,3 +136,10 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Recommendation: reuse existing task/runtime and sandbox foundations; do not introduce a second task engine. Finish Phase 2 identity/approval/recovery gates first. Then reconcile earlier phase serials before assigning any new numbered phase to agent hosting.
 - Security boundary: current Docker runner is not equivalent to a hardened multi-tenant sandbox or a gVisor/microVM boundary. No production parity claim is made.
 - This is a research/architecture artifact only; it does not mark any phase complete or waive Phase 1/2 gates.
+
+## Phase 2 follow-up — authorized stale recovery takeover
+
+- Added explicit operator/admin role to PermissionGate; default role is operator. The role must be populated by trusted server-side authentication, never client-provided input.
+- Added an admin-only, high-risk-confirmed takeover for stale `reconciling` approvals. A SQLite transaction replaces the old reservation with an admin-owned `uncertain` reservation, idempotent audit records the takeover, and successful completion returns the receipt to the recovery queue. Original skill execution is never retried.
+- Same-admin retry after audit outage is supported. Tests cover role denial, fresh reservation denial, stale takeover, audit integrity, and audit-failure retry.
+- Latest PR #498 head: `596cd7779638588b8f0139ca2aabd7020636241d`; 8 exact-head checks queued at inspection. Independent review, trusted API identity propagation, and production authorization integration remain open. No phase completion claimed.
