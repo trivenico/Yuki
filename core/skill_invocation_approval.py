@@ -340,6 +340,25 @@ class OneShotInvocationApprovalStore:
         finally:
             db.close()
 
+    def get_launch_intent(self, invocation_id: str) -> dict[str, str] | None:
+        """Return durable launch metadata for reconciliation; never returns payloads."""
+        try:
+            _identifier(invocation_id, "invocation_id")
+        except InvocationApprovalError:
+            return None
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT invocation_id, approval_id, binding_sha256, state, created_at, updated_at
+                   FROM skill_invocation_launch_intents WHERE invocation_id=?""",
+                (invocation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("invocation_id", "approval_id", "binding_sha256", "state", "created_at", "updated_at"),
+            row,
+        ))
+
     def transition_launch(
         self,
         invocation_id: str,
