@@ -5,8 +5,10 @@ from knowledge.embeddings import SentenceTransformerEmbedder
 from knowledge.vector_store import VectorStore
 from knowledge.hybrid_search import HybridKnowledgeSearch
 from knowledge.indexing_coordinator import SemanticIndexCoordinator
+from knowledge.document_parsers import DocumentParser, ParsedDocument
 
 __all__ = [
     "KnowledgeEngine", "KnowledgeResult", "SentenceTransformerEmbedder",
     "VectorStore", "HybridKnowledgeSearch", "SemanticIndexCoordinator",
+    "DocumentParser", "ParsedDocument",
 ]
