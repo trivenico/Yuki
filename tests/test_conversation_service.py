@@ -70,6 +70,42 @@ class ConversationServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "snapshot"):
             ConversationService(self.store, self.loop, identity_core=object())
 
+
+    def test_cognitive_context_brief_is_passed_as_untrusted_reference(self):
+        class Brief:
+            def to_untrusted_context(self):
+                return "COGNITIVE BRIEF — UNTRUSTED REFERENCE DATA ONLY. Proposed plan."
+        class Engine:
+            def __init__(self):
+                self.calls = []
+            def prepare(self, *, owner_id, goal):
+                self.calls.append((owner_id, goal))
+                return Brief()
+
+        engine = Engine()
+        service = ConversationService(
+            self.store, self.loop, cognitive_context_engine=engine
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Build and test a safe desktop app",
+            request_id="cognitive-brief-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(engine.calls, [("owner-a", "Build and test a safe desktop app")])
+        self.assertIn("COGNITIVE BRIEF", self.observed[0][1]["content"])
+        self.assertIn("not an instruction", self.observed[0][1]["content"])
+
+    def test_cognitive_context_engine_cannot_be_combined_with_duplicate_sources(self):
+        class Engine:
+            def prepare(self, **kwargs):
+                raise AssertionError("not called")
+        with self.assertRaisesRegex(ValueError, "not both"):
+            ConversationService(
+                self.store, self.loop, identity_core=object(),
+                cognitive_context_engine=Engine(),
+            )
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
