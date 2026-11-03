@@ -65,6 +65,14 @@ class EvidenceLedgerTests(unittest.TestCase):
         self.assertEqual(set(reviewed["reviews"][0]["source_ids"]),
                          {self.sources[0], self.sources[1]})
 
+    def test_refuting_only_evidence_is_not_reported_as_supported(self):
+        claim = self.ledger.create_claim(
+            "Yuki does not use remote-only inference.",
+            [self.chunk_ids[0]],
+            stance="refutes",
+        )
+        self.assertEqual(claim["status"], "contested")
+
     def test_conflicting_evidence_blocks_verification(self):
         claim = self.ledger.create_claim(
             "Yuki uses local semantic retrieval.", [self.chunk_ids[0]]
