@@ -37,3 +37,26 @@ Retrieved chunks are evidence, not instructions. Hybrid search does not grant to
 ## Current limitations
 
 This is an optional semantic retrieval foundation, not model training or autonomous self-improvement. It does not download models at runtime, fine-tune weights, crawl websites, or verify factual claims. A later semantic indexing service should coordinate source re-indexing and vector cleanup; do not assume deleting a lexical source automatically deletes its vector records yet.
+
+## Coordinated semantic indexing
+
+Use `SemanticIndexCoordinator` to keep the lexical source database and vector store aligned:
+
+```python
+from knowledge import (
+    KnowledgeEngine, VectorStore, SentenceTransformerEmbedder,
+    SemanticIndexCoordinator,
+)
+
+engine = KnowledgeEngine()
+vectors = VectorStore("YukiData/knowledge-vectors.sqlite3")
+embedder = SentenceTransformerEmbedder.from_local_cache(
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
+coordinator = SemanticIndexCoordinator(engine, vectors, embedder)
+result = coordinator.index_file("docs/architecture.md", workspace=".")
+```
+
+The coordinator embeds canonical chunks in bounded batches, upserts the new vectors, and only then prunes stale vectors for that source/model. Source removal also removes vectors for the configured model. If embedding fails, indexing raises rather than reporting success. The lexical source and vector databases are separate SQLite files, so a process crash between ingestion and vector synchronization can leave stale or missing vectors; hybrid retrieval validates every semantic candidate against canonical chunks and ignores stale IDs. Re-run indexing to reconcile the source.
+
+The example model name is illustrative: cache the model explicitly before runtime. Model suitability, multilingual support, license, and performance must be validated before selecting a production default.
