@@ -138,7 +138,8 @@ class IdentityCore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=".yuki-identity-", dir=str(self.path.parent))
         try:
-            os.fchmod(fd, 0o600)
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump(envelope, stream, ensure_ascii=False, indent=2)
                 stream.flush()
