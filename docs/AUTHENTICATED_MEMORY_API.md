@@ -87,3 +87,8 @@ The service does not train or fine-tune a model, change system prompts, alter id
 `companion.identity_core.IdentityCore` provides a local, versioned identity profile separate from model-provider configuration and user memories. It derives defaults from `yuki_identity.py`, preserves the canonical product name, validates a strict field allowlist, and supports explicit-approval updates with optimistic revision checks and reset. Writes use a same-directory temporary file, restrictive POSIX permissions, fsync and atomic replace.
 
 The SHA-256 digest detects accidental corruption only; it is not a signature or protection against an attacker who can rewrite the profile and digest. Identity configuration does not grant tool access, alter security policy, or establish machine-verifiable consciousness. The current implementation is a local single-process file store; multi-process writers need an inter-process lock or transactional database.
+
+
+## Identity profile in the conversation runtime
+
+`build_conversation_runtime(..., identity_core=...)` optionally injects the existing `IdentityCore` into `ConversationService`. Each model turn receives the current profile as JSON-encoded descriptive system metadata, ahead of any caller-supplied system text. Profile values are explicitly non-authoritative preferences; they cannot grant tool permissions or override system/developer policy. The integration is optional and does not change existing deployments unless an identity core is supplied. The local identity file remains a single-process store and must be protected by OS account permissions.
