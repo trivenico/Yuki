@@ -5,6 +5,7 @@ claims never become graph entities or relations.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -55,10 +56,18 @@ class VerifiedKnowledgeGraphSync:
                     graph_entities_json TEXT NOT NULL,
                     graph_relations_json TEXT NOT NULL,
                     evidence_ids_json TEXT NOT NULL,
+                    plan_hash TEXT NOT NULL DEFAULT '',
                     synced_at TEXT NOT NULL DEFAULT
                         (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
                 )
             """)
+            columns = {row["name"] for row in db.execute(
+                "PRAGMA table_info(verified_graph_sync)"
+            ).fetchall()}
+            if "plan_hash" not in columns:
+                db.execute(
+                    "ALTER TABLE verified_graph_sync ADD COLUMN plan_hash TEXT NOT NULL DEFAULT ''"
+                )
 
     @staticmethod
     def _validate_entities(entities):
@@ -128,14 +137,23 @@ class VerifiedKnowledgeGraphSync:
         prepared_entities = self._validate_entities(entities)
         prepared_relations = self._validate_relations(list(relations), prepared_entities)
         evidence_ids = sorted(item["evidence_id"] for item in supporting)
+        plan = {
+            "claim_text": claim["claim_text"],
+            "entities": prepared_entities,
+            "relations": prepared_relations,
+            "evidence_ids": evidence_ids,
+        }
+        plan_hash = hashlib.sha256(
+            json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
         with self._lock, self._session() as db:
             existing = db.execute(
                 "SELECT * FROM verified_graph_sync WHERE claim_id=?", (claim_id,)
             ).fetchone()
             if existing:
-                if json.loads(existing["evidence_ids_json"]) != evidence_ids:
-                    raise ValueError("Claim evidence changed after synchronization; review and reconcile before retry.")
+                if existing["plan_hash"] != plan_hash:
+                    raise ValueError("Claim, evidence or graph projection changed after synchronization; review and reconcile before retry.")
                 return {
                     "claim_id": claim_id, "already_synced": True,
                     "entity_ids": json.loads(existing["graph_entities_json"]),
@@ -165,10 +183,10 @@ class VerifiedKnowledgeGraphSync:
             try:
                 db.execute(
                     """INSERT INTO verified_graph_sync
-                       (claim_id, graph_entities_json, graph_relations_json, evidence_ids_json)
-                       VALUES (?, ?, ?, ?)""",
+                       (claim_id, graph_entities_json, graph_relations_json, evidence_ids_json, plan_hash)
+                       VALUES (?, ?, ?, ?, ?)""",
                     (claim_id, json.dumps(entity_ids), json.dumps(relation_ids),
-                     json.dumps(evidence_ids)),
+                     json.dumps(evidence_ids), plan_hash),
                 )
                 db.commit()
             except Exception:
@@ -191,5 +209,6 @@ class VerifiedKnowledgeGraphSync:
             "entity_ids": json.loads(row["graph_entities_json"]),
             "relation_ids": json.loads(row["graph_relations_json"]),
             "evidence_ids": json.loads(row["evidence_ids_json"]),
+            "plan_hash": row["plan_hash"],
             "synced_at": row["synced_at"],
         }
