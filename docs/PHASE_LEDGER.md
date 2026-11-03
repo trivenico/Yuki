@@ -150,3 +150,8 @@ This evidence changes the sequencing: **Phase 1 / Phase 2 are the earliest expli
 - Authenticated API conversation ownership, cancellation keys, streaming and history now consistently use the verified identity actor ID. Provider selection admin checks use the resolved identity role.
 - Added `PermissionGate.from_authenticated_identity`; only admin/operator roles may create an approval gate. End-user role is denied. Added six focused tests for pairing, role policy, forged objects, revoked sessions, malformed tokens and bearer non-disclosure.
 - Latest PR #498 head: `59f2ea5dcb85825b69396f0102257a310f894908`; 15 exact-head checks queued at inspection, none failed. Branch 113 ahead / 1 behind main. CI and mainline reconciliation remain open. This is an integration seam: existing CLI approvals are not yet a multi-user web approval workflow. No phase completion claimed.
+
+## Phase 2 CI correction — admin takeover audit allowlist
+
+- Full Python 3.11 CI on the prior identity-propagation head exposed two cross-platform failures in the stale-admin-takeover tests. Root cause: the append-only audit event allowlist omitted `admin_reconciliation_takeover`, so the correctly fail-closed audit append rejected the new event after the atomic reservation.
+- Added the event type to the explicit audit allowlist. Tests were not weakened. Latest fix head: `cf0099b94c214d83326ac464846d7ae570a3ef57`; 39 exact-head checks registered, 15 running and 24 queued at initial inspection. Revalidation pending.
