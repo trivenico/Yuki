@@ -93,7 +93,9 @@ class YukiConversationAPI:
             user, session_token = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
-            identity = AuthenticatedIdentity.from_session(user, session_token)
+            identity = AuthenticatedIdentity.from_session(self.auth, session_token)
+            if identity.actor_id != user.user_id:
+                return await self._respond(send, 401, {"error": "authentication_required"})
 
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
