@@ -29,7 +29,7 @@ _LIMIT_FIELDS = {
     "cpu_millis": (100, 64000),
     "max_processes": (1, 1024),
     "max_input_bytes": (1, 1048576),
-    "max_output_bytes": (1, 16777216),
+    "max_output_bytes": (1, 1048576),
 }
 
 
