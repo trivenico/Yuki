@@ -6,7 +6,6 @@ import importlib
 import json
 import os
 import sys
-import traceback
 
 
 def _write_response(fd: int, invocation_id: str, status: str, output: object) -> None:
@@ -21,7 +20,12 @@ def _write_response(fd: int, invocation_id: str, status: str, output: object) ->
             "protocol_version": 1, "invocation_id": invocation_id,
             "status": "failed", "output": {"error": "output limit exceeded"},
         }, separators=(",", ":")).encode("utf-8")
-    os.write(fd, payload)
+    view = memoryview(payload)
+    while view:
+        written = os.write(fd, view)
+        if written <= 0:
+            raise OSError("protocol response pipe closed")
+        view = view[written:]
 
 
 def main() -> int:
