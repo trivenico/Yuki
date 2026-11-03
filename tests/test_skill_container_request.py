@@ -91,7 +91,12 @@ class SkillContainerRequestTests(unittest.TestCase):
         with stage_skill_artifact(self.artifact, self.manifest, staging_parent=self.tmp.name) as staged:
             binding = self._binding(staged, arguments)
             payload = build_skill_runtime_input(binding, arguments, max_input_bytes=65536)
-            self.assertEqual(payload, b'{"format":"json"}')
+            import json
+            envelope = json.loads(payload)
+            self.assertEqual(envelope["arguments"], arguments)
+            self.assertEqual(envelope["protocol_version"], 1)
+            self.assertEqual(envelope["invocation_id"], "invocation")
+            self.assertEqual(envelope["entrypoint"], self.manifest.entrypoint)
             with self.assertRaises(SkillContainerRequestError):
                 build_skill_runtime_input(binding, {"format": "csv"}, max_input_bytes=65536)
             with self.assertRaises(SkillContainerRequestError):
