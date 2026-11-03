@@ -115,24 +115,24 @@ class KnowledgeEngine:
         path: str | Path, workspace: str | Path, *, allow_extracted_formats: bool = False
     ) -> tuple[Path, Path]:
         workspace_path = Path(workspace).expanduser()
-        workspace_lexical = workspace_path.absolute()
         root = workspace_path.resolve(strict=True)
         supplied = Path(path).expanduser()
-        candidate = supplied if supplied.is_absolute() else workspace_lexical / supplied
+        candidate = supplied if supplied.is_absolute() else root / supplied
         try:
-            relative = candidate.absolute().relative_to(workspace_lexical)
-        except ValueError as exc:
+            resolved = candidate.resolve(strict=True)
+            relative = resolved.relative_to(root)
+        except (ValueError, OSError) as exc:
             raise ValueError("Knowledge source must be inside the approved workspace.") from exc
-        candidate = root / relative
 
+        # Reject symlinks within the approved workspace without mistaking
+        # platform aliases such as macOS /var -> /private/var for escapes.
         cursor = root
         for part in relative.parts:
             cursor = cursor / part
             if cursor.is_symlink():
                 raise ValueError("Symbolic links are not permitted as knowledge sources.")
 
-        resolved = candidate.resolve(strict=True)
-        if root not in resolved.parents or not resolved.is_file():
+        if not resolved.is_file():
             raise ValueError("Knowledge source must be a regular file inside the workspace.")
         allowed_suffixes = (
             KnowledgeEngine.EXTRACTED_SUFFIXES
