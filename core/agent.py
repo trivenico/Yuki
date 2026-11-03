@@ -1,5 +1,6 @@
 """Bounded, permission-gated tool loop; never exposes arbitrary shell execution."""
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 from typing import Iterable, Optional
 
@@ -136,6 +137,56 @@ class YukiCoreAgent:
         except Exception:
             # Keep the reservation visible. The same operator can safely retry;
             # a different decision/operator cannot steal an in-flight resolution.
+            return False
+
+    def take_over_stale_approval_recovery(
+        self, reference: str, *, stale_after_seconds: int = 900
+    ) -> bool:
+        """Admin-only takeover of a stale reconciliation; never executes the original skill."""
+        coordinator = self.approval_coordinator
+        store = getattr(coordinator, "pending_store", None)
+        audit = getattr(coordinator, "audit_log", None)
+        if store is None or audit is None or not self.permission_gate.is_admin:
+            return False
+        if type(stale_after_seconds) is not int or not 60 <= stale_after_seconds <= 86400:
+            return False
+        record = store.find_recovery_by_reference(reference)
+        if record is None or record.get("status") != "reconciling":
+            return False
+        actor = self.permission_gate.actor_id
+        session_id = self.permission_gate.session_id
+        if not isinstance(actor, str) or not actor.strip() or not isinstance(session_id, str) or not session_id.strip():
+            return False
+        confirmed = self.permission_gate.confirm_durable_action(
+            action=f"approval-recovery-admin-takeover:{reference}",
+            reason=(
+                "Administrative takeover of a stale reconciliation. The prior reservation will be "
+                "superseded and the item returned to the recovery queue as uncertain. This does not "
+                f"execute or retry skill '{record['skill_id']}'."
+            ),
+            risk="high",
+        )
+        if not confirmed:
+            return False
+        stale_before = (datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat()
+        try:
+            if not store.takeover_reconciliation(
+                record["pending_id"], actor=actor, session_id=session_id, stale_before=stale_before
+            ):
+                return False
+            audit.append(
+                event_type="admin_reconciliation_takeover",
+                pending_id=record["pending_id"],
+                actor=actor,
+                session_id=session_id,
+                skill_id=record["skill_id"],
+                idempotency_key=hashlib.sha256(
+                    f"approval-admin-takeover:{record['pending_id']}:{actor}:{session_id}".encode("utf-8")
+                ).hexdigest(),
+            )
+            return store.finish_reconciliation(record["pending_id"], decision="uncertain")
+        except Exception:
+            # The reservation remains admin-owned and retryable by the same identity.
             return False
 
     def _execute_registered_skill(self, name: str, argument: str) -> AgentResponse:
