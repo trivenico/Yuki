@@ -118,19 +118,36 @@ class KnowledgeEngine:
         root = workspace_path.resolve(strict=True)
         supplied = Path(path).expanduser()
         candidate = supplied if supplied.is_absolute() else root / supplied
+
+        # Inspect the caller's lexical path before resolving it so a symlink
+        # that points back inside the workspace cannot disappear during
+        # canonicalization. Relative paths are rooted at the canonical root.
+        lexical_relative = None
+        if not supplied.is_absolute():
+            try:
+                lexical_relative = candidate.relative_to(root)
+            except ValueError as exc:
+                raise ValueError("Knowledge source must be inside the approved workspace.") from exc
+        else:
+            try:
+                lexical_relative = candidate.absolute().relative_to(workspace_path.absolute())
+            except ValueError:
+                # Windows short/long path aliases and macOS /var -> /private/var
+                # can differ lexically; canonical containment below remains authoritative.
+                lexical_relative = None
+
+        if lexical_relative is not None:
+            cursor = root
+            for part in lexical_relative.parts:
+                cursor = cursor / part
+                if cursor.is_symlink():
+                    raise ValueError("Symbolic links are not permitted as knowledge sources.")
+
         try:
             resolved = candidate.resolve(strict=True)
             relative = resolved.relative_to(root)
         except (ValueError, OSError) as exc:
             raise ValueError("Knowledge source must be inside the approved workspace.") from exc
-
-        # Reject symlinks within the approved workspace without mistaking
-        # platform aliases such as macOS /var -> /private/var for escapes.
-        cursor = root
-        for part in relative.parts:
-            cursor = cursor / part
-            if cursor.is_symlink():
-                raise ValueError("Symbolic links are not permitted as knowledge sources.")
 
         if not resolved.is_file():
             raise ValueError("Knowledge source must be a regular file inside the workspace.")
