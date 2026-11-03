@@ -1,6 +1,7 @@
 import unittest
 
 from providers.factory import create_provider
+from providers.anthropic import AnthropicProvider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
@@ -35,6 +36,17 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
 
+
+
+    def test_anthropic_provider_requires_configured_model_and_uses_env_key(self):
+        provider = create_provider(
+            {"provider": "anthropic", "anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "secret"},
+        )
+        self.assertIsInstance(provider, AnthropicProvider)
+        self.assertTrue(provider.is_available())
+        with self.assertRaisesRegex(ValueError, "model"):
+            create_provider({"provider": "anthropic"}, environ={})
 
 if __name__ == "__main__":
     unittest.main()

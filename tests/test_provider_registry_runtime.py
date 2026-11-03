@@ -12,7 +12,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
-        self.assertFalse(entries["anthropic"]["implemented"])
+        self.assertTrue(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
@@ -57,7 +57,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_unimplemented_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
-        message = manager.select("anthropic")
+        message = manager.select("deepseek")
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
 
@@ -66,6 +66,20 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
+
+
+    def test_selected_anthropic_provider_exposes_native_agent_streaming(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        from providers.anthropic import AnthropicProvider
+        manager = ProviderManager(
+            {"provider": "anthropic", "anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "test-key"},
+        )
+        self.assertEqual(manager.select("anthropic"), "Selected provider: anthropic")
+        self.assertIsInstance(manager.create_selected_adapter(), AnthropicProvider)
+        adapter = manager.create_selected_agent_model()
+        self.assertIsInstance(adapter, ProviderAgentAdapter)
+        self.assertTrue(callable(adapter.stream_model))
 
 if __name__ == "__main__":
     unittest.main()

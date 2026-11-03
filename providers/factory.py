@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 
+from providers.anthropic import AnthropicProvider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
@@ -31,6 +32,9 @@ def create_provider(config=None, *, environ=None):
             base_url=str(env.get("YUKI_OPENAI_BASE_URL", "https://api.openai.com/v1")),
             environ=env,
         )
+    if selected == "anthropic":
+        model = str(env.get("YUKI_ANTHROPIC_MODEL", cfg.get("anthropic_model", ""))).strip()
+        return AnthropicProvider(model, environ=env)
     if selected == "gemini":
         return GeminiCLIProvider(
             timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
@@ -38,7 +42,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, anthropic, ollama, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
