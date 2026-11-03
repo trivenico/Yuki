@@ -24,13 +24,24 @@ class SkillContainerRequestError(ValueError):
 
 @dataclass(frozen=True)
 class SkillContainerRequest:
+    actor_id: str
+    tenant_id: str
+    task_id: str
     invocation_id: str
+    skill_id: str
     worker_id: str
     fencing_token: int
     binding_sha256: str
     manifest_sha256: str
     artifact_sha256: str
     staging_sha256: str
+    argument_sha256: str
+    entrypoint: str
+    input_schema_sha256: str
+    output_schema_sha256: str
+    capabilities: tuple[str, ...]
+    read_grants: tuple[str, ...]
+    write_grants: tuple[str, ...]
     image: str
     workspace: str
     mount_target: str
@@ -104,11 +115,13 @@ def build_skill_container_request(
 
     expected_manifest = manifest_sha256(manifest)
     checks = (
+        (binding.skill_id, manifest.skill_id),
         (binding.manifest_sha256, expected_manifest),
         (binding.artifact_sha256, manifest.artifact_sha256),
+        (binding.argument_sha256, binding.argument_sha256),
+        (binding.input_schema_sha256, manifest.input_schema_sha256),
         (binding.runtime_image, manifest.runtime_image),
         (binding.entrypoint, manifest.entrypoint),
-        (binding.input_schema_sha256, manifest.input_schema_sha256),
         (binding.capabilities, manifest.capabilities),
         (binding.resource_limits, manifest.resource_limits),
         (binding.staging_sha256, staged.tree_sha256),
@@ -133,13 +146,24 @@ def build_skill_container_request(
 
     limits = dict(manifest.resource_limits)
     return SkillContainerRequest(
+        actor_id=binding.actor_id,
+        tenant_id=binding.tenant_id,
+        task_id=binding.task_id,
         invocation_id=binding.invocation_id,
+        skill_id=binding.skill_id,
         worker_id=worker_id,
         fencing_token=fencing_token,
         binding_sha256=binding.binding_sha256,
         manifest_sha256=expected_manifest,
         artifact_sha256=manifest.artifact_sha256,
         staging_sha256=staged.tree_sha256,
+        argument_sha256=binding.argument_sha256,
+        entrypoint=manifest.entrypoint,
+        input_schema_sha256=manifest.input_schema_sha256,
+        output_schema_sha256=manifest.output_schema_sha256,
+        capabilities=binding.capabilities,
+        read_grants=binding.read_grants,
+        write_grants=binding.write_grants,
         image=manifest.runtime_image,
         workspace=str(resolved),
         mount_target="/yuki/skill",
