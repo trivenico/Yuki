@@ -215,7 +215,9 @@ class SkillInvocationApprovalTests(unittest.TestCase):
             first_binding.invocation_id, first_binding.binding_sha256,
             new_state="launching",
         ))
+        self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "launching")
         self.assertEqual(self.store.recover_interrupted_launches(), 1)
+        self.assertEqual(self.store.get_launch_intent(first_binding.invocation_id)["state"], "uncertain")
         self.assertFalse(self.store.transition_launch(
             first_binding.invocation_id, first_binding.binding_sha256,
             new_state="running",
