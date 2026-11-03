@@ -248,7 +248,7 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             )
 
             resolved = agent.resolve_approval_recovery(
-                item.pending_id[-12:], "completed", note="Verified output in destination."
+                item.pending_id[-12:], "completed"
             )
 
             self.assertTrue(resolved)
