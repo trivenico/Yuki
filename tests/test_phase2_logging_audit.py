@@ -349,6 +349,30 @@ class PhaseTwoLoggingAuditTests(unittest.TestCase):
             )
             self.assertTrue(audit.verify_chain())
 
+    def test_audit_idempotency_key_prevents_duplicate_reconciliation_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            kwargs = {
+                "event_type": "reconciliation_completed",
+                "pending_id": "receipt-for-idempotency",
+                "actor": "operator",
+                "session_id": "operator-session",
+                "skill_id": "files.write",
+                "idempotency_key": "reconcile-key-001",
+            }
+            first = audit.append(**kwargs)
+            second = audit.append(**kwargs)
+
+            self.assertEqual(first, second)
+            self.assertEqual(len(audit.list_events()), 1)
+            self.assertEqual(audit.list_events()[0]["event_key"], "reconcile-key-001")
+            self.assertTrue(audit.verify_chain())
+
+            with self.assertRaises(ValueError):
+                audit.append(**{**kwargs, "skill_id": "different.skill"})
+            self.assertEqual(len(audit.list_events()), 1)
+            self.assertTrue(audit.verify_chain())
+
     def test_audit_failure_prevents_approval(self):
         class BrokenAudit:
             def append(self, **kwargs):
