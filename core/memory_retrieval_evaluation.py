@@ -35,6 +35,14 @@ def reciprocal_rank(retrieved_ids: Sequence[str], relevant_ids: Iterable[str]) -
     return 0.0
 
 
+def mean_reciprocal_rank(
+    result_sets: Iterable[tuple[Sequence[str], Iterable[str]]],
+) -> float:
+    """Mean reciprocal rank across independent query result/relevance pairs."""
+    scores = [reciprocal_rank(results, relevant) for results, relevant in result_sets]
+    return sum(scores) / len(scores) if scores else 0.0
+
+
 def ndcg_at_k(
     retrieved_ids: Sequence[str],
     relevance_by_id: Mapping[str, float],
@@ -50,15 +58,25 @@ def ndcg_at_k(
         if not math.isfinite(value) or value < 0:
             raise ValueError("relevance_must_be_finite_and_nonnegative")
 
+    # Subtracting the maximum relevance is a common positive scale factor
+    # across all gains, so nDCG is unchanged while exponent overflow is avoided.
+    max_relevance = max(relevance_by_id.values(), default=0.0)
+
     def gain(memory_id: str, rank: int) -> float:
-        return (2.0 ** relevance_by_id.get(memory_id, 0.0) - 1.0) / math.log2(rank + 1)
+        relevance = relevance_by_id.get(memory_id, 0.0)
+        scaled_gain = math.exp2(relevance - max_relevance)
+        return scaled_gain / math.log2(rank + 1)
 
     dcg = sum(gain(memory_id, rank) for rank, memory_id in enumerate(retrieved_ids[:k], 1))
     ideal = sorted(relevance_by_id.values(), reverse=True)[:k]
     idcg = sum(
-        (2.0 ** value - 1.0) / math.log2(rank + 1)
+        math.exp2(value - max_relevance) / math.log2(rank + 1)
         for rank, value in enumerate(ideal, 1)
     )
+    # Zero relevance has equal gain for every item in this scaled form.
+    # Standard nDCG convention reports zero when there is no positive gain.
+    if max_relevance == 0:
+        return 0.0
     return dcg / idcg if idcg else 0.0
 
 
