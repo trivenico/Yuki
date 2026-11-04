@@ -336,9 +336,9 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        cancelled = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="cancelled", error_code="cancelled")
-        self.store.append_task_event(task_id, kind="task.cancelled", actor_id=actor,
-                                     payload={"state_version": cancelled.version},
-                                     expected_version=cancelled.version)
+        cancelled = self.store.transition(
+            task_id, expected_version=expected_version, to_state="cancelled",
+            error_code="cancelled", event_kind="task.cancelled",
+            event_actor_id=actor, event_payload={"state_version": expected_version + 1},
+        )
         return self._record(self.store.get(task_id))
