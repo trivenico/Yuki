@@ -235,22 +235,30 @@ class SpecialistWorkerTests(unittest.TestCase):
 
         def slow_handler(_argument):
             started.set()
-            if not release.wait(timeout=5):
+            if not release.wait(timeout=30):
                 raise TimeoutError("test handler timed out")
             return "late provider response"
 
         worker = self.worker({"code-review": slow_handler})
         thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
         thread.start()
-        self.assertTrue(started.wait(timeout=5), "worker did not start handler")
-        running = self.store.get(task_id)
-        cancelled = self.runtime.cancel(
-            actor_id="alice", task_id=task_id, expected_version=running.version,
-        )
-        self.assertEqual(cancelled.state, "cancelled")
-        release.set()
-        thread.join(timeout=5)
+        try:
+            # Windows CI runners can be heavily loaded while importing the
+            # worker stack and initializing SQLite. Keep the test bounded but
+            # avoid treating ordinary runner startup latency as a cancellation bug.
+            self.assertTrue(started.wait(timeout=30), "worker did not start handler")
+            running = self.store.get(task_id)
+            cancelled = self.runtime.cancel(
+                actor_id="alice", task_id=task_id, expected_version=running.version,
+            )
+            self.assertEqual(cancelled.state, "cancelled")
+        finally:
+            # Always release and join the worker, including when an assertion
+            # fails, so TemporaryDirectory cleanup cannot race an open DB handle.
+            release.set()
+            thread.join(timeout=15)
         self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
+        self.assertIn("result", outcome, "worker exited without returning a task result")
         self.assertEqual(outcome["result"].state, "cancelled")
         self.assertEqual(self.store.get(task_id).state, "cancelled")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
