@@ -276,6 +276,22 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.recover_expired(actor_id="supervisor", limit=1), [],
         )
 
+    def test_bulk_recovery_skips_malformed_and_timezone_naive_expiries(self):
+        for index, expiry in enumerate(("not-a-timestamp", "2000-01-01T00:00:00")):
+            task = self.create(f"bulk-invalid-expiry-{index}")
+            self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+        self.assertEqual(
+            self.runtime.recover_expired(actor_id="supervisor", limit=10), [],
+        )
+        self.assertTrue(all(
+            self.store.get(f"task-{index}") is None for index in range(2)
+        ))
+
     def test_recovery_rejects_malformed_or_timezone_naive_lease_expiry(self):
         for invalid_expiry in ("not-a-timestamp", "2000-01-01T00:00:00"):
             with self.subTest(invalid_expiry=invalid_expiry):
