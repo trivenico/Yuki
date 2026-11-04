@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import heapq
 import math
+import threading
+import time
+from collections import deque
 from typing import Callable, Sequence
 
 from core.agent_memory import AgentMemoryStore
@@ -41,6 +44,44 @@ class AgentMemoryRetriever:
         self.embed = embed
         self.embedding_index = embedding_index
         self.max_candidates = max_candidates
+        self.last_retrieval_stats: dict = {}
+        self._latency_samples_ms = deque(maxlen=256)
+        self._stats_lock = threading.Lock()
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, max(0, math.ceil(percentile * len(ordered)) - 1))
+        return round(ordered[index], 3)
+
+    def latency_percentiles(self) -> dict:
+        """Return bounded rolling p50/p95 latency; no query or memory data is retained."""
+        with self._stats_lock:
+            samples = list(self._latency_samples_ms)
+        return {
+            "sample_count": len(samples),
+            "p50_ms": self._percentile(samples, 0.50),
+            "p95_ms": self._percentile(samples, 0.95),
+        }
+
+    def _publish_stats(self, *, started: float, scanned: int, candidates: int,
+                       embed_calls: int, cache_hits: int, cache_misses: int) -> None:
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        with self._stats_lock:
+            self._latency_samples_ms.append(elapsed_ms)
+            self.last_retrieval_stats = {
+                "candidate_rows_scanned": scanned,
+                "authorized_candidates_ranked": candidates,
+                "embedding_calls": embed_calls,
+                "cache_hits": cache_hits,
+                "cache_misses": cache_misses,
+                "cache_hit_rate": round(cache_hits / (cache_hits + cache_misses), 6)
+                    if cache_hits + cache_misses else 0.0,
+                "elapsed_ms": round(elapsed_ms, 3),
+                "latency_sample_count": len(self._latency_samples_ms),
+            }
 
     @staticmethod
     def _vector(values) -> list[float]:
@@ -112,6 +153,7 @@ class AgentMemoryRetriever:
             cursor = {"created_at": last["created_at"], "memory_id": last["memory_id"]}
             if len(page) < page_size:
                 break
+        self._last_candidate_scan_count = scanned
         return candidates
 
     def retrieve(
@@ -125,6 +167,8 @@ class AgentMemoryRetriever:
         verified_only: bool = False,
         min_relevance: float = 0.0,
     ) -> list[dict]:
+        started = time.perf_counter()
+        embed_calls = cache_hits = cache_misses = 0
         if not isinstance(query, str) or not query.strip() or len(query) > 1000:
             raise ValueError("invalid_memory_query")
         if type(limit) is not int or not 1 <= limit <= 20:
@@ -139,9 +183,15 @@ class AgentMemoryRetriever:
             actor_id=actor_id, agent_id=agent_id,
             include_shared=include_shared, verified_only=verified_only,
         )
+        scanned = getattr(self, "_last_candidate_scan_count", 0)
         if not memories:
+            self._publish_stats(
+                started=started, scanned=scanned, candidates=0,
+                embed_calls=0, cache_hits=0, cache_misses=0,
+            )
             return []
 
+        embed_calls += 1
         query_vector = self._vector(self.embed(query.strip()))
         now = datetime.now(timezone.utc)
         # Retain only top-k results. This avoids holding every candidate vector
@@ -156,9 +206,12 @@ class AgentMemoryRetriever:
             cached = {}
             if self.embedding_index is not None:
                 cached = self.embedding_index.get_many(actor_id=actor_id, memories=batch)
+            cache_hits += len(cached)
             missing = [item for item in batch if item["memory_id"] not in cached]
+            cache_misses += len(missing)
             missing_vectors = []
             for item in missing:
+                embed_calls += 1
                 vector = self._vector(self.embed(item["content"]))
                 if len(vector) != len(query_vector):
                     raise ValueError("embedding_dimensions_must_match")
@@ -199,4 +252,8 @@ class AgentMemoryRetriever:
             del batch_vectors, cached, missing_vectors
 
         top.sort(key=lambda entry: entry[:3], reverse=True)
+        self._publish_stats(
+            started=started, scanned=scanned, candidates=len(memories),
+            embed_calls=embed_calls, cache_hits=cache_hits, cache_misses=cache_misses,
+        )
         return [entry[3] for entry in top]
