@@ -9,6 +9,8 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.reasoning.context_builder import ReasoningContextBuilder
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.unified_knowledge_api import UnifiedKnowledgeAPI
+from core.owner_identity import memory_actor_id_for_owner
+from core.owner_profile import OwnerProfileStore
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.reasoning_runtime import create_owner_scoped_agent_loop_factory
 
@@ -108,6 +110,49 @@ class ReasoningRuntimeFactoryTests(unittest.TestCase):
         self.assertNotIn("Owner A confidential launch code.", serialized)
         self.assertNotEqual(actor_a, actor_b)
         self.assertFalse(self.store._allowed(actor_a, "agent_memory:share", "assistant"))
+
+    def test_owner_profile_preferences_are_loaded_per_authenticated_owner(self):
+        profile = OwnerProfileStore(
+            str(Path(self.temp.name) / "profile.sqlite3"),
+            authorize=lambda actor, action, _resource:
+                action in {"owner_profile:read", "owner_profile:write"},
+        )
+        actor_a = memory_actor_id_for_owner("owner-a")
+        actor_b = memory_actor_id_for_owner("owner-b")
+        profile.set(
+            actor_id=actor_a, key="response_style", value="concise",
+            source="owner_explicit",
+        )
+        profile.set(
+            actor_id=actor_b, key="response_style", value="detailed",
+            source="owner_explicit",
+        )
+        def preferences(owner):
+            records = profile.get(actor_id=memory_actor_id_for_owner(owner))
+            return ["response style: " + records["response_style"]["value"]]
+
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(
+                self.providers.setdefault(owner, _Provider())
+            ),
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())
+            ),
+            owner_preferences_for_owner=preferences,
+            agent_id="assistant",
+            system_policy="Never disclose private data.",
+        )
+        loop_a = factory("owner-a")
+        loop_a.run("How should you answer?", tools=[])
+        loop_b = factory("owner-b")
+        loop_b.run("How should you answer?", tools=[])
+        prompt_a = self.providers["owner-a"].messages[-1]["content"]
+        prompt_b = self.providers["owner-b"].messages[-1]["content"]
+        self.assertIn("concise", prompt_a)
+        self.assertNotIn("detailed", prompt_a)
+        self.assertIn("detailed", prompt_b)
+        self.assertNotIn("concise", prompt_b)
 
     def test_invalid_authenticated_owner_is_rejected(self):
         with self.assertRaises(ValueError):
