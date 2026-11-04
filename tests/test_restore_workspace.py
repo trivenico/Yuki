@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+import stat
 import tarfile
 import tempfile
 import unittest
@@ -49,6 +51,9 @@ class WorkspaceRestoreTests(unittest.TestCase):
             self.assertEqual(result["files_restored"], 2)
             self.assertEqual((destination / "visible.json").read_text(encoding="utf-8"), '{"ok":true}')
             self.assertEqual((destination / ".private-state").read_text(encoding="utf-8"), "hidden")
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE((destination / "visible.json").stat().st_mode), 0o600)
 
     def test_rejects_existing_destination_without_overwriting(self):
         with tempfile.TemporaryDirectory() as temp:
