@@ -9,6 +9,9 @@ from evaluation.approved_knowledge_promoter import ApprovedKnowledgePromoter
 
 
 class ApprovedKnowledgePromoterTests(unittest.TestCase):
+    CONTENT = "The verified deployment procedure requires a staged rollout."
+    SOURCE = "verified deployment test"
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -16,7 +19,7 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
         permissions = {
             "agent_memory:write", "agent_memory:share", "agent_memory:read",
             "agent_evaluation:enqueue", "agent_evaluation:read",
-            "agent_evaluation:review",
+            "agent_evaluation:review", "agent_knowledge:review",
         }
         authorize = lambda actor, action, _agent: actor == "owner" and action in permissions
         self.memory = AgentMemoryStore(self.db, authorize=authorize)
@@ -32,30 +35,46 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
         )
         self.queue.enqueue(actor_id="owner", report=self.report)
 
-    def approve(self):
+    def approve_evaluation(self):
         return self.queue.decide(
             reviewer_actor_id="owner", evaluation_id=self.report.evaluation_id,
-            decision="approved", note="Verified against independent evidence.",
+            decision="approved", note="Evaluation evidence reviewed.",
+        )
+
+    def approve_candidate(self, *, content=None, source=None, scope="private"):
+        return self.promoter.review_candidate(
+            actor_id="owner", evaluation_id=self.report.evaluation_id,
+            agent_id="research", content=content or self.CONTENT,
+            source=source or self.SOURCE, decision="approved",
+            scope=scope, note="Exact knowledge candidate reviewed.",
         )
 
     def promote(self, **overrides):
         args = {
             "actor_id": "owner", "evaluation_id": self.report.evaluation_id,
-            "agent_id": "research",
-            "content": "The verified deployment procedure requires a staged rollout.",
-            "source": "verified deployment test",
+            "agent_id": "research", "content": self.CONTENT,
+            "source": self.SOURCE,
         }
         args.update(overrides)
         return self.promoter.promote(**args)
 
-    def test_pending_review_cannot_be_promoted(self):
+    def approve_both(self):
+        self.approve_evaluation()
+        self.approve_candidate()
+
+    def test_pending_evaluation_cannot_be_promoted(self):
         with self.assertRaises(PermissionError):
             self.promote()
         self.assertEqual(self.memory.list_memories(
             actor_id="owner", agent_id="research"), [])
 
-    def test_owner_approval_promotes_with_provenance_and_verified_flag(self):
-        self.approve()
+    def test_approved_evaluation_without_candidate_approval_cannot_promote(self):
+        self.approve_evaluation()
+        with self.assertRaisesRegex(PermissionError, "exact_knowledge_candidate"):
+            self.promote()
+
+    def test_owner_approval_promotes_exact_candidate_with_provenance(self):
+        self.approve_both()
         result = self.promote()
         self.assertEqual(result["status"], "promoted")
         self.assertTrue(result["memory_written"])
@@ -65,8 +84,13 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
         self.assertIn(self.report.evaluation_id, records[0]["source"])
         self.assertEqual(records[0]["scope"], "private")
 
+    def test_candidate_substitution_invalidates_approval(self):
+        self.approve_both()
+        with self.assertRaisesRegex(PermissionError, "exact_knowledge_candidate"):
+            self.promote(content="A substituted unreviewed instruction.")
+
     def test_repeated_promotion_is_idempotent(self):
-        self.approve()
+        self.approve_both()
         first = self.promote()
         second = self.promote()
         self.assertEqual(first["memory_id"], second["memory_id"])
@@ -75,7 +99,7 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
             actor_id="owner", agent_id="research")), 1)
 
     def test_duplicate_candidate_from_another_approved_review_is_not_written_twice(self):
-        self.approve()
+        self.approve_both()
         first = self.promote()
         second_report = AgentEvaluator().evaluate(
             task_id="task-promotion-2", agent_id="research", outcome="succeeded",
@@ -88,6 +112,11 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
         self.queue.enqueue(actor_id="owner", report=second_report)
         self.queue.decide(reviewer_actor_id="owner",
                           evaluation_id=second_report.evaluation_id, decision="approved")
+        self.promoter.review_candidate(
+            actor_id="owner", evaluation_id=second_report.evaluation_id,
+            agent_id="research", content=self.CONTENT, source=self.SOURCE,
+            decision="approved",
+        )
         second = self.promote(evaluation_id=second_report.evaluation_id)
         self.assertEqual(second["status"], "duplicate")
         self.assertEqual(first["memory_id"], second["memory_id"])
@@ -95,30 +124,31 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
             actor_id="owner", agent_id="research")), 1)
 
     def test_agent_mismatch_is_rejected(self):
-        self.approve()
+        self.approve_both()
         with self.assertRaisesRegex(ValueError, "agent_mismatch"):
             self.promote(agent_id="coding")
 
-    def test_shared_memory_requires_share_permission(self):
-        self.approve()
+    def test_shared_candidate_requires_share_permission(self):
+        self.approve_evaluation()
         permissions = {"agent_memory:write", "agent_evaluation:enqueue",
-                       "agent_evaluation:read", "agent_evaluation:review"}
+                       "agent_evaluation:read", "agent_evaluation:review",
+                       "agent_knowledge:review"}
         memory = AgentMemoryStore(
             self.db, authorize=lambda actor, action, _agent:
             actor == "owner" and action in permissions)
         promoter = ApprovedKnowledgePromoter(memory, self.queue)
         with self.assertRaises(PermissionError):
-            promoter.promote(
+            promoter.review_candidate(
                 actor_id="owner", evaluation_id=self.report.evaluation_id,
                 agent_id="research", content="A verified shared fact.",
-                source="test", scope="shared",
+                source="test", decision="approved", scope="shared",
             )
 
-    def test_rejected_review_cannot_be_promoted(self):
+    def test_rejected_evaluation_cannot_be_promoted(self):
         self.queue.decide(reviewer_actor_id="owner",
                           evaluation_id=self.report.evaluation_id, decision="rejected")
         with self.assertRaises(PermissionError):
-            self.promote()
+            self.approve_candidate()
 
 
 if __name__ == "__main__":
