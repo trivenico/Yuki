@@ -62,7 +62,7 @@ class ReasoningContextBuilder:
             return None
         if not isinstance(content, str) or not content.strip():
             return None
-        if item.get("lifecycle_status", "active") in {"rejected", "retired"}:
+        if item.get("lifecycle_status", "active") != "active":
             return None
         if item.get("superseded_by") is not None:
             return None
@@ -113,6 +113,8 @@ class ReasoningContextBuilder:
         max_context_chars bounds the assembled textual context. Evidence is
         omitted whole when it does not fit; it is never silently truncated.
         """
+        actor_id = self._validate_text(actor_id, name="actor_id", maximum=200)
+        agent_id = self._validate_text(agent_id, name="agent_id", maximum=200)
         query = self._validate_text(query, name="query", maximum=self.MAX_QUERY_CHARS)
         system_policy = self._validate_text(
             system_policy, name="system_policy", maximum=8_000
@@ -139,8 +141,10 @@ class ReasoningContextBuilder:
                 include_shared=include_shared,
                 verified_only=not include_unverified,
             )
-            if (packet.get("actor_id") != actor_id.strip()
-                    or packet.get("agent_id") != agent_id.strip()):
+            if not isinstance(packet, dict):
+                raise ValueError("knowledge_packet_must_be_an_object")
+            if (packet.get("actor_id") != actor_id
+                    or packet.get("agent_id") != agent_id):
                 raise PermissionError("knowledge_scope_mismatch")
             raw_evidence = packet.get("evidence", [])
             if not isinstance(raw_evidence, list):
@@ -164,7 +168,13 @@ class ReasoningContextBuilder:
                 include_shared=include_shared,
                 verified_only=not include_unverified,
             )
+            if not isinstance(packet, dict):
+                raise ValueError("knowledge_packet_must_be_an_object")
+            if packet.get("actor_id") != actor_id or packet.get("agent_id") != agent_id:
+                raise PermissionError("knowledge_scope_mismatch")
             raw_evidence = packet.get("evidence", [])
+            if not isinstance(raw_evidence, list):
+                raise ValueError("knowledge_evidence_must_be_a_list")
             retrieval = {"mode": "single_hop"}
             retrieval_omitted_count = 0
 
@@ -204,8 +214,8 @@ class ReasoningContextBuilder:
         used = len(self.assemble_prompt(working))
 
         return {
-            "actor_id": packet["actor_id"],
-            "agent_id": packet["agent_id"],
+            "actor_id": actor_id,
+            "agent_id": agent_id,
             "query": query,
             "trusted": {
                 "system_policy": system_policy,
