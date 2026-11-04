@@ -8,6 +8,7 @@ from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.owner_profile import OwnerProfileStore
 
 
 class _NoApprovals:
@@ -38,6 +39,21 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_runtime_injects_owner_profile_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            profile_store = OwnerProfileStore(
+                str(Path(directory) / "profile.sqlite"),
+                authorize=lambda actor, action, resource: action == "owner_profile:read",
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                owner_profile_store=profile_store,
+            )
+            self.assertIs(runtime.app.owner_profile_store, profile_store)
+            runtime.close()
 
     def test_runtime_injects_provider_catalog_callback(self):
         with tempfile.TemporaryDirectory() as directory:
