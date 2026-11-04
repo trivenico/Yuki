@@ -164,6 +164,16 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
                 expected_step_version=2, decision="succeeded", reason=" ",
             )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision=[], reason="invalid decision type",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="contains\x00nul",
+            )
         resolved = self.runtime.reconcile_step(
             actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
             expected_step_version=2, decision="succeeded",

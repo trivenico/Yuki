@@ -484,13 +484,13 @@ class WorkflowRunStore:
         """Record a supervisor's disposition without resuming or executing work."""
         for value, label in ((run_id, "run_id"), (step_id, "step_id"),
                              (actor_id, "actor_id")):
-            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\\x00" in value:
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\x00" in value:
                 raise ValueError(f"{label} must be non-empty bounded text.")
         if type(expected_step_version) is not int or expected_step_version < 0:
             raise ValueError("expected_step_version must be a non-negative integer.")
-        if decision not in {"succeeded", "failed"}:
+        if not isinstance(decision, str) or decision not in {"succeeded", "failed"}:
             raise ValueError("decision must be 'succeeded' or 'failed'.")
-        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000 or "\\x00" in reason:
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000 or "\x00" in reason:
             raise ValueError("reason must be non-empty text of at most 1000 characters.")
         now = _now()
         with self._connect() as db:
