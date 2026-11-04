@@ -414,7 +414,7 @@ class SpecialistAgentCoordinator:
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\\x00" in idempotency_key:
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Hash the caller's request, not today's routing decision. A retry must
