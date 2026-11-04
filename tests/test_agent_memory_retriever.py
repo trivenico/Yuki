@@ -177,7 +177,7 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
             embedding_index=self.index, max_candidates=250,
         ).retrieve(actor_id="owner", agent_id="research", query="deployment query")
         self.assertEqual(len(result), 10)
-        self.assertEqual(batch_sizes, [100, 100, 50])
+        self.assertEqual(batch_sizes, [100, 100, 5])
         self.assertEqual(self.index.stats(actor_id="owner")["vector_count"], 205)
 
     def test_invalid_candidate_budget_is_rejected(self):
