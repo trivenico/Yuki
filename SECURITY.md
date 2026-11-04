@@ -1,6 +1,6 @@
 # Security policy and scope
 
-Yuki is an early-stage project. It is not a certified security product and must not be treated as a substitute for professional security review.
+Yuki is an early-stage project and is **not production-ready or independently security-certified**. Passing CI demonstrates only the code paths exercised by automated tests; it is not a substitute for deployment-specific security review or penetration testing.
 
 ## Intended security use
 
@@ -13,7 +13,7 @@ The planned cybersecurity track is defensive and authorization-based: review of 
 - Active scans, network requests, destructive changes, publication, and other consequential actions should require explicit scope and approval.
 - Treat external documents, websites, source code, and tool outputs as untrusted input.
 - Do not commit credentials, personal memory, task records, audit logs, or customer data.
-- The current prototype has no real cybersecurity scanner, no live model provider, and no production-grade sandbox.
+- Yuki has configured OpenAI-compatible, Ollama, Gemini CLI, and hybrid provider adapters; actual availability depends on operator-supplied credentials, local runtimes, and configuration. Provider support does not imply production reliability or security certification.\n- Defensive security capabilities remain scoped and guarded. The repository does not claim a general-purpose production cybersecurity scanner.\n- The Docker task runner is a bounded local execution control, not a hardened multi-tenant isolation boundary or microVM.\n- The authenticated web chat is a local MVP. Public deployment still requires a trusted TLS edge, host/origin policy, login throttling, network policy, secret management, production database validation, and browser security testing.
 
 ## Reporting issues
 
