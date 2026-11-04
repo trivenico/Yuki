@@ -20,6 +20,8 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
             "agent_memory:write", "agent_memory:share", "agent_memory:read",
             "agent_evaluation:enqueue", "agent_evaluation:read",
             "agent_evaluation:review", "agent_knowledge:review",
+            "agent_knowledge:revoke", "agent_knowledge:read",
+            "agent_memory:delete",
         }
         authorize = lambda actor, action, _agent: actor == "owner" and action in permissions
         self.memory = AgentMemoryStore(self.db, authorize=authorize)
