@@ -13,7 +13,8 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:lease:renew", "task:complete", "task:fail", "task:cancel",
+                       "task:retry", "task:list"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -102,8 +103,8 @@ class TaskRuntimeTests(unittest.TestCase):
             actor_id="alice", task_id=task.task_id,
             after_sequence=page_one[-1].sequence, limit=1,
         )
-        self.assertEqual([event.sequence for event in page_one], [2])
-        self.assertEqual([event.sequence for event in page_two], [3])
+        self.assertEqual([event.sequence for event in page_one], [3])
+        self.assertEqual([event.sequence for event in page_two], [4])
         self.assertEqual(page_one[0].payload["message"], "first update")
         with self.assertRaises(ValueError):
             self.runtime.events(actor_id="alice", task_id=task.task_id, limit=501)
@@ -306,7 +307,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(retried.state, "queued")
         self.assertEqual(retried.attempts, 0)
         events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
-        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)
         again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                           expected_version=failed.version)
