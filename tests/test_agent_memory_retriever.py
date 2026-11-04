@@ -218,5 +218,48 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.assertTrue(audit["stale_record_leakage_free"])
 
 
+    def test_retrieval_metrics_report_cache_hits_misses_and_embedding_calls(self):
+        self.add_memory("A staged deployment uses a gradual rollout.")
+        self.add_memory("The garden needs watering every morning.")
+        first = self.retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query"
+        )
+        first_stats = dict(self.retriever.last_retrieval_stats)
+        self.assertEqual(first_stats["candidate_rows_scanned"], 2)
+        self.assertEqual(first_stats["authorized_candidates_ranked"], 2)
+        self.assertEqual(first_stats["cache_hits"], 0)
+        self.assertEqual(first_stats["cache_misses"], 2)
+        self.assertEqual(first_stats["embedding_calls"], 3)
+        self.assertEqual(first_stats["cache_hit_rate"], 0.0)
+        self.assertGreaterEqual(first_stats["elapsed_ms"], 0.0)
+
+        second = self.retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query"
+        )
+        second_stats = self.retriever.last_retrieval_stats
+        self.assertEqual(
+            [item["memory_id"] for item in first],
+            [item["memory_id"] for item in second],
+        )
+        self.assertEqual(second_stats["cache_hits"], 2)
+        self.assertEqual(second_stats["cache_misses"], 0)
+        self.assertEqual(second_stats["embedding_calls"], 1)
+        self.assertEqual(second_stats["cache_hit_rate"], 1.0)
+
+    def test_latency_percentiles_use_bounded_samples_without_query_data(self):
+        self.add_memory("A staged deployment uses a gradual rollout.")
+        for _ in range(3):
+            self.retriever.retrieve(
+                actor_id="owner", agent_id="research", query="deployment query"
+            )
+        stats = self.retriever.latency_percentiles()
+        self.assertEqual(stats["sample_count"], 3)
+        self.assertIsNotNone(stats["p50_ms"])
+        self.assertIsNotNone(stats["p95_ms"])
+        self.assertLessEqual(stats["p50_ms"], stats["p95_ms"])
+        self.assertNotIn("query", self.retriever.last_retrieval_stats)
+        self.assertNotIn("content", self.retriever.last_retrieval_stats)
+
+
 if __name__ == "__main__":
     unittest.main()
