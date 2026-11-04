@@ -176,9 +176,10 @@ class YukiConversationAPI:
                     })
                 if method == "PATCH" and suffix is None:
                     payload = await self._body(receive)
-                    if set(payload) != {"status", "reason"} or payload["status"] not in {
-                        "approved", "rejected", "retired"
-                    } or not isinstance(payload["reason"], str):
+                    if (set(payload) != {"status", "reason"}
+                            or not isinstance(payload.get("status"), str)
+                            or payload["status"] not in {"approved", "rejected", "retired"}
+                            or not isinstance(payload.get("reason"), str)):
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     updated = await asyncio.to_thread(
                         self.memory_store.transition_lifecycle,
