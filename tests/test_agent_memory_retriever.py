@@ -13,7 +13,10 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.db = str(Path(self.temp.name) / "yuki.sqlite3")
         self.permissions = {
-            "owner": {"agent_memory:write", "agent_memory:read", "agent_memory:share"}
+            "owner": {
+                "agent_memory:write", "agent_memory:read",
+                "agent_memory:share", "agent_memory:delete",
+            }
         }
         authorize = lambda actor, action, _agent: action in self.permissions.get(actor, set())
         self.store = AgentMemoryStore(self.db, authorize=authorize)
