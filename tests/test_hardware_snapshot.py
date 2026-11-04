@@ -35,10 +35,18 @@ class HardwareSnapshotTests(unittest.TestCase):
 
     def test_posix_memory_bounds_available_by_total(self):
         values = {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 100, "SC_AVPHYS_PAGES": 120}
-        with patch("providers.hardware_snapshot.os.sysconf", side_effect=lambda key: values[key]):
+        # sysconf is absent on Windows; create=True keeps this POSIX-path unit
+        # test portable while still exercising the production helper.
+        with patch("providers.hardware_snapshot.os.sysconf", side_effect=lambda key: values[key], create=True):
             total, available = _posix_memory()
         self.assertEqual(total, 409600)
         self.assertEqual(available, total)
+
+    def test_unsupported_sysconf_key_returns_unknown(self):
+        with patch("providers.hardware_snapshot.os.sysconf", side_effect=ValueError("unsupported"), create=True):
+            total, available = _posix_memory()
+        self.assertIsNone(total)
+        self.assertIsNone(available)
 
 
 if __name__ == "__main__":
