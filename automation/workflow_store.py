@@ -477,6 +477,75 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def reconcile_step(
+        self, run_id: str, step_id: str, *, actor_id: str,
+        expected_step_version: int, decision: str, reason: str,
+    ) -> WorkflowStepRecord:
+        """Record a supervisor's disposition without resuming or executing work."""
+        for value, label in ((run_id, "run_id"), (step_id, "step_id"),
+                             (actor_id, "actor_id")):
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\\x00" in value:
+                raise ValueError(f"{label} must be non-empty bounded text.")
+        if type(expected_step_version) is not int or expected_step_version < 0:
+            raise ValueError("expected_step_version must be a non-negative integer.")
+        if decision not in {"succeeded", "failed"}:
+            raise ValueError("decision must be 'succeeded' or 'failed'.")
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 1000 or "\\x00" in reason:
+            raise ValueError("reason must be non-empty text of at most 1000 characters.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute(
+                "SELECT state FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if parent is None:
+                raise KeyError("workflow run not found.")
+            if parent["state"] != "interrupted":
+                raise WorkflowTransitionError("only interrupted workflows can reconcile steps.")
+            row = db.execute(
+                "SELECT * FROM workflow_steps WHERE step_id=? AND run_id=?",
+                (step_id, run_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow step not found.")
+            if row["version"] != expected_step_version:
+                raise WorkflowConflict("workflow step version changed; reload before reconciling.")
+            if row["status"] != "needs_reconciliation":
+                raise WorkflowTransitionError("only steps awaiting reconciliation can be resolved.")
+            updated = db.execute("""
+                UPDATE workflow_steps SET status=?, version=version+1, updated_at=?
+                WHERE step_id=? AND run_id=? AND version=? AND status='needs_reconciliation'
+            """, (decision, now, step_id, run_id, expected_step_version))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow step changed concurrently.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            payload = _bounded_json({
+                "step_id": step_id, "step_index": row["step_index"],
+                "step_name": row["name"], "decision": decision,
+                "step_version": expected_step_version + 1,
+                "reason": reason.strip(), "workflow_resumed": False,
+            }, 8 * 1024, "task event payload")
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, 'task.step.reconciled', ?, ?, ?)",
+                (run_id, sequence, actor_id.strip(), payload, now),
+            )
+            updated_row = db.execute(
+                "SELECT * FROM workflow_steps WHERE step_id=?", (step_id,)
+            ).fetchone()
+            return WorkflowStepRecord(
+                step_id=updated_row["step_id"], run_id=updated_row["run_id"],
+                step_index=updated_row["step_index"], name=updated_row["name"],
+                action=updated_row["action"],
+                requires_approval=bool(updated_row["requires_approval"]),
+                input_digest=updated_row["input_digest"], status=updated_row["status"],
+                attempts=updated_row["attempts"], version=updated_row["version"],
+                created_at=updated_row["created_at"], updated_at=updated_row["updated_at"],
+            )
+
     def list_steps(self, run_id: str) -> list[WorkflowStepRecord]:
         """Return ordered step metadata without exposing stored arguments or outputs."""
         if not isinstance(run_id, str) or not run_id:

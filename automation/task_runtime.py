@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.claimed", "task.lease_renewed", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.step.started", "task.step.succeeded", "task.step.failed", "task.step.needs_reconciliation"})
+_EVENT_KINDS = frozenset({"task.created", "task.claimed", "task.lease_renewed", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.step.started", "task.step.succeeded", "task.step.failed", "task.step.needs_reconciliation", "task.step.reconciled"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -187,6 +187,20 @@ class TaskRuntime:
                 self.store.recover_expired_run(run.run_id, actor_id=actor)
             ))
         return recovered
+
+    def reconcile_step(
+        self, *, actor_id: str, task_id: str, step_id: str,
+        expected_step_version: int, decision: str, reason: str,
+    ):
+        """Record an audited operator disposition; this does not resume the task."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:step:resolve", task_id):
+            raise PermissionError("workflow step reconciliation is not authorized.")
+        return self.store.reconcile_step(
+            task_id, step_id, actor_id=actor,
+            expected_step_version=expected_step_version,
+            decision=decision, reason=reason,
+        )
 
     def list_steps(self, *, actor_id: str, task_id: str):
         """Read ordered, argument-redacted step metadata under task:read."""

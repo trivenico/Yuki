@@ -14,7 +14,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile"}
+                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile", "task:step:resolve"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -139,6 +139,80 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(events[-1].actor_id, "supervisor")
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+
+    def test_supervisor_reconciliation_is_audited_and_does_not_resume_task(self):
+        task = self.create("reconcile-step")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.reconcile_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="succeeded", reason="verified",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="succeeded", reason=" ",
+            )
+        resolved = self.runtime.reconcile_step(
+            actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+            expected_step_version=2, decision="succeeded",
+            reason="External operation verified in provider audit log.",
+        )
+        self.assertEqual((resolved.status, resolved.version), ("succeeded", 3))
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "interrupted")
+        self.assertIsNone(current.lease_owner)
+        event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(event.kind, "task.step.reconciled")
+        self.assertEqual(event.actor_id, "supervisor")
+        self.assertFalse(event.payload["workflow_resumed"])
+        self.assertEqual(event.payload["decision"], "succeeded")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="stale decision",
+            )
+
+    def test_reconciliation_event_failure_rolls_back_step_disposition(self):
+        task = self.create("reconcile-atomic")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_reconciliation_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.step.reconciled'
+                BEGIN SELECT RAISE(ABORT, 'simulated reconciliation journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="provider confirms failure",
+            )
+        current = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((current.status, current.version), ("needs_reconciliation", 2))
+        self.assertEqual(self.store.get(task.task_id).state, "interrupted")
 
     def test_recovery_requires_expired_lease(self):
         task = self.create("live-step-recovery")
