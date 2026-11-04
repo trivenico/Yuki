@@ -46,7 +46,10 @@ class AgentMemoryStore:
                     created_at TEXT NOT NULL,
                     expires_at TEXT,
                     superseded_by TEXT,
-                    superseded_at TEXT
+                    superseded_at TEXT,
+                    lifecycle_status TEXT NOT NULL DEFAULT 'active',
+                    lifecycle_updated_at TEXT,
+                    lifecycle_reason TEXT
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(agent_memories)").fetchall()}
@@ -54,6 +57,30 @@ class AgentMemoryStore:
                 db.execute("ALTER TABLE agent_memories ADD COLUMN superseded_by TEXT")
             if "superseded_at" not in columns:
                 db.execute("ALTER TABLE agent_memories ADD COLUMN superseded_at TEXT")
+            if "lifecycle_status" not in columns:
+                db.execute("ALTER TABLE agent_memories ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'")
+            if "lifecycle_updated_at" not in columns:
+                db.execute("ALTER TABLE agent_memories ADD COLUMN lifecycle_updated_at TEXT")
+            if "lifecycle_reason" not in columns:
+                db.execute("ALTER TABLE agent_memories ADD COLUMN lifecycle_reason TEXT")
+            db.execute("""CREATE TABLE IF NOT EXISTS agent_memory_lifecycle_events (
+                event_id TEXT PRIMARY KEY,
+                actor_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                previous_status TEXT NOT NULL,
+                new_status TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                occurred_at TEXT NOT NULL
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_history
+                ON agent_memory_lifecycle_events(actor_id, agent_id, memory_id, occurred_at)""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_lifecycle_no_update
+                BEFORE UPDATE ON agent_memory_lifecycle_events
+                BEGIN SELECT RAISE(ABORT, 'memory_lifecycle_audit_is_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_lifecycle_no_delete
+                BEFORE DELETE ON agent_memory_lifecycle_events
+                BEGIN SELECT RAISE(ABORT, 'memory_lifecycle_audit_is_immutable'); END""")
             db.execute("""CREATE TABLE IF NOT EXISTS agent_memory_corrections (
                 correction_id TEXT PRIMARY KEY,
                 actor_id TEXT NOT NULL,
@@ -115,6 +142,9 @@ class AgentMemoryStore:
             "expires_at": row["expires_at"],
             "superseded_by": row["superseded_by"] if "superseded_by" in row.keys() else None,
             "superseded_at": row["superseded_at"] if "superseded_at" in row.keys() else None,
+            "lifecycle_status": row["lifecycle_status"] if "lifecycle_status" in row.keys() else "active",
+            "lifecycle_updated_at": row["lifecycle_updated_at"] if "lifecycle_updated_at" in row.keys() else None,
+            "lifecycle_reason": row["lifecycle_reason"] if "lifecycle_reason" in row.keys() else None,
             "trust": "untrusted_reference_data",
             "may_contain_instructions": True,
             "must_not_be_executed_as_instructions": True,
@@ -170,6 +200,7 @@ class AgentMemoryStore:
                 WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
                 AND (expires_at IS NULL OR expires_at>?)
                 AND superseded_by IS NULL
+                AND lifecycle_status NOT IN ('rejected', 'retired')
                 ORDER BY created_at DESC LIMIT ?""",
                 (actor_id, agent_id, int(include_shared), now, limit)).fetchall()
         return [self._record(row) for row in rows]
@@ -201,7 +232,9 @@ class AgentMemoryStore:
         sql = """SELECT * FROM agent_memories
             WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
             AND (expires_at IS NULL OR expires_at>?)
-            AND superseded_by IS NULL"""
+            AND superseded_by IS NULL
+            AND lifecycle_status NOT IN ('rejected', 'retired')"""
+
         params = [actor_id, agent_id, int(include_shared), now]
         if before is not None:
             sql += " AND (created_at < ? OR (created_at = ? AND memory_id < ?))"
@@ -341,6 +374,116 @@ class AgentMemoryStore:
             "replacement_memory_id": row["replacement_memory_id"],
             "reason": row["reason"],
             "approved_at": row["approved_at"],
+        } for row in rows]
+
+
+    def transition_lifecycle(self, *, actor_id, agent_id, memory_id,
+                             status, reason):
+        """Owner-authorized approval/rejection/retirement with immutable history."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
+            raise ValueError("invalid_memory_id")
+        if status not in {"approved", "rejected", "retired"}:
+            raise ValueError("invalid_lifecycle_status")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\\x00" in reason:
+            raise ValueError("lifecycle_reason_required")
+        permission = "agent_memory:retire" if status == "retired" else "agent_memory:review"
+        if not self._allowed(actor_id, permission, agent_id):
+            raise PermissionError("memory lifecycle transition is not authorized")
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = uuid4().hex
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                """SELECT * FROM agent_memories WHERE memory_id=?
+                   AND actor_id=? AND agent_id=? AND superseded_by IS NULL""",
+                (memory_id, actor_id, agent_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("active_memory_not_found")
+            previous = row["lifecycle_status"]
+            if previous == status:
+                raise ValueError("memory_already_in_requested_status")
+            if previous in {"rejected", "retired"}:
+                raise ValueError("terminal_memory_status_requires_new_memory")
+            db.execute(
+                """UPDATE agent_memories SET lifecycle_status=?,
+                   lifecycle_updated_at=?, lifecycle_reason=?, verified=?
+                   WHERE memory_id=? AND actor_id=? AND agent_id=?""",
+                (status, now, reason.strip(), 1 if status == "approved" else row["verified"],
+                 memory_id, actor_id, agent_id),
+            )
+            db.execute(
+                """INSERT INTO agent_memory_lifecycle_events
+                   (event_id,actor_id,agent_id,memory_id,previous_status,
+                    new_status,reason,occurred_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (event_id, actor_id, agent_id, memory_id, previous, status,
+                 reason.strip(), now),
+            )
+            updated = db.execute(
+                "SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)
+            ).fetchone()
+        return self._record(updated)
+
+    def renew(self, *, actor_id, agent_id, memory_id, retention_days, reason):
+        """Extend expiry of an active/approved claim with a recorded rationale."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
+            raise ValueError("invalid_memory_id")
+        if type(retention_days) is not int or not 1 <= retention_days <= 3650:
+            raise ValueError("retention_days_must_be_1_to_3650")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\\x00" in reason:
+            raise ValueError("renewal_reason_required")
+        if not self._allowed(actor_id, "agent_memory:renew", agent_id):
+            raise PermissionError("memory renewal is not authorized")
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=retention_days)).isoformat()
+        event_id = uuid4().hex
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                """SELECT * FROM agent_memories WHERE memory_id=?
+                   AND actor_id=? AND agent_id=? AND superseded_by IS NULL""",
+                (memory_id, actor_id, agent_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("active_memory_not_found")
+            if row["lifecycle_status"] in {"rejected", "retired"}:
+                raise ValueError("terminal_memory_status_cannot_be_renewed")
+            previous = row["lifecycle_status"]
+            db.execute(
+                """UPDATE agent_memories SET expires_at=?,
+                   lifecycle_updated_at=?, lifecycle_reason=?
+                   WHERE memory_id=? AND actor_id=? AND agent_id=?""",
+                (expires, now.isoformat(), reason.strip(), memory_id, actor_id, agent_id),
+            )
+            db.execute(
+                """INSERT INTO agent_memory_lifecycle_events
+                   (event_id,actor_id,agent_id,memory_id,previous_status,
+                    new_status,reason,occurred_at) VALUES(?,?,?,?,?,?,?,?)""",
+                (event_id, actor_id, agent_id, memory_id, previous, previous,
+                 "renewal: " + reason.strip(), now.isoformat()),
+            )
+            updated = db.execute(
+                "SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)
+            ).fetchone()
+        return self._record(updated)
+
+    def lifecycle_history(self, *, actor_id, agent_id, memory_id):
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
+            raise ValueError("invalid_memory_id")
+        if not self._allowed(actor_id, "agent_memory:review", agent_id):
+            raise PermissionError("memory lifecycle history is not authorized")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT * FROM agent_memory_lifecycle_events
+                   WHERE actor_id=? AND agent_id=? AND memory_id=?
+                   ORDER BY occurred_at ASC, event_id ASC""",
+                (actor_id, agent_id, memory_id),
+            ).fetchall()
+        return [{
+            "event_id": row["event_id"], "memory_id": row["memory_id"],
+            "previous_status": row["previous_status"], "new_status": row["new_status"],
+            "reason": row["reason"], "occurred_at": row["occurred_at"],
         } for row in rows]
 
     def delete(self, *, actor_id, agent_id, memory_id):
