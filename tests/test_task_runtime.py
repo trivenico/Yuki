@@ -14,7 +14,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list"}
+                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -110,6 +110,75 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.events(actor_id="alice", task_id=task.task_id, limit=501)
         with self.assertRaises(PermissionError):
             self.runtime.events(actor_id="supervisor", task_id=task.task_id)
+
+    def test_step_transitions_are_lease_bound_versioned_and_journaled(self):
+        task = self.create("step-transitions")
+        claimed = self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.assertEqual(step.status, "pending")
+        started = self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=step.version, to_status="running",
+        )
+        self.assertEqual((started.status, started.attempts, started.version), ("running", 1, 1))
+        finished = self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=started.version, to_status="succeeded",
+        )
+        self.assertEqual((finished.status, finished.version), ("succeeded", 2))
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events],
+                         ["task.created", "task.claimed", "task.step.started", "task.step.succeeded"])
+        self.assertEqual(events[-1].payload["step_id"], step.step_id)
+        self.assertEqual(events[-1].actor_id, "alice")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=started.version, to_status="succeeded",
+            )
+
+    def test_step_transition_rejects_wrong_worker_and_missing_permission(self):
+        task = self.create("step-worker-guard")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-b", expected_step_version=0, to_status="running",
+            )
+        restricted = TaskRuntime(self.store, authorize=lambda actor, action, target: action == "task:read")
+        with self.assertRaises(PermissionError):
+            restricted.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=0, to_status="running",
+            )
+        self.assertEqual(self.store.list_steps(task.task_id)[0].status, "pending")
+
+    def test_step_state_and_event_roll_back_together(self):
+        task = self.create("atomic-step-event")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_step_success
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.step.succeeded'
+                BEGIN SELECT RAISE(ABORT, 'simulated step journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=1, to_status="succeeded",
+            )
+        current = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((current.status, current.version), ("running", 1))
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)],
+            ["task.created", "task.claimed", "task.step.started"])
 
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):

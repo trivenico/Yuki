@@ -339,7 +339,7 @@ class WorkflowRunStore:
         }
         for value, label in ((run_id, "run_id"), (step_id, "step_id"),
                              (worker_id, "worker_id"), (actor_id, "actor_id")):
-            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\\x00" in value:
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\x00" in value:
                 raise ValueError(f"{label} must be non-empty bounded text.")
         if type(expected_step_version) is not int or expected_step_version < 0:
             raise ValueError("expected_step_version must be a non-negative integer.")
