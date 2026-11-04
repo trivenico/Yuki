@@ -121,7 +121,7 @@ def _copy_stream(stream, target: Path, expected_size: int, total: list[int]) -> 
         raise RestoreError("archive_entry_size_mismatch")
 
 
-def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int]:
+def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int, str | None]:
     try:
         archive = zipfile.ZipFile(archive_path, "r")
     except (OSError, zipfile.BadZipFile) as exc:
@@ -171,10 +171,10 @@ def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int]:
             with archive.open(info, "r") as source:
                 _copy_stream(source, target, info.file_size, total)
             files += 1
-        return files, total[0]
+        return files, total[0], root_name, None
 
 
-def _extract_tar(archive_path: Path, payload: Path) -> tuple[int, int]:
+def _extract_tar(archive_path: Path, payload: Path) -> tuple[int, int, str | None]:
     try:
         archive = tarfile.open(archive_path, mode="r:gz")
     except (OSError, tarfile.TarError) as exc:
@@ -282,19 +282,18 @@ def restore_workspace(archive_file: str | Path, destination_dir: str | Path) -> 
     payload.mkdir(mode=0o700)
     try:
         if archive_path.name.lower().endswith(".zip"):
-            files, total = _extract_zip(archive_path, payload)
+            files, total, archive_root = _extract_zip(archive_path, payload)
         elif archive_path.name.lower().endswith((".tar.gz", ".tgz")):
-            files, total = _extract_tar(archive_path, payload)
+            files, total, archive_root = _extract_tar(archive_path, payload)
         else:
             raise RestoreError("unsupported_archive_format")
 
-        # A single enclosing directory (Unix tar) is stripped. ZIP backups
-        # produced by Windows contain workspace files at archive root.
-        children = list(payload.iterdir())
-        if len(children) == 1 and children[0].is_dir():
-            workspace = children[0]
-        else:
-            workspace = payload
+        # Unix tar archives explicitly include the workspace root directory.
+        # Windows ZIP backups omit it; never infer a wrapper from directory count,
+        # because a valid workspace may contain only one nested directory.
+        workspace = payload / archive_root if archive_root is not None else payload
+        if not workspace.is_dir():
+            raise RestoreError("archive_workspace_root_missing")
         databases = _validate_sqlite_files(workspace)
         if os.name != "nt":
             os.chmod(workspace, 0o700)
