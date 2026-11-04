@@ -80,6 +80,29 @@
           <p class="muted">Yuki can propose preferences and project context. Nothing is saved until you approve it.</p>
           <div id="memory-candidate-list" class="memory-list"></div>
         </section>
+        <section class="profile-preferences" aria-labelledby="profile-preferences-title">
+          <h3 id="profile-preferences-title">Yuki's interaction preferences</h3>
+          <p class="muted">These typed preferences are private to your account. They guide presentation only and never change permissions.</p>
+          <div class="profile-fields">
+            <label>Response style
+              <select id="profile-response-style">
+                <option value="balanced">Balanced</option><option value="concise">Concise</option><option value="detailed">Detailed</option>
+              </select>
+            </label>
+            <label>Response tone
+              <select id="profile-response-tone">
+                <option value="neutral">Neutral</option><option value="friendly">Friendly</option><option value="formal">Formal</option><option value="technical">Technical</option>
+              </select>
+            </label>
+            <label>Explanation level
+              <select id="profile-explanation-level">
+                <option value="intermediate">Intermediate</option><option value="beginner">Beginner</option><option value="expert">Expert</option>
+              </select>
+            </label>
+          </div>
+          <button id="save-profile" class="memory-action" type="button">Save preferences</button>
+          <p id="profile-status" class="muted" role="status"></p>
+        </section>
         <h3 class="memory-section-title">Saved memories</h3>
         <div id="memory-list" class="memory-list"></div>
       </section>
