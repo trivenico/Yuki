@@ -16,6 +16,7 @@ from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.agent_memory_integration import build_memory_aware_handlers
 from core.agent_memory import AgentMemoryStore
 from evaluation.agent_experience import AgentExperienceStore
+from evaluation.agent_learning_pipeline import AgentLearningPipeline
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -162,6 +163,9 @@ class SpecialistTaskWorker:
         memory_actor_id: str | None = None,
         experience_store: AgentExperienceStore | None = None,
         experience_actor_id: str | None = None,
+        learning_pipeline: AgentLearningPipeline | None = None,
+        learning_actor_id: str | None = None,
+        outcome_assessor: Callable[[TaskRecord], Mapping] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -207,6 +211,24 @@ class SpecialistTaskWorker:
         self.experience_actor_id = experience_actor_id.strip() if isinstance(experience_actor_id, str) else None
         self.last_experience_error_code = None
         self.last_experience_error_type = None
+        if (learning_pipeline is None) != (learning_actor_id is None):
+            raise ValueError("learning_pipeline and learning_actor_id must be supplied together.")
+        if learning_pipeline is not None and not isinstance(learning_pipeline, AgentLearningPipeline):
+            raise TypeError("learning_pipeline must be an AgentLearningPipeline.")
+        if learning_actor_id is not None and (
+            not isinstance(learning_actor_id, str) or not learning_actor_id.strip()
+            or len(learning_actor_id) > 200
+        ):
+            raise ValueError("learning_actor_id must be bounded non-empty text.")
+        if (learning_pipeline is not None) != (outcome_assessor is not None):
+            raise ValueError("learning_pipeline and outcome_assessor must be supplied together.")
+        if outcome_assessor is not None and not callable(outcome_assessor):
+            raise TypeError("outcome_assessor must be callable.")
+        self.learning_pipeline = learning_pipeline
+        self.learning_actor_id = learning_actor_id.strip() if isinstance(learning_actor_id, str) else None
+        self.outcome_assessor = outcome_assessor
+        self.last_learning_error_code = None
+        self.last_learning_error_type = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -237,6 +259,9 @@ class SpecialistTaskWorker:
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
                 experience_store=self.experience_store,
                 experience_actor_id=self.experience_actor_id,
+                learning_pipeline=self.learning_pipeline,
+                learning_actor_id=self.learning_actor_id,
+                outcome_assessor=self.outcome_assessor,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -281,6 +306,7 @@ class SpecialistTaskWorker:
                 raise RuntimeError("claimed task disappeared.")
             if current.state == "cancelled":
                 self._record_experience(agent_id, claimed.run_id, "cancelled", started_at)
+                self._evaluate_learning(current, agent_id, "cancelled")
                 return self.runtime._record(current)
             if current.state != "running" or current.lease_owner != self.worker_id:
                 raise RuntimeError("task is no longer owned by this worker.")
@@ -293,6 +319,7 @@ class SpecialistTaskWorker:
                 result={"specialist": agent_id, "output": output, "execution": "text-only"},
             )
             self._record_experience(agent_id, claimed.run_id, "succeeded", started_at)
+            self._evaluate_learning(completed, agent_id, "succeeded")
             return completed
         except Exception:
             # Redact provider/handler details; never persist secrets or prompt contents
@@ -306,6 +333,7 @@ class SpecialistTaskWorker:
                 error_code="specialist_handler_failed",
             )
             self._record_experience(agent_id, claimed.run_id, "failed", started_at)
+            self._evaluate_learning(failed, agent_id, "failed")
             return failed
 
     def _record_experience(self, agent_id: str, task_id: str, outcome: str, started_at: float) -> None:
@@ -324,6 +352,31 @@ class SpecialistTaskWorker:
         except Exception as exc:
             self.last_experience_error_code = "experience_recording_failed"
             self.last_experience_error_type = type(exc).__name__
+
+    def _evaluate_learning(self, task: TaskRecord, agent_id: str, outcome: str) -> None:
+        """Best-effort evaluation from a trusted assessor; never changes task state."""
+        if self.learning_pipeline is None:
+            return
+        try:
+            assessment = self.outcome_assessor(task)
+            if not isinstance(assessment, Mapping):
+                raise TypeError("outcome_assessor_must_return_mapping")
+            signals = assessment.get("signals")
+            evidence_refs = assessment.get("evidence_refs")
+            self.learning_pipeline.evaluate_completed_task(
+                actor_id=self.learning_actor_id,
+                task_id=task.task_id,
+                agent_id=agent_id,
+                outcome=outcome,
+                independently_verified_signals=signals,
+                evidence_refs=evidence_refs,
+            )
+            self.last_learning_error_code = None
+            self.last_learning_error_type = None
+        except Exception as exc:
+            # Evaluation and review are secondary workflows; never undo completed work.
+            self.last_learning_error_code = "learning_evaluation_failed"
+            self.last_learning_error_type = type(exc).__name__
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
