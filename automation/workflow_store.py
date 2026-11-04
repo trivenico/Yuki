@@ -412,8 +412,6 @@ class WorkflowRunStore:
         else:
             lease_owner = None
 
-        if to_state in {"succeeded", "failed"} and expected_lease_owner is None:
-            raise ValueError("worker completion and failure require expected_lease_owner.")
         if expected_lease_owner is not None and (
             not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
             or len(expected_lease_owner) > 200 or "\x00" in expected_lease_owner
@@ -440,6 +438,8 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
+            if current.state == "running" and to_state in {"succeeded", "failed"} and expected_lease_owner is None:
+                raise WorkflowConflict("worker completion and failure require the active worker identity.")
             if expected_lease_owner is not None and (
                 current.state != "running" or current.lease_owner != expected_lease_owner
                 or not current.lease_expires_at or current.lease_expires_at < now
