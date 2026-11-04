@@ -21,7 +21,7 @@ MAX_PACK_BYTES = 64 * 1024
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{1,47}$")
 ALLOWED_RISKS = {"low", "medium", "high"}
 REQUIRED_KEYS = {"schema_version", "name", "description", "instructions", "risk"}
-OPTIONAL_KEYS = {"source_format", "license", "author", "version", "compatibility"}
+OPTIONAL_KEYS = {"source_format", "license", "author", "version", "compatibility", "upstream_metadata"}
 _ALLOWED_SKILL_MD_FIELDS = {
     "name", "description", "license", "compatibility", "metadata",
     "allowed-tools", "version", "author", "platforms", "homepage",
@@ -98,6 +98,26 @@ def validate_skill_pack(value: Any) -> dict[str, Any]:
             if not isinstance(item, str) or len(item) > limit:
                 raise ValueError(f"Skill pack {key} metadata is invalid.")
             result[key] = item.strip()
+    if "upstream_metadata" in value:
+        metadata = value["upstream_metadata"]
+        if not isinstance(metadata, dict) or len(metadata) > 32:
+            raise ValueError("Skill pack upstream metadata must be a bounded mapping.")
+        clean = {}
+        for meta_key, meta_value in metadata.items():
+            if not isinstance(meta_key, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", meta_key):
+                raise ValueError("Skill pack upstream metadata key is invalid.")
+            if isinstance(meta_value, (str, int, float, bool)) and not isinstance(meta_value, str) or isinstance(meta_value, str):
+                if isinstance(meta_value, str) and len(meta_value) > 500:
+                    raise ValueError("Skill pack upstream metadata value is too long.")
+                if isinstance(meta_value, float) and not __import__("math").isfinite(meta_value):
+                    raise ValueError("Skill pack upstream metadata number is invalid.")
+                clean[meta_key] = meta_value
+            elif (isinstance(meta_value, list) and len(meta_value) <= 20
+                  and all(isinstance(v, str) and len(v) <= 120 for v in meta_value)):
+                clean[meta_key] = list(meta_value)
+            else:
+                raise ValueError("Skill pack upstream metadata values must be bounded scalars or string lists.")
+        result["upstream_metadata"] = clean
     return result
 
 
@@ -149,6 +169,7 @@ def _read_agent_skill_markdown(source: Path) -> dict[str, Any]:
         "instructions": body,
         "risk": risk,
         "source_format": "agentskills-md",
+        "upstream_metadata": custom,
     }
     for source_key in ("license", "author", "version", "compatibility"):
         item = metadata.get(source_key)
