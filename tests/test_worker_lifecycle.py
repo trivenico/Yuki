@@ -95,6 +95,49 @@ class WorkerShutdownCoordinatorTests(unittest.TestCase):
         self.assertTrue(coordinator.try_begin_claim("worker-b"))
         coordinator.release_claim_reservation("worker-b")
 
+    def test_execute_claimed_releases_active_tracking_after_success(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-success")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        result = coordinator.execute_claimed(
+            "worker-a", claimed, lambda task: ("handled", task.run_id),
+        )
+        self.assertEqual(result, ("handled", "task-success"))
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_execute_claimed_releases_tracking_after_handler_exception_without_retry(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-error")
+        calls = []
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+
+        def handler(task):
+            calls.append(task.run_id)
+            raise OSError("handler failed")
+
+        with self.assertRaises(OSError):
+            coordinator.execute_claimed("worker-a", claimed, handler)
+        self.assertEqual(calls, ["task-error"])
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_execute_claimed_requires_matching_registered_ownership(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        called = []
+        with self.assertRaises(RuntimeError):
+            coordinator.execute_claimed(
+                "worker-a", SimpleNamespace(run_id="task-unclaimed"),
+                lambda _task: called.append(True),
+            )
+        self.assertEqual(called, [])
+
     def test_grace_period_is_bounded_and_validated(self):
         coordinator = WorkerShutdownCoordinator()
         for invalid in (-1, 301, True, "1"):

@@ -92,6 +92,25 @@ class WorkerShutdownCoordinator:
             self._claim_reservations.remove(worker)
             self._condition.notify_all()
 
+    def execute_claimed(self, worker_id: str, claimed: object, handler):
+        """Run a registered claim and always release process-local active tracking.
+
+        The handler owns durable completion/failure reporting. If it raises or
+        the process exits, this wrapper does not retry or alter the durable
+        lease; normal lease expiry and supervisor reconciliation remain in force.
+        """
+        worker = self._identity(worker_id, "worker_id")
+        task_id = self._identity(getattr(claimed, "run_id", None), "task_id")
+        if not callable(handler):
+            raise TypeError("handler must be callable.")
+        with self._condition:
+            if self._active.get(worker) != task_id:
+                raise RuntimeError("worker does not own this registered claim.")
+        try:
+            return handler(claimed)
+        finally:
+            self.finish_task(worker, task_id)
+
     def finish_task(self, worker_id: str, task_id: str) -> None:
         worker = self._identity(worker_id, "worker_id")
         task = self._identity(task_id, "task_id")
