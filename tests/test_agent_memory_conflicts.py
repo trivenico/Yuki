@@ -99,5 +99,30 @@ class MemoryConflictDetectorTests(unittest.TestCase):
                 )
 
 
+    def test_different_numeric_values_with_same_unit_are_flagged(self):
+        first = self.add("The request timeout is 30 seconds.")
+        second = self.add("The request timeout is 60 seconds.")
+        result = self.detector.detect(actor_id="owner", agent_id="research")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(set(result[0]["memory_ids"]), {
+            first["memory_id"], second["memory_id"]
+        })
+        self.assertTrue(result[0]["signals"]["numeric_measurement_conflict"])
+        self.assertFalse(result[0]["memory_mutated"])
+
+    def test_same_numeric_measurement_is_not_flagged(self):
+        self.add("The request timeout is 30 seconds.")
+        self.add("The request timeout is 30 seconds.")
+        self.assertEqual(
+            self.detector.detect(actor_id="owner", agent_id="research"), []
+        )
+
+    def test_different_units_are_not_assumed_equivalent_or_conflicting(self):
+        self.add("The request timeout is 30 seconds.")
+        self.add("The request timeout is 30 minutes.")
+        result = self.detector.detect(actor_id="owner", agent_id="research")
+        self.assertEqual(result, [])
+
+
 if __name__ == "__main__":
     unittest.main()
