@@ -37,8 +37,10 @@ def _safe_parts(raw_name: str) -> tuple[str, ...]:
     if not name or name.startswith("/") or name.startswith("//"):
         raise RestoreError("archive_contains_unsafe_path")
     raw_parts = name.split("/")
-    if any(part in ("", ".", "..") for part in raw_parts):
+    if any(part in ("", ".", "..") for part in raw_parts) or len(raw_parts) > 128:
         raise RestoreError("archive_contains_unsafe_path")
+    if any(len(part.encode("utf-8")) > 255 for part in raw_parts) or len(name.encode("utf-8")) > 4096:
+        raise RestoreError("archive_path_too_long")
     for part in raw_parts:
         if ":" in part or part.endswith((".", " ")):
             raise RestoreError("archive_contains_unsafe_path")
@@ -93,9 +95,10 @@ def _copy_stream(stream, target: Path, expected_size: int, total: list[int]) -> 
     if expected_size < 0 or expected_size > _MAX_FILE_BYTES:
         raise RestoreError("archive_file_size_limit_exceeded")
     written = 0
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
-        with target.open("xb") as output:
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
             while True:
                 chunk = stream.read(_CHUNK_SIZE)
                 if not chunk:
@@ -156,7 +159,7 @@ def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int]:
                 continue
             target = payload.joinpath(*relative)
             if kind == "dir":
-                target.mkdir(parents=True, exist_ok=True)
+                target.mkdir(parents=True, exist_ok=True, mode=0o700)
                 continue
             with archive.open(info, "r") as source:
                 _copy_stream(source, target, info.file_size, total)
@@ -220,6 +223,8 @@ def _validate_sqlite_files(root: Path) -> int:
     for current, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames.sort()
         for name in filenames:
+            if name.lower().endswith(("-wal", "-shm", "-journal")):
+                raise RestoreError("archive_contains_sqlite_journal_sidecar")
             path = Path(current) / name
             try:
                 with path.open("rb") as handle:
@@ -245,12 +250,20 @@ def _validate_sqlite_files(root: Path) -> int:
 
 def restore_workspace(archive_file: str | Path, destination_dir: str | Path) -> dict[str, int]:
     """Restore a supported archive to a new directory without overwriting data."""
-    archive_path = Path(archive_file).expanduser().resolve(strict=True)
+    raw_archive = Path(archive_file).expanduser()
+    if raw_archive.is_symlink():
+        raise RestoreError("restore_archive_must_not_be_symlink")
+    archive_path = raw_archive.resolve(strict=True)
     if not archive_path.is_file():
         raise RestoreError("restore_archive_must_be_file")
-    destination = Path(destination_dir).expanduser().resolve(strict=False)
+    raw_destination = Path(destination_dir).expanduser()
+    if raw_destination.is_symlink():
+        raise RestoreError("restore_destination_must_not_be_symlink")
+    destination = raw_destination.resolve(strict=False)
     if destination.exists():
         raise RestoreError("restore_destination_already_exists")
+    if archive_path.stat().st_size > _MAX_TOTAL_BYTES + 100 * 1024 * 1024:
+        raise RestoreError("archive_compressed_size_limit_exceeded")
     parent = destination.parent
     if not parent.is_dir():
         raise RestoreError("restore_destination_parent_missing")
@@ -259,7 +272,7 @@ def restore_workspace(archive_file: str | Path, destination_dir: str | Path) -> 
 
     staging = Path(tempfile.mkdtemp(prefix=".yuki-restore-", dir=str(parent)))
     payload = staging / "payload"
-    payload.mkdir()
+    payload.mkdir(mode=0o700)
     try:
         if archive_path.name.lower().endswith(".zip"):
             files, total = _extract_zip(archive_path, payload)
@@ -276,9 +289,15 @@ def restore_workspace(archive_file: str | Path, destination_dir: str | Path) -> 
         else:
             workspace = payload
         databases = _validate_sqlite_files(workspace)
-        if destination.exists():
+        if destination.exists() or destination.is_symlink():
             raise RestoreError("restore_destination_already_exists")
         os.rename(workspace, destination)
+        if os.name != "nt":
+            os.chmod(destination, 0o700)
+            for current, dirnames, filenames in os.walk(destination):
+                os.chmod(current, 0o700)
+                for filename in filenames:
+                    os.chmod(Path(current) / filename, 0o600)
         return {"files_restored": files, "bytes_restored": total, "sqlite_databases_verified": databases}
     except RestoreError:
         raise
