@@ -38,6 +38,39 @@ class WorkerShutdownCoordinator:
             self._claim_reservations.add(worker)
             return True
 
+    def claim_next(self, store: object, worker_id: str, *, lease_seconds: int = 60):
+        """Claim through the durable store while holding the shutdown gate.
+
+        A reservation is acquired before the database claim, so shutdown cannot
+        race between the gate check and durable claim. Empty queues and store
+        exceptions always release the reservation.
+        """
+        if not callable(getattr(store, "claim_next", None)):
+            raise TypeError("store must provide a callable claim_next method.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if not self.try_begin_claim(worker_id):
+            return None
+        try:
+            claimed = store.claim_next(worker_id=worker_id, lease_seconds=lease_seconds)
+            if claimed is None:
+                self.release_claim_reservation(worker_id)
+                return None
+            task_id = getattr(claimed, "run_id", None)
+            if not isinstance(task_id, str) or not task_id:
+                self.release_claim_reservation(worker_id)
+                raise RuntimeError("durable store returned a claim without a valid run_id.")
+            self.register_claim(worker_id, task_id)
+            return claimed
+        except BaseException:
+            # If registration already succeeded, the reservation no longer
+            # exists; do not mask the original exception.
+            with self._condition:
+                reserved = worker_id in self._claim_reservations
+            if reserved:
+                self.release_claim_reservation(worker_id)
+            raise
+
     def register_claim(self, worker_id: str, task_id: str) -> None:
         """Register a successfully claimed durable task against its reservation."""
         worker = self._identity(worker_id, "worker_id")

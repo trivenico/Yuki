@@ -53,6 +53,48 @@ class WorkerShutdownCoordinatorTests(unittest.TestCase):
             coordinator.register_claim("worker-b", "task-1")
         coordinator.finish_task("worker-a", "task-1")
 
+    def test_claim_next_integrates_shutdown_gate_with_durable_store(self):
+        from types import SimpleNamespace
+
+        class Store:
+            def __init__(self):
+                self.calls = 0
+
+            def claim_next(self, *, worker_id, lease_seconds):
+                self.calls += 1
+                self.asserted = (worker_id, lease_seconds)
+                return SimpleNamespace(run_id="task-42")
+
+        coordinator = WorkerShutdownCoordinator()
+        store = Store()
+        claimed = coordinator.claim_next(store, "worker-a", lease_seconds=90)
+        self.assertEqual(claimed.run_id, "task-42")
+        self.assertEqual(store.asserted, ("worker-a", 90))
+        self.assertEqual(
+            coordinator.snapshot()["active_workers"], {"worker-a": "task-42"},
+        )
+        coordinator.begin_shutdown()
+        self.assertIsNone(coordinator.claim_next(store, "worker-b"))
+        self.assertEqual(store.calls, 1)
+
+    def test_claim_next_releases_reservation_on_empty_queue_or_store_error(self):
+        class EmptyStore:
+            def claim_next(self, **_kwargs):
+                return None
+
+        class BrokenStore:
+            def claim_next(self, **_kwargs):
+                raise OSError("database unavailable")
+
+        coordinator = WorkerShutdownCoordinator()
+        self.assertIsNone(coordinator.claim_next(EmptyStore(), "worker-a"))
+        self.assertEqual(coordinator.snapshot()["claim_reservations"], 0)
+        with self.assertRaises(OSError):
+            coordinator.claim_next(BrokenStore(), "worker-b")
+        self.assertEqual(coordinator.snapshot()["claim_reservations"], 0)
+        self.assertTrue(coordinator.try_begin_claim("worker-b"))
+        coordinator.release_claim_reservation("worker-b")
+
     def test_grace_period_is_bounded_and_validated(self):
         coordinator = WorkerShutdownCoordinator()
         for invalid in (-1, 301, True, "1"):
