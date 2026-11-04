@@ -18,9 +18,18 @@ class WorkspaceRestoreTests(unittest.TestCase):
             source = root / "source"
             source.mkdir()
             (source / "preferences.json").write_text('{"theme":"dark"}', encoding="utf-8")
+            import sqlite3
+            database = sqlite3.connect(source / "memory.sqlite3")
+            try:
+                database.execute("CREATE TABLE memories (content TEXT)")
+                database.execute("INSERT INTO memories VALUES ('authenticated restore')")
+                database.commit()
+            finally:
+                database.close()
             plaintext_archive = root / "workspace.zip"
             with zipfile.ZipFile(plaintext_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 archive.write(source / "preferences.json", "preferences.json")
+                archive.write(source / "memory.sqlite3", "memory.sqlite3")
 
             key_dir = root / "secrets"
             key_dir.mkdir()
@@ -34,7 +43,13 @@ class WorkspaceRestoreTests(unittest.TestCase):
 
             destination = root / "restore-test"
             result = restore_workspace(decrypted_archive, destination)
-            self.assertEqual(result["files_restored"], 1)
+            self.assertEqual(result["files_restored"], 2)
+            self.assertEqual(result["sqlite_databases_verified"], 1)
+            restored_db = sqlite3.connect(destination / "memory.sqlite3")
+            try:
+                self.assertEqual(restored_db.execute("SELECT content FROM memories").fetchone()[0], "authenticated restore")
+            finally:
+                restored_db.close()
             self.assertEqual(
                 (destination / "preferences.json").read_text(encoding="utf-8"),
                 '{"theme":"dark"}',
