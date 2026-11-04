@@ -79,7 +79,7 @@ class ExternalSkillCatalog:
     def _path(self, skill_id: str) -> Path:
         if not isinstance(skill_id, str) or not _ID_RE.fullmatch(skill_id):
             raise ValueError("invalid_external_skill_id")
-        filename = skill_id.replace(".", "__") + ".json"
+        filename = hashlib.sha256(skill_id.encode("utf-8")).hexdigest() + ".json"
         path = (self.directory / filename).resolve()
         if path.parent != self.directory:
             raise ValueError("invalid_catalog_path")
