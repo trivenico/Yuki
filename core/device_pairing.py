@@ -12,6 +12,7 @@ import hashlib
 import re
 import secrets
 import sqlite3
+import uuid
 from pathlib import Path
 
 
@@ -139,7 +140,7 @@ class DevicePairingService:
         now = _now()
         code_hash = _digest(code)
         token = secrets.token_urlsafe(32)
-        device_id = secrets.token_urlsafe(18)
+        device_id = "dev_" + uuid.uuid4().hex
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
