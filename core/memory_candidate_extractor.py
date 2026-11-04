@@ -90,8 +90,11 @@ def extract_memory_candidates(
             if fingerprint in seen:
                 break
             seen.add(fingerprint)
+            candidate_key = hashlib.sha256(
+                (fingerprint + "\\0" + conversation_id + "\\0" + message_id).encode("utf-8")
+            ).hexdigest()
             candidates.append({
-                "candidate_id": "memcand-" + fingerprint[:24],
+                "candidate_id": "memcand-" + candidate_key[:24],
                 "content": claim[:_MAX_TEXT],
                 "category": category,
                 "status": "pending_owner_review",
