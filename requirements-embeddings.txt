@@ -1,0 +1,2 @@
+# Optional local Hugging Face sentence-transformer runtime. The base install stays lean.
+sentence-transformers>=3.4,<6
