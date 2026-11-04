@@ -39,7 +39,7 @@ You can pass source and destination directories:
 scripts\daily_backup.bat "E:\YukiData" "F:\YukiBackups"
 ```
 
-Defaults and environment overrides match the Unix script: `YUKI_HOME`, `YUKI_BACKUP_DIR`, and `YUKI_BACKUP_RETENTION_DAYS`. The script uses the Windows-provided PowerShell `Compress-Archive` command and does not install packages.
+Defaults and environment overrides match the Unix script: `YUKI_HOME`, `YUKI_BACKUP_DIR`, and `YUKI_BACKUP_RETENTION_DAYS`. The script uses the Windows-provided .NET ZIP APIs through PowerShell, includes hidden files, reads every archive entry to validate it, and does not install packages.
 
 ## Schedule it daily
 
