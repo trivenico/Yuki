@@ -153,6 +153,65 @@ class SQLiteEmbeddingIndex:
             )
             return cursor.rowcount > 0
 
+
+    def get_backfill_checkpoint(self, *, actor_id: str, agent_id: str) -> dict | None:
+        if not isinstance(actor_id, str) or not actor_id.strip():
+            raise ValueError("actor_id_required")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError("agent_id_required")
+        with self._connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS memory_embedding_backfill (
+                actor_id TEXT NOT NULL, agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
+                cursor_created_at TEXT, cursor_memory_id TEXT,
+                completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(actor_id,agent_id,model_id)
+            )""")
+            row = db.execute("""SELECT cursor_created_at,cursor_memory_id,completed,updated_at
+                FROM memory_embedding_backfill
+                WHERE actor_id=? AND agent_id=? AND model_id=?""",
+                (actor_id, agent_id, self.model_id)).fetchone()
+        if row is None:
+            return None
+        cursor = None
+        if row[0] is not None and row[1] is not None:
+            cursor = {"created_at": row[0], "memory_id": row[1]}
+        return {"cursor": cursor, "completed": bool(row[2]), "updated_at": row[3]}
+
+    def save_backfill_checkpoint(self, *, actor_id: str, agent_id: str,
+                                 cursor: dict | None, completed: bool = False) -> None:
+        if not isinstance(actor_id, str) or not actor_id.strip():
+            raise ValueError("actor_id_required")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError("agent_id_required")
+        if type(completed) is not bool:
+            raise ValueError("completed_must_be_boolean")
+        created_at = memory_id = None
+        if cursor is not None:
+            if not isinstance(cursor, dict):
+                raise ValueError("invalid_backfill_cursor")
+            created_at, memory_id = cursor.get("created_at"), cursor.get("memory_id")
+            if (not isinstance(created_at, str) or len(created_at) > 64
+                    or not isinstance(memory_id, str)
+                    or not __import__("re").fullmatch(r"[a-f0-9]{32}", memory_id)):
+                raise ValueError("invalid_backfill_cursor")
+        with self._lock, self._connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS memory_embedding_backfill (
+                actor_id TEXT NOT NULL, agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
+                cursor_created_at TEXT, cursor_memory_id TEXT,
+                completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(actor_id,agent_id,model_id)
+            )""")
+            db.execute("""INSERT INTO memory_embedding_backfill
+                (actor_id,agent_id,model_id,cursor_created_at,cursor_memory_id,completed)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(actor_id,agent_id,model_id) DO UPDATE SET
+                cursor_created_at=excluded.cursor_created_at,
+                cursor_memory_id=excluded.cursor_memory_id,
+                completed=excluded.completed,updated_at=CURRENT_TIMESTAMP""",
+                (actor_id, agent_id, self.model_id, created_at, memory_id, int(completed)))
+
     def stats(self, *, actor_id: str) -> dict:
         if not isinstance(actor_id, str) or not actor_id.strip():
             raise ValueError("actor_id_required")
