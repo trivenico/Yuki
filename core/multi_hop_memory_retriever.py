@@ -10,9 +10,6 @@ import re
 from collections import deque
 from typing import Any
 
-from core.unified_knowledge_api import UnifiedKnowledgeAPI
-
-
 class MultiHopMemoryRetriever:
     """Explore a small evidence neighborhood without changing access scope."""
 
