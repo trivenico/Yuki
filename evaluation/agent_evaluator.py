@@ -61,7 +61,7 @@ class AgentEvaluator:
             raise ValueError("invalid_task_id")
         if not isinstance(agent_id, str) or not _AGENT.fullmatch(agent_id):
             raise ValueError("invalid_agent_id")
-        if outcome not in {"succeeded", "failed", "cancelled"}:
+        if not isinstance(outcome, str) or outcome not in {"succeeded", "failed", "cancelled"}:
             raise ValueError("invalid_outcome")
         if not isinstance(signals, Mapping) or set(signals) != set(_DIMENSIONS):
             raise ValueError("signals must contain exactly the five rubric dimensions")
