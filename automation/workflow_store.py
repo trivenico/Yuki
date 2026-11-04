@@ -747,10 +747,13 @@ class WorkflowRunStore:
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='running' "
                 "AND lease_expires_at IS NOT NULL "
+                "AND lease_expires_at < ? "
+                "AND (substr(lease_expires_at, 20, 1) IN ('+', '-') "
+                "OR substr(lease_expires_at, -1) = 'Z') "
                 "AND julianday(lease_expires_at) IS NOT NULL "
                 "AND julianday(lease_expires_at) < julianday(?) "
                 "ORDER BY julianday(lease_expires_at), created_at, run_id LIMIT ?",
-                (now, limit),
+                (now, now, limit),
             ).fetchall()
             return [self._row(row) for row in rows]
 
