@@ -59,6 +59,7 @@ class AgentMemoryTests(unittest.TestCase):
    content="Timeout is 60 seconds",source="verified runbook",reason="Owner verified updated configuration")
   self.assertNotEqual(old["memory_id"],new["memory_id"])
   self.assertTrue(new["verified"])
+  self.assertEqual(new["lifecycle_status"],"approved")
   self.assertEqual(new["source"],"verified runbook")
   self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research")[0]["memory_id"],new["memory_id"])
   history=self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])
