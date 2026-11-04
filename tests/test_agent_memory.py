@@ -208,6 +208,26 @@ class AgentMemoryTests(unittest.TestCase):
   ))
   self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="assistant")),1)
 
+ def test_deleted_promoted_candidate_cannot_be_resurrected(self):
+  candidate_id="memcand-abcdef0123456789abcdef01"
+  item=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",candidate_id=candidate_id,
+   content="I prefer concise explanations",source="conversation:abc:message:1",
+   category="semantic",
+  )
+  self.assertTrue(self.store.delete(
+   actor_id="owner",agent_id="assistant",memory_id=item["memory_id"]
+  ))
+  self.assertTrue(self.store.candidate_was_promoted(
+   actor_id="owner",agent_id="assistant",candidate_id=candidate_id
+  ))
+  with self.assertRaises(ValueError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",candidate_id=candidate_id,
+    content="I prefer concise explanations",source="conversation:abc:message:1",
+    category="semantic",
+   )
+
  def test_candidate_promotion_rejects_invalid_ids_and_missing_write_permission(self):
   with self.assertRaises(ValueError):
    self.store.remember_candidate(
