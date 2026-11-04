@@ -7,6 +7,7 @@ be measured on the target hardware.
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 import json
+import math
 import re
 import urllib.error
 import urllib.request
@@ -155,7 +156,7 @@ def assess_resource_fit(
         model, runtime_overhead_ratio=runtime_overhead_ratio,
         gpu_offload_ratio=gpu_offload_ratio,
     )
-    host_required = int(
+    host_required = math.ceil(
         estimate["estimated_host_memory_bytes"] * (1.0 + required_headroom_ratio)
     )
     host_fits = available_host_memory_bytes >= host_required
@@ -166,7 +167,7 @@ def assess_resource_fit(
     elif gpu_offload_ratio > 0 and available_gpu_memory_bytes is None:
         status = "unknown_gpu_capacity"
         reason = "gpu_offload_requested_but_capacity_not_supplied"
-    elif gpu_offload_ratio > 0 and available_gpu_memory_bytes < int(
+    elif gpu_offload_ratio > 0 and available_gpu_memory_bytes < math.ceil(
         gpu_required * (1.0 + required_headroom_ratio)
     ):
         status = "gpu_memory_insufficient"
@@ -182,7 +183,7 @@ def assess_resource_fit(
         "available_gpu_memory_bytes": available_gpu_memory_bytes,
         "estimated_gpu_memory_bytes": gpu_required,
         "required_gpu_memory_with_headroom_bytes": (
-            int(gpu_required * (1.0 + required_headroom_ratio))
+            math.ceil(gpu_required * (1.0 + required_headroom_ratio))
             if gpu_offload_ratio > 0 else 0
         ),
         "estimate_kind": "heuristic_from_installed_size", "confidence": "low",
