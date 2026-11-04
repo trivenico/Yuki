@@ -174,6 +174,17 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.store.transition(run.run_id, expected_version=0, to_state="succeeded")
 
+    def test_running_terminal_transition_requires_worker_identity(self):
+        run = self.create()
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running", lease_owner="worker-a"
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition(
+                running.run_id, expected_version=running.version, to_state="succeeded",
+                result={"steps_completed": 1},
+            )
+
     def test_running_requires_owner_and_bounded_lease(self):
         run = self.create()
         with self.assertRaises(ValueError):
