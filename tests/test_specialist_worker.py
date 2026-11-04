@@ -171,7 +171,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         result = worker.run_once()
         self.assertEqual(result.state, "succeeded")
-        self.assertIsNone(worker.last_learning_error_code)
+        self.assertIsNone(
+            worker.last_learning_error_code,
+            f"learning review failed: {worker.last_learning_error_type} "
+            f"{worker.last_learning_error_detail}",
+        )
         pending = queue.list_pending(actor_id="alice")
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["task_id"], task_id)
