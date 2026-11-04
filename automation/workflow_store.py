@@ -355,7 +355,7 @@ class WorkflowRunStore:
 
     def renew_lease(
         self, run_id: str, *, worker_id: str, expected_version: int,
-        lease_seconds: int = 60,
+        lease_seconds: int = 60, event_actor_id: str | None = None,
     ) -> WorkflowRun:
         """Renew only the active worker's unexpired lease using compare-and-swap."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
@@ -387,6 +387,23 @@ class WorkflowRunStore:
             """, (lease_expires, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
+            if event_actor_id is not None:
+                if (not isinstance(event_actor_id, str) or not event_actor_id.strip()
+                        or len(event_actor_id) > 200 or "\x00" in event_actor_id):
+                    raise ValueError("event_actor_id must be non-empty bounded text.")
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+                payload_json = _bounded_json(
+                    {"worker_id": worker_id.strip(), "lease_expires_at": lease_expires},
+                    8 * 1024, "task event payload",
+                )
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, 'task.lease_renewed', ?, ?, ?)",
+                    (run_id, sequence, event_actor_id.strip(), payload_json, now),
+                )
             renewed = db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone()

@@ -146,6 +146,41 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([event.kind for event in self.runtime.events(
             actor_id="alice", task_id=task.task_id)], ["task.created"])
 
+    def test_lease_renewal_is_journaled_with_worker_identity(self):
+        task = self.create("lease-renewal-event")
+        claimed = self.claim(task)
+        renewed = self.runtime.renew_lease(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, lease_seconds=120,
+        )
+        event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(event.kind, "task.lease_renewed")
+        self.assertEqual(event.actor_id, "alice")
+        self.assertEqual(event.payload["worker_id"], "worker-a")
+        self.assertEqual(event.payload["lease_expires_at"], renewed.lease_expires_at)
+
+    def test_lease_renewal_and_event_roll_back_together(self):
+        task = self.create("atomic-lease-renewal")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_lease_renewal_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.lease_renewed'
+                BEGIN SELECT RAISE(ABORT, 'simulated lease event failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, lease_seconds=120,
+            )
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual(current.lease_expires_at, claimed.lease_expires_at)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)],
+            ["task.created", "task.claimed"])
+
     def test_progress_is_versioned_and_durable(self):
         task = self.create()
         claimed = self.claim(task)
