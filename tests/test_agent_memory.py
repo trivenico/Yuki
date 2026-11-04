@@ -7,7 +7,7 @@ from core.agent_memory import AgentMemoryStore
 class AgentMemoryTests(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory()
-  self.grants={"owner":{"agent_memory:write","agent_memory:read","agent_memory:delete","agent_memory:share","agent_memory:prune"}}
+  self.grants={"owner":{"agent_memory:write","agent_memory:read","agent_memory:delete","agent_memory:share","agent_memory:prune","agent_memory:review","agent_memory:retire","agent_memory:renew"}}
   self.store=AgentMemoryStore(str(Path(self.tmp.name)/"memory.sqlite"),
     authorize=lambda actor,action,resource: action in self.grants.get(actor,set()))
  def tearDown(self): self.tmp.cleanup()
@@ -109,6 +109,71 @@ class AgentMemoryTests(unittest.TestCase):
   with self.assertRaises(PermissionError):
    self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
     content="shared new",source="review",reason="correction")
+
+
+ def test_approval_marks_memory_verified_and_records_history(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Candidate fact",source="agent")
+  approved=self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="approved",reason="Owner checked source")
+  self.assertEqual(approved["lifecycle_status"],"approved")
+  self.assertTrue(approved["verified"])
+  history=self.store.lifecycle_history(actor_id="owner",agent_id="research",memory_id=item["memory_id"])
+  self.assertEqual(history[0]["previous_status"],"active")
+  self.assertEqual(history[0]["new_status"],"approved")
+
+ def test_rejected_memory_is_excluded_from_normal_retrieval(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Unsupported claim",source="agent")
+  self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="rejected",reason="No supporting evidence")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research"),[])
+  self.assertEqual(self.store.search(actor_id="owner",agent_id="research",query="unsupported claim"),[])
+
+ def test_retired_memory_is_excluded_and_requires_retire_permission(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Old procedure",source="runbook")
+  self.grants["owner"].remove("agent_memory:retire")
+  with self.assertRaises(PermissionError):
+   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+    memory_id=item["memory_id"],status="retired",reason="Replaced")
+  self.grants["owner"].add("agent_memory:retire")
+  self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="retired",reason="Procedure decommissioned")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research"),[])
+
+ def test_renewal_extends_expiry_and_records_reason(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Current procedure",source="runbook")
+  renewed=self.store.renew(actor_id="owner",agent_id="research",memory_id=item["memory_id"],
+   retention_days=90,reason="Owner revalidated source")
+  self.assertGreater(renewed["expires_at"],item["expires_at"])
+  self.assertIn("renewal:",self.store.lifecycle_history(
+   actor_id="owner",agent_id="research",memory_id=item["memory_id"])[0]["reason"])
+
+ def test_terminal_memory_cannot_be_renewed_or_reactivated(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Old fact",source="agent")
+  self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="rejected",reason="Incorrect")
+  with self.assertRaises(ValueError):
+   self.store.renew(actor_id="owner",agent_id="research",memory_id=item["memory_id"],
+    retention_days=30,reason="Try again")
+  with self.assertRaises(ValueError):
+   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+    memory_id=item["memory_id"],status="approved",reason="Try again")
+
+ def test_lifecycle_audit_is_immutable(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
+  self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="approved",reason="Reviewed")
+  with sqlite3.connect(self.store.database_path) as db:
+   with self.assertRaises(sqlite3.IntegrityError):
+    db.execute("UPDATE agent_memory_lifecycle_events SET reason='tampered'")
+   with self.assertRaises(sqlite3.IntegrityError):
+    db.execute("DELETE FROM agent_memory_lifecycle_events")
+
+ def test_lifecycle_review_permission_is_required(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
+  self.grants["owner"].remove("agent_memory:review")
+  with self.assertRaises(PermissionError):
+   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+    memory_id=item["memory_id"],status="approved",reason="Reviewed")
 
 
 if __name__=="__main__": unittest.main()
