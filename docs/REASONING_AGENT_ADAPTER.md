@@ -7,16 +7,19 @@ memory context builder to Yuki's existing structured provider adapter.
 
 1. Validate incoming role/content messages using the provider adapter contract.
 2. Retrieve authorized evidence for the configured actor and specialist agent.
-3. Keep Yuki's configured policy and owner preferences in the system role.
-4. Serialize retrieved records as explicitly untrusted JSON data in the latest
-   user message. Unverified records are excluded unless explicitly enabled.
+3. Keep only server-configured Yuki policy in the system role.
+4. Serialize owner preferences and retrieved records as explicitly untrusted
+   JSON reference data in the latest user message. Unverified records are
+   excluded unless explicitly enabled.
 5. Forward the original tool definitions and tool-choice policy unchanged to
    `ProviderAgentAdapter`. This wrapper never executes proposed tools.
 
 ## Security boundary
 
-Memory remains untrusted even when verified. Retrieved content cannot grant
-permissions, change system policy, or directly invoke tools. Tool execution
+Memory remains untrusted even when verified. Owner preferences are also
+reference data, not policy: they cannot grant permissions or override the
+server-configured system policy. Retrieved content cannot directly invoke
+tools. Tool execution
 remains exclusively behind `StructuredToolProtocol` and
 `GuardedToolRuntime`.
 
@@ -27,6 +30,11 @@ accounting; the existing character bounds remain an outer guard.
 
 ## Usage
 
-Construct the wrapper only after the application's authorization/configuration
-layer has selected the actor, agent, policy, and provider. Do not accept those
-security-sensitive values from an untrusted task payload.
+Use `providers.reasoning_runtime.create_owner_scoped_agent_loop_factory` to
+construct a fresh reasoning adapter and bounded execution loop for each
+conversation request. `ConversationService` supplies the authenticated owner ID
+only after conversation ownership and idempotency checks. The provider and
+guarded-tool factories remain application-owned callbacks. Shared memory is
+disabled by default; enabling it still requires the memory store's separate
+`agent_memory:share` authorization. Do not accept actor IDs, provider selection,
+agent IDs, or policy from an untrusted task payload.
