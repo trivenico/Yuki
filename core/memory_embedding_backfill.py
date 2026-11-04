@@ -88,7 +88,8 @@ class MemoryEmbeddingBackfill:
             pages += 1
             if len(memories) < page_size:
                 self.index.save_backfill_checkpoint(
-                    actor_id=actor_id, agent_id=agent_id, cursor=cursor, completed=True
+                    actor_id=actor_id, agent_id=agent_id, cursor=cursor, completed=True,
+                    include_shared=include_shared
                 )
                 completed = True
                 break
