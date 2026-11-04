@@ -48,3 +48,62 @@ class WindowsBackupScriptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(os.name == "posix", "POSIX backup integration tests")
+class PosixBackupScriptTests(unittest.TestCase):
+    SCRIPT = ROOT / "scripts" / "daily_backup.sh"
+
+    def run_backup(self, env, *args):
+        merged = os.environ.copy()
+        merged.update(env)
+        return subprocess.run(
+            ["sh", str(self.SCRIPT), *map(str, args)],
+            cwd=str(ROOT), env=merged, capture_output=True, text=True, timeout=90,
+        )
+
+    def test_default_source_tracks_configured_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "custom-yuki-home" / "workspace"
+            workspace.mkdir(parents=True)
+            (workspace / "private.json").write_text('{"safe":true}', encoding="utf-8")
+            destination = root / "backup"
+            result = self.run_backup({
+                "YUKI_HOME": str(root / "custom-yuki-home"),
+                "YUKI_WORKSPACE": "workspace",
+                "YUKI_BACKUP_DIR": str(destination),
+                "YUKI_BACKUP_RETENTION_DAYS": "14",
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archives = list(destination.glob("yuki-data-*.tar.gz"))
+            self.assertEqual(len(archives), 1)
+            listing = subprocess.run(
+                ["tar", "-tzf", str(archives[0])],
+                capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            self.assertIn("workspace/private.json", listing)
+
+    def test_explicit_backup_source_overrides_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "workspace"
+            explicit = root / "explicit-source"
+            workspace.mkdir()
+            explicit.mkdir()
+            (workspace / "wrong.txt").write_text("wrong", encoding="utf-8")
+            (explicit / "right.txt").write_text("right", encoding="utf-8")
+            destination = root / "backup"
+            result = self.run_backup({
+                "YUKI_WORKSPACE": str(workspace),
+                "YUKI_BACKUP_SOURCE": str(explicit),
+                "YUKI_BACKUP_DIR": str(destination),
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archive = next(destination.glob("yuki-data-*.tar.gz"))
+            listing = subprocess.run(
+                ["tar", "-tzf", str(archive)],
+                capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            self.assertIn("explicit-source/right.txt", listing)
+            self.assertNotIn("workspace/wrong.txt", listing)
