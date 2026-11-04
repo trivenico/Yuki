@@ -68,6 +68,22 @@ class MemoryEmbeddingBackfillTests(unittest.TestCase):
         self.assertTrue(result["completed"])
         self.assertEqual(len(self.embedder.calls), before)
 
+    def test_visibility_scope_change_requires_explicit_restart(self):
+        self.backfill.run(
+            actor_id="owner", agent_id="research", page_size=2, max_pages=1,
+            include_shared=False,
+        )
+        with self.assertRaisesRegex(ValueError, "visibility_scope_changed"):
+            self.backfill.run(
+                actor_id="owner", agent_id="research", page_size=2,
+                include_shared=True,
+            )
+        restarted = self.backfill.run(
+            actor_id="owner", agent_id="research", page_size=2,
+            max_pages=10, include_shared=True, restart=True,
+        )
+        self.assertTrue(restarted["completed"])
+
     def test_backfill_requires_local_embedder_and_matching_database(self):
         with self.assertRaisesRegex(ValueError, "local_embedder"):
             MemoryEmbeddingBackfill(self.store, object(), self.index)
