@@ -52,6 +52,6 @@ result = promoter.promote(**candidate)
 ## Current limitations and follow-up
 
 - Duplicate detection is deterministic exact-text matching, not semantic contradiction detection. Conflicting claims must remain separate candidates until an evidence-aware conflict review exists.
-- The promotion ledger preserves the original decision. Memory deletion removes the memory and vector cache; a follow-up revocation hook should mark the ledger revoked and retain an audit event.
+- Revocation is recorded in a separate append-only-style audit table so the original promotion ledger remains intact. It removes only a memory created by that exact promotion and invalidates its embedding cache in the same transaction. Duplicate promotions cannot revoke another memory. Revocation requires `agent_knowledge:revoke` and `agent_memory:delete`; audit reads require `agent_knowledge:read`.
 - The promoter uses the current SQLite schema directly and is intended for same-database local deployments. Multi-process production deployments need migration management, backup/restore tests, and database concurrency review.
 - Do not expose candidate approval or promotion as general-purpose specialist-agent tools. They must be reachable only through the authenticated owner workflow.
