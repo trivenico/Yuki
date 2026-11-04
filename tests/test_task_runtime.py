@@ -28,6 +28,24 @@ class TaskRuntimeTests(unittest.TestCase):
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
 
+    def test_enqueue_and_creation_event_roll_back_together(self):
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_creation_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.created'
+                BEGIN SELECT RAISE(ABORT, 'simulated creation journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.enqueue(actor_id="alice", idempotency_key="atomic-create",
+                                 name="atomic-create", steps=self.steps)
+        with self.store._connect() as db:
+            run = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key=?",
+                ("atomic-create",),
+            ).fetchone()
+            self.assertIsNone(run)
+
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
         second = self.create()
