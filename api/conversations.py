@@ -18,6 +18,7 @@ from core.conversation_service import ConversationService
 from core.agent_memory import AgentMemoryStore
 from core.owner_identity import memory_actor_id_for_owner
 from core.memory_candidate_extractor import extract_memory_candidates
+from core.owner_profile import OwnerProfileStore
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -41,6 +42,7 @@ class YukiConversationAPI:
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         device_agent: Any | None = None,
         memory_store: AgentMemoryStore | None = None,
+        owner_profile_store: OwnerProfileStore | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -63,6 +65,9 @@ class YukiConversationAPI:
         if memory_store is not None and not isinstance(memory_store, AgentMemoryStore):
             raise TypeError("memory_store must be an AgentMemoryStore")
         self.memory_store = memory_store
+        if owner_profile_store is not None and not isinstance(owner_profile_store, OwnerProfileStore):
+            raise TypeError("owner_profile_store must be an OwnerProfileStore")
+        self.owner_profile_store = owner_profile_store
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -295,6 +300,62 @@ class YukiConversationAPI:
                         self.memory_store.delete,
                         actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
                     )
+                    return await self._respond(send, 200 if deleted else 404, {"deleted": deleted})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
+            profile_item = re.fullmatch(r"/v1/profile/preferences/([a-z_]{2,48})", path)
+            if path == "/v1/profile/preferences" or profile_item:
+                if self.owner_profile_store is None:
+                    return await self._respond(send, 503, {"error": "owner_profile_unavailable"})
+                actor_id = memory_actor_id_for_owner(user.user_id)
+                if method == "GET" and not profile_item:
+                    try:
+                        preferences = await asyncio.to_thread(
+                            self.owner_profile_store.get, actor_id=actor_id,
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "profile_access_denied"})
+                    return await self._respond(send, 200, {"preferences": preferences})
+                if method == "PUT" and profile_item:
+                    payload = await self._body(receive)
+                    if set(payload) - {"value", "source", "expected_version"} or not {
+                        "value", "source"
+                    }.issubset(payload):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        item = await asyncio.to_thread(
+                            self.owner_profile_store.set,
+                            actor_id=actor_id, key=profile_item.group(1),
+                            value=payload["value"], source=payload["source"],
+                            expected_version=payload.get("expected_version"),
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "profile_access_denied"})
+                    except ValueError as exc:
+                        code = str(exc)
+                        if code not in {
+                            "unsupported_profile_preference", "invalid_profile_preference_value",
+                            "profile_preference_value_too_long", "invalid_profile_preference_choice",
+                            "profile_source_required", "invalid_expected_version",
+                            "profile_version_conflict", "invalid_profile_preference_key",
+                        }:
+                            code = "invalid_profile_preference"
+                        return await self._respond(send, 409 if code == "profile_version_conflict" else 400, {"error": code})
+                    return await self._respond(send, 200, {"preference": item})
+                if method == "DELETE" and profile_item:
+                    payload = await self._body(receive)
+                    if set(payload) - {"expected_version"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        deleted = await asyncio.to_thread(
+                            self.owner_profile_store.delete,
+                            actor_id=actor_id, key=profile_item.group(1),
+                            expected_version=payload.get("expected_version"),
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "profile_access_denied"})
+                    except ValueError:
+                        return await self._respond(send, 400, {"error": "invalid_profile_preference"})
                     return await self._respond(send, 200 if deleted else 404, {"deleted": deleted})
                 return await self._respond(send, 405, {"error": "method_not_allowed"})
 
