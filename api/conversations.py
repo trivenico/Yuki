@@ -423,7 +423,7 @@ class YukiConversationAPI:
         except ConversationConflict:
             return await self._respond(send, 409, {"error": "conversation_conflict"})
         except PermissionError:
-            return await self._respond(send, 403, {"error": "memory_action_not_authorized"})
+            return await self._respond(send, 403, {"error": "permission_denied"})
         except (ValueError, ConversationError):
             return await self._respond(send, 400, {"error": "invalid_request"})
         except Exception:
