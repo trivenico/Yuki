@@ -174,7 +174,7 @@ class AgentMemoryTests(unittest.TestCase):
   item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
    memory_id=item["memory_id"],status="approved",reason="Reviewed")
-  with sqlite3.connect(self.store.database_path) as db:
+  with closing(sqlite3.connect(self.store.database_path)) as db, db:
    with self.assertRaises(sqlite3.IntegrityError):
     db.execute("UPDATE agent_memory_lifecycle_events SET reason='tampered'")
    with self.assertRaises(sqlite3.IntegrityError):
