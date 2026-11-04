@@ -150,6 +150,8 @@ class AgentMemoryStore:
     def search(self, *, actor_id, agent_id, query, limit=10, include_shared=True):
         if not isinstance(query, str) or not query.strip() or len(query) > 1000:
             raise ValueError("invalid_memory_query")
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ValueError("limit_must_be_1_to_20")
         rows = self.list_memories(actor_id=actor_id, agent_id=agent_id,
                                  limit=_MAX_LIMIT, include_shared=include_shared)
         terms = set(re.findall(r"[a-z0-9_]{2,}", query.lower()))
@@ -160,8 +162,6 @@ class AgentMemoryStore:
             if overlap:
                 ranked.append((overlap / max(1, len(terms | tokens)), row))
         ranked.sort(key=lambda item: (item[0], item[1]["created_at"]), reverse=True)
-        if type(limit) is not int or not 1 <= limit <= 20:
-            raise ValueError("limit_must_be_1_to_20")
         return [{"score": round(score, 4), **row} for score, row in ranked[:limit]]
 
     def delete(self, *, actor_id, agent_id, memory_id):
