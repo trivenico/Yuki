@@ -26,11 +26,11 @@ class ProviderAgentAdapter:
         if not callable(stream):
             raise RuntimeError("configured provider does not support native streaming.")
         # Reuse the same input contract as the non-streaming adapter.
-        self._validate_inputs(messages, tools, tool_choice)
+        self.validate_inputs(messages, tools, tool_choice)
         return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
 
     @staticmethod
-    def _validate_inputs(messages, tools, tool_choice):
+    def validate_inputs(messages, tools, tool_choice):
         if not isinstance(messages, (list, tuple)) or not messages or len(messages) > 128:
             raise ValueError("messages must be a non-empty sequence of at most 128 entries.")
         total_chars = 0
