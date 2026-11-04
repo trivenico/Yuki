@@ -218,13 +218,18 @@ class AgentMemoryStore:
             raise PermissionError("agent memory write is not authorized")
         now = datetime.now(timezone.utc)
         with self._lock, self._connect() as db:
-            existing = db.execute(
-                """SELECT m.* FROM agent_memory_candidate_promotions p
-                   JOIN agent_memories m ON m.memory_id=p.memory_id
-                   WHERE p.actor_id=? AND p.agent_id=? AND p.candidate_id=?""",
+            promotion = db.execute(
+                """SELECT memory_id FROM agent_memory_candidate_promotions
+                   WHERE actor_id=? AND agent_id=? AND candidate_id=?""",
                 (actor_id, agent_id, candidate_id),
             ).fetchone()
-            if existing is not None:
+            if promotion is not None:
+                existing = db.execute(
+                    "SELECT * FROM agent_memories WHERE memory_id=?",
+                    (promotion["memory_id"],),
+                ).fetchone()
+                if existing is None:
+                    raise ValueError("memory_candidate_previously_promoted_and_deleted")
                 return self._record(existing)
             memory_id = uuid4().hex
             expires = (now + timedelta(days=retention_days)).isoformat()
