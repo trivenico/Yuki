@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,6 +134,25 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(done.state, "succeeded")
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
                          "task.completed")
+
+    def test_completion_and_terminal_event_roll_back_together(self):
+        task = self.create("atomic-completion-event")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_terminal_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.completed'
+                BEGIN SELECT RAISE(ABORT, 'simulated event journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.complete(actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a", result={"ok": True})
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created"])
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
