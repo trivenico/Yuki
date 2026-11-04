@@ -155,6 +155,99 @@
       try { await openConversation(state.active); } catch (_) {}
     } finally { state.abort = null; state.requestId = null; setBusy(false); $("message-input").focus(); }
   };
+  const memoryStatus = (message) => { $("memory-status").textContent = message || ""; };
+  const memoryActionButton = (label, action, memory) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "memory-action";
+    button.textContent = label;
+    button.addEventListener("click", () => action(memory).catch((error) => toast(error.message)));
+    return button;
+  };
+  const loadMemory = async () => {
+    memoryStatus("Loading your private notes…");
+    const data = await api("/v1/memory");
+    const list = $("memory-list"); list.replaceChildren();
+    const memories = data.memories || [];
+    if (!memories.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No saved memories yet. Add a note above to give Yuki useful context.";
+      list.append(empty);
+    }
+    memories.forEach((memory) => {
+      const card = document.createElement("article"); card.className = "memory-card";
+      const content = document.createElement("p"); content.className = "memory-content";
+      content.textContent = memory.content;
+      const meta = document.createElement("p"); meta.className = "memory-meta";
+      meta.textContent = (memory.lifecycle_status || "active") + " · " +
+        (memory.verified ? "owner-approved" : "unverified reference") +
+        (memory.created_at ? " · " + new Date(memory.created_at).toLocaleDateString() : "");
+      const actions = document.createElement("div"); actions.className = "memory-actions";
+      if (memory.lifecycle_status !== "approved") {
+        actions.append(memoryActionButton("Approve", async (item) => {
+          const reason = window.prompt("Why is this memory accurate?");
+          if (!reason || !reason.trim()) return;
+          await api("/v1/memory/" + encodeURIComponent(item.memory_id), {
+            method: "PATCH", body: JSON.stringify({ status: "approved", reason: reason.trim() })
+          });
+          await loadMemory(); toast("Memory approved.");
+        }, memory));
+      }
+      actions.append(memoryActionButton("Correct", async (item) => {
+        const content = window.prompt("Enter the corrected memory:");
+        if (!content || !content.trim()) return;
+        const reason = window.prompt("Why does this need correction?");
+        if (!reason || !reason.trim()) return;
+        await api("/v1/memory/" + encodeURIComponent(item.memory_id) + "/corrections", {
+          method: "POST", body: JSON.stringify({
+            content: content.trim(), source: "owner_memory_panel", reason: reason.trim()
+          })
+        });
+        await loadMemory(); toast("Correction saved; prior evidence retained.");
+      }, memory));
+      actions.append(memoryActionButton("History", async (item) => {
+        const history = await api("/v1/memory/" + encodeURIComponent(item.memory_id) + "/history");
+        const events = (history.lifecycle_events || []).map((entry) =>
+          entry.previous_status + " → " + entry.new_status + ": " + entry.reason
+        ).concat((history.corrections || []).map((entry) =>
+          "Corrected: " + entry.reason
+        ));
+        toast(events.length ? events.join(" · ").slice(0, 900) : "No audit events recorded yet.");
+      }, memory));
+      actions.append(memoryActionButton("Retire", async (item) => {
+        const reason = window.prompt("Why should Yuki stop using this memory?");
+        if (!reason || !reason.trim()) return;
+        await api("/v1/memory/" + encodeURIComponent(item.memory_id), {
+          method: "PATCH", body: JSON.stringify({ status: "retired", reason: reason.trim() })
+        });
+        await loadMemory(); toast("Memory retired.");
+      }, memory));
+      actions.append(memoryActionButton("Delete", async (item) => {
+        if (!window.confirm("Permanently delete this memory and its cached embedding?")) return;
+        await api("/v1/memory/" + encodeURIComponent(item.memory_id), { method: "DELETE" });
+        await loadMemory(); toast("Memory deleted.");
+      }, memory));
+      card.append(content, meta, actions); list.append(card);
+    });
+    memoryStatus(memories.length + " private note" + (memories.length === 1 ? "" : "s"));
+  };
+  $("open-memory").addEventListener("click", async () => {
+    $("memory-panel").hidden = false;
+    try { await loadMemory(); } catch (error) { memoryStatus(error.message); }
+  });
+  $("close-memory").addEventListener("click", () => { $("memory-panel").hidden = true; });
+  $("memory-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const content = $("memory-content").value.trim();
+    if (!content) return;
+    const submit = event.currentTarget.querySelector("button[type=submit]");
+    submit.disabled = true;
+    try {
+      await api("/v1/memory", { method: "POST", body: JSON.stringify({ content }) });
+      $("memory-content").value = "";
+      await loadMemory(); toast("Private note saved as unverified evidence.");
+    } catch (error) { memoryStatus(error.message); }
+    finally { submit.disabled = false; }
+  });
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault(); $("login-error").textContent = "";
     try {
