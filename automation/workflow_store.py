@@ -693,7 +693,20 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError("only the current worker may renew a running lease.")
             if row["version"] != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before renewing.")
-            if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+            expiry = row["lease_expires_at"]
+            if not expiry:
+                raise WorkflowConflict("workflow lease expiry is missing.")
+            try:
+                expiry_dt = datetime.fromisoformat(expiry)
+            except (TypeError, ValueError) as exc:
+                raise WorkflowConflict(
+                    "workflow lease expiry is malformed; renewal is unsafe."
+                ) from exc
+            if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+                raise WorkflowConflict(
+                    "workflow lease expiry must include a timezone; renewal is unsafe."
+                )
+            if expiry_dt <= now_dt:
                 raise WorkflowConflict("expired workflow lease cannot be renewed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET lease_expires_at=?, updated_at=?, version=version+1

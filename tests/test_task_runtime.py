@@ -434,6 +434,22 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(event.payload["worker_id"], "worker-a")
         self.assertEqual(event.payload["lease_expires_at"], renewed.lease_expires_at)
 
+    def test_lease_renewal_rejects_malformed_or_timezone_naive_expiry(self):
+        for index, expiry in enumerate(("invalid", "2000-01-01T00:00:00")):
+            task = self.create(f"renew-invalid-expiry-{index}")
+            claimed = self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+            with self.assertRaises(WorkflowConflict):
+                self.runtime.renew_lease(
+                    actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                    expected_version=claimed.version, lease_seconds=120,
+                )
+            self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
     def test_lease_renewal_and_event_roll_back_together(self):
         task = self.create("atomic-lease-renewal")
         claimed = self.claim(task)
