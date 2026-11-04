@@ -32,11 +32,11 @@ Regression tests cover deterministic fallback embeddings, local-only Hugging Fac
 
 The authenticated API exposes these owner-scoped operations:
 
-- `GET /v1/memory` lists private, non-expired, non-superseded memories.
+- `GET /v1/memory` lists private, non-expired, non-superseded memories; `?include_inactive=true` is available to the owner management view so rejected and retired records remain inspectable and deletable, but they are excluded from normal reasoning retrieval.
 - `POST /v1/memory` creates a private, unverified owner note.
 - `PATCH /v1/memory/{id}` approves, rejects, or retires a record with a required reason.
 - `POST /v1/memory/{id}/corrections` preserves the prior claim, creates its approved replacement, and writes immutable correction history.
 - `GET /v1/memory/{id}/history` returns lifecycle and correction audit events.
 - `DELETE /v1/memory/{id}` removes the owner's selected record and its derived embedding cache rows.
 
-Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
+Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser chat now includes a private Memory panel for adding notes, approving, rejecting, correcting, inspecting audit history, retiring, and deleting records. It uses text-only DOM rendering for memory content to avoid HTML injection. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
