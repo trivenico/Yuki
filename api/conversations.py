@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
+from core.agent_memory import AgentMemoryStore
+from providers.reasoning_runtime import memory_actor_id_for_owner
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -37,6 +39,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         device_agent: Any | None = None,
+        memory_store: AgentMemoryStore | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -56,6 +59,9 @@ class YukiConversationAPI:
         if device_agent is not None and not callable(getattr(device_agent, "heartbeat", None)):
             raise TypeError("device_agent must provide a heartbeat method")
         self.device_agent = device_agent
+        if memory_store is not None and not isinstance(memory_store, AgentMemoryStore):
+            raise TypeError("memory_store must be an AgentMemoryStore")
+        self.memory_store = memory_store
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -149,6 +155,52 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
                 })
+
+            if path == "/v1/memory":
+                if self.memory_store is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                actor_id = memory_actor_id_for_owner(user.user_id)
+                if method == "GET":
+                    records = await asyncio.to_thread(
+                        self.memory_store.list_memories,
+                        actor_id=actor_id, agent_id="assistant",
+                        limit=50, include_shared=False,
+                    )
+                    safe_records = [{
+                        "memory_id": item["memory_id"],
+                        "content": item["content"],
+                        "category": item["category"],
+                        "source": item["source"],
+                        "verified": item["verified"],
+                        "created_at": item["created_at"],
+                        "expires_at": item["expires_at"],
+                        "lifecycle_status": item["lifecycle_status"],
+                    } for item in records]
+                    return await self._respond(send, 200, {"memories": safe_records})
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"content"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    if not isinstance(payload["content"], str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    record = await asyncio.to_thread(
+                        self.memory_store.remember,
+                        actor_id=actor_id, agent_id="assistant",
+                        content=payload["content"], source="owner_web_ui",
+                        category="episodic", confidence=0.5,
+                        verified=False, scope="private",
+                    )
+                    return await self._respond(send, 201, {
+                        "memory": {
+                            "memory_id": record["memory_id"],
+                            "content": record["content"],
+                            "category": record["category"],
+                            "verified": record["verified"],
+                            "created_at": record["created_at"],
+                            "expires_at": record["expires_at"],
+                        }
+                    })
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
 
             if method == "PUT" and path == "/v1/providers/active":
                 if user.role != "admin":
