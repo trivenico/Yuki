@@ -27,7 +27,7 @@ class SemanticMemoryRetrieverTests(unittest.TestCase):
         self.store = AgentMemoryStore(
             str(Path(self.tmp.name) / "memory.sqlite3"),
             authorize=lambda actor, action, _agent: (
-                actor == "owner" and action in {"agent_memory:write", "agent_memory:read"}
+                actor == "owner" and action in {"agent_memory:write", "agent_memory:share", "agent_memory:read"}
             ),
         )
         self.store.remember(
