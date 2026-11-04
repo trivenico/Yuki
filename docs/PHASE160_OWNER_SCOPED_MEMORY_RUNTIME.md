@@ -30,4 +30,4 @@ The hashing fallback is not a trained semantic model and should not be described
 
 Regression tests cover deterministic fallback embeddings, local-only Hugging Face loading, owner-specific memory keys, private-memory non-disclosure across owners, shared-memory denial, and web-launcher composition.
 
-The web profile still has no memory-management HTTP endpoints or UI controls. Memory writes must be added through a separate authenticated, bounded, auditable API before users can manage memories from the browser.
+The authenticated API now exposes `GET /v1/memory` and `POST /v1/memory`. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
