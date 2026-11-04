@@ -1,5 +1,3 @@
-import io
-import os
 from pathlib import Path
 import tarfile
 import tempfile
@@ -130,6 +128,32 @@ class WorkspaceRestoreTests(unittest.TestCase):
             archive_path.write_bytes(b"PK\\x03\\x04broken")
             with self.assertRaises(RestoreError):
                 restore_workspace(archive_path, root / "restored")
+
+    def test_rejects_sqlite_journal_sidecar(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive_path = root / "sidecar.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("memory.sqlite3-wal", "untrusted journal")
+            with self.assertRaises(RestoreError):
+                restore_workspace(archive_path, root / "restored")
+
+    def test_rejects_destination_symlink(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive_path = root / "backup.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("note.txt", "safe")
+            real_destination = root / "real"
+            real_destination.mkdir()
+            link = root / "linked"
+            try:
+                link.symlink_to(real_destination, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlink creation is not available on this platform")
+            with self.assertRaises(RestoreError):
+                restore_workspace(archive_path, link)
+            self.assertEqual(list(real_destination.iterdir()), [])
 
 
 if __name__ == "__main__":
