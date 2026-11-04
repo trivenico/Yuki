@@ -186,7 +186,7 @@ class AgentMemoryStore:
             row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
         return self._record(row)
 
-    def list_memories(self, *, actor_id, agent_id, limit=50, include_shared=True):
+    def list_memories(self, *, actor_id, agent_id, limit=50, include_shared=True, include_inactive=False):
         self._validate_scope(actor_id, agent_id)
         if not self._allowed(actor_id, "agent_memory:read", agent_id):
             raise PermissionError("agent memory read is not authorized")
@@ -194,18 +194,23 @@ class AgentMemoryStore:
             raise ValueError("limit_must_be_1_to_100")
         if type(include_shared) is not bool:
             raise ValueError("include_shared_must_be_boolean")
+        if type(include_inactive) is not bool:
+            raise ValueError("include_inactive_must_be_boolean")
         shared_visible = include_shared and self._allowed(
             actor_id, "agent_memory:share", agent_id
         )
         now = datetime.now(timezone.utc).isoformat()
+        sql = """SELECT * FROM agent_memories
+            WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
+            AND (expires_at IS NULL OR expires_at>?)
+            AND superseded_by IS NULL"""
+        if not include_inactive:
+            sql += " AND lifecycle_status NOT IN ('rejected', 'retired')"
+        sql += " ORDER BY created_at DESC LIMIT ?"
         with self._connect() as db:
-            rows = db.execute("""SELECT * FROM agent_memories
-                WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
-                AND (expires_at IS NULL OR expires_at>?)
-                AND superseded_by IS NULL
-                AND lifecycle_status NOT IN ('rejected', 'retired')
-                ORDER BY created_at DESC LIMIT ?""",
-                (actor_id, agent_id, int(shared_visible), now, limit)).fetchall()
+            rows = db.execute(
+                sql, (actor_id, agent_id, int(shared_visible), now, limit)
+            ).fetchall()
         return [self._record(row) for row in rows]
 
     def list_memories_page(self, *, actor_id, agent_id, limit=100,
