@@ -126,7 +126,7 @@ class AgentMemoryRetriever:
     def _authorized_candidates(
         self, *, actor_id: str, agent_id: str,
         include_shared: bool, verified_only: bool,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], int]:
         """Scan a bounded keyset window; each page rechecks store authorization.
 
         The budget counts raw rows returned by the store, including records
@@ -153,8 +153,7 @@ class AgentMemoryRetriever:
             cursor = {"created_at": last["created_at"], "memory_id": last["memory_id"]}
             if len(page) < page_size:
                 break
-        self._last_candidate_scan_count = scanned
-        return candidates
+        return candidates, scanned
 
     def retrieve(
         self,
@@ -179,11 +178,10 @@ class AgentMemoryRetriever:
                 or not 0.0 <= min_relevance <= 1.0):
             raise ValueError("min_relevance_must_be_between_0_and_1")
 
-        memories = self._authorized_candidates(
+        memories, scanned = self._authorized_candidates(
             actor_id=actor_id, agent_id=agent_id,
             include_shared=include_shared, verified_only=verified_only,
         )
-        scanned = getattr(self, "_last_candidate_scan_count", 0)
         if not memories:
             self._publish_stats(
                 started=started, scanned=scanned, candidates=0,
