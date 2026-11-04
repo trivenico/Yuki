@@ -17,6 +17,7 @@ from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.agent_memory import AgentMemoryStore
 from core.owner_identity import memory_actor_id_for_owner
+from core.memory_candidate_extractor import extract_memory_candidates
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -154,6 +155,80 @@ class YukiConversationAPI:
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
+                })
+
+            candidate_approval = re.fullmatch(
+                r"/v1/memory/candidates/(memcand-[a-f0-9]{24})/approve", path
+            )
+            if path == "/v1/memory/candidates":
+                if self.memory_store is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                query = self._query(scope)
+                if set(query) != {"conversation_id"}:
+                    return await self._respond(send, 400, {"error": "invalid_query"})
+                conversation_id = query["conversation_id"]
+                if not _CONVERSATION_ID.fullmatch(conversation_id):
+                    return await self._respond(send, 400, {"error": "invalid_conversation_id"})
+                messages = await asyncio.to_thread(
+                    self.conversations.history, owner_id=user.user_id,
+                    conversation_id=conversation_id, limit=20,
+                )
+                candidates = extract_memory_candidates(
+                    messages, conversation_id=conversation_id,
+                )
+                return await self._respond(send, 200, {
+                    "candidates": candidates,
+                    "requires_owner_approval": True,
+                    "memory_written": False,
+                })
+            if candidate_approval:
+                if self.memory_store is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                payload = await self._body(receive)
+                if set(payload) != {"conversation_id"} or not isinstance(
+                    payload.get("conversation_id"), str
+                ) or not _CONVERSATION_ID.fullmatch(payload["conversation_id"]):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                conversation_id = payload["conversation_id"]
+                messages = await asyncio.to_thread(
+                    self.conversations.history, owner_id=user.user_id,
+                    conversation_id=conversation_id, limit=20,
+                )
+                candidates = extract_memory_candidates(
+                    messages, conversation_id=conversation_id,
+                )
+                candidate = next(
+                    (item for item in candidates
+                     if item["candidate_id"] == candidate_approval.group(1)),
+                    None,
+                )
+                if candidate is None:
+                    return await self._respond(send, 404, {"error": "memory_candidate_not_found"})
+                category = {
+                    "preference": "semantic",
+                    "context": "episodic",
+                    "explicit": "procedural",
+                }[candidate["category"]]
+                source = (
+                    "conversation:" + conversation_id
+                    + ":message:" + candidate["source"]["message_id"]
+                )
+                record = await asyncio.to_thread(
+                    self.memory_store.remember_candidate,
+                    actor_id=memory_actor_id_for_owner(user.user_id),
+                    agent_id="assistant", candidate_id=candidate["candidate_id"],
+                    content=candidate["content"], source=source, category=category,
+                )
+                return await self._respond(send, 201, {
+                    "memory": {
+                        "memory_id": record["memory_id"],
+                        "content": record["content"],
+                        "category": record["category"],
+                        "verified": record["verified"],
+                        "lifecycle_status": record["lifecycle_status"],
+                    },
+                    "candidate_id": candidate["candidate_id"],
+                    "idempotent": True,
                 })
 
             memory_item = re.fullmatch(r"/v1/memory/([a-f0-9]{32})(?:/(history|corrections))?", path)
