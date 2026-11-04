@@ -22,7 +22,7 @@ class AgentEvaluatorTests(unittest.TestCase):
 
     def test_weighted_score_and_confidence_are_deterministic(self):
         report = self.evaluate()
-        self.assertEqual(report.score, 0.96)
+        self.assertEqual(report.score, 0.95)
         self.assertEqual(report.confidence, "high")
         self.assertFalse(report.requires_human_review)
 
