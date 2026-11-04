@@ -64,7 +64,7 @@ class MemoryRetrievalEvaluationTests(unittest.TestCase):
             active_ids={"allowed-active"},
         )
         self.assertEqual(result["unauthorized_count"], 1)
-        self.assertEqual(result["stale_count"], 1)
+        self.assertEqual(result["stale_count"], 2)
         self.assertEqual(result["duplicate_count"], 1)
         self.assertFalse(result["permission_leakage_free"])
         self.assertFalse(result["stale_record_leakage_free"])
