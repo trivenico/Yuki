@@ -35,6 +35,24 @@ class WindowsBackupScriptTests(unittest.TestCase):
                 self.assertEqual(archive.read("visible.json"), b'{"ok":true}')
                 self.assertEqual(archive.read(".private-state"), b"hidden")
 
+    def test_default_source_uses_yuki_home_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "YukiHome" / "yuki_workspace"
+            workspace.mkdir(parents=True)
+            (workspace / "private.json").write_text('{"ok":true}', encoding="utf-8")
+            destination = root / "Backups"
+            env = os.environ.copy()
+            env.update({"YUKI_HOME": str(root / "YukiHome"), "YUKI_BACKUP_DIR": str(destination)})
+            result = subprocess.run(
+                ["cmd.exe", "/c", str(SCRIPT)],
+                cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=90,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archive_path = next(destination.glob("yuki-data-*.zip"))
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertEqual(archive.read("private.json"), b'{"ok":true}')
+
     def test_backup_rejects_same_or_nested_destination(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / "YukiData"
@@ -44,10 +62,6 @@ class WindowsBackupScriptTests(unittest.TestCase):
             self.assertNotEqual(same.returncode, 0)
             nested = self.run_backup(source, source / "nested-backup")
             self.assertNotEqual(nested.returncode, 0)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX backup integration tests")
@@ -84,6 +98,25 @@ class PosixBackupScriptTests(unittest.TestCase):
             ).stdout.splitlines()
             self.assertIn("workspace/private.json", listing)
 
+    def test_default_workspace_is_under_yuki_home(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "home" / "yuki_workspace"
+            workspace.mkdir(parents=True)
+            (workspace / "default.json").write_text("default", encoding="utf-8")
+            destination = root / "backup"
+            result = self.run_backup({
+                "YUKI_HOME": str(root / "home"),
+                "YUKI_BACKUP_DIR": str(destination),
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archive = next(destination.glob("yuki-data-*.tar.gz"))
+            listing = subprocess.run(
+                ["tar", "-tzf", str(archive)],
+                capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            self.assertIn("yuki_workspace/default.json", listing)
+
     def test_explicit_backup_source_overrides_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -107,3 +140,8 @@ class PosixBackupScriptTests(unittest.TestCase):
             ).stdout.splitlines()
             self.assertIn("explicit-source/right.txt", listing)
             self.assertNotIn("workspace/wrong.txt", listing)
+
+
+
+if __name__ == "__main__":
+    unittest.main()
