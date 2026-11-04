@@ -67,6 +67,20 @@ class YukiWebApplicationTests(unittest.TestCase):
         style = self.request(app, "/assets/chat.css")[1]["body"]
         self.assertIn(b".memory-candidates", style)
 
+    def test_web_memory_panel_exposes_typed_owner_profile_preferences(self):
+        app = YukiWebApplication(_FakeAPI())
+        html = self.request(app, "/")[1]["body"]
+        for marker in (
+            b'id="profile-response-style"', b'id="profile-response-tone"',
+            b'id="profile-explanation-level"', b'id="save-profile"',
+        ):
+            self.assertIn(marker, html)
+        script = self.request(app, "/assets/chat.js")[1]["body"]
+        self.assertIn(b"/v1/profile/preferences", script)
+        self.assertIn(b"owner_web_preference", script)
+        style = self.request(app, "/assets/chat.css")[1]["body"]
+        self.assertIn(b".profile-preferences", style)
+
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
