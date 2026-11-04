@@ -171,7 +171,7 @@ def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int, str | Non
             with archive.open(info, "r") as source:
                 _copy_stream(source, target, info.file_size, total)
             files += 1
-        return files, total[0], root_name, None
+        return files, total[0], None
 
 
 def _extract_tar(archive_path: Path, payload: Path) -> tuple[int, int, str | None]:
@@ -222,7 +222,7 @@ def _extract_tar(archive_path: Path, payload: Path) -> tuple[int, int, str | Non
             with source:
                 _copy_stream(source, target, member.size, total)
             files += 1
-        return files, total[0]
+        return files, total[0], root_name
 
 
 def _validate_sqlite_files(root: Path) -> int:
