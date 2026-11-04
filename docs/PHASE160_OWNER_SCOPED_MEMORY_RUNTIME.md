@@ -8,7 +8,7 @@ The local web launcher now composes the following components:
 2. `ConversationService` invokes `agent_loop_factory(owner_id)` only after ownership, idempotency, and version checks.
 3. `providers.reasoning_runtime` hashes the authenticated owner ID into a stable opaque `owner-<sha256>` memory key. Client-provided actor IDs are never accepted.
 4. `AgentMemoryStore` enforces private owner scope and the web authorization callback permits only `agent_memory:read` and `agent_memory:write` for the opaque owner key and the `assistant` agent.
-5. Shared memory remains denied; the callback does not grant `agent_memory:share`.
+5. Shared memory remains denied; the callback does not grant `agent_memory:share`. Owner-entered notes are retrieved with `include_unverified=True` and remain in a separate unverified evidence bucket.
 6. `AgentMemoryRetriever` asks the authorized store for candidate records before consulting the embedding cache. Cached vectors therefore cannot widen visibility.
 7. `ReasoningAgentAdapter` places only server policy in the system message. Preferences and memory are serialized as untrusted reference data.
 8. The web profile exposes no tools. The `GuardedToolRuntime` policy denies all tool execution.
@@ -30,4 +30,4 @@ The hashing fallback is not a trained semantic model and should not be described
 
 Regression tests cover deterministic fallback embeddings, local-only Hugging Face loading, owner-specific memory keys, private-memory non-disclosure across owners, shared-memory denial, and web-launcher composition.
 
-The authenticated API now exposes `GET /v1/memory` and `POST /v1/memory`. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
+The authenticated API now exposes `GET /v1/memory` and `POST /v1/memory`. Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
