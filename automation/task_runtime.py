@@ -57,6 +57,60 @@ class TaskRecord:
     lease_expires_at: str | None
 
 
+class TaskLeaseRenewer:
+    """Bounded callable adapter for WorkerShutdownCoordinator heartbeats.
+
+    It reloads the current task version before each renewal so ordinary
+    progress/artifact events do not leave a long-running worker with a stale
+    compare-and-swap version. At most three CAS attempts are made per heartbeat.
+    """
+
+    MAX_CAS_ATTEMPTS = 3
+
+    def __init__(
+        self, runtime: "TaskRuntime", *, actor_id: str, task_id: str,
+        worker_id: str, lease_seconds: int = 60,
+    ) -> None:
+        if not isinstance(runtime, TaskRuntime):
+            raise TypeError("runtime must be a TaskRuntime.")
+        self.runtime = runtime
+        self.actor_id = TaskRuntime._actor(actor_id)
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200 or "\\x00" in task_id:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        self.task_id = task_id.strip()
+        self.worker_id = worker_id.strip()
+        self.lease_seconds = lease_seconds
+
+    def __call__(self) -> bool:
+        for attempt in range(self.MAX_CAS_ATTEMPTS):
+            current = self.runtime.store.get(self.task_id)
+            if current is None:
+                raise KeyError("task not found.")
+            if current.state != "running" or current.lease_owner != self.worker_id:
+                raise WorkflowTransitionError("worker no longer owns a running task lease.")
+            try:
+                self.runtime.renew_lease(
+                    actor_id=self.actor_id,
+                    task_id=self.task_id,
+                    worker_id=self.worker_id,
+                    expected_version=current.version,
+                    lease_seconds=self.lease_seconds,
+                )
+                return True
+            except WorkflowConflict:
+                # Retry only if a concurrent journal update advanced the version.
+                # An unchanged version indicates expiry or another non-retryable
+                # conflict; a changed owner/state is rejected on the next read.
+                latest = self.runtime.store.get(self.task_id)
+                if latest is None or latest.version == current.version or attempt + 1 == self.MAX_CAS_ATTEMPTS:
+                    raise
+        return False
+
+
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 

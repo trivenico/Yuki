@@ -453,6 +453,47 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([event.kind for event in self.runtime.events(
             actor_id="alice", task_id=task.task_id)], ["task.created"])
 
+    def test_task_lease_renewer_tracks_latest_version_after_progress(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter")
+        claimed = self.claim(task)
+        progressed = self.runtime.record_progress(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, message="worker is active", percent=10,
+        )
+        renewer = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-a", lease_seconds=120,
+        )
+        self.assertIs(renewer(), True)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, progressed.version + 1)
+        self.assertEqual(current.lease_owner, "worker-a")
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.lease_renewed")
+        self.assertEqual(events[-1].actor_id, "alice")
+
+    def test_task_lease_renewer_fails_closed_for_wrong_owner_or_unauthorized_actor(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter-authz")
+        self.claim(task)
+        wrong_owner = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-b",
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            wrong_owner()
+
+        denied = TaskRuntime(self.store, authorize=lambda *_: False)
+        renewer = TaskLeaseRenewer(
+            denied, actor_id="mallory", task_id=task.task_id,
+            worker_id="worker-a",
+        )
+        with self.assertRaises(PermissionError):
+            renewer()
+
     def test_lease_renewal_is_journaled_with_worker_identity(self):
         task = self.create("lease-renewal-event")
         claimed = self.claim(task)
