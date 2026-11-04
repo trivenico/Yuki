@@ -10,6 +10,7 @@ from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
+from core.agent_memory import AgentMemoryStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -241,6 +242,48 @@ class ConversationAPITests(unittest.TestCase):
             return sent[0]["status"]
         self.assertEqual(asyncio.run(run()), 400)
 
+
+
+    def test_authenticated_memory_api_is_private_and_never_self_verifies(self):
+        memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "agent-memory.sqlite"),
+            authorize=lambda actor, action, agent: action in {
+                "agent_memory:read", "agent_memory:write"
+            },
+        )
+        self.app.memory_store = memory_store
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory", {"content": "My private deployment preference."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertFalse(data["memory"]["verified"])
+        memory_id = data["memory"]["memory_id"]
+
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["memories"]), 1)
+        self.assertEqual(data["memories"][0]["memory_id"], memory_id)
+        self.assertEqual(data["memories"][0]["content"], "My private deployment preference.")
+
+        self.auth.create_account("second-user", "a-secure-second-password")
+        second = self.auth.authenticate("second-user", "a-secure-second-password")
+        status, data, _ = self.request("GET", "/v1/memory", token=second.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "Try to self verify", "verified": True},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "invalid_request")
+
+        status, data, _ = self.request("GET", "/v1/memory")
+        self.assertEqual(status, 401)
+        self.assertEqual(data["error"], "authentication_required")
 
     def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)
