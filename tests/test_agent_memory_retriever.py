@@ -144,9 +144,9 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.assertEqual(sum(calls), 7)
 
     def test_unverified_records_count_toward_scan_budget(self):
+        verified = self.add_memory("A staged deployment uses a gradual rollout.", verified=True)
         for number in range(9):
             self.add_memory(f"Unverified garden note number {number}.", verified=False)
-        verified = self.add_memory("A staged deployment uses a gradual rollout.", verified=True)
         retriever = AgentMemoryRetriever(
             self.store, embed=lambda text: self.vectors.get(text, [0.0, 1.0, 0.0]),
             max_candidates=5,
@@ -157,6 +157,28 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         )
         self.assertEqual(result, [])
         self.assertNotIn(verified["memory_id"], {item["memory_id"] for item in result})
+
+    def test_embedding_index_batches_never_exceed_100_records(self):
+        for number in range(205):
+            self.add_memory(f"Batch fixture garden note {number}.")
+        get_many = self.index.get_many
+        put_many = self.index.put_many
+        batch_sizes = []
+        def tracked_get(**kwargs):
+            batch_sizes.append(len(kwargs["memories"]))
+            return get_many(**kwargs)
+        def tracked_put(**kwargs):
+            self.assertLessEqual(len(kwargs["memories"]), 100)
+            return put_many(**kwargs)
+        self.index.get_many = tracked_get
+        self.index.put_many = tracked_put
+        result = AgentMemoryRetriever(
+            self.store, embed=lambda _text: [0.0, 1.0, 0.0],
+            embedding_index=self.index, max_candidates=250,
+        ).retrieve(actor_id="owner", agent_id="research", query="deployment query")
+        self.assertEqual(len(result), 10)
+        self.assertEqual(batch_sizes, [100, 100, 50])
+        self.assertEqual(self.index.stats(actor_id="owner")["vector_count"], 205)
 
     def test_invalid_candidate_budget_is_rejected(self):
         for value in (0, 2001, True, 1.5):
