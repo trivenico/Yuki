@@ -347,6 +347,62 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(data["error"], "authentication_required")
 
+    def test_conversation_memory_candidates_require_owner_approval_and_promote_once(self):
+        memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "candidate-memory.sqlite"),
+            authorize=lambda actor, action, agent: (
+                action in {"agent_memory:read", "agent_memory:write"}
+                and agent == "assistant"
+            ),
+        )
+        self.app.memory_store = memory_store
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        status, reply, _ = self.request(
+            "POST", f"/v1/conversations/{cid}/messages",
+            {"content": "I prefer concise technical explanations.",
+             "request_id": "candidate-request-1", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+
+        status, data, _ = self.request(
+            "GET", "/v1/memory/candidates", token=self.issued.token,
+            query=("conversation_id=" + cid).encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["requires_owner_approval"])
+        self.assertFalse(data["memory_written"])
+        self.assertEqual(len(data["candidates"]), 1)
+        candidate = data["candidates"][0]
+        self.assertEqual(candidate["source"]["role"], "user")
+        self.assertEqual(candidate["source"]["conversation_id"], cid)
+
+        status, records, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(records["memories"], [])
+
+        path = "/v1/memory/candidates/" + candidate["candidate_id"] + "/approve"
+        payload = {"conversation_id": cid}
+        status, promoted, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201)
+        self.assertTrue(promoted["memory"]["verified"])
+        memory_id = promoted["memory"]["memory_id"]
+
+        status, replay, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201)
+        self.assertEqual(replay["memory"]["memory_id"], memory_id)
+
+        status, records, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(records["memories"]), 1)
+        self.assertEqual(records["memories"][0]["memory_id"], memory_id)
+
+        self.auth.create_account("candidate-other", "a-secure-second-password")
+        other = self.auth.authenticate("candidate-other", "a-secure-second-password")
+        status, denied, _ = self.request("POST", path, payload, other.token)
+        self.assertEqual(status, 404)
+        self.assertEqual(denied["error"], "not_found")
+
     def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)
         cid = conversation["conversation_id"]
