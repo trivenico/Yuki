@@ -20,7 +20,6 @@ class MultiHopMemoryRetriever:
     MAX_QUERIES = 6
     MAX_RECORDS = 30
     MAX_QUERY_CHARS = 1000
-    MAX_QUERY_VARIANTS = 10
     _STOP_WORDS = frozenset({
         "about", "after", "also", "because", "before", "being", "could",
         "does", "from", "have", "into", "more", "most", "other", "over",
@@ -67,10 +66,7 @@ class MultiHopMemoryRetriever:
             selected.append(token)
             if len(selected) == 3:
                 break
-        if not selected:
-            return None
-        query = " ".join(selected)
-        return query[:250]
+        return " ".join(selected)[:250] or None
 
     def retrieve(
         self,
@@ -97,13 +93,13 @@ class MultiHopMemoryRetriever:
         if type(include_shared) is not bool or type(verified_only) is not bool:
             raise ValueError("retrieval_flags_must_be_boolean")
 
-        # Each frontier item retains the evidence record that motivated it.
         frontier = deque([(query.strip(), None, 0)])
         scheduled = {query.strip().casefold()}
         records: dict[str, dict] = {}
         queries = []
         edges = []
         hop_count = 0
+        truncated = False
 
         while frontier and len(queries) < self.max_queries and len(records) < self.max_records:
             current_query, source_memory_id, hop = frontier.popleft()
@@ -124,7 +120,8 @@ class MultiHopMemoryRetriever:
                 "hop": hop,
                 "source_memory_id": source_memory_id,
             })
-            for item in packet.get("evidence", []):
+            evidence_items = packet.get("evidence", [])
+            for item in evidence_items:
                 memory_id = item.get("memory_id")
                 if not isinstance(memory_id, str) or not memory_id:
                     continue
@@ -142,11 +139,12 @@ class MultiHopMemoryRetriever:
                     if edge not in edges:
                         edges.append(edge)
 
-            if hop >= self.max_hops or len(queries) >= self.max_queries:
+            if len(records) >= self.max_records:
+                truncated = True
+            if hop >= self.max_hops:
                 continue
-            # Expand only records newly returned by this hop. Query strings
-            # are keyword-only, bounded, and cannot alter fixed scope flags.
-            for item in packet.get("evidence", []):
+
+            for item in evidence_items:
                 memory_id = item.get("memory_id")
                 content = item.get("content")
                 if not isinstance(memory_id, str) or not isinstance(content, str):
@@ -157,12 +155,14 @@ class MultiHopMemoryRetriever:
                 key = expanded.casefold()
                 if key in scheduled:
                     continue
+                if len(scheduled) >= self.max_queries:
+                    truncated = True
+                    continue
                 scheduled.add(key)
                 frontier.append((expanded, memory_id, hop + 1))
-                if len(scheduled) >= self.max_queries:
-                    break
 
-        complete = not frontier
+        if frontier:
+            truncated = True
         return {
             "actor_id": actor_id.strip(),
             "agent_id": agent_id.strip(),
@@ -173,7 +173,7 @@ class MultiHopMemoryRetriever:
             "query_count": len(queries),
             "hops_completed": hop_count,
             "edges": edges,
-            "complete": complete,
+            "complete": not truncated,
             "limits": {
                 "max_hops": self.max_hops,
                 "max_queries": self.max_queries,
