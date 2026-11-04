@@ -27,6 +27,10 @@ class WebLauncherTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "auth.sqlite3").exists())
             self.assertTrue(callable(app.app.provider_selector))
             self.assertTrue(callable(app.app.provider_catalog))
+            self.assertTrue(callable(app.app.conversations.agent_loop_factory))
+            self.assertTrue((Path(directory) / "agent_memory.sqlite3").exists())
+            owner_loop = app.app.conversations.agent_loop_factory("authenticated-owner")
+            self.assertTrue(owner_loop.model.actor_id.startswith("owner-"))
             app.close()
 
     def test_default_tool_policy_denies_all_tools(self):
