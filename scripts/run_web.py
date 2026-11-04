@@ -129,6 +129,7 @@ def create_app():
         agent_loop_factory=agent_loop_factory,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
+        memory_store=memory_store,
     )
 
 
