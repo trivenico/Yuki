@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 import stat
 import tarfile
@@ -31,8 +32,8 @@ class WorkspaceRestoreTests(unittest.TestCase):
                 archive.write(source / "preferences.json", "preferences.json")
                 archive.write(source / "memory.sqlite3", "memory.sqlite3")
 
-            key_dir = root / "secrets"
-            key_dir.mkdir()
+            key_dir = Path(tempfile.mkdtemp(prefix="yuki-restore-keys-"))
+            self.addCleanup(shutil.rmtree, key_dir, ignore_errors=True)
             key = create_key_file(key_dir / "backup.key")
             encrypted_archive = root / "workspace.yukibak"
             encrypt_file(plaintext_archive, encrypted_archive, key)
@@ -63,8 +64,8 @@ class WorkspaceRestoreTests(unittest.TestCase):
             source = root / "workspace.zip"
             with zipfile.ZipFile(source, "w") as archive:
                 archive.writestr("private.txt", "sensitive")
-            keys = root / "keys"
-            keys.mkdir()
+            keys = Path(tempfile.mkdtemp(prefix="yuki-wrong-key-"))
+            self.addCleanup(shutil.rmtree, keys, ignore_errors=True)
             correct = create_key_file(keys / "correct.key")
             wrong = create_key_file(keys / "wrong.key")
             encrypted = root / "backup.yukibak"
