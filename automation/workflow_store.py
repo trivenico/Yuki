@@ -512,7 +512,10 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def mark_expired_running_as_interrupted(self, *, now: datetime | None = None, limit: int = 50) -> list[WorkflowRun]:
+    def mark_expired_running_as_interrupted(
+        self, *, now: datetime | None = None, limit: int = 50,
+        event_actor_id: str | None = None,
+    ) -> list[WorkflowRun]:
         """Mark expired leases interrupted; never automatically replay side effects."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
@@ -520,6 +523,12 @@ class WorkflowRunStore:
         if current_time.tzinfo is None:
             raise ValueError("now must be timezone-aware.")
         cutoff = current_time.astimezone(timezone.utc).isoformat()
+        actor = None
+        if event_actor_id is not None:
+            if (not isinstance(event_actor_id, str) or not event_actor_id.strip()
+                    or len(event_actor_id) > 200 or chr(0) in event_actor_id):
+                raise ValueError("event_actor_id must be non-empty bounded text.")
+            actor = event_actor_id.strip()
         changed: list[WorkflowRun] = []
         with self._connect() as db:
             rows = db.execute("""
@@ -538,6 +547,20 @@ class WorkflowRunStore:
                     changed_row = db.execute(
                         "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
                     ).fetchone()
+                    if actor is not None:
+                        sequence = db.execute(
+                            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                            (row["run_id"],),
+                        ).fetchone()[0]
+                        payload_json = _bounded_json(
+                            {"state": "interrupted", "error_code": "lease_expired",
+                             "automatic_replay": False}, 8 * 1024, "task event payload"
+                        )
+                        db.execute(
+                            "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                            "VALUES (?, ?, 'task.interrupted', ?, ?, ?)",
+                            (row["run_id"], sequence, actor, payload_json, cutoff),
+                        )
                     changed.append(self._row(changed_row))
         return changed
 
