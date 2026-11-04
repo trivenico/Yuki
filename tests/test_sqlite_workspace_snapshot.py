@@ -35,12 +35,15 @@ class SQLiteWorkspaceSnapshotTests(unittest.TestCase):
                 self.assertFalse(Path(str(target / "agent_memory.sqlite3") + "-shm").exists())
                 self.assertEqual((target / "settings.json").read_text(encoding="utf-8"), '{"theme":"dark"}')
                 self.assertEqual((target / "nested" / "note.txt").read_text(encoding="utf-8"), "preserve")
-                with sqlite3.connect(target / "agent_memory.sqlite3") as restored:
+                restored = sqlite3.connect(target / "agent_memory.sqlite3")
+                try:
                     self.assertEqual(
                         restored.execute("SELECT content FROM memories").fetchone()[0],
                         "committed while WAL is active",
                     )
                     self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                finally:
+                    restored.close()
             finally:
                 live.close()
 
