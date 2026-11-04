@@ -34,8 +34,8 @@ class MultiHopMemoryRetriever:
         max_records: int = 30,
         per_query_limit: int = 10,
     ):
-        if not isinstance(knowledge_api, UnifiedKnowledgeAPI):
-            raise TypeError("knowledge_api_must_be_UnifiedKnowledgeAPI")
+        if not callable(getattr(knowledge_api, "retrieve", None)):
+            raise TypeError("knowledge_api_must_implement_retrieve")
         for value, name, maximum in (
             (max_hops, "max_hops", self.MAX_HOPS),
             (max_queries, "max_queries", self.MAX_QUERIES),
