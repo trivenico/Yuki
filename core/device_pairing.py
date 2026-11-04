@@ -12,6 +12,7 @@ import hashlib
 import re
 import secrets
 import sqlite3
+import uuid
 from pathlib import Path
 
 
@@ -139,7 +140,7 @@ class DevicePairingService:
         now = _now()
         code_hash = _digest(code)
         token = secrets.token_urlsafe(32)
-        device_id = secrets.token_urlsafe(18)
+        device_id = "dev_" + uuid.uuid4().hex
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
@@ -178,6 +179,18 @@ class DevicePairingService:
             db.execute("UPDATE paired_devices SET last_seen_at=? WHERE device_id=?", (now, row["device_id"]))
             updated = db.execute("SELECT * FROM paired_devices WHERE device_id=?", (row["device_id"],)).fetchone()
             return self._device(updated)
+
+    def owns_active_device(self, owner_id: str, device_id: str) -> bool:
+        """Check active device ownership using the pairing service's own database."""
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM paired_devices WHERE device_id=? AND owner_id=? AND revoked_at IS NULL",
+                (device_id, owner_id),
+            ).fetchone()
+            return row is not None
 
     def list_devices(self, owner_id: str) -> list[PairedDevice]:
         owner_id = self._owner(owner_id)

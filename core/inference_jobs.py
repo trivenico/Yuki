@@ -27,7 +27,10 @@ class InferenceJobService:
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
  def _connect(self):
-  db=sqlite3.connect(self.database_path,timeout=5); db.row_factory=sqlite3.Row; db.execute("PRAGMA busy_timeout=5000"); return db
+  db=sqlite3.connect(self.database_path,timeout=5)
+  db.row_factory=sqlite3.Row
+  db.execute("PRAGMA busy_timeout=5000")
+  return _Connection(db)
  @staticmethod
  def _job(row): return InferenceJob(**dict(row))
  def _device(self,token):
@@ -40,12 +43,12 @@ class InferenceJobService:
   if not isinstance(device_id,str) or not _DEVICE.fullmatch(device_id): raise ValueError("invalid_device_id")
   if not isinstance(input_text,str) or not input_text.strip() or len(input_text.encode())>64000: raise ValueError("invalid_input")
   now=_now(); stamp=_stamp(now); jid=uuid.uuid4().hex
+  if not self.pairing.owns_active_device(owner_id, device_id):
+   raise PermissionError("device_not_owned_or_paired")
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
-   owned=db.execute("SELECT 1 FROM paired_devices WHERE device_id=? AND owner_id=? AND revoked_at IS NULL",(device_id,owner_id)).fetchone()
-   if owned is None: raise PermissionError("device_not_owned_or_paired")
    db.execute("INSERT INTO inference_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
   return self._job(row)
@@ -87,3 +90,20 @@ class InferenceJobService:
   if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
   return [self._job(r) for r in rows]
+
+
+class _Connection:
+ """Commit/rollback and always close SQLite connections on every platform."""
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  return self.connection
+ def __exit__(self, exc_type, exc, tb):
+  try:
+   if exc_type is None:
+    self.connection.commit()
+   else:
+    self.connection.rollback()
+  finally:
+   self.connection.close()
+  return False
