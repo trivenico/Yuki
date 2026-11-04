@@ -164,6 +164,23 @@ class AgentMemoryStore:
         ranked.sort(key=lambda item: (item[0], item[1]["created_at"]), reverse=True)
         return [{"score": round(score, 4), **row} for score, row in ranked[:limit]]
 
+    @staticmethod
+    def _delete_embedding_cache_rows(db, *, actor_id, memory_ids):
+        """Delete derived vectors in the same transaction as source memories."""
+        if not memory_ids:
+            return 0
+        table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory_embeddings'"
+        ).fetchone()
+        if table is None:
+            return 0
+        placeholders = ",".join("?" for _ in memory_ids)
+        cursor = db.execute(
+            f"DELETE FROM agent_memory_embeddings WHERE actor_id=? AND memory_id IN ({placeholders})",
+            (actor_id, *memory_ids),
+        )
+        return cursor.rowcount
+
     def delete(self, *, actor_id, agent_id, memory_id):
         self._validate_scope(actor_id, agent_id)
         if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
@@ -174,6 +191,8 @@ class AgentMemoryStore:
             cursor = db.execute("""DELETE FROM agent_memories
                 WHERE memory_id=? AND actor_id=? AND agent_id=?""",
                 (memory_id, actor_id, agent_id))
+            if cursor.rowcount == 1:
+                self._delete_embedding_cache_rows(db, actor_id=actor_id, memory_ids=[memory_id])
             return cursor.rowcount == 1
 
     def prune_expired(self, *, actor_id):
@@ -181,8 +200,23 @@ class AgentMemoryStore:
             raise PermissionError("memory pruning is not authorized")
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as db:
-            cursor = db.execute("DELETE FROM agent_memories WHERE actor_id=? AND expires_at IS NOT NULL AND expires_at<=?",
-                                (actor_id, now))
+            expired = db.execute(
+                """SELECT memory_id FROM agent_memories
+                   WHERE actor_id=? AND expires_at IS NOT NULL AND expires_at<=?""",
+                (actor_id, now),
+            ).fetchall()
+            memory_ids = [row["memory_id"] for row in expired]
+            if not memory_ids:
+                return 0
+            placeholders = ",".join("?" for _ in memory_ids)
+            cursor = db.execute(
+                f"DELETE FROM agent_memories WHERE actor_id=? AND memory_id IN ({placeholders})",
+                (actor_id, *memory_ids),
+            )
+            if cursor.rowcount:
+                self._delete_embedding_cache_rows(
+                    db, actor_id=actor_id, memory_ids=memory_ids
+                )
             return cursor.rowcount
 
 
