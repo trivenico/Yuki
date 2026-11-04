@@ -30,4 +30,13 @@ The hashing fallback is not a trained semantic model and should not be described
 
 Regression tests cover deterministic fallback embeddings, local-only Hugging Face loading, owner-specific memory keys, private-memory non-disclosure across owners, shared-memory denial, and web-launcher composition.
 
-The authenticated API now exposes `GET /v1/memory` and `POST /v1/memory`. Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
+The authenticated API exposes these owner-scoped operations:
+
+- `GET /v1/memory` lists private, non-expired, non-superseded memories.
+- `POST /v1/memory` creates a private, unverified owner note.
+- `PATCH /v1/memory/{id}` approves, rejects, or retires a record with a required reason.
+- `POST /v1/memory/{id}/corrections` preserves the prior claim, creates its approved replacement, and writes immutable correction history.
+- `GET /v1/memory/{id}/history` returns lifecycle and correction audit events.
+- `DELETE /v1/memory/{id}` removes the owner's selected record and its derived embedding cache rows.
+
+Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser currently has no memory-management UI controls. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
