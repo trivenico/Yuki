@@ -11,9 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-import stat
 import sys
-from urllib.parse import quote
 
 
 _SQLITE_HEADER = b"SQLite format 3\x00"
