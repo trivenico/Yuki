@@ -26,7 +26,8 @@ class PersistentEmbeddingIndexTests(unittest.TestCase):
         self.store = AgentMemoryStore(
             self.db,
             authorize=lambda actor, action, _agent: actor == "owner" and action in {
-                "agent_memory:write", "agent_memory:share", "agent_memory:read"
+                "agent_memory:write", "agent_memory:share", "agent_memory:read",
+                "agent_memory:delete", "agent_memory:prune"
             },
         )
         self.memories = [
@@ -75,6 +76,32 @@ class PersistentEmbeddingIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "finite"):
             self.index.put_many(actor_id="owner", memories=[self.memories[0]],
                                 vectors=[[float("nan"), 1.0]])
+
+    def test_delete_memory_removes_cached_vectors_atomically(self):
+        memory = self.memories[0]
+        self.index.put_many(actor_id="owner", memories=[memory], vectors=[[1.0, 0.0, 0.0]])
+        self.assertTrue(self.store.delete(
+            actor_id="owner", agent_id="research", memory_id=memory["memory_id"]
+        ))
+        self.assertEqual(
+            self.index.get_many(actor_id="owner", memories=[memory]), {}
+        )
+
+    def test_prune_expired_removes_cached_vectors(self):
+        memory = self.store.remember(
+            actor_id="owner", agent_id="research", content="temporary memory",
+            source="test:expiry",
+        )
+        self.index.put_many(actor_id="owner", memories=[memory], vectors=[[0.0, 1.0, 0.0]])
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_memories SET expires_at=? WHERE memory_id=?",
+                ("2000-01-01T00:00:00+00:00", memory["memory_id"]),
+            )
+        self.assertEqual(self.store.prune_expired(actor_id="owner"), 1)
+        self.assertEqual(
+            self.index.get_many(actor_id="owner", memories=[memory]), {}
+        )
 
     def test_reopen_preserves_index(self):
         self.retriever.search(actor_id="owner", agent_id="research", query="automobile")
