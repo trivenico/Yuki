@@ -205,7 +205,10 @@ class WorkflowRunStore:
             approved_session_hash=row["approved_session_hash"],
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]],
+        event_actor_id: str | None = None, event_payload: dict[str, Any] | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -217,6 +220,18 @@ class WorkflowRunStore:
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
+        event_json = None
+        if event_actor_id is not None:
+            if (not isinstance(event_actor_id, str) or not event_actor_id.strip()
+                    or len(event_actor_id) > 200 or chr(0) in event_actor_id):
+                raise ValueError("event_actor_id must be non-empty bounded text.")
+            if event_payload is None:
+                event_payload = {"name": name, "step_count": len(canonical)}
+            if not isinstance(event_payload, dict):
+                raise ValueError("event_payload must be an object.")
+            event_json = _bounded_json(event_payload, 8 * 1024, "task event payload")
+        elif event_payload is not None:
+            raise ValueError("event_payload requires event_actor_id.")
         digest = hashlib.sha256(
             (name + "\n" + definition_json).encode("utf-8")
         ).hexdigest()
@@ -239,6 +254,12 @@ class WorkflowRunStore:
                     definition_json, state, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now))
+            if event_json is not None:
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, 1, 'task.created', ?, ?, ?)",
+                    (run_id, event_actor_id.strip(), event_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
