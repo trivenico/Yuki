@@ -4,6 +4,7 @@ from core.memory_retrieval_evaluation import (
     audit_retrieval,
     ndcg_at_k,
     recall_at_k,
+    mean_reciprocal_rank,
     reciprocal_rank,
 )
 
@@ -31,6 +32,21 @@ class MemoryRetrievalEvaluationTests(unittest.TestCase):
 
     def test_ndcg_is_zero_for_zero_relevance(self):
         self.assertEqual(ndcg_at_k(["a"], {"a": 0}), 0.0)
+
+    def test_ndcg_handles_large_relevance_without_overflow(self):
+        self.assertEqual(ndcg_at_k(["a", "b"], {"a": 10000, "b": 9999}), 1.0)
+        self.assertGreater(ndcg_at_k(["b", "a"], {"a": 10000, "b": 9999}), 0.0)
+
+    def test_mean_reciprocal_rank_aggregates_queries(self):
+        self.assertEqual(
+            mean_reciprocal_rank([
+                (["a", "b"], {"a"}),
+                (["x", "b"], {"b"}),
+                (["x"], {"a"}),
+            ]),
+            (1.0 + 0.5 + 0.0) / 3,
+        )
+        self.assertEqual(mean_reciprocal_rank([]), 0.0)
 
     def test_invalid_metric_inputs_are_rejected(self):
         for k in (0, -1, True, 1.5):
