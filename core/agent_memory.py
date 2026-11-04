@@ -65,6 +65,12 @@ class AgentMemoryStore:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_memory_corrections_previous
                 ON agent_memory_corrections(actor_id, previous_memory_id, approved_at)""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_corrections_no_update
+                BEFORE UPDATE ON agent_memory_corrections
+                BEGIN SELECT RAISE(ABORT, 'memory_correction_audit_is_immutable'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_corrections_no_delete
+                BEFORE DELETE ON agent_memory_corrections
+                BEGIN SELECT RAISE(ABORT, 'memory_correction_audit_is_immutable'); END""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_scope
                 ON agent_memories(actor_id, agent_id, category, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_expiry
