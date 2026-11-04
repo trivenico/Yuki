@@ -274,16 +274,6 @@ class WorkflowRunStore:
             """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
-            if event_kind is not None:
-                sequence = db.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
-                    (run_id,),
-                ).fetchone()[0]
-                db.execute(
-                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (run_id, sequence, event_kind, event_actor_id.strip(), event_json, now),
-                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -487,6 +477,16 @@ class WorkflowRunStore:
             ))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
+            if event_kind is not None:
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (run_id, sequence, event_kind, event_actor_id.strip(), event_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
