@@ -119,6 +119,24 @@ class BackupCryptoTests(unittest.TestCase):
         encrypt_file(self.source, self.encrypted, self.key)
         self.assertNotIn(marker, self.encrypted.read_bytes())
 
+    def test_symlink_key_is_rejected(self):
+        link = self.key_dir / "key-link"
+        try:
+            link.symlink_to(self.key)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is not available on this platform")
+        with self.assertRaisesRegex(BackupCryptoError, "must_not_be_symlink"):
+            encrypt_file(self.source, self.encrypted, link)
+
+    def test_symlink_source_is_rejected(self):
+        link = self.root / "source-link.tar.gz"
+        try:
+            link.symlink_to(self.source)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is not available on this platform")
+        with self.assertRaisesRegex(BackupCryptoError, "source_must_not_be_symlink"):
+            encrypt_file(link, self.encrypted, self.key)
+
 
 if __name__ == "__main__":
     unittest.main()
