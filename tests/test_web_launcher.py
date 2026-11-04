@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from api.runtime import ConversationRuntime
 from scripts import run_web
-from providers.reasoning_runtime import memory_actor_id_for_owner
+from core.owner_identity import memory_actor_id_for_owner
 
 
 class _Provider:
