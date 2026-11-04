@@ -412,6 +412,8 @@ class WorkflowRunStore:
         else:
             lease_owner = None
 
+        if to_state in {"succeeded", "failed"} and expected_lease_owner is None:
+            raise ValueError("worker completion and failure require expected_lease_owner.")
         if expected_lease_owner is not None and (
             not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
             or len(expected_lease_owner) > 200 or "\x00" in expected_lease_owner
