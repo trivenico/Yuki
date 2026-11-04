@@ -12,6 +12,7 @@ from automation.specialist_worker import (
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.agent_memory import AgentMemoryStore
+from evaluation.agent_experience import AgentExperienceStore
 
 
 class FakeProvider:
@@ -99,6 +100,44 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(received), 1)
         self.assertIn("Safe patch convention", received[0])
         self.assertIn("untrusted reference data", received[0])
+
+    def test_worker_records_successful_execution_experience(self):
+        task_id = self.create_task()
+        experience_store = AgentExperienceStore(
+            str(Path(self.tmp.name) / "experience.sqlite3"),
+            authorize=lambda actor, action, _agent: (
+                actor == "alice" and action in {"agent_experience:write", "agent_experience:read"}
+            ),
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="experience-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "review complete"},
+            experience_store=experience_store, experience_actor_id="alice",
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        summary = experience_store.summary(actor_id="alice", agent_id="code-review")
+        self.assertEqual(summary["sample_count"], 1)
+        self.assertEqual(summary["success_count"], 1)
+        self.assertEqual(summary["records"][0]["task_id"], task_id)
+        self.assertGreaterEqual(summary["records"][0]["duration_ms"], 0)
+        self.assertIsNone(summary["records"][0]["quality_score"])
+
+    def test_experience_recording_failure_does_not_fail_completed_task(self):
+        task_id = self.create_task()
+        experience_store = AgentExperienceStore(
+            str(Path(self.tmp.name) / "experience-denied.sqlite3"),
+            authorize=lambda _actor, _action, _agent: False,
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="experience-denied-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "review complete"},
+            experience_store=experience_store, experience_actor_id="alice",
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(worker.last_experience_error_code, "experience_recording_failed")
 
     def test_memory_configuration_must_be_supplied_as_a_pair(self):
         with self.assertRaises(ValueError):
