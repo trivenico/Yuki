@@ -108,7 +108,8 @@ def create_app():
             "No tools are authorized in this web profile."
         ),
         include_shared=False,
-        include_unverified=False,
+        # Owner-entered notes are retrieved as explicitly unverified evidence.
+        include_unverified=True,
         execution_options={
             "max_model_turns": 8,
             "max_tool_calls": 1,
