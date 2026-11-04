@@ -163,21 +163,23 @@ class TaskRuntime:
             task_id, after_sequence=after_sequence, limit=limit,
         )
 
-    def recover_expired(self, *, actor_id: str, task_id: str | None = None):
-        """Supervisor-only recovery; bulk mode scans a bounded page of expired runs.
-
-        Each run is recovered in its own atomic store transaction. Running steps
-        are quarantined for reconciliation; no workflow handler is invoked.
-        """
+    def recover_expired(
+        self, *, actor_id: str, task_id: str | None = None, limit: int = 50,
+    ):
+        """Recover one expired run or a bounded page; never replay workflow work."""
         actor = self._actor(actor_id)
         if task_id is not None:
             if not self._allowed(actor, "task:recover", task_id):
                 raise PermissionError("task recovery is not authorized.")
             return self._record(self.store.recover_expired_run(task_id, actor_id=actor))
 
+        if not self._allowed(actor, "task:recover", ""):
+            raise PermissionError("task recovery is not authorized.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
         recovered = []
         now = datetime.now(timezone.utc)
-        for run in self.store.list_runs(state="running", limit=100):
+        for run in self.store.list_runs(state="running", limit=limit):
             expiry = run.lease_expires_at
             if not expiry or datetime.fromisoformat(expiry) >= now:
                 continue
@@ -373,18 +375,6 @@ class TaskRuntime:
                            "approval_required": self.store._requires_approval(original.definition)},
         )
         return self._record(self.store.get(retried.run_id))
-
-    def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
-        """Mark expired worker leases interrupted and journal each recovery; never replay them."""
-        actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:recover", ""):
-            raise PermissionError("task recovery is not authorized.")
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise ValueError("limit must be an integer from 1 to 100.")
-        interrupted = self.store.mark_expired_running_as_interrupted(
-            limit=limit, event_actor_id=actor,
-        )
-        return [self._record(run) for run in interrupted]
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
