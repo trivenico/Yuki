@@ -41,6 +41,28 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
         self.assertEqual(kwargs["subtasks"][0].required_capabilities, ("research",))
         self.assertTrue(kwargs["subtasks"][0].requires_approval)
 
+    def test_accepts_provider_adapter_envelope_without_tool_calls(self):
+        response = {
+            "text": '{"tasks":[{"task_id":"research","description":"Gather evidence","required_capabilities":["research"],"depends_on":[],"requires_approval":true}]}',
+            "tool_calls": {"tool_calls": []},
+        }
+        self.orchestrator.propose(
+            actor_id="owner", request="Research this topic",
+            idempotency_key="provider-envelope", model=lambda **kwargs: response,
+        )
+        self.assertEqual(self.coordinator.submit.call_args.kwargs["subtasks"][0].subtask_id, "research")
+
+    def test_rejects_provider_tool_calls_during_planning(self):
+        response = {"text": '{"tasks":[]}', "tool_calls": {"tool_calls": [
+            {"id": "call_1", "name": "dangerous", "arguments": {}}
+        ]}}
+        with self.assertRaisesRegex(ValueError, "must_not_request_tools"):
+            self.orchestrator.propose(
+                actor_id="owner", request="Research this topic",
+                idempotency_key="provider-tool-call", model=lambda **kwargs: response,
+            )
+        self.coordinator.submit.assert_not_called()
+
     def test_rejects_extra_fields_and_invalid_dependency_graph(self):
         bad_responses = [
             {"tasks": [], "tool_calls": []},
