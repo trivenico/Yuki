@@ -203,6 +203,9 @@ class AgentMemoryTests(unittest.TestCase):
   )
   self.assertEqual(first["memory_id"],second["memory_id"])
   self.assertTrue(first["verified"])
+  self.assertTrue(self.store.candidate_was_promoted(
+   actor_id="owner",agent_id="assistant",candidate_id="memcand-0123456789abcdef01234567"
+  ))
   self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="assistant")),1)
 
  def test_candidate_promotion_rejects_invalid_ids_and_missing_write_permission(self):
