@@ -16,7 +16,7 @@ from typing import Any, Callable
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.agent_memory import AgentMemoryStore
-from providers.reasoning_runtime import memory_actor_id_for_owner
+from core.owner_identity import memory_actor_id_for_owner
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -186,7 +186,7 @@ class YukiConversationAPI:
                     record = await asyncio.to_thread(
                         self.memory_store.remember,
                         actor_id=actor_id, agent_id="assistant",
-                        content=payload["content"], source="owner_web_ui",
+                        content=payload["content"], source="owner_authenticated_api",
                         category="episodic", confidence=0.5,
                         verified=False, scope="private",
                     )
