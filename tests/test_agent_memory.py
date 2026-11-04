@@ -1,5 +1,6 @@
 import tempfile
 import sqlite3
+from contextlib import closing
 import unittest
 from pathlib import Path
 from core.agent_memory import AgentMemoryStore
@@ -106,7 +107,7 @@ class AgentMemoryTests(unittest.TestCase):
   self.grants["owner"].add("agent_memory:correct")
   self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
    content="new",source="review",reason="owner approved")
-  with sqlite3.connect(self.store.database_path) as db:
+  with closing(sqlite3.connect(self.store.database_path)) as db, db:
    with self.assertRaises(sqlite3.IntegrityError):
     db.execute("UPDATE agent_memory_corrections SET reason='tampered'")
    with self.assertRaises(sqlite3.IntegrityError):
