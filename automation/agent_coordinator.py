@@ -656,7 +656,7 @@ class SpecialistAgentCoordinator:
     ) -> None:
         """Append a bounded metadata-only audit event to an owned plan."""
         actor = actor_id.strip() if isinstance(actor_id, str) else ""
-        if not actor or len(actor) > 200 or "\\x00" in actor:
+        if not actor or len(actor) > 200 or "\x00" in actor:
             raise ValueError("audit actor_id must be bounded text.")
         if not isinstance(kind, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", kind):
             raise ValueError("audit event kind is invalid.")
