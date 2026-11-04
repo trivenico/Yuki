@@ -16,6 +16,7 @@ from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.agent_memory import AgentMemoryStore
+from core.owner_profile import OwnerProfileStore
 from core.agent_memory_retriever import AgentMemoryRetriever
 from core.embedding_index import SQLiteEmbeddingIndex
 from core.reasoning.context_builder import ReasoningContextBuilder
@@ -73,6 +74,18 @@ def create_app():
         )
 
     memory_store = AgentMemoryStore(memory_database, authorize=authorize_memory)
+
+    def authorize_profile(actor_id, action, resource):
+        return (
+            isinstance(actor_id, str)
+            and re.fullmatch(r"owner-[a-f0-9]{64}", actor_id) is not None
+            and resource == "owner_profile"
+            and action in {"owner_profile:read", "owner_profile:write"}
+        )
+
+    owner_profile_store = OwnerProfileStore(
+        str(workspace / "owner_profile.sqlite3"), authorize=authorize_profile,
+    )
     local_embedding_path = os.environ.get("YUKI_EMBEDDING_MODEL_PATH", "").strip()
     if local_embedding_path:
         embedder = HuggingFaceLocalEmbedder(local_embedding_path, device=os.environ.get("YUKI_EMBEDDING_DEVICE", "cpu"))
@@ -131,6 +144,7 @@ def create_app():
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
         memory_store=memory_store,
+        owner_profile_store=owner_profile_store,
     )
 
 
