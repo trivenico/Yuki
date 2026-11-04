@@ -249,6 +249,45 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="idem",
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
 
+
+    def test_plan_idempotency_and_access_are_scoped_to_owner(self):
+        shared_authorizer = lambda actor, action, resource: (
+            actor in {"alice", "bob"} and action in {
+                "agent:plan", "agent:dispatch", "agent:read", "agent:cancel",
+            }
+        )
+        bob_coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=shared_authorizer,
+        )
+        alice_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("collect", "Collect public sources", ("research",))],
+        )
+        bob_plan = bob_coordinator.submit(
+            actor_id="bob", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("collect", "Collect public sources", ("research",))],
+        )
+        self.assertNotEqual(alice_plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(alice_plan.idempotency_key, "same-client-key")
+        self.assertEqual(bob_plan.idempotency_key, "same-client-key")
+        self.assertEqual(
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="same-client-key",
+                subtasks=[SubtaskSpec("collect", "Collect public sources", ("research",))],
+            ).plan_id,
+            alice_plan.plan_id,
+        )
+        with self.assertRaisesRegex(PermissionError, "ownership mismatch"):
+            bob_coordinator.get_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaisesRegex(PermissionError, "ownership mismatch"):
+            bob_coordinator.advance(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaisesRegex(PermissionError, "ownership mismatch"):
+            bob_coordinator.cancel_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        self.assertEqual(
+            bob_coordinator.get_plan(actor_id="bob", plan_id=bob_plan.plan_id).plan_id,
+            bob_plan.plan_id,
+        )
+
     def test_authorization_missing_or_raising_fails_closed(self):
         no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
                                              self.agents, authorize=lambda *_: False)
