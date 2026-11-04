@@ -50,6 +50,7 @@ def build_conversation_runtime(
     *,
     auth_service: BuiltInAuthService,
     agent_loop: AgentExecutionLoop,
+    agent_loop_factory: Callable[[str], AgentExecutionLoop] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -65,9 +66,13 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if agent_loop_factory is not None and not callable(agent_loop_factory):
+        raise TypeError("agent_loop_factory must be callable when provided.")
     store = create_conversation_store(config)
     try:
-        service = ConversationService(store, agent_loop)
+        service = ConversationService(
+            store, agent_loop, agent_loop_factory=agent_loop_factory,
+        )
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
