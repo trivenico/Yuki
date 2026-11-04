@@ -245,6 +245,22 @@ class AgentMemoryStore:
             row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
         return self._record(row)
 
+
+    def candidate_was_promoted(self, *, actor_id, agent_id, candidate_id):
+        """Check the durable promotion ledger without exposing another owner."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(candidate_id, str) or not re.fullmatch(r"memcand-[a-f0-9]{24}", candidate_id):
+            raise ValueError("invalid_memory_candidate_id")
+        if not self._allowed(actor_id, "agent_memory:read", agent_id):
+            raise PermissionError("agent memory read is not authorized")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT 1 FROM agent_memory_candidate_promotions
+                   WHERE actor_id=? AND agent_id=? AND candidate_id=?""",
+                (actor_id, agent_id, candidate_id),
+            ).fetchone()
+        return row is not None
+
     def list_memories(self, *, actor_id, agent_id, limit=50, include_shared=True, include_inactive=False):
         self._validate_scope(actor_id, agent_id)
         if not self._allowed(actor_id, "agent_memory:read", agent_id):
