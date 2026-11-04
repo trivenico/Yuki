@@ -192,6 +192,16 @@
           await loadMemory(); toast("Memory approved.");
         }, memory));
       }
+      if (memory.lifecycle_status !== "rejected") {
+        actions.append(memoryActionButton("Reject", async (item) => {
+          const reason = window.prompt("Why should this memory not be trusted?");
+          if (!reason || !reason.trim()) return;
+          await api("/v1/memory/" + encodeURIComponent(item.memory_id), {
+            method: "PATCH", body: JSON.stringify({ status: "rejected", reason: reason.trim() })
+          });
+          await loadMemory(); toast("Memory rejected.");
+        }, memory));
+      }
       actions.append(memoryActionButton("Correct", async (item) => {
         const content = window.prompt("Enter the corrected memory:");
         if (!content || !content.trim()) return;
