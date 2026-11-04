@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 from core.agent_memory import AgentMemoryStore
@@ -87,6 +88,27 @@ class AgentMemoryTests(unittest.TestCase):
   old=self.store.remember(actor_id="owner",agent_id="research",content="old",source="initial")
   with self.assertRaises(PermissionError):
    self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])
+
+
+ def test_correction_audit_rows_are_immutable_in_sqlite(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="old",source="initial")
+  self.grants["owner"].add("agent_memory:correct")
+  self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+   content="new",source="review",reason="owner approved")
+  with sqlite3.connect(self.store.database_path) as db:
+   with self.assertRaises(sqlite3.IntegrityError):
+    db.execute("UPDATE agent_memory_corrections SET reason='tampered'")
+   with self.assertRaises(sqlite3.IntegrityError):
+    db.execute("DELETE FROM agent_memory_corrections")
+
+ def test_correction_requires_share_permission_for_shared_claim(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="shared old",
+   source="initial",scope="shared")
+  self.grants["owner"].add("agent_memory:correct")
+  self.grants["owner"].remove("agent_memory:share")
+  with self.assertRaises(PermissionError):
+   self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+    content="shared new",source="review",reason="correction")
 
 
 if __name__=="__main__": unittest.main()
