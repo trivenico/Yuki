@@ -15,8 +15,7 @@ Source precedence:
 1. First positional argument.
 2. `YUKI_BACKUP_SOURCE` (explicit source override).
 3. `YUKI_WORKSPACE` (workspace override; relative paths resolve under `YUKI_HOME` when set, otherwise repository root).
-4. `YUKI_HOME` (data root).
-5. `./yuki_workspace` under the repository root (default workspace).
+4. The default `yuki_workspace` beneath `YUKI_HOME` when set, otherwise beneath the repository root.
 
 The script does not parse a custom YAML config file. If your configured workspace comes from a custom config, set `YUKI_BACKUP_SOURCE` or pass the source path explicitly.
 
