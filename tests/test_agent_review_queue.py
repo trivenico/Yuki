@@ -102,7 +102,7 @@ class AgentEvaluationReviewQueueTests(unittest.TestCase):
             "pending",
         )
 
-    def test_non_reviewable_report_is_rejected(self):
+    def test_high_quality_report_is_queued_for_memory_review(self):
         report = AgentEvaluator().evaluate(
             task_id="task-003",
             agent_id="coding",
@@ -117,9 +117,9 @@ class AgentEvaluationReviewQueueTests(unittest.TestCase):
             evidence_refs=["test-run:789", "artifact:987"],
         )
         self.assertFalse(report.requires_human_review)
-        self.assertFalse(report.eligible_for_memory_review)
-        with self.assertRaises(ValueError):
-            self.queue.enqueue(actor_id="owner", report=report)
+        self.assertTrue(report.eligible_for_memory_review)
+        queued = self.queue.enqueue(actor_id="owner", report=report)
+        self.assertEqual(queued["status"], "pending")
 
 
 if __name__ == "__main__":
