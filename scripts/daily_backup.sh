@@ -94,7 +94,7 @@ fi
 trap - EXIT HUP INT TERM
 cleanup
 
-find "$BACKUP_DIR" -type f \\( -name 'yuki-data-*.tar.gz' -o -name 'yuki-data-*.yukibak' \\) -mtime "+$RETENTION_DAYS" -exec rm -f {} \\;
+find "$BACKUP_DIR" -type f \( -name 'yuki-data-*.tar.gz' -o -name 'yuki-data-*.yukibak' \) -mtime "+$RETENTION_DAYS" -exec rm -f {} \;
 
 echo "Backup completed: $ARCHIVE"
 if [ -n "${YUKI_BACKUP_KEY_FILE:-}" ]; then
