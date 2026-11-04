@@ -150,6 +150,8 @@ class MultiHopMemoryRetriever:
                 continue
 
             for item in evidence_items:
+                if not isinstance(item, dict):
+                    continue
                 memory_id = item.get("memory_id")
                 content = item.get("content")
                 if not isinstance(memory_id, str) or not isinstance(content, str):
