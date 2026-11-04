@@ -66,7 +66,10 @@ class MemoryEmbeddingBackfillTests(unittest.TestCase):
             max_pages=10, restart=True,
         )
         self.assertTrue(result["completed"])
-        self.assertEqual(len(self.embedder.calls), before)
+        # Restart begins from the first page, reuses its two cached vectors,
+        # and embeds only the three records that had not been indexed yet.
+        self.assertEqual(result["memories_indexed"], 3)
+        self.assertEqual(len(self.embedder.calls), before + 3)
 
     def test_visibility_scope_change_requires_explicit_restart(self):
         self.backfill.run(
