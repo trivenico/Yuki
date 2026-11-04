@@ -75,9 +75,9 @@ class TaskLeaseRenewer:
             raise TypeError("runtime must be a TaskRuntime.")
         self.runtime = runtime
         self.actor_id = TaskRuntime._actor(actor_id)
-        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200 or "\\x00" in task_id:
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200 or "\x00" in task_id:
             raise ValueError("task_id must be non-empty bounded text.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
@@ -86,6 +86,8 @@ class TaskLeaseRenewer:
         self.lease_seconds = lease_seconds
 
     def __call__(self) -> bool:
+        if not self.runtime._allowed(self.actor_id, "task:lease:renew", self.task_id):
+            raise PermissionError("task lease renewal is not authorized.")
         for attempt in range(self.MAX_CAS_ATTEMPTS):
             current = self.runtime.store.get(self.task_id)
             if current is None:
