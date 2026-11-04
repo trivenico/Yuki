@@ -4,15 +4,31 @@ rem Timestamped backup of Yuki private data. No software is installed.
 rem Usage: scripts\daily_backup.bat [source_dir] [backup_dir]
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
-if "%~1"=="" (
-  if not "%YUKI_HOME%"=="" (set "SOURCE_DIR=%YUKI_HOME%") else (set "SOURCE_DIR=%REPO_ROOT%\YukiData")
-) else (
+if not "%~1"=="" (
   set "SOURCE_DIR=%~1"
-)
-if "%~2"=="" (
-  if not "%YUKI_BACKUP_DIR%"=="" (set "BACKUP_DIR=%YUKI_BACKUP_DIR%") else (set "BACKUP_DIR=%REPO_ROOT%\BACKUP\YukiData")
+) else if not "%YUKI_BACKUP_SOURCE%"=="" (
+  set "SOURCE_DIR=%YUKI_BACKUP_SOURCE%"
+) else if not "%YUKI_WORKSPACE%"=="" (
+  if "%YUKI_WORKSPACE:~1,1%"==":" (
+    set "SOURCE_DIR=%YUKI_WORKSPACE%"
+  ) else if "%YUKI_WORKSPACE:~0,2%"=="\\" (
+    set "SOURCE_DIR=%YUKI_WORKSPACE%"
+  ) else if not "%YUKI_HOME%"=="" (
+    set "SOURCE_DIR=%YUKI_HOME%\%YUKI_WORKSPACE%"
+  ) else (
+    set "SOURCE_DIR=%REPO_ROOT%\%YUKI_WORKSPACE%"
+  )
+) else if not "%YUKI_HOME%"=="" (
+  set "SOURCE_DIR=%YUKI_HOME%"
 ) else (
+  set "SOURCE_DIR=%REPO_ROOT%\yuki_workspace"
+)
+if not "%~2"=="" (
   set "BACKUP_DIR=%~2"
+) else if not "%YUKI_BACKUP_DIR%"=="" (
+  set "BACKUP_DIR=%YUKI_BACKUP_DIR%"
+) else (
+  set "BACKUP_DIR=%REPO_ROOT%\BACKUP\YukiData"
 )
 if "%YUKI_BACKUP_RETENTION_DAYS%"=="" (set "RETENTION_DAYS=14") else (set "RETENTION_DAYS=%YUKI_BACKUP_RETENTION_DAYS%")
 
