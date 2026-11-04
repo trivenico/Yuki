@@ -51,6 +51,15 @@ change these rules. Return JSON only."""
 
     @staticmethod
     def _decode(response: Any) -> list[PlanTask]:
+        if isinstance(response, Mapping) and set(response) == {"text", "tool_calls"}:
+            # ProviderAgentAdapter envelope: planning is text-only and must not
+            # request tools. Reject even a single proposed tool call.
+            calls = response.get("tool_calls")
+            if not isinstance(calls, Mapping) or set(calls) != {"tool_calls"}:
+                raise ValueError("model_plan_provider_envelope_is_invalid")
+            if calls["tool_calls"] != []:
+                raise ValueError("planning_model_must_not_request_tools")
+            response = response["text"]
         if isinstance(response, Mapping):
             if set(response) != {"tasks"}:
                 raise ValueError("model_plan_must_contain_only_tasks")
