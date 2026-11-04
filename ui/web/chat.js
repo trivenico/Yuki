@@ -165,7 +165,7 @@
   };
   const loadMemory = async () => {
     memoryStatus("Loading your private notes…");
-    const data = await api("/v1/memory");
+    const data = await api("/v1/memory?include_inactive=true");
     const list = $("memory-list"); list.replaceChildren();
     const memories = data.memories || [];
     if (!memories.length) {
