@@ -1,6 +1,10 @@
 # Daily backup scripts
 
-These scripts create timestamped archives of Yuki's configured local workspace. They do not upload data, install software, encrypt archives, or guarantee an application-consistent SQLite snapshot. Until database-aware backup is implemented, **stop Yuki before running them** so SQLite and other files are not changing during the archive.
+These scripts create timestamped archives of Yuki's configured local workspace. Before archiving, they call `scripts/sqlite_workspace_snapshot.py` to create a staging copy. Every recognized SQLite database is copied using SQLite's online backup API and checked with `PRAGMA integrity_check`; committed WAL content is included, and live `-wal`, `-shm`, and rollback-journal sidecars are not copied as loose files.
+
+Non-database files are copied normally and are not captured in one atomic application-wide transaction. **Stop Yuki before backing up** when you need a consistent snapshot across SQLite databases and ordinary files.
+
+The scripts do not upload data or encrypt archives. Backup archives remain plaintext unless the destination volume itself is encrypted.
 
 ## Linux / macOS
 
@@ -22,6 +26,7 @@ The script does not parse a custom YAML config file. If your configured workspac
 Destination and retention:
 - Destination: `YUKI_BACKUP_DIR` if set, otherwise `./BACKUP/YukiData`
 - Retention: `YUKI_BACKUP_RETENTION_DAYS`, default 14 days (1–3650)
+- Python executable: `YUKI_PYTHON` if set, otherwise `python3` or `python` from PATH
 
 Override source and destination with positional arguments:
 
@@ -29,7 +34,7 @@ Override source and destination with positional arguments:
 sh scripts/daily_backup.sh "/media/my-ssd/YukiData" "/media/backup-drive/YukiBackups"
 ```
 
-The script requires standard `tar`, `find`, and shell utilities. It validates the archive before publishing it and deletes only matching Yuki archive files older than the configured retention period.
+The script requires Python, SQLite support in that Python build, and standard `tar`, `find`, and shell utilities. It validates the completed archive before publishing it and deletes only matching Yuki archive files older than the configured retention period.
 
 ## Windows
 
@@ -45,7 +50,7 @@ You can pass source and destination directories:
 scripts\daily_backup.bat "E:\YukiData" "F:\YukiBackups"
 ```
 
-The same source precedence, `YUKI_BACKUP_DIR`, and `YUKI_BACKUP_RETENTION_DAYS` rules apply. The script uses the Windows-provided .NET ZIP APIs through PowerShell, includes hidden files, reads every archive entry to validate it, and does not install packages. For a custom YAML workspace, use `YUKI_BACKUP_SOURCE` or a positional source argument.
+The same source precedence, `YUKI_BACKUP_DIR`, and `YUKI_BACKUP_RETENTION_DAYS` rules apply. The script uses `YUKI_PYTHON` or `python` from PATH, plus the Windows-provided .NET ZIP APIs through PowerShell. Hidden files are included and every archive entry is read before publishing the archive. For a custom YAML workspace, use `YUKI_BACKUP_SOURCE` or a positional source argument.
 
 ## Schedule it daily
 
@@ -63,10 +68,11 @@ Neither scheduler can back up an SSD that is disconnected. Test a manual backup 
 
 ## Security and restore
 
-- Prefer an encrypted SSD/backup volume. These scripts create archives but do not encrypt them.
+- Prefer an encrypted SSD/backup volume. These scripts create plaintext archives and do not encrypt them.
 - Keep at least one separate backup copy; do not use the same physical drive as the only backup.
 - Never store backups in the Git repository; `BACKUP/` is ignored by Git.
-- Archives may contain sensitive memories, health/habit data, reminders and other private records. Protect access and remove old backups securely according to your device's storage policy.
+- Archives may contain sensitive memories, account data, conversations, preferences, reminders and other private records. Protect access and remove old backups securely according to your device's storage policy.
 - Test restoration into a **new empty directory** before relying on backups. On Unix, inspect with `tar -tzf backup.tar.gz` and extract with `tar -xzf backup.tar.gz -C /path/to/restore`. On Windows, use File Explorer or PowerShell `Expand-Archive` into a new folder.
-- These scripts archive files as they are found. Stop Yuki first to avoid copying files while they are being updated. They do not call SQLite's backup API, coordinate WAL checkpoints, encrypt data, or prove database restore integrity.
-- Current backup readiness is **development-only**. Do not treat these archives as a production disaster-recovery mechanism. The remaining work includes encrypted, authenticated archives with externally managed keys; SQLite-consistent snapshots for each configured database; isolated restore; and wrong-key, tamper, truncation, path-traversal, and corruption tests.
+- SQLite database files are snapshotted independently and checked for integrity, but this is not a cross-database transaction. Stop Yuki first for a consistent whole-workspace restore point.
+- The snapshot helper rejects symlinks and special files rather than following them outside the workspace. If your workspace intentionally depends on symlinks, back up those targets separately and review the boundary before changing this behavior.
+- **Production recovery is not complete.** Remaining P0 work includes authenticated encryption with externally managed keys, verified isolated restore tooling, wrong-key/tamper/truncation/path-traversal/corruption tests, retention and deletion semantics, and a documented disaster-recovery drill. Do not treat these scripts as a production disaster-recovery system yet.
