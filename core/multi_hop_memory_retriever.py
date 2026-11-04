@@ -97,6 +97,8 @@ class MultiHopMemoryRetriever:
         edges = []
         hop_count = 0
         truncated = False
+        invalid_evidence_count = 0
+        conflicting_duplicate_count = 0
 
         while frontier and len(queries) < self.max_queries and len(records) < self.max_records:
             current_query, source_memory_id, hop = frontier.popleft()
@@ -124,14 +126,30 @@ class MultiHopMemoryRetriever:
             evidence_items = packet.get("evidence", [])
             if not isinstance(evidence_items, list):
                 raise ValueError("knowledge_evidence_must_be_a_list")
+            accepted_items = []
             for item in evidence_items:
                 if not isinstance(item, dict):
+                    invalid_evidence_count += 1
                     continue
                 memory_id = item.get("memory_id")
-                if not isinstance(memory_id, str) or not memory_id:
+                content = item.get("content")
+                if (not isinstance(memory_id, str) or not memory_id.strip()
+                        or not isinstance(content, str) or not content.strip()
+                        or item.get("lifecycle_status", "active") != "active"
+                        or item.get("superseded_by") is not None
+                        or item.get("trust") != "untrusted_reference_data"
+                        or (verified_only and item.get("verified") is not True)):
+                    invalid_evidence_count += 1
                     continue
-                if memory_id not in records and len(records) < self.max_records:
-                    records[memory_id] = item
+                existing = records.get(memory_id)
+                if existing is not None:
+                    if existing.get("content") != content:
+                        conflicting_duplicate_count += 1
+                    continue
+                if len(records) >= self.max_records:
+                    continue
+                records[memory_id] = item
+                accepted_items.append(item)
                 if source_memory_id and memory_id != source_memory_id:
                     edge = {
                         "source_memory_id": source_memory_id,
@@ -144,18 +162,14 @@ class MultiHopMemoryRetriever:
                     if edge not in edges:
                         edges.append(edge)
 
-            if len(records) >= self.max_records:
+            if len(evidence_items) >= remaining and len(records) >= self.max_records:
                 truncated = True
             if hop >= self.max_hops:
                 continue
 
-            for item in evidence_items:
-                if not isinstance(item, dict):
-                    continue
-                memory_id = item.get("memory_id")
-                content = item.get("content")
-                if not isinstance(memory_id, str) or not isinstance(content, str):
-                    continue
+            for item in accepted_items:
+                memory_id = item["memory_id"]
+                content = item["content"]
                 expanded = self._expand_from_evidence(content)
                 if not expanded:
                     continue
@@ -176,6 +190,8 @@ class MultiHopMemoryRetriever:
             "query": query.strip(),
             "evidence": list(records.values()),
             "count": len(records),
+            "invalid_evidence_count": invalid_evidence_count,
+            "conflicting_duplicate_count": conflicting_duplicate_count,
             "queries": queries,
             "query_count": len(queries),
             "hops_completed": hop_count,
