@@ -160,16 +160,19 @@ class WorkerShutdownCoordinator:
         heartbeat.start()
         try:
             result = handler(claimed, lease_lost)
-            if lease_lost.is_set():
-                cause = heartbeat_errors[0] if heartbeat_errors else None
-                raise WorkerLeaseLost(
-                    "worker lease was lost; handler result must not be treated as committed."
-                ) from cause
-            return result
         finally:
+            # Stop future heartbeat cycles and wait for an in-flight renewal to
+            # settle before deciding whether the handler result is trustworthy.
             stop.set()
             heartbeat.join()
             self.finish_task(worker, task_id)
+
+        if lease_lost.is_set():
+            cause = heartbeat_errors[0] if heartbeat_errors else None
+            raise WorkerLeaseLost(
+                "worker lease was lost; handler result must not be treated as committed."
+            ) from cause
+        return result
 
     def finish_task(self, worker_id: str, task_id: str) -> None:
         worker = self._identity(worker_id, "worker_id")

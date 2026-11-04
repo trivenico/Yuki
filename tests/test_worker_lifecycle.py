@@ -184,6 +184,44 @@ class WorkerShutdownCoordinatorTests(unittest.TestCase):
         self.assertTrue(observed.is_set())
         self.assertEqual(coordinator.snapshot()["active_workers"], {})
 
+    def test_inflight_heartbeat_failure_after_handler_return_rejects_result(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-heartbeat-race")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        renewal_started = threading.Event()
+        release_renewal = threading.Event()
+        outcomes = []
+
+        def renew():
+            renewal_started.set()
+            release_renewal.wait(1.0)
+            return False
+
+        def handler(_task, _lease_lost):
+            self.assertTrue(renewal_started.wait(1.0))
+            return "must-not-escape"
+
+        def execute():
+            try:
+                outcomes.append(coordinator.execute_claimed_with_heartbeat(
+                    "worker-a", claimed, handler, renew, heartbeat_interval=0.01,
+                ))
+            except BaseException as exc:
+                outcomes.append(exc)
+
+        thread = threading.Thread(target=execute)
+        thread.start()
+        self.assertTrue(renewal_started.wait(1.0))
+        release_renewal.set()
+        thread.join(1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(outcomes), 1)
+        self.assertIsInstance(outcomes[0], WorkerLeaseLost)
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
     def test_heartbeat_requires_registered_ownership_and_valid_interval(self):
         from types import SimpleNamespace
 
