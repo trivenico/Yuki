@@ -124,5 +124,27 @@ class MemoryConflictDetectorTests(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+    def test_different_explicit_dates_are_not_flagged_as_conflicts(self):
+        self.add("The maintenance window is 30 minutes on 2026-11-01.")
+        self.add("The maintenance window is 60 minutes on 2026-11-02.")
+        self.assertEqual(
+            self.detector.detect(actor_id="owner", agent_id="research"), []
+        )
+
+    def test_same_date_with_different_numeric_claims_is_flagged(self):
+        self.add("The maintenance window is 30 minutes on 2026-11-01.")
+        self.add("The maintenance window is 60 minutes on 2026-11-01.")
+        result = self.detector.detect(actor_id="owner", agent_id="research")
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0]["signals"]["numeric_measurement_conflict"])
+
+    def test_different_environments_are_not_flagged_as_conflicts(self):
+        self.add("The API timeout is 30 seconds in staging.")
+        self.add("The API timeout is 60 seconds in production.")
+        self.assertEqual(
+            self.detector.detect(actor_id="owner", agent_id="research"), []
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
