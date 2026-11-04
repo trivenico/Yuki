@@ -208,7 +208,7 @@ def _extract_tar(archive_path: Path, payload: Path) -> tuple[int, int, str | Non
         total = [0]
         files = 0
         for member, parts, kind in normalized:
-            relative = parts[1:] if root_name is not None else parts
+            relative = parts
             if not relative:
                 payload.mkdir(parents=True, exist_ok=True)
                 continue
