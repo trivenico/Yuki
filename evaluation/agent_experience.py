@@ -12,7 +12,8 @@ import sqlite3
 from threading import RLock
 from uuid import uuid4
 
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$")
+# WorkflowRunStore IDs are opaque URL-safe tokens and may begin with _ or -.
+_ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.:@/-]{0,199}$")
 _CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 
