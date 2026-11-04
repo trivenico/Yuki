@@ -474,6 +474,40 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(events[-1].kind, "task.lease_renewed")
         self.assertEqual(events[-1].actor_id, "alice")
 
+    def test_task_lease_renewer_reloads_after_concurrent_version_conflict(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter-cas-race")
+        claimed = self.claim(task)
+        original_renew = self.runtime.renew_lease
+        injected = []
+
+        def concurrent_progress_then_renew(**kwargs):
+            if not injected:
+                injected.append(True)
+                self.runtime.record_progress(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=kwargs["expected_version"],
+                    message="concurrent worker progress", percent=15,
+                )
+            return original_renew(**kwargs)
+
+        self.runtime.renew_lease = concurrent_progress_then_renew
+        renewer = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-a",
+        )
+        self.assertIs(renewer(), True)
+        self.assertEqual(len(injected), 1)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, claimed.version + 2)
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(
+                actor_id="alice", task_id=task.task_id
+            )][-2:],
+            ["task.progress", "task.lease_renewed"],
+        )
+
     def test_task_lease_renewer_fails_closed_for_wrong_owner_or_unauthorized_actor(self):
         from automation.task_runtime import TaskLeaseRenewer
 
