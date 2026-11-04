@@ -30,7 +30,7 @@ _OPPOSITES = (
 )
 _POLARITY_TERMS = frozenset().union(*(positive | negative for positive, negative in _OPPOSITES))
 _MEASUREMENT = re.compile(
-    r"(?<![a-z0-9])(-?\${ch}+(?:\.\${ch}+)?)\${ch}*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|days?|%|percent|gb|mb|tb|kb|hz|ghz|tokens?)(?![a-z])",
+    r"(?<![a-z0-9])(-?\d+(?:\.\d+)?)\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|days?|%|percent|gb|mb|tb|kb|hz|ghz|tokens?)(?![a-z])",
     re.IGNORECASE,
 )
 _TOKEN = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
