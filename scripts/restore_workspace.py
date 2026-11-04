@@ -160,7 +160,7 @@ def _extract_zip(archive_path: Path, payload: Path) -> tuple[int, int, str | Non
         total = [0]
         files = 0
         for info, parts, kind in normalized:
-            relative = parts[1:] if root_name is not None else parts
+            relative = parts
             if not relative:
                 payload.mkdir(parents=True, exist_ok=True)
                 continue
