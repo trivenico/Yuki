@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Create a timestamped local backup of Yuki's private data.
+# Create a timestamped local backup of Yuki's private workspace.
 # Usage: sh scripts/daily_backup.sh [source_dir] [backup_dir]
 set -eu
 umask 077
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+DATA_ROOT="${YUKI_HOME:-$REPO_ROOT}"
+case "$DATA_ROOT" in
+  /*) ;;
+  *) DATA_ROOT="$REPO_ROOT/$DATA_ROOT" ;;
+esac
 if [ -n "${1:-}" ]; then
   SOURCE_DIR="$1"
 elif [ -n "${YUKI_BACKUP_SOURCE:-}" ]; then
@@ -15,14 +20,13 @@ elif [ -n "${YUKI_BACKUP_SOURCE:-}" ]; then
     *) SOURCE_DIR="$REPO_ROOT/$SOURCE_DIR" ;;
   esac
 elif [ -n "${YUKI_WORKSPACE:-}" ]; then
-  case "$YUKI_WORKSPACE" in
-    /*) SOURCE_DIR="$YUKI_WORKSPACE" ;;
-    *) SOURCE_DIR="${YUKI_HOME:-$REPO_ROOT}/$YUKI_WORKSPACE" ;;
+  SOURCE_DIR="$YUKI_WORKSPACE"
+  case "$SOURCE_DIR" in
+    /*) ;;
+    *) SOURCE_DIR="$DATA_ROOT/$SOURCE_DIR" ;;
   esac
-elif [ -n "${YUKI_HOME:-}" ]; then
-  SOURCE_DIR="$YUKI_HOME"
 else
-  SOURCE_DIR="$REPO_ROOT/yuki_workspace"
+  SOURCE_DIR="$DATA_ROOT/yuki_workspace"
 fi
 BACKUP_DIR="${2:-${YUKI_BACKUP_DIR:-$REPO_ROOT/BACKUP/YukiData}}"
 RETENTION_DAYS="${YUKI_BACKUP_RETENTION_DAYS:-14}"
