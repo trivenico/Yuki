@@ -17,7 +17,7 @@ class TaskRuntimeTests(unittest.TestCase):
                        "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile", "task:step:resolve"}
         self.runtime = TaskRuntime(
             self.store,
-            authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
+            authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
