@@ -45,7 +45,7 @@ class SQLiteEmbeddingIndex:
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.execute("PRAGMA busy_timeout=5000")
         db.execute("PRAGMA synchronous=FULL")
-        return db
+        return _ClosingConnection(db)
 
     @staticmethod
     def _digest(content: str) -> str:
@@ -231,3 +231,22 @@ class SQLiteEmbeddingIndex:
                 (actor_id, self.model_id)).fetchone()
         return {"model_id": self.model_id, "vector_count": row[0],
                 "total_dimensions": row[1], "storage": "sqlite_float32"}
+
+class _ClosingConnection:
+    """Commit/rollback and always close SQLite handles (required on Windows)."""
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def __enter__(self):
+        return self._connection
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self._connection.commit()
+            else:
+                self._connection.rollback()
+        finally:
+            self._connection.close()
+        return False
