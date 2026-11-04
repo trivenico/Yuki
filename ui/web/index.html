@@ -31,6 +31,7 @@
       <aside class="sidebar">
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <button id="open-memory" class="memory-nav-button" type="button">◇ <span>My memory</span></button>
         <p class="section-label">RECENT</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
         <div class="sidebar-bottom">
@@ -62,6 +63,19 @@
           </form>
           <p class="footer-note">Yuki AI · Your workspace, your intelligence</p>
         </div>
+      </section>
+      <section id="memory-panel" class="memory-panel" aria-labelledby="memory-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YOUR PRIVATE CONTEXT</p><h2 id="memory-title">Memory</h2><p class="muted">Notes are private to your account. New notes are unverified until you review them.</p></div>
+          <button id="close-memory" class="quiet-button" type="button" aria-label="Close memory">Close</button>
+        </header>
+        <form id="memory-form" class="memory-form">
+          <label for="memory-content">Remember something</label>
+          <textarea id="memory-content" rows="2" maxlength="8000" required placeholder="A preference, project detail, or useful context…"></textarea>
+          <button class="primary" type="submit">Save private note</button>
+        </form>
+        <p id="memory-status" class="muted" role="status"></p>
+        <div id="memory-list" class="memory-list"></div>
       </section>
     </section>
     <div id="toast" class="toast" role="status"></div>
