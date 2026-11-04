@@ -328,11 +328,13 @@ class AgentMemoryStore:
             db.execute(
                 """INSERT INTO agent_memories
                    (memory_id,actor_id,agent_id,category,content,source,confidence,
-                    verified,scope,created_at,expires_at,superseded_by,superseded_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    verified,scope,created_at,expires_at,superseded_by,superseded_at,
+                    lifecycle_status,lifecycle_updated_at,lifecycle_reason)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (replacement_id, actor_id, agent_id, previous["category"],
                  content.strip(), source.strip(), float(confidence), 1,
-                 previous["scope"], now, expires_at, None, None),
+                 previous["scope"], now, expires_at, None, None,
+                 "approved", now, reason.strip()),
             )
             db.execute(
                 """INSERT INTO agent_memory_corrections
