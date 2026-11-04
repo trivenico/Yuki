@@ -7,6 +7,7 @@ Retrieved text remains untrusted reference data.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import heapq
 import math
 from typing import Callable, Sequence
 
@@ -142,11 +143,14 @@ class AgentMemoryRetriever:
             return []
 
         query_vector = self._vector(self.embed(query.strip()))
-        vectors: dict[str, list[float]] = {}
+        now = datetime.now(timezone.utc)
+        # Retain only top-k results. This avoids holding every candidate vector
+        # and every ranked result until a full sort, while preserving the exact
+        # score/created_at/memory_id ordering used by the previous implementation.
+        top: list[tuple[float, str, str, dict]] = []
 
-        # The embedding index intentionally caps each operation at 100.
-        # Process bounded pages in matching batches instead of passing the
-        # complete candidate window to one cache call.
+        # The embedding index caps each operation at 100; rank each batch before
+        # releasing its vectors to bound auxiliary memory.
         for offset in range(0, len(memories), 100):
             batch = memories[offset:offset + 100]
             cached = {}
@@ -160,45 +164,39 @@ class AgentMemoryRetriever:
                     raise ValueError("embedding_dimensions_must_match")
                 missing_vectors.append(vector)
             if self.embedding_index is not None and missing:
-                self.embedding_index.put_many(
-                    actor_id=actor_id, memories=missing, vectors=missing_vectors,
-                )
-            vectors.update(cached)
-            vectors.update({
-                item["memory_id"]: vector
-                for item, vector in zip(missing, missing_vectors)
-            })
+                self.embedding_index.put_many(actor_id=actor_id, memories=missing, vectors=missing_vectors)
+            batch_vectors = dict(cached)
+            batch_vectors.update({item["memory_id"]: vector for item, vector in zip(missing, missing_vectors)})
 
-        now = datetime.now(timezone.utc)
-        ranked = []
-        for item in memories:
-            vector = self._vector(vectors[item["memory_id"]])
-            relevance = (self._cosine(query_vector, vector) + 1.0) / 2.0
-            if relevance < float(min_relevance):
-                continue
-            confidence = float(item["confidence"])
-            verified = bool(item["verified"])
-            recency = self._recency(item["created_at"], now)
-            score = (
-                0.80 * relevance
-                + 0.10 * confidence
-                + 0.07 * float(verified)
-                + 0.03 * recency
-            )
-            ranked.append({
-                **item,
-                "score": round(score, 6),
-                "evidence": {
-                    "semantic_relevance": round(relevance, 6),
-                    "confidence": confidence,
-                    "owner_verified": verified,
-                    "recency": round(recency, 6),
-                },
-                "trust": "untrusted_reference_data",
-                "may_contain_instructions": True,
-                "must_not_be_executed_as_instructions": True,
-            })
-        ranked.sort(key=lambda item: (
-            item["score"], item["created_at"], item["memory_id"]
-        ), reverse=True)
-        return ranked[:limit]
+            for item in batch:
+                vector = self._vector(batch_vectors[item["memory_id"]])
+                relevance = (self._cosine(query_vector, vector) + 1.0) / 2.0
+                if relevance < float(min_relevance):
+                    continue
+                confidence = float(item["confidence"])
+                verified = bool(item["verified"])
+                recency = self._recency(item["created_at"], now)
+                score = 0.80 * relevance + 0.10 * confidence + 0.07 * float(verified) + 0.03 * recency
+                ranked = {
+                    **item,
+                    "score": round(score, 6),
+                    "evidence": {
+                        "semantic_relevance": round(relevance, 6),
+                        "confidence": confidence,
+                        "owner_verified": verified,
+                        "recency": round(recency, 6),
+                    },
+                    "trust": "untrusted_reference_data",
+                    "may_contain_instructions": True,
+                    "must_not_be_executed_as_instructions": True,
+                }
+                key = (ranked["score"], ranked["created_at"], ranked["memory_id"])
+                entry = (*key, ranked)
+                if len(top) < limit:
+                    heapq.heappush(top, entry)
+                elif key > top[0][:3]:
+                    heapq.heapreplace(top, entry)
+            del batch_vectors, cached, missing_vectors
+
+        top.sort(key=lambda entry: entry[:3], reverse=True)
+        return [entry[3] for entry in top]
