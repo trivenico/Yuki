@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import shutil
 import sqlite3
 import stat
@@ -289,15 +289,15 @@ def restore_workspace(archive_file: str | Path, destination_dir: str | Path) -> 
         else:
             workspace = payload
         databases = _validate_sqlite_files(workspace)
-        if destination.exists() or destination.is_symlink():
-            raise RestoreError("restore_destination_already_exists")
-        os.rename(workspace, destination)
         if os.name != "nt":
-            os.chmod(destination, 0o700)
-            for current, dirnames, filenames in os.walk(destination):
+            os.chmod(workspace, 0o700)
+            for current, dirnames, filenames in os.walk(workspace):
                 os.chmod(current, 0o700)
                 for filename in filenames:
                     os.chmod(Path(current) / filename, 0o600)
+        if destination.exists() or destination.is_symlink():
+            raise RestoreError("restore_destination_already_exists")
+        os.rename(workspace, destination)
         return {"files_restored": files, "bytes_restored": total, "sqlite_databases_verified": databases}
     except RestoreError:
         raise
