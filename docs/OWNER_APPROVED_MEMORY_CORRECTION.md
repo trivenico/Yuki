@@ -50,7 +50,7 @@ matches = retriever.retrieve(
 
 The memory store also exposes an explicit `correct(...)` operation. It requires the dedicated `agent_memory:correct` authorization grant; correcting a shared memory additionally requires `agent_memory:share`.
 
-A correction atomically:
+A correction atomically creates a replacement already marked `approved` and `verified`, because the correction operation itself requires explicit owner authorization and a rationale.
 1. Marks the active predecessor with a `superseded_by` link and timestamp.
 2. Inserts a new verified replacement with a new memory ID and retained category/scope.
 3. Writes an audit event containing actor, agent, predecessor, replacement, reason and approval timestamp.
