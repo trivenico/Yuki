@@ -13,6 +13,7 @@ import secrets
 import stat
 import sys
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
@@ -100,7 +101,10 @@ def encrypt_file(
     destination_file: str | Path,
     key_file: str | Path,
 ) -> dict[str, int]:
-    source = Path(source_file).expanduser().resolve(strict=True)
+    source_raw = Path(source_file).expanduser()
+    if source_raw.is_symlink():
+        raise BackupCryptoError("backup_source_must_not_be_symlink")
+    source = source_raw.resolve(strict=True)
     destination_raw = Path(destination_file).expanduser()
     if destination_raw.is_symlink():
         raise BackupCryptoError("backup_destination_must_not_be_symlink")
@@ -123,7 +127,7 @@ def encrypt_file(
     source_size = source.stat().st_size
     if source_size <= 0 or source_size > MAX_CIPHERTEXT_BYTES:
         raise BackupCryptoError("backup_source_size_invalid")
-    key = _load_key(key_path)
+    key = _load_key(key_file)
     nonce = secrets.token_bytes(NONCE_BYTES)
     header = MAGIC + nonce
     encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
@@ -163,7 +167,10 @@ def decrypt_file(
     destination_file: str | Path,
     key_file: str | Path,
 ) -> dict[str, int]:
-    source = Path(source_file).expanduser().resolve(strict=True)
+    source_raw = Path(source_file).expanduser()
+    if source_raw.is_symlink():
+        raise BackupCryptoError("encrypted_backup_must_not_be_symlink")
+    source = source_raw.resolve(strict=True)
     destination_raw = Path(destination_file).expanduser()
     if destination_raw.is_symlink():
         raise BackupCryptoError("restore_destination_must_not_be_symlink")
@@ -179,7 +186,7 @@ def decrypt_file(
     minimum_size = len(MAGIC) + NONCE_BYTES + TAG_BYTES + 1
     if encrypted_size < minimum_size or encrypted_size > MAX_CIPHERTEXT_BYTES + len(MAGIC) + NONCE_BYTES + TAG_BYTES:
         raise BackupCryptoError("encrypted_backup_size_invalid")
-    key = _load_key(key_path)
+    key = _load_key(key_file)
     temporary = destination.parent / (".yuki-decrypt-" + secrets.token_hex(12) + ".tmp")
     plaintext_bytes = 0
     try:
@@ -206,7 +213,7 @@ def decrypt_file(
                     output.write(plaintext)
                 try:
                     final = decryptor.finalize()
-                except Exception as exc:
+                except InvalidTag as exc:
                     raise BackupCryptoError("encrypted_backup_authentication_failed") from exc
                 if final:
                     output.write(final)
