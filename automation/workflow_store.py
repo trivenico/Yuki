@@ -453,7 +453,7 @@ class WorkflowRunStore:
                 ))
             """, (
                 to_state, result_json, error_code, now, attempts, lease_owner,
-                lease_expires, run_id, expected_version, int(expected_lease_owner is None),
+                lease_expires, run_id, expected_version, int(expected_lease_owner is not None),
                 expected_lease_owner, now
             ))
             if updated.rowcount != 1:
