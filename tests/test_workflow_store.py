@@ -28,7 +28,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key="step-records",
             workflow_name="release-check",
             definition=[
-                {"name": "review", "action": "emit", "argument": {"secret": "do-not-copy"}, "requires_approval": True},
+                {"name": "review", "action": "emit", "argument": "do-not-copy", "requires_approval": True},
                 {"name": "notify", "action": "note", "argument": "done", "requires_approval": False},
             ],
         )
