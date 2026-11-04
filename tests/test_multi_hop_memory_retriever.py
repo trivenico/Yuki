@@ -276,3 +276,34 @@ class SQLiteMultiHopAuthorizationTests(unittest.TestCase):
             query="Kubernetes deployment", include_shared=True,
         )
         self.assertNotIn(shared["memory_id"], {item["memory_id"] for item in denied["evidence"]})
+
+
+    def test_exact_record_budget_is_complete_when_lookahead_finds_no_more_evidence(self):
+        only = evidence("f" * 32, "ok")
+        api = FakeKnowledgeAPI({"deployment": [only]})
+        result = MultiHopMemoryRetriever(
+            api, max_hops=1, max_records=1, per_query_limit=1,
+        ).retrieve(actor_id="owner", agent_id="research", query="deployment")
+        self.assertEqual(result["count"], 1)
+        self.assertTrue(result["complete"])
+        self.assertEqual(api.calls[0]["limit"], 2)
+
+    def test_record_budget_reports_incomplete_when_lookahead_finds_an_extra_record(self):
+        first = evidence("f" * 32, "ok")
+        extra = evidence("e" * 32, "additional deployment record")
+        api = FakeKnowledgeAPI({"deployment": [first, extra]})
+        result = MultiHopMemoryRetriever(
+            api, max_hops=1, max_records=1, per_query_limit=1,
+        ).retrieve(actor_id="owner", agent_id="research", query="deployment")
+        self.assertEqual(result["count"], 1)
+        self.assertFalse(result["complete"])
+
+    def test_per_query_limit_uses_one_bounded_lookahead_record(self):
+        items = [evidence(f"{number:032x}", "ok") for number in range(1, 4)]
+        api = FakeKnowledgeAPI({"deployment": items})
+        result = MultiHopMemoryRetriever(
+            api, max_hops=1, max_records=5, per_query_limit=2,
+        ).retrieve(actor_id="owner", agent_id="research", query="deployment")
+        self.assertEqual(result["count"], 2)
+        self.assertFalse(result["complete"])
+        self.assertEqual(api.calls[0]["limit"], 3)

@@ -106,11 +106,16 @@ class MultiHopMemoryRetriever:
                 continue
             hop_count = max(hop_count, hop)
             remaining = self.max_records - len(records)
+            # Fetch one extra authorized candidate as a bounded lookahead.
+            # This distinguishes an exactly-full result from a genuinely
+            # truncated result without an unbounded follow-up scan.
+            query_capacity = min(self.per_query_limit, remaining)
+            request_limit = min(query_capacity + 1, 20)
             packet = self.knowledge_api.retrieve(
                 actor_id=actor_id.strip(),
                 agent_id=agent_id.strip(),
                 query=current_query,
-                limit=min(self.per_query_limit, remaining),
+                limit=request_limit,
                 include_shared=include_shared,
                 verified_only=verified_only,
             )
@@ -127,6 +132,7 @@ class MultiHopMemoryRetriever:
             if not isinstance(evidence_items, list):
                 raise ValueError("knowledge_evidence_must_be_a_list")
             accepted_items = []
+            accepted_count = 0
             for item in evidence_items:
                 if not isinstance(item, dict):
                     invalid_evidence_count += 1
@@ -146,10 +152,12 @@ class MultiHopMemoryRetriever:
                     if existing.get("content") != content:
                         conflicting_duplicate_count += 1
                     continue
-                if len(records) >= self.max_records:
+                if len(records) >= self.max_records or accepted_count >= query_capacity:
+                    truncated = True
                     continue
                 records[memory_id] = item
                 accepted_items.append(item)
+                accepted_count += 1
                 if source_memory_id and memory_id != source_memory_id:
                     edge = {
                         "source_memory_id": source_memory_id,
@@ -162,8 +170,6 @@ class MultiHopMemoryRetriever:
                     if edge not in edges:
                         edges.append(edge)
 
-            if len(evidence_items) >= remaining and len(records) >= self.max_records:
-                truncated = True
             if hop >= self.max_hops:
                 continue
 
