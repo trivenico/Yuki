@@ -44,6 +44,16 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"/v1/providers", sent[1]["body"])
         self.assertIn(b"loadProviderStatus", sent[1]["body"])
 
+    def test_chat_shell_exposes_owner_private_memory_controls(self):
+        html = self.request(YukiWebApplication(_FakeAPI()), "/")[1]["body"]
+        self.assertIn(b'id="open-memory"', html)
+        self.assertIn(b'id="memory-panel"', html)
+        script = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")[1]["body"]
+        for marker in (b"/v1/memory", b"loadMemory", b"Approve", b"Reject", b"Correct", b"Retire", b"Delete"):
+            self.assertIn(marker, script)
+        style = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.css")[1]["body"]
+        self.assertIn(b".memory-panel", style)
+
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
