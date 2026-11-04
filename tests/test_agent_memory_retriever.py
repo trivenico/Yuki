@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+
+from core.memory_retrieval_evaluation import audit_retrieval, ndcg_at_k, recall_at_k, reciprocal_rank
 from pathlib import Path
 
 from core.agent_memory import AgentMemoryStore
@@ -184,6 +186,36 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         for value in (0, 2001, True, 1.5):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 AgentMemoryRetriever(self.store, embed=lambda _text: [1.0], max_candidates=value)
+
+
+    def test_real_sqlite_retrieval_is_scored_by_offline_metrics(self):
+        relevant = self.add_memory(
+            "A staged deployment uses a gradual rollout.", verified=True
+        )
+        related = self.add_memory(
+            "A rollback follows the deployment health check.", verified=True
+        )
+        unrelated = self.add_memory("The garden needs watering every morning.")
+        results = self.retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query", limit=10,
+        )
+        ranked_ids = [item["memory_id"] for item in results]
+        relevant_ids = {relevant["memory_id"], related["memory_id"]}
+        relevance = {
+            relevant["memory_id"]: 3.0,
+            related["memory_id"]: 2.0,
+            unrelated["memory_id"]: 0.0,
+        }
+        self.assertGreaterEqual(recall_at_k(ranked_ids, relevant_ids, k=5), 0.5)
+        self.assertGreater(reciprocal_rank(ranked_ids, relevant_ids), 0.0)
+        self.assertGreater(ndcg_at_k(ranked_ids, relevance, k=5), 0.0)
+        audit = audit_retrieval(
+            ranked_ids,
+            authorized_ids={relevant["memory_id"], related["memory_id"], unrelated["memory_id"]},
+            active_ids={relevant["memory_id"], related["memory_id"], unrelated["memory_id"]},
+        )
+        self.assertTrue(audit["permission_leakage_free"])
+        self.assertTrue(audit["stale_record_leakage_free"])
 
 
 if __name__ == "__main__":
