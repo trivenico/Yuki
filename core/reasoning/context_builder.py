@@ -20,10 +20,14 @@ class ReasoningContextBuilder:
     MAX_CONTEXT_CHARS = 32_000
     MAX_EVIDENCE_ITEMS = 20
 
-    def __init__(self, knowledge: UnifiedKnowledgeAPI):
+    def __init__(self, knowledge: UnifiedKnowledgeAPI, *, multi_hop_retriever=None):
         if not isinstance(knowledge, UnifiedKnowledgeAPI):
             raise TypeError("knowledge_must_be_UnifiedKnowledgeAPI")
+        if (multi_hop_retriever is not None
+                and not callable(getattr(multi_hop_retriever, "retrieve", None))):
+            raise TypeError("multi_hop_retriever_must_implement_retrieve")
         self.knowledge = knowledge
+        self.multi_hop_retriever = multi_hop_retriever
 
     @staticmethod
     def _validate_text(value: Any, *, name: str, maximum: int) -> str:
@@ -101,6 +105,7 @@ class ReasoningContextBuilder:
         limit: int = 8,
         include_shared: bool = True,
         include_unverified: bool = False,
+        multi_hop: bool = False,
         max_context_chars: int = 12_000,
     ) -> dict:
         """Return trusted policy/preferences and separately framed evidence.
@@ -116,24 +121,57 @@ class ReasoningContextBuilder:
             raise ValueError("include_unverified_must_be_boolean")
         if type(include_shared) is not bool:
             raise ValueError("include_shared_must_be_boolean")
+        if type(multi_hop) is not bool:
+            raise ValueError("multi_hop_must_be_boolean")
         if type(limit) is not int or not 1 <= limit <= self.MAX_EVIDENCE_ITEMS:
             raise ValueError("limit_must_be_1_to_20")
         if type(max_context_chars) is not int or not 512 <= max_context_chars <= self.MAX_CONTEXT_CHARS:
             raise ValueError("max_context_chars_must_be_512_to_32000")
 
         preferences = self._preferences(owner_preferences)
-        packet = self.knowledge.retrieve(
-            actor_id=actor_id,
-            agent_id=agent_id,
-            query=query,
-            limit=limit,
-            include_shared=include_shared,
-            verified_only=not include_unverified,
-        )
+        if multi_hop:
+            if self.multi_hop_retriever is None:
+                raise ValueError("multi_hop_retriever_not_configured")
+            packet = self.multi_hop_retriever.retrieve(
+                actor_id=actor_id,
+                agent_id=agent_id,
+                query=query,
+                include_shared=include_shared,
+                verified_only=not include_unverified,
+            )
+            if (packet.get("actor_id") != actor_id.strip()
+                    or packet.get("agent_id") != agent_id.strip()):
+                raise PermissionError("knowledge_scope_mismatch")
+            raw_evidence = packet.get("evidence", [])
+            if not isinstance(raw_evidence, list):
+                raise ValueError("knowledge_evidence_must_be_a_list")
+            retrieval = {
+                "mode": "multi_hop",
+                "complete": packet.get("complete") is True and len(raw_evidence) <= limit,
+                "query_count": packet.get("query_count", 0),
+                "hops_completed": packet.get("hops_completed", 0),
+                "edges": packet.get("edges", [])[:60],
+                "omitted_edge_count": max(0, len(packet.get("edges", [])) - 60),
+            }
+            retrieval_omitted_count = max(0, len(raw_evidence) - limit)
+            raw_evidence = raw_evidence[:limit]
+        else:
+            packet = self.knowledge.retrieve(
+                actor_id=actor_id,
+                agent_id=agent_id,
+                query=query,
+                limit=limit,
+                include_shared=include_shared,
+                verified_only=not include_unverified,
+            )
+            raw_evidence = packet.get("evidence", [])
+            retrieval = {"mode": "single_hop"}
+            retrieval_omitted_count = 0
+
         verified = []
         unverified = []
         seen_ids = set()
-        for raw in packet.get("evidence", []):
+        for raw in raw_evidence:
             item = self._safe_evidence(raw)
             if item is None or item["memory_id"] in seen_ids:
                 continue
@@ -177,12 +215,14 @@ class ReasoningContextBuilder:
                 "verified": selected_verified,
                 "unverified": selected_unverified,
             },
+            "retrieval": retrieval,
             "budget": {
                 "max_context_chars": max_context_chars,
                 "used_context_chars": used,
                 "omitted_evidence_count": (
                     len(verified) + len(unverified)
                     - len(selected_verified) - len(selected_unverified)
+                    + retrieval_omitted_count
                 ),
                 "token_count_is_estimate": True,
                 "estimated_tokens_at_four_chars_each": (used + 3) // 4,

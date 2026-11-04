@@ -30,6 +30,7 @@ class ReasoningAgentAdapter:
         evidence_limit: int = 8,
         max_context_chars: int = 12_000,
         max_provider_context_chars: int = 100_000,
+        multi_hop_memory: bool = False,
     ):
         if not isinstance(provider_adapter, ProviderAgentAdapter):
             raise TypeError("provider_adapter_must_be_ProviderAgentAdapter")
@@ -44,6 +45,8 @@ class ReasoningAgentAdapter:
             raise ValueError("owner_preferences_must_be_a_sequence")
         if type(include_shared) is not bool or type(include_unverified) is not bool:
             raise ValueError("retrieval_flags_must_be_boolean")
+        if type(multi_hop_memory) is not bool:
+            raise ValueError("multi_hop_memory_must_be_boolean")
         if type(evidence_limit) is not int or not 1 <= evidence_limit <= 20:
             raise ValueError("evidence_limit_must_be_1_to_20")
         if type(max_context_chars) is not int or not 512 <= max_context_chars <= 32_000:
@@ -62,6 +65,7 @@ class ReasoningAgentAdapter:
         self.evidence_limit = evidence_limit
         self.max_context_chars = max_context_chars
         self.max_provider_context_chars = max_provider_context_chars
+        self.multi_hop_memory = multi_hop_memory
 
     @staticmethod
     def _transcript_chars(messages: Sequence[Mapping[str, str]]) -> int:
@@ -85,6 +89,7 @@ class ReasoningAgentAdapter:
             limit=self.evidence_limit,
             include_shared=self.include_shared,
             include_unverified=self.include_unverified,
+            multi_hop=self.multi_hop_memory,
             max_context_chars=self.max_context_chars,
         )
 
