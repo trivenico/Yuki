@@ -188,8 +188,6 @@ class AgentMemoryTests(unittest.TestCase):
     memory_id=item["memory_id"],status="approved",reason="Reviewed")
 
 
-if __name__=="__main__": unittest.main()
-
  def test_owner_reviewed_candidate_promotion_is_idempotent_and_authorized(self):
   first=self.store.remember_candidate(
    actor_id="owner",agent_id="assistant",
@@ -220,3 +218,6 @@ if __name__=="__main__": unittest.main()
     candidate_id="memcand-0123456789abcdef01234567",
     content="A preference",source="conversation:abc:message:1",
    )
+
+
+if __name__=="__main__": unittest.main()
