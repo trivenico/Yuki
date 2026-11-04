@@ -28,3 +28,8 @@
 .memory-action:hover{background:#302a40}
 .memory-action:disabled{opacity:.5;cursor:wait}
 @media(max-width:520px){.memory-panel{padding:20px 15px}.memory-header h2{font-size:22px}}
+
+.memory-candidates{padding:18px 0;border-bottom:1px solid var(--line)}
+.memory-candidates h3,.memory-section-title{margin:0 0 7px;font-size:13px;font-weight:600;color:#e1ddec}
+.memory-candidates>.muted{font-size:11px;line-height:1.5;margin:0 0 12px}
+.memory-candidates .memory-list{margin-top:0}
