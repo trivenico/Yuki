@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,7 +103,7 @@ class ReasoningAgentAdapterTests(unittest.TestCase):
             tools=[], tool_choice="none",
         )
         messages = self.provider.received[0]
-        total = sum(len(message["content"]) for message in messages)
+        total = len(json.dumps(messages, ensure_ascii=False, sort_keys=True))
         self.assertLessEqual(total, 1_400)
         self.assertLessEqual(total, 100_000)
 
