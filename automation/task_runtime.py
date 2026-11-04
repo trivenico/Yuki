@@ -163,12 +163,30 @@ class TaskRuntime:
             task_id, after_sequence=after_sequence, limit=limit,
         )
 
-    def recover_expired(self, *, actor_id: str, task_id: str):
-        """Supervisor-only quarantine of expired work; never automatically retries."""
+    def recover_expired(self, *, actor_id: str, task_id: str | None = None):
+        """Supervisor-only recovery; bulk mode scans a bounded page of expired runs.
+
+        Each run is recovered in its own atomic store transaction. Running steps
+        are quarantined for reconciliation; no workflow handler is invoked.
+        """
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:recover", task_id):
-            raise PermissionError("task recovery is not authorized.")
-        return self.store.recover_expired_run(task_id, actor_id=actor)
+        if task_id is not None:
+            if not self._allowed(actor, "task:recover", task_id):
+                raise PermissionError("task recovery is not authorized.")
+            return self._record(self.store.recover_expired_run(task_id, actor_id=actor))
+
+        recovered = []
+        now = datetime.now(timezone.utc)
+        for run in self.store.list_runs(state="running", limit=100):
+            expiry = run.lease_expires_at
+            if not expiry or datetime.fromisoformat(expiry) >= now:
+                continue
+            if not self._allowed(actor, "task:recover", run.run_id):
+                continue
+            recovered.append(self._record(
+                self.store.recover_expired_run(run.run_id, actor_id=actor)
+            ))
+        return recovered
 
     def list_steps(self, *, actor_id: str, task_id: str):
         """Read ordered, argument-redacted step metadata under task:read."""

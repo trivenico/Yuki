@@ -465,6 +465,7 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run changed during recovery.")
             event_payload = _bounded_json({
                 "reason": "worker_lease_expired",
+                "automatic_replay": False,
                 "reconciliation_required_steps": [step["step_id"] for step in steps],
             }, 8 * 1024, "task event payload")
             db.execute(
