@@ -223,10 +223,14 @@ class YukiConversationAPI:
                     return await self._respond(send, 503, {"error": "memory_unavailable"})
                 actor_id = memory_actor_id_for_owner(user.user_id)
                 if method == "GET":
+                    query = self._query(scope)
+                    if set(query) - {"include_inactive"} or query.get("include_inactive", "false") not in {"true", "false"}:
+                        return await self._respond(send, 400, {"error": "invalid_query"})
                     records = await asyncio.to_thread(
                         self.memory_store.list_memories,
                         actor_id=actor_id, agent_id="assistant",
                         limit=50, include_shared=False,
+                        include_inactive=query.get("include_inactive") == "true",
                     )
                     safe_records = [{
                         "memory_id": item["memory_id"],
