@@ -23,6 +23,32 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def test_create_persists_ordered_step_metadata_without_arguments(self):
+        run = self.store.create(
+            idempotency_key="step-records",
+            workflow_name="release-check",
+            definition=[
+                {"name": "review", "action": "emit", "argument": {"secret": "do-not-copy"}, "requires_approval": True},
+                {"name": "notify", "action": "note", "argument": "done", "requires_approval": False},
+            ],
+        )
+        steps = self.store.list_steps(run.run_id)
+        self.assertEqual([step.step_index for step in steps], [0, 1])
+        self.assertEqual([step.name for step in steps], ["review", "notify"])
+        self.assertEqual([step.action for step in steps], ["emit", "note"])
+        self.assertEqual([step.requires_approval for step in steps], [True, False])
+        self.assertTrue(all(step.status == "pending" and step.attempts == 0 for step in steps))
+        self.assertTrue(all(len(step.input_digest) == 64 for step in steps))
+        self.assertNotIn("do-not-copy", repr(steps))
+        self.assertEqual(steps[0].step_id, f"{run.run_id}:0")
+        self.assertEqual(self.store.list_steps("unknown-run"), [])
+
+    def test_idempotent_create_does_not_duplicate_step_records(self):
+        first = self.create(key="step-idempotency")
+        second = self.create(key="step-idempotency")
+        self.assertEqual(first.run_id, second.run_id)
+        self.assertEqual(len(self.store.list_steps(first.run_id)), 1)
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()

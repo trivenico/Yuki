@@ -64,6 +64,22 @@ def _bounded_json(value: Any, limit: int, field: str) -> str:
 
 
 @dataclass(frozen=True)
+class WorkflowStepRecord:
+    step_id: str
+    run_id: str
+    step_index: int
+    name: str
+    action: str
+    requires_approval: bool
+    input_digest: str
+    status: str
+    attempts: int
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class WorkflowRun:
     run_id: str
     idempotency_key: str
@@ -144,6 +160,29 @@ class WorkflowRunStore:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence "
                 "ON task_events(task_id, sequence)"
+            ) 
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_steps (
+                    step_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    step_index INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    requires_approval INTEGER NOT NULL CHECK(requires_approval IN (0, 1)),
+                    input_digest TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'running', 'succeeded', 'failed', 'needs_reconciliation')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(run_id, step_index),
+                    FOREIGN KEY(run_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_steps_run_order "
+                "ON workflow_steps(run_id, step_index)"
             )
 
     @contextmanager
@@ -254,6 +293,18 @@ class WorkflowRunStore:
                     definition_json, state, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now))
+            for step_index, step in enumerate(canonical):
+                argument_json = _bounded_json(step.get("argument"), _MAX_DEFINITION_BYTES, "step argument")
+                input_digest = hashlib.sha256(argument_json.encode("utf-8")).hexdigest()
+                db.execute("""
+                    INSERT INTO workflow_steps (
+                        step_id, run_id, step_index, name, action, requires_approval,
+                        input_digest, status, attempts, version, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?)
+                """, (
+                    f"{run_id}:{step_index}", run_id, step_index, step["name"],
+                    step["action"], int(step["requires_approval"]), input_digest, now, now,
+                ))
             if event_json is not None:
                 db.execute(
                     "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
@@ -263,6 +314,27 @@ class WorkflowRunStore:
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    def list_steps(self, run_id: str) -> list[WorkflowStepRecord]:
+        """Return ordered step metadata without exposing stored arguments or outputs."""
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be non-empty text.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM workflow_steps WHERE run_id=? ORDER BY step_index",
+                (run_id,),
+            ).fetchall()
+            return [
+                WorkflowStepRecord(
+                    step_id=row["step_id"], run_id=row["run_id"],
+                    step_index=row["step_index"], name=row["name"], action=row["action"],
+                    requires_approval=bool(row["requires_approval"]),
+                    input_digest=row["input_digest"], status=row["status"],
+                    attempts=row["attempts"], version=row["version"],
+                    created_at=row["created_at"], updated_at=row["updated_at"],
+                )
+                for row in rows
+            ]
 
     @staticmethod
     def _requires_approval(definition: list[dict[str, Any]]) -> bool:
