@@ -67,11 +67,15 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 STAMP="$(date '+%Y%m%d_%H%M%S')"
-ARCHIVE="$BACKUP_DIR/yuki-data-$STAMP.tar.gz"
-TEMP_ARCHIVE="$ARCHIVE.tmp"
+if [ -n "${YUKI_BACKUP_KEY_FILE:-}" ]; then
+  ARCHIVE="$BACKUP_DIR/yuki-data-$STAMP.yukibak"
+else
+  ARCHIVE="$BACKUP_DIR/yuki-data-$STAMP.tar.gz"
+fi
 STAGING_ROOT="$(mktemp -d "$BACKUP_DIR/.yuki-stage-XXXXXX")"
 SOURCE_NAME="$(basename -- "$SOURCE_DIR")"
 SNAPSHOT_DIR="$STAGING_ROOT/$SOURCE_NAME"
+TEMP_ARCHIVE="$STAGING_ROOT/$SOURCE_NAME.tar.gz"
 cleanup() {
   rm -f "$TEMP_ARCHIVE"
   rm -rf "$STAGING_ROOT"
@@ -82,11 +86,19 @@ trap cleanup EXIT HUP INT TERM
 tar -czf "$TEMP_ARCHIVE" -C "$STAGING_ROOT" "$SOURCE_NAME"
 # Validate archive before publishing it as a completed backup.
 tar -tzf "$TEMP_ARCHIVE" >/dev/null
-mv "$TEMP_ARCHIVE" "$ARCHIVE"
+if [ -n "${YUKI_BACKUP_KEY_FILE:-}" ]; then
+  "$PYTHON_BIN" "$SCRIPT_DIR/backup_crypto.py" encrypt "$TEMP_ARCHIVE" "$ARCHIVE" --key-file "$YUKI_BACKUP_KEY_FILE"
+else
+  mv "$TEMP_ARCHIVE" "$ARCHIVE"
+fi
 trap - EXIT HUP INT TERM
 cleanup
 
-find "$BACKUP_DIR" -type f -name 'yuki-data-*.tar.gz' -mtime "+$RETENTION_DAYS" -exec rm -f {} \;
+find "$BACKUP_DIR" -type f \\( -name 'yuki-data-*.tar.gz' -o -name 'yuki-data-*.yukibak' \\) -mtime "+$RETENTION_DAYS" -exec rm -f {} \\;
 
 echo "Backup completed: $ARCHIVE"
-echo "SQLite databases were snapshotted with the SQLite backup API. Archives are not encrypted."
+if [ -n "${YUKI_BACKUP_KEY_FILE:-}" ]; then
+  echo "Archive authenticated and encrypted with AES-256-GCM."
+else
+  echo "WARNING: archive is plaintext. Set YUKI_BACKUP_KEY_FILE to enable authenticated encryption."
+fi
