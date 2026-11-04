@@ -17,6 +17,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
+from core.owner_identity import memory_actor_id_for_owner
 from core.agent_memory_retriever import AgentMemoryRetriever
 from core.embedding_index import SQLiteEmbeddingIndex
 from core.reasoning.context_builder import ReasoningContextBuilder
@@ -101,6 +102,21 @@ def create_app():
     )
     context_builder = ReasoningContextBuilder(UnifiedKnowledgeAPI(memory_retriever))
 
+    def owner_preferences_for_owner(owner_id):
+        records = owner_profile_store.get(
+            actor_id=memory_actor_id_for_owner(owner_id),
+        )
+        # Only fixed, typed profile fields are rendered as presentation hints.
+        return [
+            key.replace("_", " ") + ": " + records[key]["value"]
+            for key in sorted(records)
+            if key in {
+                "response_style", "response_tone", "preferred_language",
+                "preferred_code_language", "measurement_system", "date_format",
+                "code_comments", "explanation_level",
+            }
+        ]
+
     def provider_adapter_for_owner(owner_id):
         # Snapshot the currently selected provider for this request. Provider
         # selection itself remains admin-controlled and process-wide.
@@ -113,6 +129,7 @@ def create_app():
         provider_adapter_for_owner=provider_adapter_for_owner,
         context_builder=context_builder,
         tool_protocol_for_owner=tool_protocol_for_owner,
+        owner_preferences_for_owner=owner_preferences_for_owner,
         agent_id="assistant",
         system_policy=(
             "You are Yuki, a private local-first AI assistant. "
