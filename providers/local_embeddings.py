@@ -81,3 +81,50 @@ class HuggingFaceLocalEmbedder:
                 raise ValueError("embedding_model_returned_zero_vector")
             vectors.append(values)
         return vectors
+
+
+class LocalHashingEmbedder:
+    """Deterministic offline fallback when no local HF model is configured.
+
+    This is a lightweight lexical baseline, not a substitute for a trained
+    sentence-transformer. It keeps private-memory retrieval local and usable
+    without downloading weights or contacting a remote service.
+    """
+
+    is_local = True
+    model_id = "yuki-local-hashing-v1"
+
+    def __init__(self, *, dimensions: int = 384):
+        if type(dimensions) is not int or not 64 <= dimensions <= 4096:
+            raise ValueError("hash_dimensions_must_be_64_to_4096")
+        self.dimensions = dimensions
+
+    def encode(self, text: str) -> Sequence[float]:
+        import hashlib
+        import re
+
+        if not isinstance(text, str) or not text.strip() or len(text) > 8000:
+            raise ValueError("embedding_text_invalid_or_too_long")
+        tokens = re.findall(r"[\\w]+", text.casefold(), flags=re.UNICODE)
+        if not tokens:
+            tokens = [text.casefold()]
+        features = list(tokens)
+        features.extend(
+            tokens[index] + "_" + tokens[index + 1]
+            for index in range(len(tokens) - 1)
+        )
+        vector = [0.0] * self.dimensions
+        for feature in features:
+            digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
+            slot = int.from_bytes(digest[:4], "little") % self.dimensions
+            sign = 1.0 if digest[4] & 1 else -1.0
+            vector[slot] += sign
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm <= 1e-12:
+            raise ValueError("embedding_model_returned_zero_vector")
+        return [value / norm for value in vector]
+
+    def encode_many(self, texts: Sequence[str]) -> list[list[float]]:
+        if isinstance(texts, (str, bytes)) or not isinstance(texts, Sequence) or not 1 <= len(texts) <= 128:
+            raise ValueError("batch_must_contain_1_to_128_texts")
+        return [list(self.encode(text)) for text in texts]
