@@ -426,7 +426,7 @@ class WorkflowRunStore:
                              "cancelled": "task.cancelled", "interrupted": "task.interrupted"}.get(to_state)
             if event_kind not in _EVENT_KINDS or event_kind != expected_kind:
                 raise ValueError("event_kind must match the terminal workflow state.")
-            if not isinstance(event_actor_id, str) or not event_actor_id.strip() or len(event_actor_id) > 200 or "\\x00" in event_actor_id:
+            if not isinstance(event_actor_id, str) or not event_actor_id.strip() or len(event_actor_id) > 200 or "\x00" in event_actor_id:
                 raise ValueError("event_actor_id must be non-empty bounded text.")
             if not isinstance(event_payload, dict):
                 raise ValueError("event_payload must be an object.")
