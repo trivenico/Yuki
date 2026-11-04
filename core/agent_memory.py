@@ -194,6 +194,9 @@ class AgentMemoryStore:
             raise ValueError("limit_must_be_1_to_100")
         if type(include_shared) is not bool:
             raise ValueError("include_shared_must_be_boolean")
+        shared_visible = include_shared and self._allowed(
+            actor_id, "agent_memory:share", agent_id
+        )
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             rows = db.execute("""SELECT * FROM agent_memories
@@ -202,7 +205,7 @@ class AgentMemoryStore:
                 AND superseded_by IS NULL
                 AND lifecycle_status NOT IN ('rejected', 'retired')
                 ORDER BY created_at DESC LIMIT ?""",
-                (actor_id, agent_id, int(include_shared), now, limit)).fetchall()
+                (actor_id, agent_id, int(shared_visible), now, limit)).fetchall()
         return [self._record(row) for row in rows]
 
     def list_memories_page(self, *, actor_id, agent_id, limit=100,
@@ -228,6 +231,9 @@ class AgentMemoryStore:
                     or not isinstance(cursor_id, str)
                     or not re.fullmatch(r"[a-f0-9]{32}", cursor_id)):
                 raise ValueError("invalid_memory_page_cursor")
+        shared_visible = include_shared and self._allowed(
+            actor_id, "agent_memory:share", agent_id
+        )
         now = datetime.now(timezone.utc).isoformat()
         sql = """SELECT * FROM agent_memories
             WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
@@ -235,7 +241,7 @@ class AgentMemoryStore:
             AND superseded_by IS NULL
             AND lifecycle_status NOT IN ('rejected', 'retired')"""
 
-        params = [actor_id, agent_id, int(include_shared), now]
+        params = [actor_id, agent_id, int(shared_visible), now]
         if before is not None:
             sql += " AND (created_at < ? OR (created_at = ? AND memory_id < ?))"
             params.extend([cursor_created, cursor_created, cursor_id])
