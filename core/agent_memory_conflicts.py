@@ -28,6 +28,7 @@ _OPPOSITES = (
     (frozenset({"available", "online", "healthy"}), frozenset({"unavailable", "offline", "unhealthy"})),
     (frozenset({"present", "exists"}), frozenset({"absent", "missing"})),
 )
+_POLARITY_TERMS = frozenset().union(*(positive | negative for positive, negative in _OPPOSITES))
 _TOKEN = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 
 
@@ -43,7 +44,7 @@ class MemoryConflictDetector:
     def _features(content: str) -> tuple[set[str], set[str], bool]:
         tokens = set(_TOKEN.findall(content.casefold()))
         negated = bool(tokens & _NEGATION)
-        canonical = set(tokens) - _STOP - _NEGATION
+        canonical = set(tokens) - _STOP - _NEGATION - _POLARITY_TERMS
         return tokens, canonical, negated
 
     @staticmethod
@@ -82,6 +83,7 @@ class MemoryConflictDetector:
                     "confidence": left["confidence"],
                     "verified": left["verified"],
                     "created_at": left["created_at"],
+                    "agent_id": left["agent_id"],
                     "scope": left["scope"],
                 },
                 {
@@ -91,6 +93,7 @@ class MemoryConflictDetector:
                     "confidence": right["confidence"],
                     "verified": right["verified"],
                     "created_at": right["created_at"],
+                    "agent_id": right["agent_id"],
                     "scope": right["scope"],
                 },
             ],
