@@ -206,6 +206,7 @@ class SpecialistTaskWorker:
         self.experience_store = experience_store
         self.experience_actor_id = experience_actor_id.strip() if isinstance(experience_actor_id, str) else None
         self.last_experience_error_code = None
+        self.last_experience_error_type = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -319,8 +320,10 @@ class SpecialistTaskWorker:
                 evaluator="execution-outcome", evidence_ref=f"workflow-task:{task_id}",
             )
             self.last_experience_error_code = None
-        except Exception:
+            self.last_experience_error_type = None
+        except Exception as exc:
             self.last_experience_error_code = "experience_recording_failed"
+            self.last_experience_error_type = type(exc).__name__
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
