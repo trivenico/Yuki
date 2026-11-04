@@ -508,6 +508,59 @@ class TaskRuntimeTests(unittest.TestCase):
             ["task.progress", "task.lease_renewed"],
         )
 
+    def test_durable_task_cancellation_reaches_running_heartbeat_handler(self):
+        import threading
+        import time
+        from automation.task_runtime import TaskLeaseRenewer
+        from automation.worker_lifecycle import WorkerLeaseLost, WorkerShutdownCoordinator
+
+        task = self.create("heartbeat-cancellation-propagation")
+        claimed = self.claim(task)
+        coordinator = WorkerShutdownCoordinator()
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", task.task_id)
+        handler_started = threading.Event()
+        outcomes = []
+
+        def handler(_claimed, stop_requested):
+            handler_started.set()
+            self.assertTrue(stop_requested.wait(1.0))
+            return "must-not-be-accepted"
+
+        def execute():
+            try:
+                outcomes.append(coordinator.execute_claimed_with_heartbeat(
+                    "worker-a", claimed, handler,
+                    TaskLeaseRenewer(
+                        self.runtime, actor_id="alice", task_id=task.task_id,
+                        worker_id="worker-a",
+                    ),
+                    heartbeat_interval=0.01,
+                ))
+            except BaseException as exc:
+                outcomes.append(exc)
+
+        thread = threading.Thread(target=execute)
+        thread.start()
+        self.assertTrue(handler_started.wait(1.0))
+        deadline = time.monotonic() + 1.0
+        while thread.is_alive() and time.monotonic() < deadline:
+            current = self.store.get(task.task_id)
+            if current.version == claimed.version:
+                time.sleep(0.001)
+                continue
+            break
+        self.runtime.cancel(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version,
+        )
+        thread.join(1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(outcomes), 1)
+        self.assertIsInstance(outcomes[0], WorkerLeaseLost)
+        self.assertEqual(self.store.get(task.task_id).state, "cancelled")
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
     def test_task_lease_renewer_fails_closed_for_wrong_owner_or_unauthorized_actor(self):
         from automation.task_runtime import TaskLeaseRenewer
 
