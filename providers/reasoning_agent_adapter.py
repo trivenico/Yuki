@@ -60,7 +60,7 @@ class ReasoningAgentAdapter:
 
     def _enrich(self, messages: Sequence[Mapping[str, str]]) -> list[dict[str, str]]:
         # Reuse the provider adapter's strict schema and aggregate-size checks.
-        self.provider_adapter._validate_inputs(messages, [], "none")
+        self.provider_adapter.validate_inputs(messages, [], "none")
         normalized = [{"role": m["role"], "content": m["content"]} for m in messages]
         user_indices = [i for i, item in enumerate(normalized) if item["role"] == "user"]
         if not user_indices:
@@ -109,7 +109,7 @@ class ReasoningAgentAdapter:
                 + "\n[/UNTRUSTED MEMORY EVIDENCE]"
             )
         # Validate the expanded transcript against the provider's hard limits.
-        self.provider_adapter._validate_inputs(normalized, [], "none")
+        self.provider_adapter.validate_inputs(normalized, [], "none")
         return normalized
 
     def __call__(
