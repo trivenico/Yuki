@@ -1,10 +1,15 @@
 # Approved agent knowledge promotion
 
-`ApprovedKnowledgePromoter` is the explicit boundary between a human-approved evaluation and durable `AgentMemoryStore` content.
+`ApprovedKnowledgePromoter` is the explicit boundary between reviewed agent work and durable `AgentMemoryStore` content.
 
-## Required wiring
+## Required approval sequence
 
-The review queue and memory store must share the same SQLite database. This lets the promoter verify the review decision, insert the memory, and write the promotion ledger in one `BEGIN IMMEDIATE` transaction.
+1. The owner approves the evaluation report in `AgentEvaluationReviewQueue`.
+2. The owner separately calls `review_candidate` with the exact proposed content, source, agent, category, scope, confidence, and retention period.
+3. The promoter hashes all those fields. Any later change to the candidate invalidates the approval.
+4. `promote` verifies both approvals and atomically inserts the memory plus its promotion ledger entry.
+
+The review queue and memory store must share the same SQLite database.
 
 ```python
 from core.agent_memory import AgentMemoryStore
@@ -15,33 +20,38 @@ memory = AgentMemoryStore(database_path, authorize=authorize)
 reviews = AgentEvaluationReviewQueue(database_path, authorize=authorize)
 promoter = ApprovedKnowledgePromoter(memory, reviews)
 
-result = promoter.promote(
-    actor_id=owner_id,                 # trusted authenticated identity
-    evaluation_id=approved_evaluation_id,
-    agent_id=reviewed_agent_id,
-    content=exact_human_approved_text,
-    source="checked artifact or source reference",
-    category="semantic",
-    scope="private",                  # shared requires agent_memory:share
-)
+# First approve the evaluation report through the review queue.
+reviews.decide(reviewer_actor_id=owner_id, evaluation_id=evaluation_id,
+               decision="approved")
+
+# Then explicitly approve this exact candidate and its provenance.
+candidate = {
+    "actor_id": owner_id, "evaluation_id": evaluation_id,
+    "agent_id": agent_id, "content": exact_candidate_text,
+    "source": checked_evidence_reference, "category": "semantic",
+    "scope": "private", "confidence": 0.9, "retention_days": 365,
+}
+promoter.review_candidate(**candidate, decision="approved")
+
+# Promotion accepts only the exact same candidate parameters.
+result = promoter.promote(**candidate)
 ```
 
 ## Trust and transaction guarantees
 
-- Promotion requires an existing review with status `approved` and the reviewer must be the same owner as the memory actor.
-- The review's agent ID and `eligible_for_memory_review` flag must match.
-- The caller supplies the exact candidate content. The promoter does not turn model-generated explanations into facts or infer content from a score.
-- Private memory requires `agent_memory:write`; shared memory separately requires `agent_memory:share`.
-- Review verification, duplicate check, memory insert and promotion ledger insert commit atomically in SQLite.
-- A unique `(actor_id, evaluation_id)` ledger key makes retries idempotent.
-- Exact existing memory content is recorded as a duplicate rather than copied.
-- Memory is tagged verified only after owner approval and keeps the evaluation ID in its source provenance.
+- Evaluation approval and exact candidate approval are separate owner actions.
+- Candidate approval binds content, provenance, agent, category, scope, confidence, and retention with SHA-256.
+- A content or metadata substitution after review is rejected.
+- Private candidates require `agent_memory:write`; shared candidates separately require `agent_memory:share`.
+- Evaluation verification, candidate approval verification, duplicate check, memory insert and promotion ledger insert commit atomically in SQLite.
+- A unique actor/evaluation/candidate key makes retries idempotent.
+- Existing exact memory content is recorded as a duplicate rather than copied.
+- Only specifically approved knowledge is marked verified and retains evaluation provenance.
 - Promotion never changes routing, agent instructions, or model weights.
 
 ## Current limitations and follow-up
 
-- The caller is responsible for presenting the evidence and obtaining explicit owner approval of the specific candidate text, not merely the evaluation. The current review queue approves an evaluation report; a dedicated candidate-review record should be added before exposing promotion in a UI.
-- Duplicate detection is deterministic exact-text matching, not semantic contradiction detection. Conflicting claims must remain separate candidates until a future evidence-aware conflict review is built.
-- The promotion ledger preserves the original promotion decision. Memory deletion removes the memory and vector cache; a follow-up revocation hook should mark the ledger revoked and retain an audit event.
-- The promoter uses the current SQLite schema directly and is intended for same-database local deployments. Multi-process production deployments need migration management, backup/restore tests, and a database concurrency review.
-- Do not expose this operation to specialist agents as a general-purpose tool. It should be reachable only through the authenticated owner approval workflow.
+- Duplicate detection is deterministic exact-text matching, not semantic contradiction detection. Conflicting claims must remain separate candidates until an evidence-aware conflict review exists.
+- The promotion ledger preserves the original decision. Memory deletion removes the memory and vector cache; a follow-up revocation hook should mark the ledger revoked and retain an audit event.
+- The promoter uses the current SQLite schema directly and is intended for same-database local deployments. Multi-process production deployments need migration management, backup/restore tests, and database concurrency review.
+- Do not expose candidate approval or promotion as general-purpose specialist-agent tools. They must be reachable only through the authenticated owner workflow.
