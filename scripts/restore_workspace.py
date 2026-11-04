@@ -21,6 +21,7 @@ import zipfile
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _CHUNK_SIZE = 1024 * 1024
 _MAX_ENTRIES = 100_000
+_MAX_PATH_RECORDS = 200_000
 _MAX_TOTAL_BYTES = 20 * 1024**3
 _MAX_FILE_BYTES = 8 * 1024**3
 _WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
@@ -70,6 +71,8 @@ def _register_path(
         if previous and previous[0] != parent:
             raise RestoreError("archive_contains_case_colliding_path")
         if not previous:
+            if len(entries) >= _MAX_PATH_RECORDS:
+                raise RestoreError("archive_path_count_limit_exceeded")
             entries[key] = (parent, "dir", False)
 
     key = _canonical(parts)
@@ -79,6 +82,8 @@ def _register_path(
             entries[key] = (parts, "dir", True)
             return
         raise RestoreError("archive_contains_duplicate_path")
+    if len(entries) >= _MAX_PATH_RECORDS:
+        raise RestoreError("archive_path_count_limit_exceeded")
     entries[key] = (parts, kind, True)
 
 
