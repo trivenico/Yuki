@@ -21,7 +21,10 @@ class YukiWebApplicationTests(unittest.TestCase):
             return {"type": "http.request", "body": b"", "more_body": False}
         async def send(message):
             sent.append(message)
-        asyncio.run(app({"type": "http", "method": method, "path": path}, receive, send))
+        headers = [(b"host", b"localhost:8000")]
+        asyncio.run(app({
+            "type": "http", "method": method, "path": path, "headers": headers,
+        }, receive, send))
         return sent
 
     def test_root_serves_chat_shell_with_security_headers(self):
@@ -94,6 +97,79 @@ class YukiWebApplicationTests(unittest.TestCase):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/healthz")
         self.assertEqual(sent[0]["status"], 200)
         self.assertEqual(sent[1]["body"], b'{"status": "ok", "service": "yuki"}')
+
+
+    def test_rejects_missing_duplicate_and_untrusted_host_headers(self):
+        import asyncio
+        async def invoke(headers):
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(_FakeAPI())(
+                {"type": "http", "method": "GET", "path": "/healthz", "headers": headers},
+                receive, send,
+            )
+            return sent[0]["status"]
+        self.assertEqual(asyncio.run(invoke([])), 400)
+        self.assertEqual(asyncio.run(invoke([
+            (b"host", b"localhost:8000"), (b"host", b"localhost:8000"),
+        ])), 400)
+        self.assertEqual(asyncio.run(invoke([(b"host", b"attacker.example")])), 421)
+
+    def test_rejects_cross_origin_and_cross_site_state_changes(self):
+        import asyncio
+        async def invoke(headers):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": "POST", "path": "/v1/auth/login",
+                 "headers": [(b"host", b"localhost:8000"), *headers]},
+                receive, send,
+            )
+            return sent[0]["status"], api.calls
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"https://evil.example"),
+        ])), (403, 0))
+        self.assertEqual(asyncio.run(invoke([
+            (b"sec-fetch-site", b"cross-site"),
+        ])), (403, 0))
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"http://localhost:9000"),
+        ])), (403, 0))
+
+    def test_allows_same_origin_and_non_browser_bearer_clients(self):
+        import asyncio
+        async def invoke(headers):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": "POST", "path": "/v1/auth/login",
+                 "headers": [(b"host", b"localhost:8000"), *headers]},
+                receive, send,
+            )
+            return sent[0]["status"], api.calls
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"http://localhost:8000"),
+        ])), (404, 1))
+        self.assertEqual(asyncio.run(invoke([
+            (b"authorization", b"Bearer client-token"),
+        ])), (404, 1))
+
+    def test_allowed_hosts_are_explicit_and_wildcards_are_rejected(self):
+        with self.assertRaises(ValueError):
+            YukiWebApplication(_FakeAPI(), allowed_hosts=["*"])
+        app = YukiWebApplication(_FakeAPI(), allowed_hosts=["chat.example.com"])
+        self.assertEqual(app.allowed_hosts, frozenset({"chat.example.com"}))
 
     def test_unknown_paths_delegate_to_api_and_post_root_is_rejected(self):
         api = _FakeAPI()

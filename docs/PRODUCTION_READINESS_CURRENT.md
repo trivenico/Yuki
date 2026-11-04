@@ -24,7 +24,7 @@ CI evidence is tied to this exact commit; later commits must be checked independ
 
 ### P0 — deployment and trust boundaries
 
-- Do not enable public binding until deployment-specific TLS termination, trusted-host validation, origin/CSRF controls, login throttling, request/body limits, access logging, network policy, and secret provisioning are implemented and tested.
+- The ASGI web boundary now enforces an explicit hostname allowlist (`YUKI_WEB_ALLOWED_HOSTS`), rejects missing/duplicate/untrusted Host headers, rejects cross-site Fetch Metadata on state-changing methods, and validates supplied Origin hostname and effective port. This is defense in depth, not a complete CSRF/TLS/proxy solution. Public binding still requires a trusted TLS edge, proxy configuration review, login throttling, access logging, network policy, and secret provisioning. Set `YUKI_WEB_ALLOWED_HOSTS` to comma-separated exact public hostnames; wildcard hosts are forbidden.
 - The web profile is deny-by-default for tools. Do not enable multi-user tool execution until authenticated identity propagation, request-scoped execution, fresh approvals, actor-attributed audit, and per-tool authorization are integrated end-to-end.
 - The local Docker runner is not a hardened multi-tenant sandbox. Do not run mutually untrusted users' code on one host under the assumption that current container controls provide a strong tenant boundary.
 - Complete an explicit threat model covering prompt injection, malicious skills, provider compromise, SSRF/DNS rebinding, workspace escape, credential leakage, local privilege boundaries, cross-user data access, and supply-chain compromise.
