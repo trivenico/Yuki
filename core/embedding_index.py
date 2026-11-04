@@ -183,7 +183,8 @@ class SQLiteEmbeddingIndex:
         return {"cursor": cursor, "include_shared": bool(row[2]), "completed": bool(row[3]), "updated_at": row[4]}
 
     def save_backfill_checkpoint(self, *, actor_id: str, agent_id: str,
-                                 cursor: dict | None, completed: bool = False) -> None:
+                                 cursor: dict | None, completed: bool = False,
+                                 include_shared: bool = True) -> None:
         if not isinstance(actor_id, str) or not actor_id.strip():
             raise ValueError("actor_id_required")
         if not isinstance(agent_id, str) or not agent_id.strip():
@@ -203,6 +204,7 @@ class SQLiteEmbeddingIndex:
             db.execute("""CREATE TABLE IF NOT EXISTS memory_embedding_backfill (
                 actor_id TEXT NOT NULL, agent_id TEXT NOT NULL, model_id TEXT NOT NULL,
                 cursor_created_at TEXT, cursor_memory_id TEXT,
+                include_shared INTEGER NOT NULL DEFAULT 1 CHECK(include_shared IN (0,1)),
                 completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY(actor_id,agent_id,model_id)
