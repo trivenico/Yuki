@@ -543,6 +543,23 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([event.kind for event in self.runtime.events(
             actor_id="alice", task_id=task.task_id)], ["task.created", "task.claimed"])
 
+    def test_completion_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for index, expiry in enumerate(("invalid", "2000-01-01T00:00:00")):
+            task = self.create(f"complete-invalid-expiry-{index}")
+            claimed = self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+            with self.assertRaises(WorkflowConflict):
+                self.runtime.complete(
+                    actor_id="alice", task_id=task.task_id,
+                    worker_id="worker-a", expected_version=claimed.version,
+                    result={"ok": True},
+                )
+            self.assertEqual(self.store.get(task.task_id).state, "running")
+
     def test_expired_lease_cannot_complete(self):
         task = self.create()
         claimed = self.claim(task)

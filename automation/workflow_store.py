@@ -862,18 +862,29 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             if current.state == "running" and to_state in {"succeeded", "failed"} and expected_lease_owner is None:
                 raise WorkflowConflict("worker completion and failure require the active worker identity.")
-            if expected_lease_owner is not None and (
-                current.state != "running" or current.lease_owner != expected_lease_owner
-                or not current.lease_expires_at or current.lease_expires_at < now
-            ):
-                raise WorkflowConflict("only the current worker with an unexpired lease may finish this task.")
+            if expected_lease_owner is not None:
+                expiry = current.lease_expires_at
+                if current.state != "running" or current.lease_owner != expected_lease_owner or not expiry:
+                    raise WorkflowConflict("only the current worker with an unexpired lease may finish this task.")
+                try:
+                    expiry_dt = datetime.fromisoformat(expiry)
+                except (TypeError, ValueError) as exc:
+                    raise WorkflowConflict(
+                        "workflow lease expiry is malformed; worker completion is unsafe."
+                    ) from exc
+                if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+                    raise WorkflowConflict(
+                        "workflow lease expiry must include a timezone; worker completion is unsafe."
+                    )
+                if expiry_dt <= now_dt:
+                    raise WorkflowConflict("only the current worker with an unexpired lease may finish this task.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
                     updated_at=?, version=version+1, attempts=?, lease_owner=?,
                     lease_expires_at=?
                 WHERE run_id=? AND version=? AND (?=0 OR (
-                    state='running' AND lease_owner=? AND lease_expires_at>=?
+                    state='running' AND lease_owner=? AND julianday(lease_expires_at)>=julianday(?)
                 ))
             """, (
                 to_state, result_json, error_code, now, attempts, lease_owner,
