@@ -24,6 +24,16 @@ class AgentMemoryTests(unittest.TestCase):
   self.grants["owner"].add("agent_memory:share")
   self.store.remember(actor_id="owner",agent_id="research",content="shared fact",source="review",scope="shared")
   self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="developer")),1)
+ def test_shared_memory_disappears_when_share_permission_is_revoked(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="shared fact",source="review",scope="shared")
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="research")),1)
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="developer")),1)
+  self.grants["owner"].remove("agent_memory:share")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research"),[])
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="developer"),[])
+  self.assertEqual(self.store.list_memories_page(actor_id="owner",agent_id="research"),[])
+  self.assertEqual(self.store.list_memories_page(actor_id="owner",agent_id="developer"),[])
+
  def test_verified_flag_is_explicit_not_assumed(self):
   item=self.store.remember(actor_id="owner",agent_id="research",content="A reviewed fact",source="human review",verified=True)
   self.assertTrue(item["verified"])
