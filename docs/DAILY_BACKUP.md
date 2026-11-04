@@ -66,6 +66,25 @@ Scheduling is intentionally **not automatic**.
 
 Neither scheduler can back up an SSD that is disconnected. Test a manual backup and restore before scheduling unattended runs.
 
+
+## Restore into an isolated directory
+
+Use the restore utility to validate and extract an existing ZIP or gzip TAR backup into a **new directory**. It does not overwrite an existing destination.
+
+```sh
+python scripts/restore_workspace.py "/path/to/yuki-data-YYYYMMDD_HHMMSS.tar.gz" "/path/to/restore-test"
+```
+
+On Windows, use the ZIP produced by `daily_backup.bat`:
+
+```bat
+python scripts\restore_workspace.py "F:\YukiBackups\yuki-data-YYYYMMDD_HHMMSS.zip" "E:\YukiRestoreTest"
+```
+
+The utility stages extraction beside the destination, rejects path traversal, absolute/drive paths, duplicate/case-colliding names, links, special files, SQLite journal sidecars, oversized archives and unsupported formats, then runs SQLite integrity checks before publishing the restored workspace. On POSIX it applies owner-only permissions (directories 0700, files 0600). Restore into a fresh location, inspect the result, and only then use it as a Yuki workspace. Do not restore over a running workspace.
+
+The restore utility currently supports the existing **plaintext** archive formats only. It does not decrypt backups, merge data, restore application settings outside the workspace, or guarantee an atomic snapshot across multiple SQLite databases and ordinary files.
+
 ## Security and restore
 
 - Prefer an encrypted SSD/backup volume. These scripts create plaintext archives and do not encrypt them.
