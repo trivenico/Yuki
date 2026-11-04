@@ -15,7 +15,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile", "task:step:resolve"}
+                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
