@@ -97,7 +97,7 @@ class TaskRuntimeTests(unittest.TestCase):
             expected_version=first.version, message="second update", percent=50,
         )
         page_one = self.runtime.events(
-            actor_id="alice", task_id=task.task_id, after_sequence=1, limit=1,
+            actor_id="alice", task_id=task.task_id, after_sequence=2, limit=1,
         )
         page_two = self.runtime.events(
             actor_id="alice", task_id=task.task_id,
@@ -307,7 +307,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(retried.state, "queued")
         self.assertEqual(retried.attempts, 0)
         events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
-        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
+        self.assertEqual([event.kind for event in events], ["task.created"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)
         again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                           expected_version=failed.version)
@@ -363,7 +363,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(current.state, "running")
         self.assertEqual(current.version, claimed.version)
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
-        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
 
     def test_expired_lease_recovery_is_authorized_and_journaled(self):
         task = self.create("recover-expired")
