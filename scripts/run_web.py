@@ -69,7 +69,7 @@ def create_app():
             isinstance(actor_id, str)
             and re.fullmatch(r"owner-[a-f0-9]{64}", actor_id) is not None
             and agent_id == "assistant"
-            and action in {"agent_memory:read", "agent_memory:write"}
+            and action in {"agent_memory:read", "agent_memory:write", "agent_memory:correct", "agent_memory:review", "agent_memory:retire", "agent_memory:delete"}
         )
 
     memory_store = AgentMemoryStore(memory_database, authorize=authorize_memory)
