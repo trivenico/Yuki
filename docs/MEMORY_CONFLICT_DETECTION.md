@@ -17,6 +17,7 @@ The initial detector is deliberately conservative and deterministic:
 - Explicit opposite state terms such as enabled/disabled, allowed/denied and online/offline.
 - Opposing negation over a sufficiently overlapping subject.
 - Different numeric measurements using the same unit token and an overlapping subject (for example, a 30-second versus 60-second timeout). Different unit spellings are not converted or compared.
+- Explicit date and environment context is compared before flagging: disjoint ISO/slash-formatted dates and disjoint known environments (such as staging versus production) are kept separate.
 - Subject overlap threshold is configurable between 0.5 and 1.0.
 
 This is a candidate generator, not a natural-language truth engine. It can miss paraphrases, temporal changes, numeric conflicts and complex context. It may also produce false positives. A later local-model adjudicator can propose a reason and context comparison, but must preserve the same owner-review boundary.
