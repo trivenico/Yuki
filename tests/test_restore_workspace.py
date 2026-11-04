@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import zipfile
 
-from scripts.backup_crypto import create_key_file, decrypt_file, encrypt_file
+from scripts.backup_crypto import BackupCryptoError, create_key_file, decrypt_file, encrypt_file
 from scripts.restore_workspace import RestoreError, restore_workspace
 
 
@@ -40,7 +40,7 @@ class WorkspaceRestoreTests(unittest.TestCase):
                 '{"theme":"dark"}',
             )
             self.assertFalse(list(decrypted_archive.parent.glob(".yuki-decrypt-*.tmp")))
-            self.assertFalse(destination.exists() is False)
+            self.assertTrue(destination.is_dir())
 
     def test_encrypted_restore_wrong_key_leaves_no_workspace_or_plaintext(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -58,7 +58,7 @@ class WorkspaceRestoreTests(unittest.TestCase):
             staging.mkdir()
             decrypted = staging / "workspace.zip"
             destination = root / "restore"
-            with self.assertRaisesRegex(Exception, "authentication_failed"):
+            with self.assertRaisesRegex(BackupCryptoError, "authentication_failed"):
                 decrypt_file(encrypted, decrypted, wrong)
             self.assertFalse(decrypted.exists())
             self.assertFalse(destination.exists())
