@@ -40,12 +40,12 @@ class InferenceJobService:
   if not isinstance(device_id,str) or not _DEVICE.fullmatch(device_id): raise ValueError("invalid_device_id")
   if not isinstance(input_text,str) or not input_text.strip() or len(input_text.encode())>64000: raise ValueError("invalid_input")
   now=_now(); stamp=_stamp(now); jid=uuid.uuid4().hex
+  if not self.pairing.owns_active_device(owner_id, device_id):
+   raise PermissionError("device_not_owned_or_paired")
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
-   owned=db.execute("SELECT 1 FROM paired_devices WHERE device_id=? AND owner_id=? AND revoked_at IS NULL",(device_id,owner_id)).fetchone()
-   if owned is None: raise PermissionError("device_not_owned_or_paired")
    db.execute("INSERT INTO inference_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
   return self._job(row)
