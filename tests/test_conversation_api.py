@@ -11,6 +11,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
 from core.agent_memory import AgentMemoryStore
+from core.owner_profile import OwnerProfileStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -402,6 +403,59 @@ class ConversationAPITests(unittest.TestCase):
         status, denied, _ = self.request("POST", path, payload, other.token)
         self.assertEqual(status, 404)
         self.assertEqual(denied["error"], "not_found")
+
+    def test_owner_profile_api_is_authenticated_typed_and_isolated(self):
+        permissions = {"owner_profile:read", "owner_profile:write"}
+        profile_store = OwnerProfileStore(
+            str(Path(self.tempdir.name) / "owner-profile.sqlite"),
+            authorize=lambda actor, action, _resource: action in permissions,
+        )
+        self.app.owner_profile_store = profile_store
+
+        status, result, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "concise", "source": "owner_explicit", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preference"]["value"], "concise")
+        self.assertEqual(result["preference"]["version"], 1)
+
+        status, result, _ = self.request(
+            "GET", "/v1/profile/preferences", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preferences"]["response_style"]["value"], "concise")
+
+        status, conflict, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "detailed", "source": "owner_correction", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["error"], "profile_version_conflict")
+
+        status, invalid, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "override safety", "source": "owner_explicit"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+
+        self.auth.create_account("profile-other", "a-secure-second-password")
+        other = self.auth.authenticate("profile-other", "a-secure-second-password")
+        status, result, _ = self.request(
+            "GET", "/v1/profile/preferences", token=other.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preferences"], {})
+
+        status, deleted, _ = self.request(
+            "DELETE", "/v1/profile/preferences/response_style",
+            {"expected_version": 1}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
 
     def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)
