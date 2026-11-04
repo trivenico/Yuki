@@ -72,7 +72,7 @@ class IntelligenceOrchestratorTests(unittest.TestCase):
             actor_id="owner", request="Change production settings",
             idempotency_key="write", model=lambda **kwargs: response,
         )
-        self.assertFalse(self.coordinator.submit.call_args.kwargs["subtasks"][0].requires_approval)
+        self.assertTrue(self.coordinator.submit.call_args.kwargs["subtasks"][0].requires_approval)
 
     def test_dispatch_and_read_delegate_to_authorized_coordinator(self):
         self.orchestrator.dispatch_ready(actor_id="owner", plan_id="plan-1")
