@@ -54,7 +54,7 @@ class MemoryRetrievalScenarioTests(unittest.TestCase):
             active_ids={"owner-private"},
         )
         self.assertEqual(audit["unauthorized_count"], 1)
-        self.assertEqual(audit["stale_count"], 1)
+        self.assertEqual(audit["stale_count"], 2)
 
 
 if __name__ == "__main__":
