@@ -731,6 +731,29 @@ class WorkflowRunStore:
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             return self._row(row) if row else None
 
+    def list_expired_runs(self, *, now: str, limit: int = 50) -> list[WorkflowRun]:
+        """Return the oldest valid expired leases first for starvation-free recovery."""
+        if not isinstance(now, str) or not now.strip():
+            raise ValueError("now must be a non-empty ISO timestamp.")
+        try:
+            now_dt = datetime.fromisoformat(now)
+        except ValueError as exc:
+            raise ValueError("now must be a valid ISO timestamp.") from exc
+        if now_dt.tzinfo is None or now_dt.utcoffset() is None:
+            raise ValueError("now must include a timezone.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM workflow_runs WHERE state='running' "
+                "AND lease_expires_at IS NOT NULL "
+                "AND julianday(lease_expires_at) IS NOT NULL "
+                "AND julianday(lease_expires_at) < julianday(?) "
+                "ORDER BY julianday(lease_expires_at), created_at, run_id LIMIT ?",
+                (now, limit),
+            ).fetchall()
+            return [self._row(row) for row in rows]
+
     def list_runs(self, *, state: str | None = None, limit: int = 50) -> list[WorkflowRun]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")

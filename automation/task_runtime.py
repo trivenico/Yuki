@@ -179,19 +179,7 @@ class TaskRuntime:
             raise ValueError("limit must be an integer from 1 to 100.")
         recovered = []
         now = datetime.now(timezone.utc)
-        for run in self.store.list_runs(state="running", limit=limit):
-            expiry = run.lease_expires_at
-            if not expiry:
-                continue
-            try:
-                expiry_dt = datetime.fromisoformat(expiry)
-            except (TypeError, ValueError):
-                # Corrupt persisted timestamps are never treated as expired.
-                continue
-            if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
-                continue
-            if expiry_dt >= now:
-                continue
+        for run in self.store.list_expired_runs(now=now.isoformat(), limit=limit):
             if not self._allowed(actor, "task:recover", run.run_id):
                 continue
             recovered.append(self._record(

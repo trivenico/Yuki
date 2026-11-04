@@ -252,6 +252,30 @@ class TaskRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(self.store.get(task.task_id).state, "interrupted")
 
+    def test_bulk_recovery_pages_oldest_expired_runs_without_starvation(self):
+        tasks = []
+        for index in range(3):
+            task = self.create(f"bulk-expired-{index}")
+            self.claim(task)
+            tasks.append(task)
+        with self.store._connect() as db:
+            for index, task in enumerate(tasks):
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (f"2000-01-0{index + 1}T00:00:00+00:00", task.task_id),
+                )
+        recovered_ids = []
+        for _ in range(3):
+            page = self.runtime.recover_expired(
+                actor_id="supervisor", limit=1,
+            )
+            self.assertEqual(len(page), 1)
+            recovered_ids.append(page[0].task_id)
+        self.assertEqual(set(recovered_ids), {task.task_id for task in tasks})
+        self.assertEqual(
+            self.runtime.recover_expired(actor_id="supervisor", limit=1), [],
+        )
+
     def test_recovery_rejects_malformed_or_timezone_naive_lease_expiry(self):
         for invalid_expiry in ("not-a-timestamp", "2000-01-01T00:00:00"):
             with self.subTest(invalid_expiry=invalid_expiry):
