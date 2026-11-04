@@ -6,6 +6,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from time import monotonic
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
 from typing import Callable, Mapping
@@ -14,6 +15,7 @@ from uuid import uuid4
 from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.agent_memory_integration import build_memory_aware_handlers
 from core.agent_memory import AgentMemoryStore
+from evaluation.agent_experience import AgentExperienceStore
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -158,6 +160,8 @@ class SpecialistTaskWorker:
         handlers: Mapping[str, Callable[[str], str]],
         memory_store: AgentMemoryStore | None = None,
         memory_actor_id: str | None = None,
+        experience_store: AgentExperienceStore | None = None,
+        experience_actor_id: str | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -190,6 +194,18 @@ class SpecialistTaskWorker:
         self.handlers = validated
         self.memory_store = memory_store
         self.memory_actor_id = memory_actor_id.strip() if isinstance(memory_actor_id, str) else None
+        if (experience_store is None) != (experience_actor_id is None):
+            raise ValueError("experience_store and experience_actor_id must be supplied together.")
+        if experience_store is not None and not isinstance(experience_store, AgentExperienceStore):
+            raise TypeError("experience_store must be an AgentExperienceStore.")
+        if experience_actor_id is not None and (
+            not isinstance(experience_actor_id, str) or not experience_actor_id.strip()
+            or len(experience_actor_id) > 200
+        ):
+            raise ValueError("experience_actor_id must be bounded non-empty text.")
+        self.experience_store = experience_store
+        self.experience_actor_id = experience_actor_id.strip() if isinstance(experience_actor_id, str) else None
+        self.last_experience_error_code = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -218,6 +234,8 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                experience_store=self.experience_store,
+                experience_actor_id=self.experience_actor_id,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -248,6 +266,7 @@ class SpecialistTaskWorker:
                 error_code="unknown_specialist",
             )
 
+        started_at = monotonic()
         try:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
@@ -260,28 +279,48 @@ class SpecialistTaskWorker:
             if current is None:
                 raise RuntimeError("claimed task disappeared.")
             if current.state == "cancelled":
+                self._record_experience(agent_id, claimed.run_id, "cancelled", started_at)
                 return self.runtime._record(current)
             if current.state != "running" or current.lease_owner != self.worker_id:
                 raise RuntimeError("task is no longer owned by this worker.")
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
-            return self.runtime.complete(
+            completed = self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
                 result={"specialist": agent_id, "output": output, "execution": "text-only"},
             )
+            self._record_experience(agent_id, claimed.run_id, "succeeded", started_at)
+            return completed
         except Exception:
             # Redact provider/handler details; never persist secrets or prompt contents
             # from exception messages into task error state.
             current = self.runtime.store.get(claimed.run_id)
             if current is None or current.state != "running" or current.lease_owner != self.worker_id:
                 raise
-            return self.runtime.fail(
+            failed = self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
                 error_code="specialist_handler_failed",
             )
+            self._record_experience(agent_id, claimed.run_id, "failed", started_at)
+            return failed
+
+    def _record_experience(self, agent_id: str, task_id: str, outcome: str, started_at: float) -> None:
+        """Best-effort metadata recording; telemetry must not change task outcome."""
+        if self.experience_store is None:
+            return
+        duration_ms = max(0, min(86_400_000, int((monotonic() - started_at) * 1000)))
+        try:
+            self.experience_store.record(
+                actor_id=self.experience_actor_id, agent_id=agent_id, task_id=task_id,
+                outcome=outcome, duration_ms=duration_ms,
+                evaluator="execution-outcome", evidence_ref=f"workflow-task:{task_id}",
+            )
+            self.last_experience_error_code = None
+        except Exception:
+            self.last_experience_error_code = "experience_recording_failed"
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
