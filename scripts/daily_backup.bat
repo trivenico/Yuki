@@ -7,10 +7,10 @@ for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
 if not "%YUKI_HOME%"=="" (
   if "%YUKI_HOME:~1,1%"==":" (
     set "DATA_ROOT=%YUKI_HOME%"
-  ) else if ("%YUKI_HOME:~0,1%"=="\") (
+  ) else if "%YUKI_HOME:~0,1%"=="\" (
     set "DATA_ROOT=%YUKI_HOME%"
   ) else (
-    set "DATA_ROOT=%REPO_ROOT%\\%YUKI_HOME%"
+    set "DATA_ROOT=%REPO_ROOT%\%YUKI_HOME%"
   )
 ) else (
   set "DATA_ROOT=%REPO_ROOT%"
@@ -20,10 +20,10 @@ if not "%~1"=="" (
 ) else if not "%YUKI_BACKUP_SOURCE%"=="" (
   if "%YUKI_BACKUP_SOURCE:~1,1%"==":" (
     set "SOURCE_DIR=%YUKI_BACKUP_SOURCE%"
-  ) else if ("%YUKI_BACKUP_SOURCE:~0,1%"=="\") (
+  ) else if "%YUKI_BACKUP_SOURCE:~0,1%"=="\" (
     set "SOURCE_DIR=%YUKI_BACKUP_SOURCE%"
   ) else (
-    set "SOURCE_DIR=%REPO_ROOT%\\%YUKI_BACKUP_SOURCE%"
+    set "SOURCE_DIR=%REPO_ROOT%\%YUKI_BACKUP_SOURCE%"
   )
 ) else if not "%YUKI_WORKSPACE%"=="" (
   if "%YUKI_WORKSPACE:~1,1%"==":" (
