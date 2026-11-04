@@ -65,8 +65,10 @@ class UnifiedKnowledgeAPITests(unittest.TestCase):
         packet = self.api.retrieve(actor_id="owner", agent_id="research", query="deployment")
         self.assertEqual(packet["count"], 1)
         self.permissions["owner"].remove("agent_memory:share")
-        with self.assertRaises(PermissionError):
-            self.api.retrieve(actor_id="owner", agent_id="research", query="deployment")
+        denied_packet = self.api.retrieve(
+            actor_id="owner", agent_id="research", query="deployment"
+        )
+        self.assertEqual(denied_packet["count"], 0)
 
     def test_unauthorized_actor_cannot_read_knowledge(self):
         self.add("verified deployment runbook", verified=True)
