@@ -155,6 +155,16 @@ class WorkspaceRestoreTests(unittest.TestCase):
                 restore_workspace(archive_path, link)
             self.assertEqual(list(real_destination.iterdir()), [])
 
+    def test_rejects_case_colliding_directory_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive_path = root / "case-collision.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("Folder/one.txt", "one")
+                archive.writestr("folder/two.txt", "two")
+            with self.assertRaises(RestoreError):
+                restore_workspace(archive_path, root / "restored")
+
 
 if __name__ == "__main__":
     unittest.main()
