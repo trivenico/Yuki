@@ -426,7 +426,19 @@ class WorkflowRunStore:
             if parent["state"] != "running":
                 raise WorkflowTransitionError("only a running workflow can be recovered.")
             expiry = parent["lease_expires_at"]
-            if not expiry or datetime.fromisoformat(expiry) >= now_dt:
+            if not expiry:
+                raise WorkflowConflict("workflow worker lease expiry is missing.")
+            try:
+                expiry_dt = datetime.fromisoformat(expiry)
+            except (TypeError, ValueError) as exc:
+                raise WorkflowConflict(
+                    "workflow worker lease expiry is malformed; manual inspection is required."
+                ) from exc
+            if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+                raise WorkflowConflict(
+                    "workflow worker lease expiry must include a timezone; manual inspection is required."
+                )
+            if expiry_dt >= now_dt:
                 raise WorkflowConflict("workflow worker lease has not expired.")
             steps = db.execute(
                 "SELECT * FROM workflow_steps WHERE run_id=? AND status='running' ORDER BY step_index",

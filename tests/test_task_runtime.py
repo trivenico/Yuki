@@ -225,6 +225,22 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual((current.status, current.version), ("needs_reconciliation", 2))
         self.assertEqual(self.store.get(task.task_id).state, "interrupted")
 
+    def test_recovery_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for invalid_expiry in ("not-a-timestamp", "2000-01-01T00:00:00"):
+            with self.subTest(invalid_expiry=invalid_expiry):
+                task = self.create("invalid-expiry-" + str(len(invalid_expiry)))
+                self.claim(task)
+                with self.store._connect() as db:
+                    db.execute(
+                        "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                        (invalid_expiry, task.task_id),
+                    )
+                with self.assertRaises(WorkflowConflict):
+                    self.runtime.recover_expired(
+                        actor_id="supervisor", task_id=task.task_id,
+                    )
+                self.assertEqual(self.store.get(task.task_id).state, "running")
+
     def test_recovery_requires_expired_lease(self):
         task = self.create("live-step-recovery")
         self.claim(task)
