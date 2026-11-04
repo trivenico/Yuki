@@ -190,3 +190,89 @@ class MultiHopMemoryRetrieverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SQLiteMultiHopAuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from core.agent_memory import AgentMemoryStore
+        from core.agent_memory_retriever import AgentMemoryRetriever
+        from core.unified_knowledge_api import UnifiedKnowledgeAPI
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        permissions = {
+            "owner-a": {"agent_memory:write", "agent_memory:read",
+                        "agent_memory:share", "agent_memory:review",
+                        "agent_memory:correct"},
+            "owner-b": {"agent_memory:write", "agent_memory:read",
+                        "agent_memory:share"},
+        }
+        self.permissions = permissions
+        self.store = AgentMemoryStore(
+            str(Path(self.temp.name) / "memory.sqlite3"),
+            authorize=lambda actor, action, _agent:
+                action in permissions.get(actor, set()),
+        )
+        retriever = AgentMemoryRetriever(
+            self.store, embed=lambda _text: [1.0, 0.0, 0.0],
+        )
+        self.api = UnifiedKnowledgeAPI(retriever)
+        self.multi_hop = MultiHopMemoryRetriever(self.api)
+
+    def remember(self, actor, agent, content, *, scope="private"):
+        return self.store.remember(
+            actor_id=actor, agent_id=agent, content=content,
+            source="sqlite-integration", category="semantic",
+            confidence=0.9, verified=True, scope=scope,
+        )
+
+    def test_real_sqlite_hops_exclude_other_owners_agents_and_stale_records(self):
+        visible = self.remember("owner-a", "research", "Kubernetes canary rollout strategy")
+        other_agent = self.remember("owner-a", "developer", "Kubernetes deployment secret")
+        other_owner = self.remember("owner-b", "research", "Kubernetes private deployment")
+        rejected = self.remember("owner-a", "research", "Kubernetes retired rollout")
+        self.store.transition_lifecycle(
+            actor_id="owner-a", agent_id="research",
+            memory_id=rejected["memory_id"], status="rejected",
+            reason="Owner rejected this claim",
+        )
+        superseded = self.remember("owner-a", "research", "Kubernetes old rollout procedure")
+        self.store.correct(
+            actor_id="owner-a", agent_id="research",
+            memory_id=superseded["memory_id"],
+            content="Kubernetes corrected rollout procedure",
+            source="owner-correction", reason="Owner supplied corrected procedure",
+        )
+
+        result = self.multi_hop.retrieve(
+            actor_id="owner-a", agent_id="research",
+            query="Kubernetes deployment", verified_only=True,
+            include_shared=False,
+        )
+        ids = {item["memory_id"] for item in result["evidence"]}
+        self.assertIn(visible["memory_id"], ids)
+        self.assertNotIn(other_agent["memory_id"], ids)
+        self.assertNotIn(other_owner["memory_id"], ids)
+        self.assertNotIn(rejected["memory_id"], ids)
+        self.assertNotIn(superseded["memory_id"], ids)
+        self.assertTrue(ids.isdisjoint({other_agent["memory_id"], other_owner["memory_id"]}))
+
+    def test_shared_memory_requires_current_share_permission(self):
+        shared = self.remember(
+            "owner-b", "research", "Kubernetes shared deployment playbook",
+            scope="shared",
+        )
+        allowed = self.multi_hop.retrieve(
+            actor_id="owner-b", agent_id="research",
+            query="Kubernetes deployment", include_shared=True,
+        )
+        self.assertIn(shared["memory_id"], {item["memory_id"] for item in allowed["evidence"]})
+
+        self.permissions["owner-b"].remove("agent_memory:share")
+        denied = self.multi_hop.retrieve(
+            actor_id="owner-b", agent_id="research",
+            query="Kubernetes deployment", include_shared=True,
+        )
+        self.assertNotIn(shared["memory_id"], {item["memory_id"] for item in denied["evidence"]})
