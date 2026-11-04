@@ -75,6 +75,8 @@ def _snapshot_sqlite(source: Path, destination: Path) -> None:
         if not result or result[0] != "ok":
             raise SnapshotError("sqlite_snapshot_integrity_check_failed")
         target_db.commit()
+        target_db.close()
+        target_db = None
         shutil.copystat(source, destination, follow_symlinks=False)
     except SnapshotError:
         raise
