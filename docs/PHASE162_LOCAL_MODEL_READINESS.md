@@ -1,25 +1,20 @@
-# Phase 162 — Local model readiness assessment
+# Phase 162.2 — Cross-platform hardware snapshot
 
-## Scope
+## Implemented
 
-Extend the existing read-only Ollama inventory with a deterministic resource-fit assessment. The caller supplies a current available-memory snapshot; Yuki does not silently collect machine telemetry or assume that a model will fit.
+- Read-only operating-system and CPU architecture identification.
+- Logical CPU count with invalid/unavailable values represented as unknown.
+- Total and available physical memory using POSIX sysconf or Windows GlobalMemoryStatusEx.
+- Explicit GPU unknown/not-probed status; no GPU capacity is guessed.
+- No subprocesses, network calls, telemetry upload, model downloads, or activation.
 
-## Assessment
+## Limitations
 
-- Estimate host memory from installed model size using the existing conservative overhead heuristic.
-- Apply explicit additional headroom before reporting a plausible fit.
-- Evaluate GPU memory only when a GPU offload ratio and measured available GPU memory are supplied.
-- Report unknown GPU capacity instead of assuming a GPU exists or has enough memory.
-- Distinguish host-memory insufficiency, GPU-memory insufficiency, unknown GPU capacity, and a plausible fit.
-
-## Safety and limitations
-
-- A plausible fit is not a runtime verification or a guarantee that Ollama can load the model.
-- Estimates do not fully account for context length, KV cache, concurrent requests, allocator fragmentation, driver/runtime overhead, or other processes.
-- No hardware probing, model downloads, pulls, activation, deletion, or provider switching is performed.
-- Download, install, and activation must remain separate explicit approval workflows.
-- Hardware snapshots must be gathered by a trusted local diagnostics layer and should not be accepted from untrusted remote agents as authoritative.
+- Memory values are point-in-time snapshots and can change immediately.
+- POSIX available-page semantics vary by platform; values are advisory.
+- GPU inventory requires a separately reviewed platform-specific adapter and must not be inferred from CPU or OS metadata.
+- Hardware snapshot values are local diagnostics, not trusted remote authorization inputs.
 
 ## Validation
 
-Deterministic unit tests cover host headroom, insufficient host memory, unknown GPU capacity, insufficient supplied GPU capacity, and invalid snapshots. Tests require no Ollama server, GPU, or network.
+Unit tests cover platform metadata, unknown values, GPU non-detection, and POSIX available-memory clamping. Windows API behavior remains covered by Windows CI runtime and should be supplemented with a dedicated mocked Win32 test before release.
