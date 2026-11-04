@@ -264,6 +264,7 @@
       meta.textContent = candidate.category + " · from your message · awaiting your approval";
       const actions = document.createElement("div"); actions.className = "memory-actions";
       actions.append(memoryActionButton("Approve and remember", async (item) => {
+        if (item.requires_owner_approval !== true) throw new Error("Owner approval is required.");
         await api("/v1/memory/candidates/" + encodeURIComponent(item.candidate_id) + "/approve", {
           method: "POST", body: JSON.stringify({ conversation_id: state.active })
         });
