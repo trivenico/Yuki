@@ -218,7 +218,6 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
-                memory_store=self.memory_store, memory_actor_id=self.memory_actor_id,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
