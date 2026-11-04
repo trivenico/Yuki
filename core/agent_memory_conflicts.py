@@ -34,7 +34,7 @@ _MEASUREMENT = re.compile(
     re.IGNORECASE,
 )
 _TOKEN = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
-_DATE = re.compile(r"\\b(?:20\\d{2}-\\d{2}-\\d{2}|20\\d{2}/\\d{1,2}/\\d{1,2}|\\d{1,2}/\\d{1,2}/20\\d{2})\\b")
+_DATE = re.compile(r"\b(?:20\d{2}-\d{2}-\d{2}|20\d{2}/\d{1,2}/\d{1,2}|\d{1,2}/\d{1,2}/20\d{2})\b")
 _CONTEXT = frozenset({
     "local", "remote", "cloud", "production", "prod", "staging", "stage",
     "development", "dev", "test", "testing", "sandbox", "preview",
