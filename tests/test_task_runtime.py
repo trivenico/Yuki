@@ -361,6 +361,19 @@ class TaskRuntimeTests(unittest.TestCase):
                 current = self.store.list_steps(task.task_id)[0]
                 self.assertEqual((current.status, current.version), ("pending", 0))
 
+    def test_step_transition_rejects_non_string_status_without_type_error(self):
+        task = self.create("invalid-step-status")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        for invalid in ([], {}, None, 1):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    self.runtime.transition_step(
+                        actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                        worker_id="worker-a", expected_step_version=0, to_status=invalid,
+                    )
+        self.assertEqual(self.store.list_steps(task.task_id)[0].status, "pending")
+
     def test_step_transition_rejects_wrong_worker_and_missing_permission(self):
         task = self.create("step-worker-guard")
         self.claim(task)

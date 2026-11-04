@@ -222,6 +222,8 @@ class TaskRuntime:
             "failed": "task:step:finish",
             "needs_reconciliation": "task:step:reconcile",
         }
+        if not isinstance(to_status, str):
+            raise ValueError("Unknown workflow step status.")
         permission = permissions.get(to_status)
         if permission is None:
             raise ValueError("Unknown workflow step status.")

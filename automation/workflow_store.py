@@ -343,7 +343,7 @@ class WorkflowRunStore:
                 raise ValueError(f"{label} must be non-empty bounded text.")
         if type(expected_step_version) is not int or expected_step_version < 0:
             raise ValueError("expected_step_version must be a non-negative integer.")
-        if to_status not in event_kinds:
+        if not isinstance(to_status, str) or to_status not in event_kinds:
             raise ValueError("Unknown workflow step status.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
