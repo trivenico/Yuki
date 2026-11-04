@@ -54,6 +54,19 @@ class YukiWebApplicationTests(unittest.TestCase):
         style = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.css")[1]["body"]
         self.assertIn(b".memory-panel", style)
 
+    def test_chat_shell_exposes_owner_approved_memory_suggestions(self):
+        app = YukiWebApplication(_FakeAPI())
+        html = self.request(app, "/")[1]["body"]
+        self.assertIn(b'id="memory-candidate-list"', html)
+        script = self.request(app, "/assets/chat.js")[1]["body"]
+        for marker in (
+            b"/v1/memory/candidates", b"Approve and remember",
+            b"requires_owner_approval", b"conversation_id",
+        ):
+            self.assertIn(marker, script)
+        style = self.request(app, "/assets/chat.css")[1]["body"]
+        self.assertIn(b".memory-candidates", style)
+
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
