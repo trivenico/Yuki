@@ -117,8 +117,16 @@ class MultiHopMemoryRetriever:
                 "hop": hop,
                 "source_memory_id": source_memory_id,
             })
+            if (not isinstance(packet, dict)
+                    or packet.get("actor_id") != actor_id.strip()
+                    or packet.get("agent_id") != agent_id.strip()):
+                raise PermissionError("knowledge_scope_mismatch")
             evidence_items = packet.get("evidence", [])
+            if not isinstance(evidence_items, list):
+                raise ValueError("knowledge_evidence_must_be_a_list")
             for item in evidence_items:
+                if not isinstance(item, dict):
+                    continue
                 memory_id = item.get("memory_id")
                 if not isinstance(memory_id, str) or not memory_id:
                     continue

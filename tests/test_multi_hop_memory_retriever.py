@@ -76,6 +76,23 @@ class MultiHopMemoryRetrieverTests(unittest.TestCase):
             self.assertFalse(call["include_shared"])
             self.assertTrue(call["verified_only"])
 
+    def test_scope_mismatch_from_a_hop_is_rejected(self):
+        first = evidence("a" * 32, "Kubernetes canary rollout strategy")
+        class ScopeChangingAPI(FakeKnowledgeAPI):
+            def retrieve(self, **kwargs):
+                packet = super().retrieve(**kwargs)
+                if len(self.calls) == 2:
+                    packet["actor_id"] = "another-owner"
+                return packet
+        api = ScopeChangingAPI({
+            "deployment": [first],
+            "kubernetes canary rollout": [],
+        })
+        with self.assertRaisesRegex(PermissionError, "knowledge_scope_mismatch"):
+            MultiHopMemoryRetriever(api, max_hops=1).retrieve(
+                actor_id="owner", agent_id="research", query="deployment",
+            )
+
     def test_duplicate_records_are_returned_once(self):
         first = evidence("a" * 32, "Kubernetes canary rollout strategy")
         api = FakeKnowledgeAPI({
