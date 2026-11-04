@@ -31,7 +31,7 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
 
         def embed(text):
             self.embed_calls.append(text)
-            return self.vectors[text]
+            return self.vectors.get(text, [0.0, 1.0, 0.0])
 
         self.retriever = AgentMemoryRetriever(
             self.store, embed=embed, embedding_index=self.index
@@ -115,6 +115,53 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
                 self.store, embed=lambda _text: [1.0],
                 embedding_index=other_index,
             )
+
+    def test_older_relevant_memory_is_found_beyond_newest_100(self):
+        relevant = self.add_memory("A staged deployment uses a gradual rollout.", verified=True)
+        for number in range(110):
+            self.add_memory(f"Unrelated garden note number {number}.")
+        result = self.retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query", limit=10,
+        )
+        self.assertIn(relevant["memory_id"], {item["memory_id"] for item in result})
+        self.assertEqual(result[0]["memory_id"], relevant["memory_id"])
+
+    def test_candidate_scan_budget_is_hard_bound(self):
+        for number in range(12):
+            self.add_memory(f"Unrelated garden note number {number}.")
+        retriever = AgentMemoryRetriever(
+            self.store, embed=lambda text: [1.0, 0.0, 0.0],
+            max_candidates=7,
+        )
+        original = self.store.list_memories_page
+        calls = []
+        def tracked(**kwargs):
+            page = original(**kwargs)
+            calls.append(len(page))
+            return page
+        self.store.list_memories_page = tracked
+        retriever.retrieve(actor_id="owner", agent_id="research", query="deployment query")
+        self.assertEqual(sum(calls), 7)
+
+    def test_unverified_records_count_toward_scan_budget(self):
+        for number in range(9):
+            self.add_memory(f"Unverified garden note number {number}.", verified=False)
+        verified = self.add_memory("A staged deployment uses a gradual rollout.", verified=True)
+        retriever = AgentMemoryRetriever(
+            self.store, embed=lambda text: self.vectors.get(text, [0.0, 1.0, 0.0]),
+            max_candidates=5,
+        )
+        result = retriever.retrieve(
+            actor_id="owner", agent_id="research", query="deployment query",
+            verified_only=True,
+        )
+        self.assertEqual(result, [])
+        self.assertNotIn(verified["memory_id"], {item["memory_id"] for item in result})
+
+    def test_invalid_candidate_budget_is_rejected(self):
+        for value in (0, 2001, True, 1.5):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                AgentMemoryRetriever(self.store, embed=lambda _text: [1.0], max_candidates=value)
 
 
 if __name__ == "__main__":
