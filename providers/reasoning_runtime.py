@@ -16,6 +16,13 @@ from providers.agent_adapter import ProviderAgentAdapter
 from providers.reasoning_agent_adapter import ReasoningAgentAdapter
 
 
+def memory_actor_id_for_owner(owner_id: str) -> str:
+    """Return a stable opaque store-safe key for an authenticated owner ID."""
+    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+        raise ValueError("invalid_authenticated_owner_id")
+    return "owner-" + hashlib.sha256(owner_id.strip().encode("utf-8")).hexdigest()
+
+
 def create_owner_scoped_agent_loop_factory(
     *,
     provider_adapter_for_owner: Callable[[str], ProviderAgentAdapter],
@@ -82,7 +89,7 @@ def create_owner_scoped_agent_loop_factory(
             raise TypeError("owner_preferences_factory_must_return_sequence")
         # Authentication IDs may be URL-safe tokens beginning with '_' or '-'.
         # Map them to a stable, opaque, store-safe owner key before memory access.
-        memory_actor_id = "owner-" + hashlib.sha256(owner.encode("utf-8")).hexdigest()
+        memory_actor_id = memory_actor_id_for_owner(owner)
         reasoning_adapter = ReasoningAgentAdapter(
             provider_adapter,
             context_builder,
