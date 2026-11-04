@@ -91,7 +91,7 @@ The restore utility accepts plaintext ZIP/TAR archives only. For an encrypted ar
 Generate a key once, in a directory outside the Yuki workspace and backup destination:
 
 ```sh
-python scripts/backup_crypto.py generate-key "$HOME/.config/yuki/backup.key"
+mkdir -p "$HOME/.config/yuki" && chmod 700 "$HOME/.config/yuki" && python scripts/backup_crypto.py generate-key "$HOME/.config/yuki/backup.key"
 ```
 
 Protect and separately back up this key using your operating system's secret-management facilities or an offline secure medium. The key file is exactly 32 random bytes. On POSIX, the tool creates it with mode 0600 and rejects broader permissions. On Windows, the file inherits its parent directory's ACL; create the key in a directory accessible only to the intended Windows account. **Do not commit the key, put it in the workspace, put it in the backup directory, or send it to Yuki's model/provider.** Loss of the key means the encrypted archives cannot be recovered.
