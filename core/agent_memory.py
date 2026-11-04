@@ -98,6 +98,15 @@ class AgentMemoryStore:
             db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_corrections_no_delete
                 BEFORE DELETE ON agent_memory_corrections
                 BEGIN SELECT RAISE(ABORT, 'memory_correction_audit_is_immutable'); END""")
+            db.execute("""CREATE TABLE IF NOT EXISTS agent_memory_candidate_promotions (
+                actor_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                candidate_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                promoted_at TEXT NOT NULL,
+                PRIMARY KEY(actor_id, agent_id, candidate_id),
+                UNIQUE(actor_id, agent_id, memory_id)
+            )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_scope
                 ON agent_memories(actor_id, agent_id, category, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_expiry
@@ -183,6 +192,56 @@ class AgentMemoryStore:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (memory_id, actor_id, agent_id, category, content.strip(), source.strip(),
                  float(confidence), int(verified), scope, now.isoformat(), expires))
+            row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
+        return self._record(row)
+
+
+    def remember_candidate(
+        self, *, actor_id, agent_id, candidate_id, content, source,
+        category="episodic", confidence=0.5, retention_days=365,
+    ):
+        """Promote one owner-reviewed candidate exactly once, transactionally."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(candidate_id, str) or not re.fullmatch(r"memcand-[a-f0-9]{24}", candidate_id):
+            raise ValueError("invalid_memory_candidate_id")
+        if not isinstance(content, str) or not content.strip() or len(content) > _MAX_TEXT or "\\x00" in content:
+            raise ValueError("invalid_memory_content")
+        if not isinstance(source, str) or not source.strip() or len(source) > _MAX_SOURCE:
+            raise ValueError("memory_source_required")
+        if category not in _CATEGORIES:
+            raise ValueError("invalid_memory_category")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("invalid_memory_confidence")
+        if type(retention_days) is not int or not 1 <= retention_days <= 3650:
+            raise ValueError("retention_days_must_be_1_to_3650")
+        if not self._allowed(actor_id, "agent_memory:write", agent_id):
+            raise PermissionError("agent memory write is not authorized")
+        now = datetime.now(timezone.utc)
+        with self._lock, self._connect() as db:
+            existing = db.execute(
+                """SELECT m.* FROM agent_memory_candidate_promotions p
+                   JOIN agent_memories m ON m.memory_id=p.memory_id
+                   WHERE p.actor_id=? AND p.agent_id=? AND p.candidate_id=?""",
+                (actor_id, agent_id, candidate_id),
+            ).fetchone()
+            if existing is not None:
+                return self._record(existing)
+            memory_id = uuid4().hex
+            expires = (now + timedelta(days=retention_days)).isoformat()
+            db.execute(
+                """INSERT INTO agent_memories
+                   (memory_id,actor_id,agent_id,category,content,source,confidence,
+                    verified,scope,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (memory_id, actor_id, agent_id, category, content.strip(), source.strip(),
+                 float(confidence), 1, "private", now.isoformat(), expires),
+            )
+            db.execute(
+                """INSERT INTO agent_memory_candidate_promotions
+                   (actor_id,agent_id,candidate_id,memory_id,promoted_at)
+                   VALUES(?,?,?,?,?)""",
+                (actor_id, agent_id, candidate_id, memory_id, now.isoformat()),
+            )
             row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
         return self._record(row)
 
