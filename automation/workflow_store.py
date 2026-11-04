@@ -414,7 +414,7 @@ class WorkflowRunStore:
 
         if expected_lease_owner is not None and (
             not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
-            or len(expected_lease_owner) > 200 or "\\x00" in expected_lease_owner
+            or len(expected_lease_owner) > 200 or "\x00" in expected_lease_owner
             or to_state not in {"succeeded", "failed"}
         ):
             raise ValueError("expected_lease_owner is valid only for worker completion or failure.")
@@ -444,10 +444,6 @@ class WorkflowRunStore:
             ):
                 raise WorkflowConflict("only the current worker with an unexpired lease may finish this task.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
-            lease_guard = expected_lease_owner is None or (
-                current.state == "running" and current.lease_owner == expected_lease_owner
-                and current.lease_expires_at is not None and current.lease_expires_at >= now
-            )
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
                     updated_at=?, version=version+1, attempts=?, lease_owner=?,
