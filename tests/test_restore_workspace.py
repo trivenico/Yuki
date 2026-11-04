@@ -6,10 +6,64 @@ import tempfile
 import unittest
 import zipfile
 
+from scripts.backup_crypto import create_key_file, decrypt_file, encrypt_file
 from scripts.restore_workspace import RestoreError, restore_workspace
 
 
 class WorkspaceRestoreTests(unittest.TestCase):
+
+    def test_encrypted_backup_decrypts_and_restores_to_isolated_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            (source / "preferences.json").write_text('{"theme":"dark"}', encoding="utf-8")
+            plaintext_archive = root / "workspace.zip"
+            with zipfile.ZipFile(plaintext_archive, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.write(source / "preferences.json", "preferences.json")
+
+            key_dir = root / "secrets"
+            key_dir.mkdir()
+            key = create_key_file(key_dir / "backup.key")
+            encrypted_archive = root / "workspace.yukibak"
+            encrypt_file(plaintext_archive, encrypted_archive, key)
+
+            decrypted_archive = root / "private-staging" / "workspace.zip"
+            decrypted_archive.parent.mkdir(mode=0o700)
+            decrypt_file(encrypted_archive, decrypted_archive, key)
+
+            destination = root / "restore-test"
+            result = restore_workspace(decrypted_archive, destination)
+            self.assertEqual(result["files_restored"], 1)
+            self.assertEqual(
+                (destination / "preferences.json").read_text(encoding="utf-8"),
+                '{"theme":"dark"}',
+            )
+            self.assertFalse(list(decrypted_archive.parent.glob(".yuki-decrypt-*.tmp")))
+            self.assertFalse(destination.exists() is False)
+
+    def test_encrypted_restore_wrong_key_leaves_no_workspace_or_plaintext(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "workspace.zip"
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("private.txt", "sensitive")
+            keys = root / "keys"
+            keys.mkdir()
+            correct = create_key_file(keys / "correct.key")
+            wrong = create_key_file(keys / "wrong.key")
+            encrypted = root / "backup.yukibak"
+            encrypt_file(source, encrypted, correct)
+            staging = root / "staging"
+            staging.mkdir()
+            decrypted = staging / "workspace.zip"
+            destination = root / "restore"
+            with self.assertRaisesRegex(Exception, "authentication_failed"):
+                decrypt_file(encrypted, decrypted, wrong)
+            self.assertFalse(decrypted.exists())
+            self.assertFalse(destination.exists())
+            self.assertEqual(list(staging.iterdir()), [])
+
     def test_restores_unix_tar_workspace_and_verifies_sqlite(self):
         import sqlite3
 
