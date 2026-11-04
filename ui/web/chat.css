@@ -33,3 +33,13 @@
 .memory-candidates h3,.memory-section-title{margin:0 0 7px;font-size:13px;font-weight:600;color:#e1ddec}
 .memory-candidates>.muted{font-size:11px;line-height:1.5;margin:0 0 12px}
 .memory-candidates .memory-list{margin-top:0}
+
+.profile-preferences{padding:18px 0;border-bottom:1px solid var(--line)}
+.profile-preferences h3{margin:0 0 7px;font-size:13px;font-weight:600;color:#e1ddec}
+.profile-preferences>.muted{font-size:11px;line-height:1.5;margin:0 0 12px}
+.profile-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.profile-fields label{display:grid;gap:6px;font-size:11px;color:#c4c8d0}
+.profile-fields select{width:100%;min-width:0;background:#101216;border:1px solid var(--line);border-radius:8px;padding:9px;color:var(--text);font:inherit;font-size:12px}
+#save-profile{cursor:pointer}
+#save-profile:disabled{opacity:.5}
+@media(max-width:520px){.profile-fields{grid-template-columns:1fr}}
