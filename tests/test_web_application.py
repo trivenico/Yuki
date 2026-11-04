@@ -143,6 +143,22 @@ class YukiWebApplicationTests(unittest.TestCase):
             (b"origin", b"http://localhost:9000"),
         ])), (403, 0))
 
+
+    def test_rejects_nondefault_origin_port_when_host_omits_port(self):
+        import asyncio
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        asyncio.run(YukiWebApplication(_FakeAPI())(
+            {"type": "http", "method": "POST", "path": "/v1/auth/login",
+             "headers": [(b"host", b"localhost"),
+                         (b"origin", b"http://localhost:9000")]},
+            receive, send,
+        ))
+        self.assertEqual(sent[0]["status"], 403)
+
     def test_allows_same_origin_and_non_browser_bearer_clients(self):
         import asyncio
         async def invoke(headers):

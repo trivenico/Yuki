@@ -94,8 +94,14 @@ class YukiWebApplication:
                     valid_scheme = origin.scheme in {"http", "https"}
                     valid_authority = bool(origin.netloc) and not origin.username and not origin.password
                     no_path = origin.path in {"", "/"} and not origin.query and not origin.fragment
-                    effective_origin_port = origin_port or (443 if origin.scheme == "https" else 80)
-                    effective_host_port = host_port or effective_origin_port
+                    default_port = 443 if origin.scheme == "https" else 80
+                    effective_origin_port = origin_port or default_port
+                    # With no explicit Host port, only the scheme's default
+                    # origin port is valid; don't let an arbitrary Origin port
+                    # define the expected port and bypass same-origin checks.
+                    if host_port is None and origin_port not in {None, default_port}:
+                        return 403, "origin_not_allowed"
+                    effective_host_port = host_port if host_port is not None else default_port
                 except ValueError:
                     return 403, "invalid_origin"
                 if (
