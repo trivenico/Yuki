@@ -62,15 +62,17 @@ def ndcg_at_k(
     # across all gains, so nDCG is unchanged while exponent overflow is avoided.
     max_relevance = max(relevance_by_id.values(), default=0.0)
 
+    zero_gain = math.exp2(-max_relevance)
+
     def gain(memory_id: str, rank: int) -> float:
         relevance = relevance_by_id.get(memory_id, 0.0)
-        scaled_gain = math.exp2(relevance - max_relevance)
-        return scaled_gain / math.log2(rank + 1)
+        scaled_gain = math.exp2(relevance - max_relevance) - zero_gain
+        return max(0.0, scaled_gain) / math.log2(rank + 1)
 
     dcg = sum(gain(memory_id, rank) for rank, memory_id in enumerate(retrieved_ids[:k], 1))
     ideal = sorted(relevance_by_id.values(), reverse=True)[:k]
     idcg = sum(
-        math.exp2(value - max_relevance) / math.log2(rank + 1)
+        max(0.0, math.exp2(value - max_relevance) - zero_gain) / math.log2(rank + 1)
         for rank, value in enumerate(ideal, 1)
     )
     # Zero relevance has equal gain for every item in this scaled form.
