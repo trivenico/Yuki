@@ -79,7 +79,7 @@ class SQLiteWorkspaceSnapshotTests(unittest.TestCase):
             root = Path(temp)
             source = root / "workspace"
             source.mkdir()
-            (source / "broken.sqlite3").write_bytes(b"SQLite format 3\\x00" + b"corrupt")
+            (source / "broken.sqlite3").write_bytes(b"SQLite format 3\x00" + b"corrupt")
             target = root / "snapshot"
             with self.assertRaises(SnapshotError):
                 snapshot_workspace(source, target)
