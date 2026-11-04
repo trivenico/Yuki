@@ -2,7 +2,7 @@ import threading
 import time
 import unittest
 
-from automation.worker_lifecycle import WorkerShutdownCoordinator
+from automation.worker_lifecycle import WorkerLeaseLost, WorkerShutdownCoordinator
 
 
 class WorkerShutdownCoordinatorTests(unittest.TestCase):
