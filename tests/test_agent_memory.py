@@ -189,3 +189,34 @@ class AgentMemoryTests(unittest.TestCase):
 
 
 if __name__=="__main__": unittest.main()
+
+ def test_owner_reviewed_candidate_promotion_is_idempotent_and_authorized(self):
+  first=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",
+   candidate_id="memcand-0123456789abcdef01234567",
+   content="I prefer concise technical explanations",
+   source="conversation:abc:message:message-1",category="semantic",
+  )
+  second=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",
+   candidate_id="memcand-0123456789abcdef01234567",
+   content="I prefer concise technical explanations",
+   source="conversation:abc:message:message-1",category="semantic",
+  )
+  self.assertEqual(first["memory_id"],second["memory_id"])
+  self.assertTrue(first["verified"])
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="assistant")),1)
+
+ def test_candidate_promotion_rejects_invalid_ids_and_missing_write_permission(self):
+  with self.assertRaises(ValueError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",candidate_id="not-a-candidate",
+    content="A preference",source="conversation:abc:message:1",
+  )
+  self.grants["owner"].discard("agent_memory:write")
+  with self.assertRaises(PermissionError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",
+    candidate_id="memcand-0123456789abcdef01234567",
+    content="A preference",source="conversation:abc:message:1",
+   )
