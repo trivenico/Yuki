@@ -22,12 +22,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "$dst=[IO.Path]::GetFullPath($env:BACKUP_DIR);" ^
  "$days=14; if ($env:RETENTION_DAYS -notmatch '^\d+$' -or [int]$env:RETENTION_DAYS -lt 1 -or [int]$env:RETENTION_DAYS -gt 3650) { throw 'Retention must be a whole number from 1 to 3650 days.' }; $days=[int]$env:RETENTION_DAYS;" ^
  "if (!(Test-Path -LiteralPath $src -PathType Container)) { throw ('Backup source does not exist: ' + $src) };" ^
- "$src=(Resolve-Path -LiteralPath $src).Path.TrimEnd('\') + '\';" ^
- "if ($dst.StartsWith($src,[StringComparison]::OrdinalIgnoreCase)) { throw 'Backup destination must not be inside source.' };" ^
- "if ($src.StartsWith($dst.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Source must not be inside backup destination.' };" ^
- "New-Item -ItemType Directory -Force -Path $dst | Out-Null;" ^
+ "$srcRoot=(Resolve-Path -LiteralPath $src).Path.TrimEnd('\'); $src=$srcRoot + '\';" ^
+ "New-Item -ItemType Directory -Force -Path $dst | Out-Null; $dst=(Resolve-Path -LiteralPath $dst).Path.TrimEnd('\');" ^
+ "if ($dst.Equals($srcRoot,[StringComparison]::OrdinalIgnoreCase) -or $dst.StartsWith($src,[StringComparison]::OrdinalIgnoreCase)) { throw 'Backup destination must not be source or inside source.' };" ^
+ "if ($srcRoot.StartsWith($dst.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Source must not be inside backup destination.' };" ^
  "$stamp=Get-Date -Format 'yyyyMMdd_HHmmss'; $archive=Join-Path $dst ('yuki-data-' + $stamp + '.zip'); $temp=$archive + '.tmp.zip';" ^
- "try { Compress-Archive -Path (Join-Path $src '*') -DestinationPath $temp -CompressionLevel Optimal; if (!(Test-Path -LiteralPath $temp) -or (Get-Item -LiteralPath $temp).Length -eq 0) { throw 'Archive was not created or is empty.' }; Move-Item -LiteralPath $temp -Destination $archive; } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } };" ^
+ "Add-Type -AssemblyName System.IO.Compression.FileSystem;" ^
+ "try { [IO.Compression.ZipFile]::CreateFromDirectory($src, $temp, [IO.Compression.CompressionLevel]::Optimal, $false); $zip=[IO.Compression.ZipFile]::OpenRead($temp); try { if ($zip.Entries.Count -eq 0) { throw 'Archive is empty.' }; foreach ($entry in $zip.Entries) { $stream=$entry.Open(); try { $buffer=New-Object byte[] 8192; while ($stream.Read($buffer,0,$buffer.Length) -gt 0) { } } finally { $stream.Dispose() } } } finally { $zip.Dispose() }; Move-Item -LiteralPath $temp -Destination $archive; } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } };" ^
  "Get-ChildItem -LiteralPath $dst -File -Filter 'yuki-data-*.zip' | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$days) } | Remove-Item -Force;" ^
  "Write-Output ('Backup completed: ' + $archive); Write-Output ('Retention: ' + $days + ' days. Keep the drive encrypted and store another copy separately.')"
 if errorlevel 1 (
