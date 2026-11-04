@@ -69,6 +69,27 @@ class ReasoningContextBuilderTests(unittest.TestCase):
         self.assertIn("CURRENT USER QUERY", rendered)
         self.assertGreaterEqual(context["budget"]["omitted_evidence_count"], 0)
 
+
+    def test_duplicate_and_superseded_evidence_are_excluded(self):
+        retrieve = self.builder.knowledge.retrieve
+        def with_bad_records(**kwargs):
+            packet = retrieve(**kwargs)
+            original = dict(packet["evidence"][0])
+            packet["evidence"].extend([
+                dict(original),
+                {
+                    **original,
+                    "memory_id": "f" * 32,
+                    "superseded_by": "e" * 32,
+                },
+            ])
+            return packet
+        self.builder.knowledge.retrieve = with_bad_records
+        context = self.build()
+        evidence = context["evidence"]["verified"]
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(len({item["memory_id"] for item in evidence}), 1)
+
     def test_invalid_or_oversized_trusted_context_is_rejected(self):
         with self.assertRaises(ValueError):
             self.build(system_policy=" ")
