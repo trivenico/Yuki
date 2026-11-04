@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Callable
 
 from core.agent_memory import AgentMemoryStore
+from core.semantic_memory import SemanticMemoryRetriever
 
 _MAX_CONTEXT_MEMORIES = 5
 _MAX_CONTEXT_CHARS = 8_000
@@ -22,6 +23,7 @@ def build_memory_aware_handlers(
     *,
     actor_id: str,
     max_memories: int = _MAX_CONTEXT_MEMORIES,
+    retriever: SemanticMemoryRetriever | None = None,
 ) -> dict[str, Callable[[str], str]]:
     """Wrap specialist handlers with authorized, bounded memory retrieval.
 
@@ -36,6 +38,11 @@ def build_memory_aware_handlers(
         raise ValueError("actor_id must be bounded non-empty text")
     if type(max_memories) is not int or not 1 <= max_memories <= _MAX_CONTEXT_MEMORIES:
         raise ValueError("max_memories must be between 1 and 5")
+    if retriever is not None:
+        if not isinstance(retriever, SemanticMemoryRetriever):
+            raise TypeError("retriever must be a SemanticMemoryRetriever")
+        if retriever.memory_store is not memory_store:
+            raise ValueError("retriever_must_use_the_same_authorized_memory_store")
 
     wrapped = {}
     for agent_id, handler in handlers.items():
@@ -47,7 +54,8 @@ def build_memory_aware_handlers(
         def invoke(request: str, *, _agent_id=agent_id, _handler=handler) -> str:
             if not isinstance(request, str) or not request.strip() or len(request) > 2_000:
                 raise ValueError("specialist request must be bounded non-empty text")
-            memories = memory_store.search(
+            search = retriever.search if retriever is not None else memory_store.search
+            memories = search(
                 actor_id=actor_id.strip(),
                 agent_id=_agent_id,
                 query=request,
