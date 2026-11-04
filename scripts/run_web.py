@@ -6,6 +6,7 @@ proxy, configure trusted host/rate-limit policy, and provision secrets securely.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
@@ -64,7 +65,12 @@ def create_app():
     def authorize_memory(actor_id, action, agent_id):
         # Authenticated owner IDs are transformed to opaque store-safe keys by
         # the reasoning factory. Sharing remains disabled in this web profile.
-        return action in {"agent_memory:read", "agent_memory:write"}
+        return (
+            isinstance(actor_id, str)
+            and re.fullmatch(r"owner-[a-f0-9]{64}", actor_id) is not None
+            and agent_id == "assistant"
+            and action in {"agent_memory:read", "agent_memory:write"}
+        )
 
     memory_store = AgentMemoryStore(memory_database, authorize=authorize_memory)
     local_embedding_path = os.environ.get("YUKI_EMBEDDING_MODEL_PATH", "").strip()
