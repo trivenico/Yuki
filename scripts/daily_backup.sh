@@ -6,7 +6,24 @@ umask 077
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
-SOURCE_DIR="${1:-${YUKI_HOME:-$REPO_ROOT/YukiData}}"
+if [ -n "${1:-}" ]; then
+  SOURCE_DIR="$1"
+elif [ -n "${YUKI_BACKUP_SOURCE:-}" ]; then
+  SOURCE_DIR="$YUKI_BACKUP_SOURCE"
+  case "$SOURCE_DIR" in
+    /*) ;;
+    *) SOURCE_DIR="$REPO_ROOT/$SOURCE_DIR" ;;
+  esac
+elif [ -n "${YUKI_WORKSPACE:-}" ]; then
+  case "$YUKI_WORKSPACE" in
+    /*) SOURCE_DIR="$YUKI_WORKSPACE" ;;
+    *) SOURCE_DIR="${YUKI_HOME:-$REPO_ROOT}/$YUKI_WORKSPACE" ;;
+  esac
+elif [ -n "${YUKI_HOME:-}" ]; then
+  SOURCE_DIR="$YUKI_HOME"
+else
+  SOURCE_DIR="$REPO_ROOT/yuki_workspace"
+fi
 BACKUP_DIR="${2:-${YUKI_BACKUP_DIR:-$REPO_ROOT/BACKUP/YukiData}}"
 RETENTION_DAYS="${YUKI_BACKUP_RETENTION_DAYS:-14}"
 
@@ -19,7 +36,7 @@ if [ "$RETENTION_DAYS" -lt 1 ] || [ "$RETENTION_DAYS" -gt 3650 ]; then
 fi
 if [ ! -d "$SOURCE_DIR" ]; then
   echo "Backup source does not exist: $SOURCE_DIR" >&2
-  echo "Create YukiData first or pass a source directory explicitly." >&2
+  echo "Set YUKI_BACKUP_SOURCE/YUKI_WORKSPACE, create the configured workspace, or pass a source directory." >&2
   exit 1
 fi
 SOURCE_DIR="$(CDPATH= cd -- "$SOURCE_DIR" && pwd)"
