@@ -29,6 +29,10 @@ _OPPOSITES = (
     (frozenset({"present", "exists"}), frozenset({"absent", "missing"})),
 )
 _POLARITY_TERMS = frozenset().union(*(positive | negative for positive, negative in _OPPOSITES))
+_MEASUREMENT = re.compile(
+    r"(?<![a-z0-9])(-?\\d+(?:\\.\\d+)?)\\s*(milliseconds?|ms|seconds?|secs?|s|minutes?|mins?|hours?|hrs?|days?|%|percent|gb|mb|tb|kb|hz|ghz|tokens?)(?![a-z])",
+    re.IGNORECASE,
+)
 _TOKEN = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
 
 
@@ -45,6 +49,7 @@ class MemoryConflictDetector:
         tokens = set(_TOKEN.findall(content.casefold()))
         negated = bool(tokens & _NEGATION)
         canonical = set(tokens) - _STOP - _NEGATION - _POLARITY_TERMS
+        canonical -= {match.group(1) for match in _MEASUREMENT.finditer(content)}
         return tokens, canonical, negated
 
     @staticmethod
@@ -65,7 +70,24 @@ class MemoryConflictDetector:
         overlap = len(intersection) / len(union)
         explicit_opposites = cls._opposite_values(left_tokens, right_tokens)
         opposite_negation = left_negated != right_negated
-        if not explicit_opposites and not (opposite_negation and overlap >= min_overlap):
+        left_measurements = {
+            (match.group(2).casefold(), float(match.group(1)))
+            for match in _MEASUREMENT.finditer(left["content"])
+        }
+        right_measurements = {
+            (match.group(2).casefold(), float(match.group(1)))
+            for match in _MEASUREMENT.finditer(right["content"])
+        }
+        left_units = {unit for unit, _ in left_measurements}
+        right_units = {unit for unit, _ in right_measurements}
+        numeric_conflict = bool(
+            left_units & right_units
+            and {value for unit, value in left_measurements if unit in right_units}
+            != {value for unit, value in right_measurements if unit in left_units}
+        )
+        if not explicit_opposites and not numeric_conflict and not (
+            opposite_negation and overlap >= min_overlap
+        ):
             return None
         if overlap < min_overlap:
             return None
@@ -101,6 +123,9 @@ class MemoryConflictDetector:
                 "token_overlap": round(overlap, 4),
                 "opposing_negation": opposite_negation,
                 "opposite_state_terms": explicit_opposites,
+                "numeric_measurement_conflict": numeric_conflict,
+                "left_measurements": sorted([list(item) for item in left_measurements]),
+                "right_measurements": sorted([list(item) for item in right_measurements]),
             },
             "resolution": "none",
             "memory_mutated": False,
