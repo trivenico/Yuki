@@ -280,6 +280,28 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, message="ok", percent=True)
 
+    def test_expired_lease_recovery_and_event_roll_back_together(self):
+        task = self.create("recover-atomic")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+            db.execute("""
+                CREATE TRIGGER reject_interruption_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.interrupted'
+                BEGIN SELECT RAISE(ABORT, 'simulated interruption journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.recover_expired(actor_id="supervisor")
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+
     def test_expired_lease_recovery_is_authorized_and_journaled(self):
         task = self.create("recover-expired")
         claimed = self.claim(task)
