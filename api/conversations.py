@@ -176,6 +176,11 @@ class YukiConversationAPI:
                 candidates = extract_memory_candidates(
                     messages, conversation_id=conversation_id,
                 )
+                actor_id = memory_actor_id_for_owner(user.user_id)
+                candidates = [item for item in candidates if not await asyncio.to_thread(
+                    self.memory_store.candidate_was_promoted,
+                    actor_id=actor_id, agent_id="assistant", candidate_id=item["candidate_id"],
+                )]
                 return await self._respond(send, 200, {
                     "candidates": candidates,
                     "requires_owner_approval": True,
