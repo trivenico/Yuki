@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import tempfile
 import unittest
@@ -223,6 +224,32 @@ class TaskRuntimeTests(unittest.TestCase):
             )
         current = self.store.list_steps(task.task_id)[0]
         self.assertEqual((current.status, current.version), ("needs_reconciliation", 2))
+        self.assertEqual(self.store.get(task.task_id).state, "interrupted")
+
+    def test_concurrent_recovery_has_single_winner(self):
+        task = self.create("concurrent-recovery")
+        self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+
+        def recover():
+            try:
+                return self.runtime.recover_expired(
+                    actor_id="supervisor", task_id=task.task_id,
+                )
+            except WorkflowTransitionError:
+                return "already-recovered"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: recover(), range(2)))
+        self.assertEqual(sum(outcome != "already-recovered" for outcome in outcomes), 1)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(
+            sum(event.kind == "task.interrupted" for event in events), 1,
+        )
         self.assertEqual(self.store.get(task.task_id).state, "interrupted")
 
     def test_recovery_rejects_malformed_or_timezone_naive_lease_expiry(self):
