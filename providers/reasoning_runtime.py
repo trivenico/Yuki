@@ -6,21 +6,14 @@ This module never accepts an actor identity from an HTTP payload.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-import hashlib
 from typing import Any
 
 from core.agent_execution_loop import AgentExecutionLoop
+from core.owner_identity import memory_actor_id_for_owner
 from core.reasoning.context_builder import ReasoningContextBuilder
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.reasoning_agent_adapter import ReasoningAgentAdapter
-
-
-def memory_actor_id_for_owner(owner_id: str) -> str:
-    """Return a stable opaque store-safe key for an authenticated owner ID."""
-    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
-        raise ValueError("invalid_authenticated_owner_id")
-    return "owner-" + hashlib.sha256(owner_id.strip().encode("utf-8")).hexdigest()
 
 
 def create_owner_scoped_agent_loop_factory(
