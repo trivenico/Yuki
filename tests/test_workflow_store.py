@@ -176,6 +176,9 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_running_terminal_transition_requires_worker_identity(self):
         run = self.create()
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=run.version
+        )
         running = self.store.transition(
             run.run_id, expected_version=run.version, to_state="running", lease_owner="worker-a"
         )
