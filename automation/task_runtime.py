@@ -304,7 +304,16 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
-        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+        expiry = run.lease_expires_at
+        if not expiry:
+            raise WorkflowConflict("workflow lease expiry is missing.")
+        try:
+            expiry_dt = datetime.fromisoformat(expiry)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("workflow lease expiry is malformed; completion is unsafe.") from exc
+        if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+            raise WorkflowConflict("workflow lease expiry must include a timezone; completion is unsafe.")
+        if expiry_dt <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
         completed = self.store.transition(
             task_id, expected_version=expected_version, to_state="succeeded",
@@ -324,7 +333,16 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
-        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+        expiry = run.lease_expires_at
+        if not expiry:
+            raise WorkflowConflict("workflow lease expiry is missing.")
+        try:
+            expiry_dt = datetime.fromisoformat(expiry)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("workflow lease expiry is malformed; failure update is unsafe.") from exc
+        if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+            raise WorkflowConflict("workflow lease expiry must include a timezone; failure update is unsafe.")
+        if expiry_dt <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot fail task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
