@@ -200,7 +200,7 @@ class AgentMemoryStore:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             rows = db.execute("""SELECT * FROM agent_memories
-                WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+                WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
                 AND (expires_at IS NULL OR expires_at>?)
                 AND superseded_by IS NULL
                 AND lifecycle_status NOT IN ('rejected', 'retired')
@@ -236,7 +236,7 @@ class AgentMemoryStore:
         )
         now = datetime.now(timezone.utc).isoformat()
         sql = """SELECT * FROM agent_memories
-            WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+            WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
             AND (expires_at IS NULL OR expires_at>?)
             AND superseded_by IS NULL
             AND lifecycle_status NOT IN ('rejected', 'retired')"""
@@ -444,7 +444,6 @@ class AgentMemoryStore:
         if not self._allowed(actor_id, "agent_memory:renew", agent_id):
             raise PermissionError("memory renewal is not authorized")
         now = datetime.now(timezone.utc)
-        expires = (now + timedelta(days=retention_days)).isoformat()
         event_id = uuid4().hex
         with self._lock, self._connect() as db:
             row = db.execute(
@@ -457,6 +456,20 @@ class AgentMemoryStore:
             if row["lifecycle_status"] in {"rejected", "retired"}:
                 raise ValueError("terminal_memory_status_cannot_be_renewed")
             previous = row["lifecycle_status"]
+            # Renewal extends from the later of now or the existing expiry;
+            # a short renewal interval must never shorten a longer retention.
+            existing_expiry = row["expires_at"]
+            if existing_expiry:
+                try:
+                    expiry_dt = datetime.fromisoformat(existing_expiry)
+                    if expiry_dt.tzinfo is None:
+                        expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    raise ValueError("invalid_existing_memory_expiry")
+                renewal_base = max(now, expiry_dt)
+            else:
+                renewal_base = now
+            expires = (renewal_base + timedelta(days=retention_days)).isoformat()
             db.execute(
                 """UPDATE agent_memories SET expires_at=?,
                    lifecycle_updated_at=?, lifecycle_reason=?
