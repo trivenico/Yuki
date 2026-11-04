@@ -135,6 +135,24 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
                          "task.completed")
 
+    def test_cancellation_and_terminal_event_roll_back_together(self):
+        task = self.create("atomic-cancellation-event")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_cancel_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.cancelled'
+                BEGIN SELECT RAISE(ABORT, 'simulated event journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.cancel(actor_id="alice", task_id=task.task_id,
+                                expected_version=task.version)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "queued")
+        self.assertEqual(current.version, task.version)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created"])
+
     def test_completion_and_terminal_event_roll_back_together(self):
         task = self.create("atomic-completion-event")
         claimed = self.claim(task)
