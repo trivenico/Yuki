@@ -4,6 +4,7 @@ from pathlib import Path
 
 from core.agent_memory import AgentMemoryStore
 from core.semantic_memory import SemanticMemoryRetriever
+from automation.agent_memory_integration import build_memory_aware_handlers
 
 
 class FakeLocalEmbedder:
@@ -97,6 +98,32 @@ class SemanticMemoryRetrieverTests(unittest.TestCase):
         retriever = SemanticMemoryRetriever(self.store, MismatchedEmbedder())
         with self.assertRaisesRegex(ValueError, "dimensions_must_match"):
             retriever.search(actor_id="owner", agent_id="research", query="vehicle")
+
+    def test_semantic_retrieval_can_be_enabled_for_specialist_handlers(self):
+        handler = build_memory_aware_handlers(
+            {"research": lambda prompt: prompt},
+            self.store,
+            actor_id="owner",
+            retriever=self.retriever,
+        )["research"]
+        prompt = handler("automobile")
+        self.assertIn("A vehicle", prompt)
+        self.assertIn("untrusted reference data", prompt)
+        self.assertIn("CURRENT_USER_TASK: automobile", prompt)
+
+    def test_retriever_must_share_the_authorized_memory_store(self):
+        other_store = AgentMemoryStore(
+            str(Path(self.tmp.name) / "other-memory.sqlite3"),
+            authorize=lambda _actor, _action, _agent: True,
+        )
+        other_retriever = SemanticMemoryRetriever(other_store, FakeLocalEmbedder())
+        with self.assertRaisesRegex(ValueError, "same_authorized_memory_store"):
+            build_memory_aware_handlers(
+                {"research": lambda prompt: prompt},
+                self.store,
+                actor_id="owner",
+                retriever=other_retriever,
+            )
 
     def test_empty_scope_returns_no_results(self):
         results = self.retriever.search(
