@@ -12,10 +12,13 @@ SCRIPT = ROOT / "scripts" / "daily_backup.bat"
 
 @unittest.skipUnless(os.name == "nt", "Windows backup integration tests")
 class WindowsBackupScriptTests(unittest.TestCase):
-    def run_backup(self, source, destination):
+    def run_backup(self, source, destination, extra_env=None):
+        env = os.environ.copy()
+        env.pop("YUKI_BACKUP_KEY_FILE", None)
+        env.update(extra_env or {})
         return subprocess.run(
             ["cmd.exe", "/c", str(SCRIPT), str(source), str(destination)],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=90,
+            cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=90,
         )
 
     def test_backup_preserves_hidden_files_and_archive_is_readable(self):
@@ -34,6 +37,27 @@ class WindowsBackupScriptTests(unittest.TestCase):
                 self.assertEqual(archive.testzip(), None)
                 self.assertEqual(archive.read("visible.json"), b'{"ok":true}')
                 self.assertEqual(archive.read(".private-state"), b"hidden")
+
+
+    def test_backup_can_publish_authenticated_encrypted_archive(self):
+        from scripts.backup_crypto import create_key_file, decrypt_file
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "YukiData"
+            source.mkdir()
+            (source / "private.json").write_text('{"secret":"yuki"}', encoding="utf-8")
+            key_dir = root / "Keys"
+            key_dir.mkdir()
+            key = create_key_file(key_dir / "backup.key")
+            destination = root / "Backups"
+            result = self.run_backup(source, destination, {"YUKI_BACKUP_KEY_FILE": str(key)})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            encrypted = next(destination.glob("yuki-data-*.yukibak"))
+            plaintext = root / "verified.zip"
+            decrypt_file(encrypted, plaintext, key)
+            with zipfile.ZipFile(plaintext) as archive:
+                self.assertEqual(archive.read("private.json"), b'{"secret":"yuki"}')
 
     def test_default_source_uses_yuki_home_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -70,11 +94,40 @@ class PosixBackupScriptTests(unittest.TestCase):
 
     def run_backup(self, env, *args):
         merged = os.environ.copy()
+        merged.pop("YUKI_BACKUP_KEY_FILE", None)
         merged.update(env)
         return subprocess.run(
             ["sh", str(self.SCRIPT), *map(str, args)],
             cwd=str(ROOT), env=merged, capture_output=True, text=True, timeout=90,
         )
+
+
+    def test_backup_can_publish_authenticated_encrypted_archive(self):
+        from scripts.backup_crypto import create_key_file, decrypt_file
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "workspace"
+            source.mkdir()
+            (source / "private.json").write_text('{"secret":"yuki"}', encoding="utf-8")
+            key_dir = root / "keys"
+            key_dir.mkdir()
+            key = create_key_file(key_dir / "backup.key")
+            destination = root / "backup"
+            result = self.run_backup({
+                "YUKI_BACKUP_SOURCE": str(source),
+                "YUKI_BACKUP_DIR": str(destination),
+                "YUKI_BACKUP_KEY_FILE": str(key),
+            })
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            encrypted = next(destination.glob("yuki-data-*.yukibak"))
+            plaintext = root / "verified.tar.gz"
+            decrypt_file(encrypted, plaintext, key)
+            listing = subprocess.run(
+                ["tar", "-tzf", str(plaintext)],
+                capture_output=True, text=True, check=True,
+            ).stdout.splitlines()
+            self.assertIn("workspace/private.json", listing)
 
     def test_default_source_tracks_configured_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
