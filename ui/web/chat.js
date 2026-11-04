@@ -100,6 +100,7 @@
     state.version = state.conversations.find((item) => item.conversation_id === id)?.version ?? 0;
     if (!(data.messages || []).length) showWelcome();
     $("messages").scrollTop = $("messages").scrollHeight;
+    if (!$("memory-panel").hidden) await loadMemoryCandidates();
   };
   const newConversation = async () => {
     const data = await api("/v1/conversations", { method: "POST", body: JSON.stringify({ title: "New conversation" }) });
@@ -149,6 +150,7 @@
       }
       if (!assistantText.textContent) await openConversation(state.active);
       await loadConversations();
+      if (!$("memory-panel").hidden) await loadMemoryCandidates();
     } catch (error) {
       if (error.name === "AbortError") toast("Connection closed.");
       else { assistantText.textContent = assistantText.textContent || "I couldn't complete that request."; toast(error.message); }
@@ -240,9 +242,40 @@
     });
     memoryStatus(memories.length + " private note" + (memories.length === 1 ? "" : "s"));
   };
+  const loadMemoryCandidates = async () => {
+    const list = $("memory-candidate-list"); list.replaceChildren();
+    if (!state.active) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "Open a conversation to review memory suggestions.";
+      list.append(empty); return;
+    }
+    const data = await api("/v1/memory/candidates?conversation_id=" + encodeURIComponent(state.active));
+    const candidates = data.candidates || [];
+    if (!candidates.length) {
+      const empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No clear memory suggestions in this conversation yet.";
+      list.append(empty); return;
+    }
+    candidates.forEach((candidate) => {
+      const card = document.createElement("article"); card.className = "memory-card";
+      const content = document.createElement("p"); content.className = "memory-content";
+      content.textContent = candidate.content;
+      const meta = document.createElement("p"); meta.className = "memory-meta";
+      meta.textContent = candidate.category + " · from your message · awaiting your approval";
+      const actions = document.createElement("div"); actions.className = "memory-actions";
+      actions.append(memoryActionButton("Approve and remember", async (item) => {
+        await api("/v1/memory/candidates/" + encodeURIComponent(item.candidate_id) + "/approve", {
+          method: "POST", body: JSON.stringify({ conversation_id: state.active })
+        });
+        await loadMemoryCandidates(); await loadMemory();
+        toast("Reviewed memory saved to Yuki's private memory.");
+      }, candidate));
+      card.append(content, meta, actions); list.append(card);
+    });
+  };
   $("open-memory").addEventListener("click", async () => {
     $("memory-panel").hidden = false;
-    try { await loadMemory(); } catch (error) { memoryStatus(error.message); }
+    try { await loadMemory(); await loadMemoryCandidates(); } catch (error) { memoryStatus(error.message); }
   });
   $("close-memory").addEventListener("click", () => { $("memory-panel").hidden = true; });
   $("memory-form").addEventListener("submit", async (event) => {
