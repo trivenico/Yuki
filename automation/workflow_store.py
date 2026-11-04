@@ -274,6 +274,16 @@ class WorkflowRunStore:
             """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
+            if event_kind is not None:
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                    (run_id,),
+                ).fetchone()[0]
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (run_id, sequence, event_kind, event_actor_id.strip(), event_json, now),
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -393,6 +403,9 @@ class WorkflowRunStore:
         lease_owner: str | None = None,
         lease_seconds: int = 60,
         expected_lease_owner: str | None = None,
+        event_kind: str | None = None,
+        event_actor_id: str | None = None,
+        event_payload: dict[str, Any] | None = None,
     ) -> WorkflowRun:
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
@@ -406,6 +419,20 @@ class WorkflowRunStore:
         ):
             raise ValueError("error_code must be a bounded machine-readable code.")
         result_json = None if result is None else _bounded_json(result, _MAX_RESULT_BYTES, "result")
+        event_json = None
+        if event_kind is not None:
+            from automation.task_runtime import _EVENT_KINDS
+            expected_kind = {"succeeded": "task.completed", "failed": "task.failed",
+                             "cancelled": "task.cancelled", "interrupted": "task.interrupted"}.get(to_state)
+            if event_kind not in _EVENT_KINDS or event_kind != expected_kind:
+                raise ValueError("event_kind must match the terminal workflow state.")
+            if not isinstance(event_actor_id, str) or not event_actor_id.strip() or len(event_actor_id) > 200 or "\\x00" in event_actor_id:
+                raise ValueError("event_actor_id must be non-empty bounded text.")
+            if not isinstance(event_payload, dict):
+                raise ValueError("event_payload must be an object.")
+            event_json = _bounded_json(event_payload, 8 * 1024, "task event payload")
+        elif event_actor_id is not None or event_payload is not None:
+            raise ValueError("event actor and payload require event_kind.")
         if to_state == "running":
             if not isinstance(lease_owner, str) or not lease_owner.strip() or len(lease_owner) > 200:
                 raise ValueError("running state requires a lease_owner.")
