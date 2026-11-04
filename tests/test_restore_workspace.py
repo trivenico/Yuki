@@ -104,7 +104,7 @@ class WorkspaceRestoreTests(unittest.TestCase):
             root = Path(temp)
             archive_path = root / "bad-db.zip"
             with zipfile.ZipFile(archive_path, "w") as archive:
-                archive.writestr("broken.sqlite3", b"SQLite format 3\\x00" + b"corrupt")
+                archive.writestr("broken.sqlite3", b"SQLite format 3\x00" + b"corrupt")
             destination = root / "restored"
             with self.assertRaises(RestoreError):
                 restore_workspace(archive_path, destination)
@@ -125,7 +125,7 @@ class WorkspaceRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             archive_path = root / "truncated.zip"
-            archive_path.write_bytes(b"PK\\x03\\x04broken")
+            archive_path.write_bytes(b"PK\x03\x04broken")
             with self.assertRaises(RestoreError):
                 restore_workspace(archive_path, root / "restored")
 
