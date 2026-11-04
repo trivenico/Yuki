@@ -248,7 +248,8 @@ class ConversationAPITests(unittest.TestCase):
         memory_store = AgentMemoryStore(
             str(Path(self.tempdir.name) / "agent-memory.sqlite"),
             authorize=lambda actor, action, agent: action in {
-                "agent_memory:read", "agent_memory:write"
+                "agent_memory:read", "agent_memory:write", "agent_memory:correct",
+                "agent_memory:review", "agent_memory:retire", "agent_memory:delete"
             },
         )
         self.app.memory_store = memory_store
@@ -271,6 +272,45 @@ class ConversationAPITests(unittest.TestCase):
         second = self.auth.authenticate("second-user", "a-secure-second-password")
         status, data, _ = self.request("GET", "/v1/memory", token=second.token)
         self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+
+        status, data, _ = self.request(
+            "PATCH", f"/v1/memory/{memory_id}",
+            {"status": "approved", "reason": "Confirmed by the owner."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memory"]["lifecycle_status"], "approved")
+        self.assertTrue(data["memory"]["verified"])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/corrections",
+            {"content": "My corrected private deployment preference.",
+             "source": "owner-confirmed", "reason": "The previous note was inaccurate."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        replacement_id = data["memory"]["memory_id"]
+        self.assertNotEqual(replacement_id, memory_id)
+        self.assertEqual(data["memory"]["lifecycle_status"], "approved")
+
+        status, data, _ = self.request(
+            "GET", f"/v1/memory/{memory_id}/history", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["corrections"]), 1)
+        self.assertEqual(data["corrections"][0]["replacement_memory_id"], replacement_id)
+
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in data["memories"]], [replacement_id])
+
+        status, data, _ = self.request(
+            "DELETE", f"/v1/memory/{replacement_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["deleted"])
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
         self.assertEqual(data["memories"], [])
 
         status, data, _ = self.request(
