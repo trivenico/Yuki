@@ -92,12 +92,10 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
-        existing = self.store.list_task_events(run.run_id, limit=1)
-        if not existing:
-            self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
-                                         payload={"name": run.workflow_name, "step_count": len(run.definition)},
-                                         expected_version=run.version)
+        run = self.store.create(
+            idempotency_key=idempotency_key, workflow_name=name, definition=steps,
+            event_actor_id=actor,
+        )
         return self._record(self.store.get(run.run_id))
 
     def list_tasks(
@@ -297,17 +295,12 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            event_actor_id=actor,
+            event_payload={"name": original.workflow_name, "step_count": len(original.definition),
+                           "retry_of": original.run_id, "source_state": original.state,
+                           "source_version": original.version,
+                           "approval_required": self.store._requires_approval(original.definition)},
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=1)
-        if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
         return self._record(self.store.get(retried.run_id))
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
