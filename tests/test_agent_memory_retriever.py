@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 
-from core.memory_retrieval_evaluation import audit_retrieval, ndcg_at_k, recall_at_k, reciprocal_rank
+from core.memory_retrieval_evaluation import audit_retrieval, mean_reciprocal_rank, ndcg_at_k, recall_at_k, reciprocal_rank
 from pathlib import Path
 
 from core.agent_memory import AgentMemoryStore
@@ -259,6 +259,48 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.assertLessEqual(stats["p50_ms"], stats["p95_ms"])
         self.assertNotIn("query", self.retriever.last_retrieval_stats)
         self.assertNotIn("content", self.retriever.last_retrieval_stats)
+
+
+    def test_deterministic_sqlite_scenario_suite_reports_quality_and_zero_leakage(self):
+        deployment = self.add_memory(
+            "A staged deployment uses a gradual rollout.", verified=True
+        )
+        rollback = self.add_memory(
+            "A rollback follows the deployment health check.", verified=True
+        )
+        garden = self.add_memory("The garden needs watering every morning.")
+        self.vectors["garden query"] = [0.0, 1.0, 0.0]
+        scenarios = (
+            ("deployment query", {deployment["memory_id"], rollback["memory_id"]},
+             {deployment["memory_id"]: 3.0, rollback["memory_id"]: 2.0,
+              garden["memory_id"]: 0.0}),
+            ("garden query", {garden["memory_id"]},
+             {garden["memory_id"]: 3.0, deployment["memory_id"]: 0.0,
+              rollback["memory_id"]: 0.0}),
+        )
+        authorized = {deployment["memory_id"], rollback["memory_id"], garden["memory_id"]}
+        evaluated = []
+        for query, relevant, graded in scenarios:
+            with self.subTest(query=query):
+                results = self.retriever.retrieve(
+                    actor_id="owner", agent_id="research", query=query, limit=10,
+                )
+                ranked_ids = [item["memory_id"] for item in results]
+                self.assertGreaterEqual(recall_at_k(ranked_ids, relevant, k=5), 0.5)
+                self.assertGreater(reciprocal_rank(ranked_ids, relevant), 0.0)
+                self.assertGreater(ndcg_at_k(ranked_ids, graded, k=5), 0.0)
+                audit = audit_retrieval(
+                    ranked_ids, authorized_ids=authorized, active_ids=authorized,
+                )
+                self.assertTrue(audit["permission_leakage_free"])
+                self.assertTrue(audit["stale_record_leakage_free"])
+                self.assertEqual(audit["duplicate_count"], 0)
+                stats = self.retriever.last_retrieval_stats
+                self.assertEqual(stats["candidate_rows_scanned"], 3)
+                self.assertEqual(stats["authorized_candidates_ranked"], 3)
+                self.assertGreaterEqual(stats["embedding_calls"], 1)
+                evaluated.append((ranked_ids, relevant))
+        self.assertGreater(mean_reciprocal_rank(evaluated), 0.0)
 
 
 if __name__ == "__main__":
