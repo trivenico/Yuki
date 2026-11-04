@@ -6,6 +6,7 @@ This module never accepts an actor identity from an HTTP payload.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import hashlib
 from typing import Any
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -79,10 +80,13 @@ def create_owner_scoped_agent_loop_factory(
         )
         if not isinstance(preferences, (list, tuple)):
             raise TypeError("owner_preferences_factory_must_return_sequence")
+        # Authentication IDs may be URL-safe tokens beginning with '_' or '-'.
+        # Map them to a stable, opaque, store-safe owner key before memory access.
+        memory_actor_id = "owner-" + hashlib.sha256(owner.encode("utf-8")).hexdigest()
         reasoning_adapter = ReasoningAgentAdapter(
             provider_adapter,
             context_builder,
-            actor_id=owner,
+            actor_id=memory_actor_id,
             agent_id=agent_id.strip(),
             system_policy=system_policy,
             owner_preferences=preferences,
