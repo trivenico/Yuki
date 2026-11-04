@@ -3,8 +3,12 @@ The coordinator gates new claims and tracks work already claimed by workers.
 It does not cancel handlers, mutate durable leases, or replay work.
 """
 from __future__ import annotations
-from threading import Condition
+from threading import Condition, Event, Thread
 from time import monotonic
+
+class WorkerLeaseLost(RuntimeError):
+    """Raised when a worker can no longer prove ownership of its durable lease."""
+
 
 class WorkerShutdownCoordinator:
     """Coordinate bounded shutdown without taking ownership from live workers."""
@@ -109,6 +113,62 @@ class WorkerShutdownCoordinator:
         try:
             return handler(claimed)
         finally:
+            self.finish_task(worker, task_id)
+
+    def execute_claimed_with_heartbeat(
+        self, worker_id: str, claimed: object, handler, renew_lease,
+        *, heartbeat_interval: float = 10.0,
+    ):
+        """Execute cooperatively while renewing a durable lease in a helper thread.
+
+        handler(claimed, lease_lost_event) must periodically inspect the event
+        and stop initiating side effects when it is set. renew_lease must be
+        bounded and return exactly True only after a confirmed renewal.
+        A failed/ambiguous renewal signals lease loss; this method never retries
+        the handler or reports durable task completion.
+        """
+        worker = self._identity(worker_id, "worker_id")
+        task_id = self._identity(getattr(claimed, "run_id", None), "task_id")
+        if not callable(handler) or not callable(renew_lease):
+            raise TypeError("handler and renew_lease must be callable.")
+        if isinstance(heartbeat_interval, bool) or not isinstance(heartbeat_interval, (int, float)):
+            raise ValueError("heartbeat_interval must be a number.")
+        if not 0.01 <= heartbeat_interval <= 300:
+            raise ValueError("heartbeat_interval must be between 0.01 and 300 seconds.")
+        with self._condition:
+            if self._active.get(worker) != task_id:
+                raise RuntimeError("worker does not own this registered claim.")
+
+        stop = Event()
+        lease_lost = Event()
+        heartbeat_errors: list[BaseException] = []
+
+        def heartbeat_loop():
+            while not stop.wait(float(heartbeat_interval)):
+                try:
+                    renewed = renew_lease()
+                    if renewed is not True:
+                        raise WorkerLeaseLost("durable lease renewal was not confirmed.")
+                except BaseException as exc:
+                    heartbeat_errors.append(exc)
+                    lease_lost.set()
+                    return
+
+        heartbeat = Thread(
+            target=heartbeat_loop, name=f"yuki-lease-heartbeat-{worker}", daemon=True,
+        )
+        heartbeat.start()
+        try:
+            result = handler(claimed, lease_lost)
+            if lease_lost.is_set():
+                cause = heartbeat_errors[0] if heartbeat_errors else None
+                raise WorkerLeaseLost(
+                    "worker lease was lost; handler result must not be treated as committed."
+                ) from cause
+            return result
+        finally:
+            stop.set()
+            heartbeat.join()
             self.finish_task(worker, task_id)
 
     def finish_task(self, worker_id: str, task_id: str) -> None:

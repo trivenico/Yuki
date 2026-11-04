@@ -138,6 +138,70 @@ class WorkerShutdownCoordinatorTests(unittest.TestCase):
             )
         self.assertEqual(called, [])
 
+    def test_heartbeat_renews_lease_while_handler_runs(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-heartbeat")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        renewed = threading.Event()
+
+        def renew():
+            renewed.set()
+            return True
+
+        def handler(_task, lease_lost):
+            self.assertFalse(lease_lost.wait(0.08))
+            self.assertTrue(renewed.is_set())
+            return "done"
+
+        result = coordinator.execute_claimed_with_heartbeat(
+            "worker-a", claimed, handler, renew, heartbeat_interval=0.01,
+        )
+        self.assertEqual(result, "done")
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_heartbeat_failure_signals_handler_and_rejects_result(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-lost-lease")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        observed = threading.Event()
+
+        def handler(_task, lease_lost):
+            self.assertTrue(lease_lost.wait(1.0))
+            observed.set()
+            return "must-not-be-accepted"
+
+        with self.assertRaises(WorkerLeaseLost):
+            coordinator.execute_claimed_with_heartbeat(
+                "worker-a", claimed, handler, lambda: False,
+                heartbeat_interval=0.01,
+            )
+        self.assertTrue(observed.is_set())
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_heartbeat_requires_registered_ownership_and_valid_interval(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-not-owned")
+        with self.assertRaises(RuntimeError):
+            coordinator.execute_claimed_with_heartbeat(
+                "worker-a", claimed, lambda *_: None, lambda: True,
+            )
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        with self.assertRaises(ValueError):
+            coordinator.execute_claimed_with_heartbeat(
+                "worker-a", claimed, lambda *_: None, lambda: True,
+                heartbeat_interval=0,
+            )
+        coordinator.finish_task("worker-a", claimed.run_id)
+
     def test_grace_period_is_bounded_and_validated(self):
         coordinator = WorkerShutdownCoordinator()
         for invalid in (-1, 301, True, "1"):
