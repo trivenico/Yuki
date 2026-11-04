@@ -69,7 +69,15 @@ class ReasoningAgentAdapter:
 
     @staticmethod
     def _transcript_chars(messages: Sequence[Mapping[str, str]]) -> int:
-        return sum(len(message["content"]) for message in messages)
+        """Measure the complete canonical JSON message payload, not just text.
+
+        This accounts for role keys, JSON quotes, escaped newlines/quotes, and
+        list/object framing. It is a deterministic character budget, not a
+        tokenizer-derived provider token count.
+        """
+        return len(json.dumps(
+            list(messages), ensure_ascii=False, sort_keys=True,
+        ))
 
     def _enrich(self, messages: Sequence[Mapping[str, str]]) -> list[dict[str, str]]:
         # Reuse the provider adapter's strict schema and aggregate-size checks.
