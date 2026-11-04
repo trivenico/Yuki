@@ -222,6 +222,57 @@ class WorkerShutdownCoordinatorTests(unittest.TestCase):
         self.assertIsInstance(outcomes[0], WorkerLeaseLost)
         self.assertEqual(coordinator.snapshot()["active_workers"], {})
 
+    def test_stuck_heartbeat_times_out_without_releasing_active_ownership(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-stuck-heartbeat")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        renewal_started = threading.Event()
+        release_renewal = threading.Event()
+
+        def renew():
+            renewal_started.set()
+            release_renewal.wait(1.0)
+            return True
+
+        def handler(_task, _lease_lost):
+            self.assertTrue(renewal_started.wait(1.0))
+            return "must-not-be-accepted"
+
+        started = time.monotonic()
+        with self.assertRaises(WorkerLeaseLost):
+            coordinator.execute_claimed_with_heartbeat(
+                "worker-a", claimed, handler, renew,
+                heartbeat_interval=0.01, heartbeat_timeout=0.02,
+            )
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual(
+            coordinator.snapshot()["active_workers"], {"worker-a": "task-stuck-heartbeat"},
+        )
+        release_renewal.set()
+        deadline = time.monotonic() + 1.0
+        while coordinator.snapshot()["active_workers"] and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_heartbeat_timeout_validation(self):
+        from types import SimpleNamespace
+
+        coordinator = WorkerShutdownCoordinator()
+        claimed = SimpleNamespace(run_id="task-heartbeat-timeout-validation")
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", claimed.run_id)
+        for invalid in (0, 61, True, "1"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    coordinator.execute_claimed_with_heartbeat(
+                        "worker-a", claimed, lambda *_: None, lambda: True,
+                        heartbeat_timeout=invalid,
+                    )
+        coordinator.finish_task("worker-a", claimed.run_id)
+
     def test_heartbeat_requires_registered_ownership_and_valid_interval(self):
         from types import SimpleNamespace
 

@@ -117,14 +117,14 @@ class WorkerShutdownCoordinator:
 
     def execute_claimed_with_heartbeat(
         self, worker_id: str, claimed: object, handler, renew_lease,
-        *, heartbeat_interval: float = 10.0,
+        *, heartbeat_interval: float = 10.0, heartbeat_timeout: float = 5.0,
     ):
         """Execute cooperatively while renewing a durable lease in a helper thread.
 
         handler(claimed, lease_lost_event) must periodically inspect the event
         and stop initiating side effects when it is set. renew_lease must be
         bounded and return exactly True only after a confirmed renewal.
-        A failed/ambiguous renewal signals lease loss; this method never retries
+        A renewal exceeding heartbeat_timeout signals lease loss; active ownership stays registered until it settles. A failed/ambiguous renewal signals lease loss; this method never retries
         the handler or reports durable task completion.
         """
         worker = self._identity(worker_id, "worker_id")
@@ -135,6 +135,10 @@ class WorkerShutdownCoordinator:
             raise ValueError("heartbeat_interval must be a number.")
         if not 0.01 <= heartbeat_interval <= 300:
             raise ValueError("heartbeat_interval must be between 0.01 and 300 seconds.")
+        if isinstance(heartbeat_timeout, bool) or not isinstance(heartbeat_timeout, (int, float)):
+            raise ValueError("heartbeat_timeout must be a number.")
+        if not 0.01 <= heartbeat_timeout <= 60:
+            raise ValueError("heartbeat_timeout must be between 0.01 and 60 seconds.")
         with self._condition:
             if self._active.get(worker) != task_id:
                 raise RuntimeError("worker does not own this registered claim.")
@@ -142,17 +146,28 @@ class WorkerShutdownCoordinator:
         stop = Event()
         lease_lost = Event()
         heartbeat_errors: list[BaseException] = []
+        cleanup_lock = Condition()
+        heartbeat_finished = False
+        deferred_cleanup = False
 
         def heartbeat_loop():
-            while not stop.wait(float(heartbeat_interval)):
-                try:
-                    renewed = renew_lease()
-                    if renewed is not True:
-                        raise WorkerLeaseLost("durable lease renewal was not confirmed.")
-                except BaseException as exc:
-                    heartbeat_errors.append(exc)
-                    lease_lost.set()
-                    return
+            nonlocal heartbeat_finished
+            try:
+                while not stop.wait(float(heartbeat_interval)):
+                    try:
+                        renewed = renew_lease()
+                        if renewed is not True:
+                            raise WorkerLeaseLost("durable lease renewal was not confirmed.")
+                    except BaseException as exc:
+                        heartbeat_errors.append(exc)
+                        lease_lost.set()
+                        return
+            finally:
+                with cleanup_lock:
+                    heartbeat_finished = True
+                    cleanup_here = deferred_cleanup
+                if cleanup_here:
+                    self.finish_task(worker, task_id)
 
         heartbeat = Thread(
             target=heartbeat_loop, name=f"yuki-lease-heartbeat-{worker}", daemon=True,
@@ -161,11 +176,20 @@ class WorkerShutdownCoordinator:
         try:
             result = handler(claimed, lease_lost)
         finally:
-            # Stop future heartbeat cycles and wait for an in-flight renewal to
-            # settle before deciding whether the handler result is trustworthy.
+            # Do not block shutdown indefinitely on a stuck database/network
+            # renewal. If it outlives the bound, fail closed and leave active
+            # ownership registered until the callback actually settles.
             stop.set()
-            heartbeat.join()
-            self.finish_task(worker, task_id)
+            heartbeat.join(float(heartbeat_timeout))
+            with cleanup_lock:
+                if heartbeat_finished:
+                    cleanup_here = True
+                else:
+                    deferred_cleanup = True
+                    cleanup_here = False
+                    lease_lost.set()
+            if cleanup_here:
+                self.finish_task(worker, task_id)
 
         if lease_lost.is_set():
             cause = heartbeat_errors[0] if heartbeat_errors else None
