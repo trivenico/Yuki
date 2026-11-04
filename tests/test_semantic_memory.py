@@ -65,11 +65,21 @@ class SemanticMemoryRetrieverTests(unittest.TestCase):
             )
 
     def test_shared_memories_follow_store_scope_rules(self):
-        results = self.retriever.search(
-            actor_id="owner", agent_id="research", query="python",
+        self.store.remember(
+            actor_id="owner", agent_id="other-agent",
+            content="A vehicle fleet uses automobiles.",
+            source="reviewed:shared-vehicle-notes", verified=True, scope="shared",
+        )
+        private_only = self.retriever.search(
+            actor_id="owner", agent_id="research", query="vehicle",
             include_shared=False,
         )
-        self.assertTrue(all(item["agent_id"] == "research" for item in results))
+        with_shared = self.retriever.search(
+            actor_id="owner", agent_id="research", query="vehicle",
+            include_shared=True,
+        )
+        self.assertTrue(all(item["agent_id"] == "research" for item in private_only))
+        self.assertTrue(any(item["agent_id"] == "other-agent" for item in with_shared))
 
     def test_cloud_embedder_is_rejected(self):
         class CloudEmbedder:
