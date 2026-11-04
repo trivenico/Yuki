@@ -30,6 +30,7 @@ else
 fi
 BACKUP_DIR="${2:-${YUKI_BACKUP_DIR:-$REPO_ROOT/BACKUP/YukiData}}"
 RETENTION_DAYS="${YUKI_BACKUP_RETENTION_DAYS:-14}"
+PYTHON_BIN="${YUKI_PYTHON:-}"
 
 case "$RETENTION_DAYS" in
   ''|*[!0-9]*) echo "YUKI_BACKUP_RETENTION_DAYS must be a whole number." >&2; exit 2 ;;
@@ -54,21 +55,38 @@ case "$SOURCE_DIR/" in
   "$BACKUP_DIR/"*) echo "Source must not be inside the backup destination." >&2; exit 2 ;;
 esac
 
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then PYTHON_BIN=python3
+  elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python
+  else echo "Python is required for SQLite-consistent snapshots." >&2; exit 1
+  fi
+fi
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "Configured Python executable was not found: $PYTHON_BIN" >&2
+  exit 1
+fi
+
 STAMP="$(date '+%Y%m%d_%H%M%S')"
 ARCHIVE="$BACKUP_DIR/yuki-data-$STAMP.tar.gz"
 TEMP_ARCHIVE="$ARCHIVE.tmp"
-cleanup() { rm -f "$TEMP_ARCHIVE"; }
+STAGING_ROOT="$(mktemp -d "$BACKUP_DIR/.yuki-stage-XXXXXX")"
+SOURCE_NAME="$(basename -- "$SOURCE_DIR")"
+SNAPSHOT_DIR="$STAGING_ROOT/$SOURCE_NAME"
+cleanup() {
+  rm -f "$TEMP_ARCHIVE"
+  rm -rf "$STAGING_ROOT"
+}
 trap cleanup EXIT HUP INT TERM
 
-PARENT_DIR="$(dirname -- "$SOURCE_DIR")"
-SOURCE_NAME="$(basename -- "$SOURCE_DIR")"
-tar -czf "$TEMP_ARCHIVE" -C "$PARENT_DIR" "$SOURCE_NAME"
+"$PYTHON_BIN" "$SCRIPT_DIR/sqlite_workspace_snapshot.py" "$SOURCE_DIR" "$SNAPSHOT_DIR"
+tar -czf "$TEMP_ARCHIVE" -C "$STAGING_ROOT" "$SOURCE_NAME"
 # Validate archive before publishing it as a completed backup.
 tar -tzf "$TEMP_ARCHIVE" >/dev/null
 mv "$TEMP_ARCHIVE" "$ARCHIVE"
 trap - EXIT HUP INT TERM
+cleanup
 
 find "$BACKUP_DIR" -type f -name 'yuki-data-*.tar.gz' -mtime "+$RETENTION_DAYS" -exec rm -f {} \;
 
 echo "Backup completed: $ARCHIVE"
-echo "Retention: $RETENTION_DAYS days. Keep the drive encrypted and store another copy separately."
+echo "SQLite databases were snapshotted with the SQLite backup API. Archives are not encrypted."
