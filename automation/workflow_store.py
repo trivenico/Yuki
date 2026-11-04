@@ -392,6 +392,7 @@ class WorkflowRunStore:
         error_code: str | None = None,
         lease_owner: str | None = None,
         lease_seconds: int = 60,
+        expected_lease_owner: str | None = None,
     ) -> WorkflowRun:
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
@@ -411,10 +412,17 @@ class WorkflowRunStore:
         else:
             lease_owner = None
 
+        if expected_lease_owner is not None and (
+            not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
+            or len(expected_lease_owner) > 200 or "\\x00" in expected_lease_owner
+            or to_state not in {"succeeded", "failed"}
+        ):
+            raise ValueError("expected_lease_owner is valid only for worker completion or failure.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat() if to_state == "running" else None
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise KeyError("workflow run not found.")
@@ -430,15 +438,27 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
+            if expected_lease_owner is not None and (
+                current.state != "running" or current.lease_owner != expected_lease_owner
+                or not current.lease_expires_at or current.lease_expires_at < now
+            ):
+                raise WorkflowConflict("only the current worker with an unexpired lease may finish this task.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
+            lease_guard = expected_lease_owner is None or (
+                current.state == "running" and current.lease_owner == expected_lease_owner
+                and current.lease_expires_at is not None and current.lease_expires_at >= now
+            )
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
                     updated_at=?, version=version+1, attempts=?, lease_owner=?,
                     lease_expires_at=?
-                WHERE run_id=? AND version=?
+                WHERE run_id=? AND version=? AND (?=0 OR (
+                    state='running' AND lease_owner=? AND lease_expires_at>=?
+                ))
             """, (
                 to_state, result_json, error_code, now, attempts, lease_owner,
-                lease_expires, run_id, expected_version
+                lease_expires, run_id, expected_version, int(expected_lease_owner is None),
+                expected_lease_owner, now
             ))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
