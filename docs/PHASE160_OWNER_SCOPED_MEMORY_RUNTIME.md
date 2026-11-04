@@ -46,3 +46,10 @@ Owner-entered notes are unverified and are presented to the reasoner as untruste
 The authenticated chat API now provides `GET /v1/memory/candidates?conversation_id=...` and `POST /v1/memory/candidates/{candidate_id}/approve`. Candidate extraction is deterministic and bounded to the latest 20 messages. It considers only explicit user-authored preference/context statements, excludes obvious credential/payment-secret content, preserves source message provenance, and does not write memory.
 
 Approval re-reads the conversation through the authenticated conversation store, recomputes the candidate, and requires the same source-bound candidate ID. The memory store promotes it transactionally with a unique owner/agent/candidate key, so repeated approval is idempotent. The promotion ledger survives deletion, preventing a previously deleted candidate from being silently re-created. Only this owner-approved promotion marks the record verified. This is a deterministic candidate workflow, not autonomous truth verification or model-weight training. The web Memory panel surfaces suggestions from the active conversation and requires an explicit approval click.
+
+
+## Owner profile preferences
+
+A separate `OwnerProfileStore` persists a small allowlist of typed interaction preferences: response style and tone, preferred language and code language, measurement system, date format, code-comment verbosity, and explanation level. It deliberately rejects arbitrary keys and values, so profile data cannot become a prompt or tool instruction. It excludes sensitive personal data.
+
+The authenticated API exposes `GET /v1/profile/preferences`, `PUT /v1/profile/preferences/{key}`, and `DELETE /v1/profile/preferences/{key}`. Identity comes only from the authenticated session. Every store operation checks a separate owner-profile permission; values are owner-scoped, versioned, and support optimistic concurrency to prevent lost updates. Explicit source labels and update events provide basic provenance. Profile preferences are separate from verified memories and do not grant permissions.
