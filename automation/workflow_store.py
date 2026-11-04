@@ -315,6 +315,97 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def transition_step(
+        self, run_id: str, step_id: str, *, worker_id: str, actor_id: str,
+        expected_step_version: int, to_status: str,
+    ) -> WorkflowStepRecord:
+        """CAS a step transition while holding an unexpired parent worker lease.
+
+        Step state and its task journal event are committed in one transaction.
+        This method never executes a step or retries external side effects.
+        """
+        transitions = {
+            "pending": frozenset({"running"}),
+            "running": frozenset({"succeeded", "failed", "needs_reconciliation"}),
+            "succeeded": frozenset(),
+            "failed": frozenset(),
+            "needs_reconciliation": frozenset(),
+        }
+        event_kinds = {
+            "running": "task.step.started",
+            "succeeded": "task.step.succeeded",
+            "failed": "task.step.failed",
+            "needs_reconciliation": "task.step.needs_reconciliation",
+        }
+        for value, label in ((run_id, "run_id"), (step_id, "step_id"),
+                             (worker_id, "worker_id"), (actor_id, "actor_id")):
+            if not isinstance(value, str) or not value.strip() or len(value) > 200 or "\\x00" in value:
+                raise ValueError(f"{label} must be non-empty bounded text.")
+        if type(expected_step_version) is not int or expected_step_version < 0:
+            raise ValueError("expected_step_version must be a non-negative integer.")
+        if to_status not in event_kinds:
+            raise ValueError("Unknown workflow step status.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute(
+                "SELECT state, lease_owner, lease_expires_at FROM workflow_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if parent is None:
+                raise KeyError("workflow run not found.")
+            if (parent["state"] != "running" or parent["lease_owner"] != worker_id
+                    or not parent["lease_expires_at"]
+                    or datetime.fromisoformat(parent["lease_expires_at"]) < now_dt):
+                raise WorkflowConflict("step update requires the current worker's unexpired task lease.")
+            row = db.execute(
+                "SELECT * FROM workflow_steps WHERE step_id=? AND run_id=?",
+                (step_id, run_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow step not found.")
+            if row["version"] != expected_step_version:
+                raise WorkflowConflict("workflow step version changed; reload before updating.")
+            if to_status not in transitions[row["status"]]:
+                raise WorkflowTransitionError(
+                    f"step transition {row['status']!r} -> {to_status!r} is not allowed."
+                )
+            attempts = row["attempts"] + (1 if to_status == "running" else 0)
+            updated = db.execute("""
+                UPDATE workflow_steps SET status=?, attempts=?, version=version+1, updated_at=?
+                WHERE step_id=? AND run_id=? AND version=?
+            """, (to_status, attempts, now, step_id, run_id, expected_step_version))
+            if updated.rowcount != 1:
+                raise WorkflowConflict("workflow step changed concurrently.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            payload = _bounded_json({
+                "step_id": step_id, "step_index": row["step_index"],
+                "step_name": row["name"], "status": to_status,
+                "step_version": expected_step_version + 1,
+                "worker_id": worker_id,
+            }, 8 * 1024, "task event payload")
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, sequence, event_kinds[to_status], actor_id.strip(), payload, now),
+            )
+            updated_row = db.execute(
+                "SELECT * FROM workflow_steps WHERE step_id=?", (step_id,)
+            ).fetchone()
+            return WorkflowStepRecord(
+                step_id=updated_row["step_id"], run_id=updated_row["run_id"],
+                step_index=updated_row["step_index"], name=updated_row["name"],
+                action=updated_row["action"],
+                requires_approval=bool(updated_row["requires_approval"]),
+                input_digest=updated_row["input_digest"], status=updated_row["status"],
+                attempts=updated_row["attempts"], version=updated_row["version"],
+                created_at=updated_row["created_at"], updated_at=updated_row["updated_at"],
+            )
+
     def list_steps(self, run_id: str) -> list[WorkflowStepRecord]:
         """Return ordered step metadata without exposing stored arguments or outputs."""
         if not isinstance(run_id, str) or not run_id:

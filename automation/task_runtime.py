@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.claimed", "task.lease_renewed", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.claimed", "task.lease_renewed", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.step.started", "task.step.succeeded", "task.step.failed", "task.step.needs_reconciliation"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -161,6 +161,37 @@ class TaskRuntime:
             raise PermissionError("task event read is not authorized.")
         return self.store.list_task_events(
             task_id, after_sequence=after_sequence, limit=limit,
+        )
+
+    def list_steps(self, *, actor_id: str, task_id: str):
+        """Read ordered, argument-redacted step metadata under task:read."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:read", task_id):
+            raise PermissionError("task step read is not authorized.")
+        if self.store.get(task_id) is None:
+            raise KeyError("task not found.")
+        return self.store.list_steps(task_id)
+
+    def transition_step(
+        self, *, actor_id: str, task_id: str, step_id: str, worker_id: str,
+        expected_step_version: int, to_status: str,
+    ):
+        """Authorize and atomically journal one worker-owned step transition."""
+        actor = self._actor(actor_id)
+        permissions = {
+            "running": "task:step:start",
+            "succeeded": "task:step:finish",
+            "failed": "task:step:finish",
+            "needs_reconciliation": "task:step:reconcile",
+        }
+        permission = permissions.get(to_status)
+        if permission is None:
+            raise ValueError("Unknown workflow step status.")
+        if not self._allowed(actor, permission, task_id):
+            raise PermissionError("workflow step transition is not authorized.")
+        return self.store.transition_step(
+            task_id, step_id, worker_id=worker_id, actor_id=actor,
+            expected_step_version=expected_step_version, to_status=to_status,
         )
 
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
