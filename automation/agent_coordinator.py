@@ -414,22 +414,20 @@ class SpecialistAgentCoordinator:
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
-        # Use one registry snapshot for the whole plan to avoid mixed-version routing.
-        self._refresh_agent_registry()
-        assignments = {item.subtask_id: self._route(item) for item in items}
-        canonical = [
+        # Hash the caller's request, not today's routing decision. A retry must
+        # return its original persisted plan even if a specialist was disabled or
+        # the registry changed after the first successful submission.
+        canonical_request = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
              "required_permissions": sorted(i.required_permissions),
-             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
-             "agent_id": assignments[i.subtask_id].agent_id,
-             "action": assignments[i.subtask_id].action}
+             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
-        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(canonical_request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
         owner_id = actor_id.strip()
@@ -451,6 +449,10 @@ class SpecialistAgentCoordinator:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
+
+            # Route only after idempotency lookup, from one fresh registry snapshot.
+            self._refresh_agent_registry()
+            assignments = {item.subtask_id: self._route(item) for item in items}
             db.execute(
                 "INSERT INTO agent_plans(plan_id, idempotency_key, request_key, owner_id, request_digest, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
