@@ -242,6 +242,24 @@
     });
     memoryStatus(memories.length + " private note" + (memories.length === 1 ? "" : "s"));
   };
+  const profilePreferenceKeys = ["response_style", "response_tone", "explanation_level"];
+  let profileVersions = {};
+  const profileStatus = (message) => { $("profile-status").textContent = message; };
+  const loadProfilePreferences = async () => {
+    const data = await api("/v1/profile/preferences");
+    profileVersions = {};
+    profilePreferenceKeys.forEach((key) => {
+      const item = (data.preferences || {})[key];
+      const control = $("profile-" + key.replaceAll("_", "-"));
+      if (item) {
+        profileVersions[key] = item.version;
+        control.value = item.value;
+      } else {
+        delete profileVersions[key];
+      }
+    });
+    profileStatus("Preferences are private to this account.");
+  };
   const loadMemoryCandidates = async () => {
     const list = $("memory-candidate-list"); list.replaceChildren();
     if (!state.active) {
@@ -276,7 +294,30 @@
   };
   $("open-memory").addEventListener("click", async () => {
     $("memory-panel").hidden = false;
-    try { await loadMemory(); await loadMemoryCandidates(); } catch (error) { memoryStatus(error.message); }
+    try { await loadMemory(); await loadMemoryCandidates(); await loadProfilePreferences(); } catch (error) { memoryStatus(error.message); profileStatus(error.message); }
+  });
+  $("save-profile").addEventListener("click", async () => {
+    const button = $("save-profile"); button.disabled = true;
+    try {
+      for (const key of profilePreferenceKeys) {
+        const control = $("profile-" + key.replaceAll("_", "-"));
+        const result = await api("/v1/profile/preferences/" + key, {
+          method: "PUT",
+          body: JSON.stringify({
+            value: control.value, source: "owner_web_preference",
+            expected_version: profileVersions[key] || 0
+          })
+        });
+        profileVersions[key] = result.preference.version;
+      }
+      profileStatus("Preferences saved.");
+      toast("Yuki's interaction preferences updated.");
+    } catch (error) {
+      profileStatus(error.message);
+      if (error.message === "profile_version_conflict") {
+        try { await loadProfilePreferences(); } catch (_) {}
+      }
+    } finally { button.disabled = false; }
   });
   $("close-memory").addEventListener("click", () => { $("memory-panel").hidden = true; });
   $("memory-form").addEventListener("submit", async (event) => {
