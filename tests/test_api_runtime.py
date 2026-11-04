@@ -93,5 +93,38 @@ class ConversationRuntimeTests(unittest.TestCase):
                 )
 
 
+
+    def test_runtime_injects_owner_scoped_agent_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            seen = []
+            def factory(owner_id):
+                seen.append(owner_id)
+                return _loop()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_factory=factory,
+            )
+            conversation = runtime.app.conversations.create(owner_id="runtime-owner")
+            result = runtime.app.conversations.reply(
+                owner_id="runtime-owner",
+                conversation_id=conversation["conversation_id"],
+                user_text="Hello", request_id="runtime-request",
+                expected_version=0, tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(seen, ["runtime-owner"])
+            runtime.close()
+
+    def test_runtime_rejects_non_callable_agent_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "agent_loop_factory"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), agent_loop_factory=object(),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
