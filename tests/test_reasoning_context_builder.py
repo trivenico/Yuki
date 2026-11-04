@@ -95,6 +95,45 @@ class ReasoningContextBuilderTests(unittest.TestCase):
         self.assertEqual(len(evidence), 1)
         self.assertEqual(len({item["memory_id"] for item in evidence}), 1)
 
+
+    def test_single_hop_rejects_mismatched_actor_or_agent_scope(self):
+        retrieve = self.builder.knowledge.retrieve
+        def mismatched_actor(**kwargs):
+            packet = retrieve(**kwargs)
+            packet["actor_id"] = "another-owner"
+            return packet
+        self.builder.knowledge.retrieve = mismatched_actor
+        with self.assertRaisesRegex(PermissionError, "knowledge_scope_mismatch"):
+            self.build()
+
+    def test_single_hop_rejects_malformed_evidence_container(self):
+        retrieve = self.builder.knowledge.retrieve
+        def malformed_packet(**kwargs):
+            packet = retrieve(**kwargs)
+            packet["evidence"] = {"not": "a list"}
+            return packet
+        self.builder.knowledge.retrieve = malformed_packet
+        with self.assertRaisesRegex(ValueError, "knowledge_evidence_must_be_a_list"):
+            self.build()
+
+    def test_only_active_lifecycle_evidence_is_eligible(self):
+        retrieve = self.builder.knowledge.retrieve
+        def with_inactive_records(**kwargs):
+            packet = retrieve(**kwargs)
+            original = dict(packet["evidence"][0])
+            for status in ("pending", "archived", "expired", "rejected", "retired"):
+                packet["evidence"].append({
+                    **original,
+                    "memory_id": status,
+                    "content": "Inactive record " + status,
+                    "lifecycle_status": status,
+                })
+            return packet
+        self.builder.knowledge.retrieve = with_inactive_records
+        context = self.build()
+        ids = {item["memory_id"] for item in context["evidence"]["verified"]}
+        self.assertEqual(len(ids), 1)
+
     def test_multi_hop_retrieval_is_opt_in_and_reports_lineage(self):
         context = self.build(multi_hop=True)
         self.assertEqual(context["retrieval"]["mode"], "multi_hop")
