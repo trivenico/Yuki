@@ -1,9 +1,14 @@
 @echo off
 setlocal EnableExtensions
-rem Timestamped backup of Yuki private data. No software is installed.
+rem Timestamped backup of Yuki private workspace. No software is installed.
 rem Usage: scripts\daily_backup.bat [source_dir] [backup_dir]
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "REPO_ROOT=%%~fI"
+if not "%YUKI_HOME%"=="" (
+  set "DATA_ROOT=%YUKI_HOME%"
+) else (
+  set "DATA_ROOT=%REPO_ROOT%"
+)
 if not "%~1"=="" (
   set "SOURCE_DIR=%~1"
 ) else if not "%YUKI_BACKUP_SOURCE%"=="" (
@@ -11,17 +16,13 @@ if not "%~1"=="" (
 ) else if not "%YUKI_WORKSPACE%"=="" (
   if "%YUKI_WORKSPACE:~1,1%"==":" (
     set "SOURCE_DIR=%YUKI_WORKSPACE%"
-  ) else if "%YUKI_WORKSPACE:~0,2%"=="\\" (
+  ) else if "%YUKI_WORKSPACE:~0,1%"=="\" (
     set "SOURCE_DIR=%YUKI_WORKSPACE%"
-  ) else if not "%YUKI_HOME%"=="" (
-    set "SOURCE_DIR=%YUKI_HOME%\%YUKI_WORKSPACE%"
   ) else (
-    set "SOURCE_DIR=%REPO_ROOT%\%YUKI_WORKSPACE%"
+    set "SOURCE_DIR=%DATA_ROOT%\%YUKI_WORKSPACE%"
   )
-) else if not "%YUKI_HOME%"=="" (
-  set "SOURCE_DIR=%YUKI_HOME%"
 ) else (
-  set "SOURCE_DIR=%REPO_ROOT%\yuki_workspace"
+  set "SOURCE_DIR=%DATA_ROOT%\yuki_workspace"
 )
 if not "%~2"=="" (
   set "BACKUP_DIR=%~2"
