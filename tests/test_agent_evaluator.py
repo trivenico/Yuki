@@ -58,6 +58,13 @@ class AgentEvaluatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.evaluate(evidence_refs=[" "])
 
+
+    def test_urlsafe_workflow_ids_may_begin_with_underscore_or_hyphen(self):
+        for task_id in ("_valid-url-safe-id", "-valid-url-safe-id"):
+            report = self.evaluate(task_id=task_id)
+            self.assertEqual(report.task_id, task_id)
+            self.assertEqual(report.evaluation_id, "eval-" + task_id)
+
     def test_rubric_weights_sum_to_one(self):
         self.assertAlmostEqual(sum(self.evaluator.rubric()["weights"].values()), 1.0)
 
