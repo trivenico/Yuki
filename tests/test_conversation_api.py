@@ -314,6 +314,28 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["memories"], [])
 
         status, data, _ = self.request(
+            "POST", "/v1/memory", {"content": "An outdated preference."}, self.issued.token,
+        )
+        rejected_id = data["memory"]["memory_id"]
+        status, data, _ = self.request(
+            "PATCH", f"/v1/memory/{rejected_id}",
+            {"status": "rejected", "reason": "Owner confirmed this is inaccurate."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(data["memories"], [])
+        status, data, _ = self.request(
+            "GET", "/v1/memory?include_inactive=true", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"][0]["lifecycle_status"], "rejected")
+        status, data, _ = self.request(
+            "DELETE", f"/v1/memory/{rejected_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+
+        status, data, _ = self.request(
             "POST", "/v1/memory",
             {"content": "Try to self verify", "verified": True},
             self.issued.token,
