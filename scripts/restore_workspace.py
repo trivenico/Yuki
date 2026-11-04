@@ -67,6 +67,8 @@ def _register_path(
         previous = entries.get(key)
         if previous and previous[1] != "dir":
             raise RestoreError("archive_path_type_collision")
+        if previous and previous[0] != parent:
+            raise RestoreError("archive_contains_case_colliding_path")
         if not previous:
             entries[key] = (parent, "dir", False)
 
