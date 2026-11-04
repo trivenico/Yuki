@@ -12,6 +12,8 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
+from automation.agent_memory_integration import build_memory_aware_handlers
+from core.agent_memory import AgentMemoryStore
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -154,6 +156,8 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        memory_store: AgentMemoryStore | None = None,
+        memory_actor_id: str | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -170,10 +174,22 @@ class SpecialistTaskWorker:
             if not callable(handler):
                 raise TypeError("each specialist handler must be callable.")
             validated[agent_id] = handler
+        if (memory_store is None) != (memory_actor_id is None):
+            raise ValueError("memory_store and memory_actor_id must be supplied together.")
+        if memory_store is not None:
+            if not isinstance(memory_store, AgentMemoryStore):
+                raise TypeError("memory_store must be an AgentMemoryStore.")
+            if not isinstance(memory_actor_id, str) or not memory_actor_id.strip() or len(memory_actor_id) > 200:
+                raise ValueError("memory_actor_id must be bounded non-empty text.")
+            validated = build_memory_aware_handlers(
+                validated, memory_store, actor_id=memory_actor_id.strip(),
+            )
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self.memory_store = memory_store
+        self.memory_actor_id = memory_actor_id.strip() if isinstance(memory_actor_id, str) else None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -202,6 +218,7 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                memory_store=self.memory_store, memory_actor_id=self.memory_actor_id,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
