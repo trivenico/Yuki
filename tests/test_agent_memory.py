@@ -51,4 +51,42 @@ class AgentMemoryTests(unittest.TestCase):
   with self.assertRaises(ValueError):
    self.store.remember(actor_id="owner",agent_id="research",content="valid",source="test",confidence=True)
 
+ def test_owner_correction_preserves_history_and_hides_superseded_claim(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="Timeout is 30 seconds",source="initial")
+  self.grants["owner"].add("agent_memory:correct")
+  new=self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+   content="Timeout is 60 seconds",source="verified runbook",reason="Owner verified updated configuration")
+  self.assertNotEqual(old["memory_id"],new["memory_id"])
+  self.assertTrue(new["verified"])
+  self.assertEqual(new["source"],"verified runbook")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research")[0]["memory_id"],new["memory_id"])
+  history=self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])
+  self.assertEqual(len(history),1)
+  self.assertEqual(history[0]["previous_memory_id"],old["memory_id"])
+  self.assertEqual(history[0]["replacement_memory_id"],new["memory_id"])
+  self.assertEqual(history[0]["reason"],"Owner verified updated configuration")
+
+ def test_correction_requires_dedicated_permission(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="old",source="initial")
+  with self.assertRaises(PermissionError):
+   self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+    content="new",source="review",reason="corrected")
+
+ def test_correction_is_atomic_and_only_active_claim_can_be_replaced(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="old",source="initial")
+  self.grants["owner"].add("agent_memory:correct")
+  new=self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+   content="new",source="review",reason="correction")
+  with self.assertRaises(ValueError):
+   self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
+    content="third",source="review",reason="duplicate")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research")[0]["memory_id"],new["memory_id"])
+  self.assertEqual(len(self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])),1)
+
+ def test_correction_history_requires_owner_correction_permission(self):
+  old=self.store.remember(actor_id="owner",agent_id="research",content="old",source="initial")
+  with self.assertRaises(PermissionError):
+   self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])
+
+
 if __name__=="__main__": unittest.main()
