@@ -286,11 +286,11 @@ class AgentMemoryStore:
         self._validate_scope(actor_id, agent_id)
         if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
             raise ValueError("invalid_memory_id")
-        if not isinstance(content, str) or not content.strip() or len(content) > _MAX_TEXT or "\\x00" in content:
+        if not isinstance(content, str) or not content.strip() or len(content) > _MAX_TEXT or "\x00" in content:
             raise ValueError("invalid_memory_content")
         if not isinstance(source, str) or not source.strip() or len(source) > _MAX_SOURCE:
             raise ValueError("memory_source_required")
-        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\\x00" in reason:
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\x00" in reason:
             raise ValueError("correction_reason_required")
         if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
             raise ValueError("invalid_memory_confidence")
@@ -385,7 +385,7 @@ class AgentMemoryStore:
             raise ValueError("invalid_memory_id")
         if status not in {"approved", "rejected", "retired"}:
             raise ValueError("invalid_lifecycle_status")
-        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\\x00" in reason:
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\x00" in reason:
             raise ValueError("lifecycle_reason_required")
         permission = "agent_memory:retire" if status == "retired" else "agent_memory:review"
         if not self._allowed(actor_id, permission, agent_id):
@@ -431,7 +431,7 @@ class AgentMemoryStore:
             raise ValueError("invalid_memory_id")
         if type(retention_days) is not int or not 1 <= retention_days <= 3650:
             raise ValueError("retention_days_must_be_1_to_3650")
-        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\\x00" in reason:
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000 or "\x00" in reason:
             raise ValueError("renewal_reason_required")
         if not self._allowed(actor_id, "agent_memory:renew", agent_id):
             raise PermissionError("memory renewal is not authorized")
