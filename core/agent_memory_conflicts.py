@@ -34,6 +34,11 @@ _MEASUREMENT = re.compile(
     re.IGNORECASE,
 )
 _TOKEN = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+_DATE = re.compile(r"\\b(?:20\\d{2}-\\d{2}-\\d{2}|20\\d{2}/\\d{1,2}/\\d{1,2}|\\d{1,2}/\\d{1,2}/20\\d{2})\\b")
+_CONTEXT = frozenset({
+    "local", "remote", "cloud", "production", "prod", "staging", "stage",
+    "development", "dev", "test", "testing", "sandbox", "preview",
+})
 
 
 class MemoryConflictDetector:
@@ -68,6 +73,16 @@ class MemoryConflictDetector:
         intersection = left_core & right_core
         union = left_core | right_core
         overlap = len(intersection) / len(union)
+        left_dates = set(_DATE.findall(left["content"]))
+        right_dates = set(_DATE.findall(right["content"]))
+        left_context = left_tokens & _CONTEXT
+        right_context = right_tokens & _CONTEXT
+        # Claims explicitly scoped to disjoint dates or environments are not
+        # treated as contradictions by this lexical candidate generator.
+        if (left_dates and right_dates and left_dates.isdisjoint(right_dates)):
+            return None
+        if (left_context and right_context and left_context.isdisjoint(right_context)):
+            return None
         explicit_opposites = cls._opposite_values(left_tokens, right_tokens)
         opposite_negation = left_negated != right_negated
         left_measurements = {
@@ -124,6 +139,10 @@ class MemoryConflictDetector:
                 "opposing_negation": opposite_negation,
                 "opposite_state_terms": explicit_opposites,
                 "numeric_measurement_conflict": numeric_conflict,
+                "left_dates": sorted(left_dates),
+                "right_dates": sorted(right_dates),
+                "left_context": sorted(left_context),
+                "right_context": sorted(right_context),
                 "left_measurements": sorted([list(item) for item in left_measurements]),
                 "right_measurements": sorted([list(item) for item in right_measurements]),
             },
