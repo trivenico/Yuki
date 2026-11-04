@@ -156,6 +156,67 @@ class YukiConversationAPI:
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
                 })
 
+            memory_item = re.fullmatch(r"/v1/memory/([a-f0-9]{32})(?:/(history|corrections))?", path)
+            if memory_item:
+                if self.memory_store is None:
+                    return await self._respond(send, 503, {"error": "memory_unavailable"})
+                actor_id = memory_actor_id_for_owner(user.user_id)
+                memory_id, suffix = memory_item.group(1), memory_item.group(2)
+                if method == "GET" and suffix == "history":
+                    history = await asyncio.to_thread(
+                        self.memory_store.lifecycle_history,
+                        actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
+                    )
+                    corrections = await asyncio.to_thread(
+                        self.memory_store.correction_history,
+                        actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
+                    )
+                    return await self._respond(send, 200, {
+                        "lifecycle_events": history, "corrections": corrections,
+                    })
+                if method == "PATCH" and suffix is None:
+                    payload = await self._body(receive)
+                    if set(payload) != {"status", "reason"} or payload["status"] not in {
+                        "approved", "rejected", "retired"
+                    } or not isinstance(payload["reason"], str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    updated = await asyncio.to_thread(
+                        self.memory_store.transition_lifecycle,
+                        actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
+                        status=payload["status"], reason=payload["reason"],
+                    )
+                    return await self._respond(send, 200, {"memory": {
+                        "memory_id": updated["memory_id"],
+                        "lifecycle_status": updated["lifecycle_status"],
+                        "verified": updated["verified"],
+                        "lifecycle_updated_at": updated["lifecycle_updated_at"],
+                    }})
+                if method == "POST" and suffix == "corrections":
+                    payload = await self._body(receive)
+                    if set(payload) != {"content", "source", "reason"} or not all(
+                        isinstance(payload[key], str) for key in ("content", "source", "reason")
+                    ):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    corrected = await asyncio.to_thread(
+                        self.memory_store.correct,
+                        actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
+                        content=payload["content"], source=payload["source"],
+                        reason=payload["reason"],
+                    )
+                    return await self._respond(send, 201, {"memory": {
+                        "memory_id": corrected["memory_id"],
+                        "content": corrected["content"],
+                        "verified": corrected["verified"],
+                        "lifecycle_status": corrected["lifecycle_status"],
+                    }})
+                if method == "DELETE" and suffix is None:
+                    deleted = await asyncio.to_thread(
+                        self.memory_store.delete,
+                        actor_id=actor_id, agent_id="assistant", memory_id=memory_id,
+                    )
+                    return await self._respond(send, 200 if deleted else 404, {"deleted": deleted})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
             if path == "/v1/memory":
                 if self.memory_store is None:
                     return await self._respond(send, 503, {"error": "memory_unavailable"})
@@ -361,6 +422,8 @@ class YukiConversationAPI:
             return await self._respond(send, 404, {"error": "not_found"})
         except ConversationConflict:
             return await self._respond(send, 409, {"error": "conversation_conflict"})
+        except PermissionError:
+            return await self._respond(send, 403, {"error": "memory_action_not_authorized"})
         except (ValueError, ConversationError):
             return await self._respond(send, 400, {"error": "invalid_request"})
         except Exception:
