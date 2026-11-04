@@ -355,9 +355,22 @@ class WorkflowRunStore:
             ).fetchone()
             if parent is None:
                 raise KeyError("workflow run not found.")
-            if (parent["state"] != "running" or parent["lease_owner"] != worker_id
-                    or not parent["lease_expires_at"]
-                    or datetime.fromisoformat(parent["lease_expires_at"]) < now_dt):
+            if parent["state"] != "running" or parent["lease_owner"] != worker_id:
+                raise WorkflowConflict("step update requires the current worker's unexpired task lease.")
+            expiry = parent["lease_expires_at"]
+            if not expiry:
+                raise WorkflowConflict("step update requires the current worker's unexpired task lease.")
+            try:
+                expiry_dt = datetime.fromisoformat(expiry)
+            except (TypeError, ValueError) as exc:
+                raise WorkflowConflict(
+                    "workflow worker lease expiry is malformed; manual inspection is required."
+                ) from exc
+            if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+                raise WorkflowConflict(
+                    "workflow worker lease expiry must include a timezone; manual inspection is required."
+                )
+            if expiry_dt <= now_dt:
                 raise WorkflowConflict("step update requires the current worker's unexpired task lease.")
             row = db.execute(
                 "SELECT * FROM workflow_steps WHERE step_id=? AND run_id=?",

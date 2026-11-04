@@ -342,6 +342,25 @@ class TaskRuntimeTests(unittest.TestCase):
                 worker_id="worker-a", expected_step_version=started.version, to_status="succeeded",
             )
 
+    def test_step_transition_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for expiry in ("not-a-timestamp", "2030-01-01T00:00:00"):
+            with self.subTest(expiry=expiry):
+                task = self.create("invalid-step-lease-" + str(len(expiry)))
+                self.claim(task)
+                step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+                with self.store._connect() as db:
+                    db.execute(
+                        "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                        (expiry, task.task_id),
+                    )
+                with self.assertRaises(WorkflowConflict):
+                    self.runtime.transition_step(
+                        actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                        worker_id="worker-a", expected_step_version=0, to_status="running",
+                    )
+                current = self.store.list_steps(task.task_id)[0]
+                self.assertEqual((current.status, current.version), ("pending", 0))
+
     def test_step_transition_rejects_wrong_worker_and_missing_permission(self):
         task = self.create("step-worker-guard")
         self.claim(task)
