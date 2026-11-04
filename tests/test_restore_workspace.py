@@ -170,6 +170,19 @@ class WorkspaceRestoreTests(unittest.TestCase):
             with self.assertRaises(RestoreError):
                 restore_workspace(archive_path, root / "restored")
 
+    def test_preserves_single_nested_directory_in_windows_zip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive_path = root / "single-folder.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("only-folder/inside.txt", "keep folder")
+            destination = root / "restored"
+            restore_workspace(archive_path, destination)
+            self.assertEqual(
+                (destination / "only-folder" / "inside.txt").read_text(encoding="utf-8"),
+                "keep folder",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
