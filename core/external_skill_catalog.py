@@ -245,5 +245,8 @@ class ExternalSkillCatalog:
 
     @staticmethod
     def _audit(record, action, actor):
-        record.setdefault("audit", []).append({"action": action, "actor": actor, "at": _now()})
+        events = record.setdefault("audit", [])
+        if not isinstance(events, list) or len(events) >= 1000:
+            raise RuntimeError("skill_audit_history_limit_reached")
+        events.append({"action": action, "actor": actor, "at": _now()})
         record["updated_at"] = _now()
