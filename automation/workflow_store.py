@@ -406,6 +406,76 @@ class WorkflowRunStore:
                 created_at=updated_row["created_at"], updated_at=updated_row["updated_at"],
             )
 
+    def recover_expired_run(self, run_id: str, *, actor_id: str) -> WorkflowRun:
+        """Interrupt an expired run and quarantine in-flight steps atomically.
+
+        This is an operator recovery action, not a retry. No handler is invoked
+        and no side effect is replayed.
+        """
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 200 or "\x00" in run_id:
+            raise ValueError("run_id must be non-empty bounded text.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            if parent is None:
+                raise KeyError("workflow run not found.")
+            if parent["state"] != "running":
+                raise WorkflowTransitionError("only a running workflow can be recovered.")
+            expiry = parent["lease_expires_at"]
+            if not expiry or datetime.fromisoformat(expiry) >= now_dt:
+                raise WorkflowConflict("workflow worker lease has not expired.")
+            steps = db.execute(
+                "SELECT * FROM workflow_steps WHERE run_id=? AND status='running' ORDER BY step_index",
+                (run_id,),
+            ).fetchall()
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            for step in steps:
+                changed = db.execute("""
+                    UPDATE workflow_steps SET status='needs_reconciliation',
+                        version=version+1, updated_at=?
+                    WHERE step_id=? AND version=? AND status='running'
+                """, (now, step["step_id"], step["version"]))
+                if changed.rowcount != 1:
+                    raise WorkflowConflict("workflow step changed during recovery.")
+                payload = _bounded_json({
+                    "step_id": step["step_id"], "step_index": step["step_index"],
+                    "step_name": step["name"], "status": "needs_reconciliation",
+                    "step_version": step["version"] + 1,
+                    "reason": "worker_lease_expired",
+                }, 8 * 1024, "task event payload")
+                db.execute(
+                    "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                    "VALUES (?, ?, 'task.step.needs_reconciliation', ?, ?, ?)",
+                    (run_id, sequence, actor_id.strip(), payload, now),
+                )
+                sequence += 1
+            changed = db.execute("""
+                UPDATE workflow_runs SET state='interrupted', updated_at=?,
+                    version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                WHERE run_id=? AND version=? AND state='running'
+            """, (now, run_id, parent["version"]))
+            if changed.rowcount != 1:
+                raise WorkflowConflict("workflow run changed during recovery.")
+            event_payload = _bounded_json({
+                "reason": "worker_lease_expired",
+                "reconciliation_required_steps": [step["step_id"] for step in steps],
+            }, 8 * 1024, "task event payload")
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, 'task.interrupted', ?, ?, ?)",
+                (run_id, sequence, actor_id.strip(), event_payload, now),
+            )
+            return self._row(db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone())
+
     def list_steps(self, run_id: str) -> list[WorkflowStepRecord]:
         """Return ordered step metadata without exposing stored arguments or outputs."""
         if not isinstance(run_id, str) or not run_id:

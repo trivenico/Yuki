@@ -111,6 +111,41 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.events(actor_id="supervisor", task_id=task.task_id)
 
+    def test_supervisor_recovery_quarantines_running_steps_after_lease_expiry(self):
+        task = self.create("expired-step-recovery")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(), task.task_id),
+            )
+        with self.assertRaises(PermissionError):
+            self.runtime.recover_expired(actor_id="alice", task_id=task.task_id)
+        recovered = self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        self.assertEqual(recovered.state, "interrupted")
+        self.assertIsNone(recovered.lease_owner)
+        quarantined = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((quarantined.status, quarantined.version), ("needs_reconciliation", 2))
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], [
+            "task.created", "task.claimed", "task.step.started",
+            "task.step.needs_reconciliation", "task.interrupted",
+        ])
+        self.assertEqual(events[-1].actor_id, "supervisor")
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+
+    def test_recovery_requires_expired_lease(self):
+        task = self.create("live-step-recovery")
+        self.claim(task)
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+
     def test_step_transitions_are_lease_bound_versioned_and_journaled(self):
         task = self.create("step-transitions")
         claimed = self.claim(task)

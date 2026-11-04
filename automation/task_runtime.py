@@ -163,6 +163,13 @@ class TaskRuntime:
             task_id, after_sequence=after_sequence, limit=limit,
         )
 
+    def recover_expired(self, *, actor_id: str, task_id: str):
+        """Supervisor-only quarantine of expired work; never automatically retries."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:recover", task_id):
+            raise PermissionError("task recovery is not authorized.")
+        return self.store.recover_expired_run(task_id, actor_id=actor)
+
     def list_steps(self, *, actor_id: str, task_id: str):
         """Read ordered, argument-redacted step metadata under task:read."""
         actor = self._actor(actor_id)
