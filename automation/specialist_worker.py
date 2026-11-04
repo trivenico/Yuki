@@ -230,6 +230,7 @@ class SpecialistTaskWorker:
         self.outcome_assessor = outcome_assessor
         self.last_learning_error_code = None
         self.last_learning_error_type = None
+        self.last_learning_error_detail = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -380,10 +381,16 @@ class SpecialistTaskWorker:
             )
             self.last_learning_error_code = None
             self.last_learning_error_type = None
+            self.last_learning_error_detail = None
         except Exception as exc:
             # Evaluation and review are secondary workflows; never undo completed work.
             self.last_learning_error_code = "learning_evaluation_failed"
             self.last_learning_error_type = type(exc).__name__
+            # Only bounded validation diagnostics are retained; arbitrary provider
+            # or storage exception text may contain sensitive data.
+            self.last_learning_error_detail = (
+                str(exc)[:160] if isinstance(exc, (ValueError, TypeError)) else None
+            )
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
