@@ -11,6 +11,7 @@ from automation.specialist_worker import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from core.agent_memory import AgentMemoryStore
 
 
 class FakeProvider:
@@ -72,6 +73,40 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_worker_retrieves_authorized_memory_before_specialist_handler(self):
+        task_id = self.create_task()
+        memory_store = AgentMemoryStore(
+            str(Path(self.tmp.name) / "agent-memory.sqlite3"),
+            authorize=lambda actor, action, _resource: (
+                actor == "alice" and action in {"agent_memory:write", "agent_memory:read"}
+            ),
+        )
+        memory_store.remember(
+            actor_id="alice", agent_id="code-review",
+            content="Safe patch convention: validate inputs before processing.",
+            source="reviewed:engineering-guideline", verified=True,
+        )
+        received = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="memory-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda prompt: received.append(prompt) or "review complete"},
+            memory_store=memory_store, memory_actor_id="alice",
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(len(received), 1)
+        self.assertIn("Safe patch convention", received[0])
+        self.assertIn("untrusted reference data", received[0])
+
+    def test_memory_configuration_must_be_supplied_as_a_pair(self):
+        with self.assertRaises(ValueError):
+            SpecialistTaskWorker(
+                self.runtime, worker_id="memory-worker", service_actor_id="worker-service",
+                handlers={"code-review": lambda prompt: prompt},
+                memory_actor_id="alice",
+            )
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
