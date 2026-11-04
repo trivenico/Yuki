@@ -288,6 +288,41 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             bob_plan.plan_id,
         )
 
+
+    def test_legacy_ownerless_plans_are_not_reassigned_during_schema_migration(self):
+        legacy_path = str(Path(self.tmp.name) / "legacy-plans.sqlite3")
+        db = sqlite3.connect(legacy_path)
+        try:
+            db.execute("""
+                CREATE TABLE agent_plans (
+                    plan_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    request_digest TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute(
+                "INSERT INTO agent_plans VALUES (?, ?, ?, ?)",
+                ("legacy-plan", "legacy-key", "legacy-digest", "2026-01-01T00:00:00+00:00"),
+            )
+            db.commit()
+        finally:
+            db.close()
+        migrated = SpecialistAgentCoordinator(
+            self.runtime, legacy_path, self.agents,
+            authorize=lambda actor, action, resource: (
+                actor == "alice" and action in {"agent:plan", "agent:read"}
+            ),
+        )
+        with self.assertRaisesRegex(PermissionError, "ownership mismatch"):
+            migrated.get_plan(actor_id="alice", plan_id="legacy-plan")
+        new_plan = migrated.submit(
+            actor_id="alice", idempotency_key="legacy-key",
+            subtasks=[SubtaskSpec("new", "Create a new owner-scoped plan", ("research",))],
+        )
+        self.assertNotEqual(new_plan.plan_id, "legacy-plan")
+        self.assertEqual(new_plan.idempotency_key, "legacy-key")
+
     def test_authorization_missing_or_raising_fails_closed(self):
         no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
                                              self.agents, authorize=lambda *_: False)
