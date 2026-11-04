@@ -66,7 +66,7 @@ class AgentExperienceStore:
             raise ValueError("invalid_agent_id")
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_task_id")
-        if outcome not in {"succeeded", "failed", "cancelled"}:
+        if not isinstance(outcome, str) or outcome not in {"succeeded", "failed", "cancelled"}:
             raise ValueError("invalid_outcome")
         if type(duration_ms) is not int or not 0 <= duration_ms <= 86_400_000:
             raise ValueError("duration_ms_must_be_between_0_and_86400000")
