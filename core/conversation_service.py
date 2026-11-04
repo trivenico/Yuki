@@ -20,13 +20,19 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop):
+    def __init__(
+        self, store: ConversationStore, agent_loop: AgentExecutionLoop,
+        *, agent_loop_factory=None,
+    ):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
+        if agent_loop_factory is not None and not callable(agent_loop_factory):
+            raise TypeError("agent_loop_factory must be callable when provided.")
         self.store = store
         self.agent_loop = agent_loop
+        self.agent_loop_factory = agent_loop_factory
         self._lock = threading.RLock()
 
     def create(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
@@ -168,7 +174,20 @@ class ConversationService:
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
-                result = self.agent_loop.run(user_text, on_text_delta=on_text_delta, cancellation_requested=cancellation_requested, **kwargs)
+                # Build request-scoped execution only after authenticated ownership,
+                # idempotency, and conversation-version checks have succeeded.
+                # Factories can bind memory retrieval to this owner without sharing
+                # actor identity or mutable request context across conversations.
+                agent_loop = (
+                    self.agent_loop_factory(owner_id)
+                    if self.agent_loop_factory is not None else self.agent_loop
+                )
+                if not isinstance(agent_loop, AgentExecutionLoop):
+                    raise TypeError("agent_loop_factory must return an AgentExecutionLoop.")
+                result = agent_loop.run(
+                    user_text, on_text_delta=on_text_delta,
+                    cancellation_requested=cancellation_requested, **kwargs
+                )
                 status = result.status
                 model_turns = result.model_turns
                 tool_calls = result.tool_calls
