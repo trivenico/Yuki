@@ -335,6 +335,19 @@ class WorkflowRunStore:
             """, (now, worker_id.strip(), lease_expires, row["run_id"], row["version"]))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run was claimed concurrently.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM task_events WHERE task_id=?",
+                (row["run_id"],),
+            ).fetchone()[0]
+            claim_payload = _bounded_json(
+                {"attempt": row["attempts"] + 1, "lease_expires_at": lease_expires},
+                8 * 1024, "task event payload",
+            )
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES (?, ?, 'task.claimed', ?, ?, ?)",
+                (row["run_id"], sequence, worker_id.strip(), claim_payload, now),
+            )
             claimed = db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
             ).fetchone()

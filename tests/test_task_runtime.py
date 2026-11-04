@@ -119,6 +119,33 @@ class TaskRuntimeTests(unittest.TestCase):
             broken.enqueue(actor_id="alice", idempotency_key="broken-auth",
                            name="task", steps=self.steps)
 
+    def test_claim_is_journaled_atomically_with_worker_identity(self):
+        task = self.create("claim-event")
+        claimed = self.claim(task)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
+        self.assertEqual(events[-1].actor_id, "worker-a")
+        self.assertEqual(events[-1].payload["attempt"], 1)
+        self.assertEqual(events[-1].payload["lease_expires_at"], claimed.lease_expires_at)
+
+    def test_claim_and_claim_event_roll_back_together(self):
+        task = self.create("atomic-claim-event")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_claim_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.claimed'
+                BEGIN SELECT RAISE(ABORT, 'simulated claim journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.claim_next(worker_id="worker-a")
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "queued")
+        self.assertEqual(current.version, task.version)
+        self.assertIsNone(current.lease_owner)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created"])
+
     def test_progress_is_versioned_and_durable(self):
         task = self.create()
         claimed = self.claim(task)
@@ -129,7 +156,7 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, message="stale")
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
-                         ["task.created", "task.progress"])
+                         ["task.created", "task.claimed", "task.progress"])
 
     def test_artifact_is_journaled(self):
         task = self.create()
@@ -188,7 +215,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(current.state, "running")
         self.assertEqual(current.version, claimed.version)
         self.assertEqual([event.kind for event in self.runtime.events(
-            actor_id="alice", task_id=task.task_id)], ["task.created"])
+            actor_id="alice", task_id=task.task_id)], ["task.created", "task.claimed"])
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
