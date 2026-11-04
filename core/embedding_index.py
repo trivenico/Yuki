@@ -45,7 +45,7 @@ class SQLiteEmbeddingIndex:
         db = sqlite3.connect(self.database_path, timeout=5.0)
         db.execute("PRAGMA busy_timeout=5000")
         db.execute("PRAGMA synchronous=FULL")
-        return db
+        return _ClosingConnection(db)
 
     @staticmethod
     def _digest(content: str) -> str:
@@ -162,3 +162,29 @@ class SQLiteEmbeddingIndex:
                 (actor_id, self.model_id)).fetchone()
         return {"model_id": self.model_id, "vector_count": row[0],
                 "total_dimensions": row[1], "storage": "sqlite_float32"}
+
+
+
+class _ClosingConnection:
+    """SQLite transaction context that always closes its file handle.
+
+    sqlite3.Connection.__exit__ commits or rolls back but deliberately does not
+    close the connection. Explicit closure is required for portable temp-file
+    cleanup on Windows and prevents idle handles accumulating in long-lived
+    processes.
+    """
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.connection.commit()
+            else:
+                self.connection.rollback()
+        finally:
+            self.connection.close()
+        return False
