@@ -303,5 +303,46 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.assertGreater(mean_reciprocal_rank(evaluated), 0.0)
 
 
+    def test_sqlite_retrieval_performance_baseline_reports_cold_and_warm_work(self):
+        for number in range(100):
+            self.add_memory(
+                f"Deterministic benchmark memory {number} about deployment operations.",
+                verified=True,
+            )
+
+        cold = self.retriever.retrieve(
+            actor_id="owner", agent_id="research",
+            query="deployment query", limit=10,
+        )
+        cold_stats = dict(self.retriever.last_retrieval_stats)
+        warm = self.retriever.retrieve(
+            actor_id="owner", agent_id="research",
+            query="deployment query", limit=10,
+        )
+        warm_stats = dict(self.retriever.last_retrieval_stats)
+        latency = self.retriever.latency_percentiles()
+
+        self.assertEqual(
+            [item["memory_id"] for item in cold],
+            [item["memory_id"] for item in warm],
+        )
+        self.assertEqual(cold_stats["candidate_rows_scanned"], 100)
+        self.assertEqual(cold_stats["authorized_candidates_ranked"], 100)
+        self.assertEqual(cold_stats["cache_hits"], 0)
+        self.assertEqual(cold_stats["cache_misses"], 100)
+        self.assertEqual(cold_stats["embedding_calls"], 101)
+        self.assertEqual(warm_stats["candidate_rows_scanned"], 100)
+        self.assertEqual(warm_stats["authorized_candidates_ranked"], 100)
+        self.assertEqual(warm_stats["cache_hits"], 100)
+        self.assertEqual(warm_stats["cache_misses"], 0)
+        self.assertEqual(warm_stats["embedding_calls"], 1)
+        self.assertEqual(latency["sample_count"], 2)
+        self.assertGreaterEqual(latency["p50_ms"], 0.0)
+        self.assertLessEqual(latency["p50_ms"], latency["p95_ms"])
+        # Timing is recorded as a baseline, not gated on noisy shared CI hosts.
+        self.assertNotIn("query", cold_stats)
+        self.assertNotIn("content", cold_stats)
+
+
 if __name__ == "__main__":
     unittest.main()
