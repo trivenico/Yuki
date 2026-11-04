@@ -9,6 +9,7 @@ from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
 from api.web import YukiWebApplication
+from core.agent_memory import AgentMemoryStore
 
 
 class ConversationRuntime:
@@ -55,6 +56,7 @@ def build_conversation_runtime(
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     device_agent: Any | None = None,
+    memory_store: AgentMemoryStore | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -76,7 +78,7 @@ def build_conversation_runtime(
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
-            device_agent=device_agent,
+            device_agent=device_agent, memory_store=memory_store,
         )
         return ConversationRuntime(app, store)
     except Exception:
