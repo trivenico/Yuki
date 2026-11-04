@@ -141,6 +141,21 @@ class SpecialistAgentCoordinator:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_plan_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(plan_id, sequence),
+                    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_events_plan_sequence ON agent_plan_events(plan_id, sequence)")
+
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
                     agent_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -441,6 +456,11 @@ class SpecialistAgentCoordinator:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (plan_id, scoped_key, key, owner_id, digest, now),
             )
+            db.execute(
+                "INSERT INTO agent_plan_events(plan_id, sequence, actor_id, kind, payload_json, created_at) "
+                "VALUES (?, 1, ?, 'plan.created', ?, ?)",
+                (plan_id, owner_id, json.dumps({"subtask_count": len(items)}, separators=(",", ":")), now),
+            )
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -546,6 +566,10 @@ class SpecialistAgentCoordinator:
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            self._append_plan_event(
+                plan_id, actor_id=actor_id, kind="subtask.dispatched",
+                payload={"subtask_id": row["subtask_id"], "agent_id": agent.agent_id, "task_id": task.task_id},
+            )
             row["task_id"] = task.task_id
             row["status"] = task.state
 
@@ -621,7 +645,71 @@ class SpecialistAgentCoordinator:
                 )
             self._set_subtask(plan_id, row["subtask_id"], status=state)
 
+        self._append_plan_event(
+            plan_id, actor_id=actor_id, kind="plan.cancelled",
+            payload={"subtask_count": len(rows)},
+        )
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
+    def _append_plan_event(
+        self, plan_id: str, *, actor_id: str, kind: str, payload: dict,
+    ) -> None:
+        """Append a bounded metadata-only audit event to an owned plan."""
+        actor = actor_id.strip() if isinstance(actor_id, str) else ""
+        if not actor or len(actor) > 200 or "\\x00" in actor:
+            raise ValueError("audit actor_id must be bounded text.")
+        if not isinstance(kind, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", kind):
+            raise ValueError("audit event kind is invalid.")
+        if not isinstance(payload, dict):
+            raise ValueError("audit payload must be an object.")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        if len(encoded.encode("utf-8")) > 2048:
+            raise ValueError("audit payload exceeds the byte limit.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            if row is None:
+                raise KeyError("agent plan not found.")
+            if row["owner_id"] != actor:
+                raise PermissionError("agent plan ownership mismatch.")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_plan_events WHERE plan_id=?",
+                (plan_id,),
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO agent_plan_events(plan_id, sequence, actor_id, kind, payload_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (plan_id, sequence, actor, kind, encoded, now),
+            )
+
+    def plan_events(
+        self, *, actor_id: str, plan_id: str, after_sequence: int = 0, limit: int = 100,
+    ) -> tuple[dict, ...]:
+        """Read bounded plan audit metadata after explicit authorization and owner check."""
+        if type(after_sequence) is not int or after_sequence < 0:
+            raise ValueError("after_sequence must be a non-negative integer.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if not self._allowed(actor_id, "agent:read", plan_id):
+            raise PermissionError("agent plan audit access is not authorized.")
+        actor = actor_id.strip()
+        with self._connect() as db:
+            row = db.execute("SELECT owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            if row is None:
+                raise KeyError("agent plan not found.")
+            if row["owner_id"] != actor:
+                raise PermissionError("agent plan ownership mismatch.")
+            events = db.execute(
+                "SELECT sequence, actor_id, kind, payload_json, created_at "
+                "FROM agent_plan_events WHERE plan_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+                (plan_id, after_sequence, limit),
+            ).fetchall()
+        return tuple({
+            "sequence": event["sequence"], "actor_id": event["actor_id"],
+            "kind": event["kind"], "payload": json.loads(event["payload_json"]),
+            "created_at": event["created_at"],
+        } for event in events)
 
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
         with self._connect() as db:
