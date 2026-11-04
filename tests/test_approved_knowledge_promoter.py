@@ -151,5 +151,62 @@ class ApprovedKnowledgePromoterTests(unittest.TestCase):
             self.approve_candidate()
 
 
+    def test_revocation_removes_memory_and_preserves_audit_record(self):
+        self.approve_both()
+        promoted = self.promote()
+        revoked = self.promoter.revoke(
+            actor_id="owner", evaluation_id=self.report.evaluation_id,
+            candidate_sha256=promoted["candidate_sha256"],
+            reason="Evidence was superseded by a corrected source.",
+        )
+        self.assertTrue(revoked["memory_removed"])
+        self.assertEqual(self.memory.list_memories(
+            actor_id="owner", agent_id="research"), [])
+        audit = self.promoter.get_revocation(
+            actor_id="owner", evaluation_id=self.report.evaluation_id,
+            candidate_sha256=promoted["candidate_sha256"],
+        )
+        self.assertEqual(audit["revoked_by"], "owner")
+        self.assertTrue(audit["memory_removed"])
+        retry = self.promoter.revoke(
+            actor_id="owner", evaluation_id=self.report.evaluation_id,
+            candidate_sha256=promoted["candidate_sha256"], reason="Retry",
+        )
+        self.assertTrue(retry["idempotent"])
+
+    def test_duplicate_promotion_cannot_revoke_another_memory(self):
+        self.approve_both()
+        self.memory.remember(
+            actor_id="owner", agent_id="research", content=self.CONTENT,
+            source="existing memory", category="semantic", scope="private",
+            verified=True,
+        )
+        duplicate = self.promote()
+        self.assertEqual(duplicate["status"], "duplicate")
+        with self.assertRaisesRegex(ValueError, "does_not_own_memory"):
+            self.promoter.revoke(
+                actor_id="owner", evaluation_id=self.report.evaluation_id,
+                candidate_sha256=duplicate["candidate_sha256"],
+                reason="Must not delete unrelated memory.",
+            )
+        self.assertEqual(len(self.memory.list_memories(
+            actor_id="owner", agent_id="research")), 1)
+
+    def test_revocation_requires_explicit_permission(self):
+        self.approve_both()
+        promoted = self.promote()
+        restricted = AgentEvaluationReviewQueue(
+            self.db,
+            authorize=lambda actor, action, _agent:
+            actor == "owner" and action != "agent_knowledge:revoke",
+        )
+        promoter = ApprovedKnowledgePromoter(self.memory, restricted)
+        with self.assertRaises(PermissionError):
+            promoter.revoke(
+                actor_id="owner", evaluation_id=self.report.evaluation_id,
+                candidate_sha256=promoted["candidate_sha256"], reason="Unauthorized",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
