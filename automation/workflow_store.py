@@ -95,6 +95,20 @@ class WorkflowOperation:
 
 
 @dataclass(frozen=True)
+class OperationAuditEvent:
+    event_id: int
+    task_id: str
+    operation_id: str
+    sequence: int
+    from_status: str | None
+    to_status: str
+    actor_type: str
+    actor_id: str
+    reason: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class WorkflowRun:
     run_id: str
     idempotency_key: str
@@ -221,6 +235,38 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_operations_task_status "
                 "ON workflow_operations(task_id, status)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS operation_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    from_status TEXT,
+                    to_status TEXT NOT NULL CHECK(to_status IN
+                        ('prepared', 'in_flight', 'succeeded', 'needs_reconciliation')),
+                    actor_type TEXT NOT NULL CHECK(actor_type IN ('system', 'worker')),
+                    actor_id TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(operation_id, sequence),
+                    FOREIGN KEY(task_id) REFERENCES workflow_runs(run_id) ON DELETE RESTRICT,
+                    FOREIGN KEY(operation_id) REFERENCES workflow_operations(operation_id) ON DELETE RESTRICT
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_operation_events_task_created "
+                "ON operation_events(task_id, event_id)"
+            )
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS operation_events_no_update
+                BEFORE UPDATE ON operation_events
+                BEGIN SELECT RAISE(ABORT, 'operation audit events are immutable'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS operation_events_no_delete
+                BEFORE DELETE ON operation_events
+                BEGIN SELECT RAISE(ABORT, 'operation audit events are immutable'); END
+            """)
 
     @contextmanager
     def _connect(self):
@@ -1023,6 +1069,59 @@ class WorkflowRunStore:
             version=row["version"], created_at=row["created_at"], updated_at=row["updated_at"],
         )
 
+    @staticmethod
+    def _append_operation_event(db: sqlite3.Connection, *, operation: sqlite3.Row,
+                                from_status: str | None, to_status: str,
+                                actor_type: str, actor_id: str, reason: str,
+                                created_at: str) -> None:
+        if actor_type not in {"system", "worker"}:
+            raise ValueError("invalid operation audit actor type.")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+            raise ValueError("operation audit actor_id must be non-empty bounded text.")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 120 or "\\x00" in reason:
+            raise ValueError("operation audit reason must be non-empty bounded text.")
+        sequence = db.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM operation_events WHERE operation_id=?",
+            (operation["operation_id"],),
+        ).fetchone()[0]
+        db.execute(
+            "INSERT INTO operation_events(task_id, operation_id, sequence, from_status, "
+            "to_status, actor_type, actor_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (operation["task_id"], operation["operation_id"], sequence, from_status,
+             to_status, actor_type, actor_id.strip(), reason.strip(), created_at),
+        )
+
+    @staticmethod
+    def _operation_event_row(row: sqlite3.Row) -> OperationAuditEvent:
+        return OperationAuditEvent(
+            event_id=row["event_id"], task_id=row["task_id"],
+            operation_id=row["operation_id"], sequence=row["sequence"],
+            from_status=row["from_status"], to_status=row["to_status"],
+            actor_type=row["actor_type"], actor_id=row["actor_id"],
+            reason=row["reason"], created_at=row["created_at"],
+        )
+
+    def list_operation_events(self, operation_id: str, *, limit: int = 100,
+                              before_event_id: int | None = None) -> list[OperationAuditEvent]:
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be non-empty text.")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer from 1 to 500.")
+        if before_event_id is not None and (type(before_event_id) is not int or before_event_id < 1):
+            raise ValueError("before_event_id must be a positive integer.")
+        with self._connect() as db:
+            if before_event_id is None:
+                rows = db.execute(
+                    "SELECT * FROM operation_events WHERE operation_id=? "
+                    "ORDER BY sequence LIMIT ?", (operation_id.strip(), limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM operation_events WHERE operation_id=? AND event_id<? "
+                    "ORDER BY sequence LIMIT ?", (operation_id.strip(), before_event_id, limit),
+                ).fetchall()
+            return [self._operation_event_row(row) for row in rows]
+
     def prepare_operation(self, task_id: str, *, idempotency_key: str, action: str,
                           request: dict[str, Any]) -> WorkflowOperation:
         """Persist intent before an external side effect; never executes the action."""
@@ -1060,6 +1159,11 @@ class WorkflowRunStore:
             )
             row = db.execute("SELECT * FROM workflow_operations WHERE operation_id=?",
                              (operation_id,)).fetchone()
+            self._append_operation_event(
+                db, operation=row, from_status=None, to_status="prepared",
+                actor_type="system", actor_id="workflow_store",
+                reason="operation_prepared", created_at=now,
+            )
             return self._operation_row(row)
 
     def mark_operation_in_flight(self, operation_id: str, *, worker_id: str,
@@ -1112,9 +1216,15 @@ class WorkflowRunStore:
             )
             if updated.rowcount != 1:
                 raise WorkflowConflict("operation changed concurrently.")
-            return self._operation_row(db.execute(
+            updated_row = db.execute(
                 "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
-            ).fetchone())
+            ).fetchone()
+            self._append_operation_event(
+                db, operation=updated_row, from_status="prepared", to_status="in_flight",
+                actor_type="worker", actor_id=worker_id.strip(),
+                reason="provider_dispatch_started", created_at=now,
+            )
+            return self._operation_row(updated_row)
 
     def record_operation_outcome(self, operation_id: str, *, expected_version: int,
                                  status: str, provider_reference: str | None = None,
@@ -1143,9 +1253,16 @@ class WorkflowRunStore:
                 "version=version+1, updated_at=? WHERE operation_id=? AND version=?",
                 (status, provider_reference, outcome_json, now, operation_id, expected_version),
             )
-            return self._operation_row(db.execute(
+            updated_row = db.execute(
                 "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
-            ).fetchone())
+            ).fetchone()
+            self._append_operation_event(
+                db, operation=updated_row, from_status="in_flight", to_status=status,
+                actor_type="system", actor_id="workflow_store",
+                reason="provider_outcome_recorded" if status == "succeeded" else "provider_outcome_uncertain",
+                created_at=now,
+            )
+            return self._operation_row(updated_row)
 
     def get_operation(self, operation_id: str) -> WorkflowOperation | None:
         with self._connect() as db:
@@ -1192,10 +1309,17 @@ class WorkflowRunStore:
             )
             if updated.rowcount != 1:
                 raise WorkflowConflict("operation changed concurrently.")
-            return self._operation_row(db.execute(
+            updated_row = db.execute(
                 "SELECT * FROM workflow_operations WHERE operation_id=?",
                 (operation_id.strip(),),
-            ).fetchone())
+            ).fetchone()
+            self._append_operation_event(
+                db, operation=updated_row, from_status="in_flight",
+                to_status="needs_reconciliation", actor_type="system",
+                actor_id="workflow_store", reason="expired_lease_requires_reconciliation",
+                created_at=cutoff,
+            )
+            return self._operation_row(updated_row)
 
     def list_unresolved_operations(self, *, task_id: str | None = None, limit: int = 100):
         if task_id is not None and (not isinstance(task_id, str) or not task_id.strip()):

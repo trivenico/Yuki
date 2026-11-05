@@ -91,6 +91,60 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(resolved.provider_reference, "provider-op-123")
         self.assertEqual(self.store.list_unresolved_operations(), [])
 
+    def test_operation_audit_captures_atomic_redacted_lifecycle(self):
+        run = self.start_worker_run("operation-audit")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="audit-once", action="provider.call",
+            request={"secret": "must-not-appear"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+        )
+        completed = self.store.record_operation_outcome(
+            inflight.operation_id, expected_version=inflight.version,
+            status="succeeded", provider_reference="provider-123",
+            outcome={"accepted": True},
+        )
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual([event.to_status for event in events],
+                         ["prepared", "in_flight", "succeeded"])
+        self.assertEqual([event.sequence for event in events], [1, 2, 3])
+        self.assertEqual(events[1].actor_type, "worker")
+        self.assertEqual(events[1].actor_id, "worker-a")
+        self.assertNotIn("must-not-appear", repr(events))
+        self.assertEqual(completed.status, "succeeded")
+        with self.store._connect() as db:
+            with self.assertRaises(Exception):
+                db.execute(
+                    "UPDATE operation_events SET reason='tampered' WHERE event_id=?",
+                    (events[0].event_id,),
+                )
+            with self.assertRaises(Exception):
+                db.execute("DELETE FROM operation_events WHERE event_id=?", (events[0].event_id,))
+
+    def test_operation_audit_insert_failure_rolls_back_state_transition(self):
+        run = self.start_worker_run("operation-audit-rollback")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="audit-rollback", action="provider.call",
+            request={"input_digest": "abc"},
+        )
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER fail_operation_event_insert
+                BEFORE INSERT ON operation_events
+                WHEN NEW.to_status='in_flight'
+                BEGIN SELECT RAISE(ABORT, 'injected audit write failure'); END
+            """)
+        with self.assertRaises(Exception):
+            self.store.mark_operation_in_flight(
+                operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+            )
+        self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
+        self.assertEqual(
+            [event.to_status for event in self.store.list_operation_events(operation.operation_id)],
+            ["prepared"],
+        )
+
     def test_abandoned_inflight_operation_requires_expired_lease_and_is_not_replayed(self):
         run = self.start_worker_run("operation-abandoned")
         operation = self.store.prepare_operation(
