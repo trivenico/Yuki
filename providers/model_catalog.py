@@ -93,14 +93,16 @@ def review_provenance(catalog, model_id, model_version, *, provenance_status, li
     reviewer = _reviewer(reviewer)
     if item.get("state") != "quarantined":
         raise ModelCatalogError("provenance_review_requires_quarantine")
-    if provenance_status not in {"verified", "rejected"}:
+    if not isinstance(provenance_status, str) or provenance_status not in {"verified", "rejected"}:
         raise ModelCatalogError("invalid_provenance_status")
-    if license_status not in {"verified", "restricted", "not_applicable"}:
+    if not isinstance(license_status, str) or license_status not in {"verified", "restricted", "not_applicable"}:
         raise ModelCatalogError("invalid_license_status")
     item["provenance_status"] = provenance_status
     item["license_status"] = license_status
     item["provenance_reviewer"] = reviewer
-    if provenance_status == "verified" and license_status in {"verified", "not_applicable"}:
+    if provenance_status == "rejected":
+        item["state"] = "rejected"
+    elif provenance_status == "verified" and license_status in {"verified", "not_applicable"}:
         item["state"] = "reviewed"
     return deepcopy(item)
 

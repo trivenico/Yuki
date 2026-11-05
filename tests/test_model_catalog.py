@@ -95,6 +95,19 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertEqual(rolled["state"], "rolled_back")
         self.assertEqual(len(list_models(self.catalog)), 1)
 
+
+    def test_rejected_provenance_is_terminal_and_invalid_types_are_safe(self):
+        self.register()
+        with self.assertRaisesRegex(ModelCatalogError, "invalid_provenance_status"):
+            review_provenance(self.catalog, "yuki/core", "0.1.0",
+                              provenance_status=[], license_status="verified", reviewer="reviewer-1")
+        rejected = review_provenance(self.catalog, "yuki/core", "0.1.0",
+                                     provenance_status="rejected", license_status="verified", reviewer="reviewer-1")
+        self.assertEqual(rejected["state"], "rejected")
+        with self.assertRaisesRegex(ModelCatalogError, "requires_quarantine"):
+            review_provenance(self.catalog, "yuki/core", "0.1.0",
+                              provenance_status="verified", license_status="verified", reviewer="reviewer-2")
+
     def test_failed_evaluation_cannot_be_approved(self):
         self.register()
         review_provenance(self.catalog, "yuki/core", "0.1.0",
