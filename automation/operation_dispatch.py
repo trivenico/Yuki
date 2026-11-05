@@ -45,8 +45,10 @@ class OperationDispatcher:
         )
         if operation.status != "needs_reconciliation":
             raise OperationDispatchError("only uncertain operations can be reconciled.")
+        if not operation.provider_name or provider_name != operation.provider_name:
+            raise OperationDispatchError("provider does not match the operation's recorded dispatch provider.")
         try:
-            registered = self.providers.require_operation_lookup(provider_name)
+            registered = self.providers.require_operation_lookup(operation.provider_name)
         except (KeyError, ProviderCapabilityError) as exc:
             raise OperationDispatchError("provider lookup is unavailable.") from exc
         try:
@@ -89,7 +91,7 @@ class OperationDispatcher:
 
         inflight = self.runtime.mark_operation_in_flight(
             actor_id=actor_id, operation_id=operation_id, worker_id=worker_id,
-            expected_version=operation.version,
+            provider_name=provider_name, expected_version=operation.version,
         )
         try:
             response = registered.provider.execute(

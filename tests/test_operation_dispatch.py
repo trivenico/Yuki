@@ -163,6 +163,21 @@ class OperationDispatcherTests(unittest.TestCase):
             self.assertEqual(result.status, "needs_reconciliation")
             self.assertEqual(runtime.resolved, [])
 
+    def test_reconcile_rejects_a_different_provider_than_original_dispatch(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_response={
+                "status": "succeeded", "idempotency_key": "stable-key",
+                "provider_reference": "remote-1",
+            })
+        )
+        operation.status = "needs_reconciliation"
+        operation.provider_name = "payments.original"
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+        self.assertEqual(provider.lookup_keys, [])
+
     def test_reconcile_rejects_mismatched_idempotency_identity(self):
         dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
             Provider(lookup_response={

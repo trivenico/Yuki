@@ -85,6 +85,7 @@ class WorkflowOperation:
     task_id: str
     idempotency_key: str
     action: str
+    provider_name: str | None
     request_digest: str
     status: str
     provider_reference: str | None
@@ -220,6 +221,7 @@ class WorkflowRunStore:
                     task_id TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
                     action TEXT NOT NULL,
+                    provider_name TEXT,
                     request_digest TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN
                         ('prepared', 'in_flight', 'succeeded', 'needs_reconciliation')),
@@ -232,6 +234,9 @@ class WorkflowRunStore:
                     FOREIGN KEY(task_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
                 )
             """)
+            operation_columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_operations)")}
+            if "provider_name" not in operation_columns:
+                db.execute("ALTER TABLE workflow_operations ADD COLUMN provider_name TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_operations_task_status "
                 "ON workflow_operations(task_id, status)"
@@ -1078,7 +1083,8 @@ class WorkflowRunStore:
         return WorkflowOperation(
             operation_id=row["operation_id"], task_id=row["task_id"],
             idempotency_key=row["idempotency_key"], action=row["action"],
-            request_digest=row["request_digest"], status=row["status"],
+            provider_name=row["provider_name"], request_digest=row["request_digest"],
+            status=row["status"],
             provider_reference=row["provider_reference"],
             outcome=json.loads(row["outcome_json"]) if row["outcome_json"] else None,
             version=row["version"], created_at=row["created_at"], updated_at=row["updated_at"],
@@ -1189,7 +1195,8 @@ class WorkflowRunStore:
             return self._operation_row(row)
 
     def mark_operation_in_flight(self, operation_id: str, *, worker_id: str,
-                                 expected_version: int, principal_id: str | None = None) -> WorkflowOperation:
+                                 provider_name: str, expected_version: int,
+                                 principal_id: str | None = None) -> WorkflowOperation:
         if not isinstance(operation_id, str) or not operation_id.strip():
             raise ValueError("operation_id must be non-empty text.")
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
@@ -1201,6 +1208,8 @@ class WorkflowRunStore:
             or len(principal_id) > 200 or "\\x00" in principal_id
         ):
             raise ValueError("principal_id must be non-empty bounded text.")
+        if not isinstance(provider_name, str) or not provider_name.strip() or len(provider_name) > 64 or "\x00" in provider_name:
+            raise ValueError("provider_name must be non-empty bounded text.")
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1237,9 +1246,9 @@ class WorkflowRunStore:
             if row["status"] != "prepared":
                 raise WorkflowTransitionError("only prepared operations can be dispatched.")
             updated = db.execute(
-                "UPDATE workflow_operations SET status='in_flight', version=version+1, updated_at=? "
-                "WHERE operation_id=? AND version=? AND status='prepared'",
-                (now, operation_id, expected_version),
+                "UPDATE workflow_operations SET status='in_flight', provider_name=?, version=version+1, updated_at=? "
+                "WHERE operation_id=? AND version=? AND status='prepared' AND provider_name IS NULL",
+                (provider_name.strip(), now, operation_id, expected_version),
             )
             if updated.rowcount != 1:
                 raise WorkflowConflict("operation changed concurrently.")

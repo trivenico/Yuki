@@ -486,15 +486,16 @@ class TaskRuntime:
         )
 
     def mark_operation_in_flight(self, *, actor_id: str, operation_id: str,
-                                 worker_id: str, expected_version: int):
+                                 worker_id: str, provider_name: str,
+                                 expected_version: int):
         actor = self._actor(actor_id)
         # Re-check both capabilities at the final durable transition, not only
         # in the dispatcher's earlier preflight. Permission grants may change
         # between preflight and this boundary.
         self.authorize_operation_dispatch(actor_id=actor, operation_id=operation_id)
         return self.store.mark_operation_in_flight(
-            operation_id, worker_id=worker_id, expected_version=expected_version,
-            principal_id=actor,
+            operation_id, worker_id=worker_id, provider_name=provider_name,
+            expected_version=expected_version, principal_id=actor,
         )
 
     def reconcile_abandoned_operation(self, *, actor_id: str, operation_id: str,
