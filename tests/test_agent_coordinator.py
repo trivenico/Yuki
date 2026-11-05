@@ -259,6 +259,25 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 )],
             )
 
+        explicitly_granted = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "approved-bypass.sqlite3"),
+            self.agents,
+            authorize=lambda actor, action, resource: (
+                actor == "alice" and action in {
+                    "agent:plan", "agent:plan_without_approval",
+                    "agent:dispatch", "agent:read",
+                }
+            ),
+        )
+        authorized = explicitly_granted.submit(
+            actor_id="alice", idempotency_key="approval-bypass-authorized",
+            subtasks=[SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            )],
+        )
+        self.assertFalse(authorized.subtasks[0].requires_approval)
+
     def test_missing_capability_and_disabled_agent_fail_closed(self):
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(actor_id="alice", idempotency_key="no-route", subtasks=[
