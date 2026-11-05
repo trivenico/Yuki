@@ -81,7 +81,7 @@ class ProviderAgentAdapter:
         except (TypeError, ValueError) as exc:
             raise ProviderResponseError("provider_tool_call_protocol_invalid") from exc
         for call in normalized:
-            if call["name"] not in allowed_names:
+            if call.name not in allowed_names:
                 raise ProviderResponseError("provider_tool_name_not_requested")
         return {"text": text, "tool_calls": dict(calls), "finish_reason": finish_reason}
 
