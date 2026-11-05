@@ -27,15 +27,15 @@ class ProviderAgentAdapter:
     def __init__(self, provider: Any, *, default_timeout_seconds: float = 60.0):
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
-        if isinstance(default_timeout_seconds, bool) or not isinstance(default_timeout_seconds, (int, float)) or not 0.1 <= default_timeout_seconds <= 3600:
-            raise ValueError("default_timeout_seconds must be between 0.1 and 3600.")
+        if isinstance(default_timeout_seconds, bool) or not isinstance(default_timeout_seconds, (int, float)) or not 0 < default_timeout_seconds <= 3600:
+            raise ValueError("default_timeout_seconds must be greater than 0 and at most 3600.")
         self.provider = provider
         self.default_timeout_seconds = float(default_timeout_seconds)
 
     @staticmethod
     def _execution_context(provider_method, timeout_seconds, cancellation_event):
-        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0.1 <= timeout_seconds <= 3600:
-            raise ValueError("timeout_seconds must be between 0.1 and 3600.")
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 3600:
+            raise ValueError("timeout_seconds must be greater than 0 and at most 3600.")
         if cancellation_event is not None and not isinstance(cancellation_event, threading.Event):
             raise TypeError("cancellation_event must be a threading.Event.")
         deadline = time.monotonic() + float(timeout_seconds)
