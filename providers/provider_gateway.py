@@ -24,11 +24,12 @@ class ProviderGateway(ProviderAgentAdapter):
         self.cloud_opt_in = cloud_opt_in
 
     @classmethod
-    def from_adapter(cls, adapter: ProviderAgentAdapter, *, cloud_opt_in: bool = False):
+    def from_adapter(cls, adapter: ProviderAgentAdapter, *, cloud_opt_in: bool = False, provider_id: str | None = None):
         if not isinstance(adapter, ProviderAgentAdapter):
             raise TypeError("provider_adapter_required")
         provider = adapter.provider
-        provider_id = getattr(provider, "provider_id", None)
+        if provider_id is None:
+            provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip():
             provider_name = type(provider).__name__.removesuffix("Provider").removesuffix("Model")
             provider_id = provider_name.lower()
