@@ -31,6 +31,42 @@ class DurableProviderExecutionRecordTests(unittest.TestCase):
                 provider_id="local.engine", agent_id="planner"
             )["global_active_requests"], 0)
 
+    def test_uncertain_execution_requires_evidence_to_resolve(self):
+        import hashlib
+        now = [1000.0]
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderGovernanceStore(
+                str(Path(directory) / "provider.sqlite3"),
+                lease_timeout_seconds=5, clock=lambda: now[0],
+            )
+            lease = store.acquire(provider_id="local.engine", agent_id="planner")
+            now[0] += 6
+            self.assertEqual(store.list_executions(provider_id="local.engine")[0]["status"], "uncertain")
+            evidence = b"provider operation status: completed"
+            self.assertTrue(store.resolve_uncertain_execution(
+                lease.execution_id, outcome="succeeded", evidence_source="provider_api",
+                evidence_sha256=hashlib.sha256(evidence).hexdigest(),
+                provider_reference="request-123", resolver_id="operator-1",
+            ))
+            resolved = store.list_executions(
+                provider_id="local.engine", statuses=("succeeded",)
+            )
+            self.assertEqual(resolved[0]["reason"], "evidence_reconciled")
+            self.assertEqual(len(store.list_resolutions(execution_id=lease.execution_id)), 1)
+            self.assertEqual(store.list_executions(provider_id="local.engine"), [])
+
+    def test_resolution_rejects_invalid_evidence_and_non_uncertain_state(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderGovernanceStore(str(Path(directory) / "provider.sqlite3"))
+            lease = store.acquire(provider_id="local.engine", agent_id="planner")
+            with self.assertRaises(ValueError):
+                store.resolve_uncertain_execution(
+                    lease.execution_id, outcome="succeeded", evidence_source="provider_api",
+                    evidence_sha256="bad", provider_reference="request-123", resolver_id="operator-1",
+                )
+            self.assertEqual(store.list_executions(provider_id="local.engine")[0]["status"], "running")
+
     def test_completed_execution_is_not_reported_as_unresolved(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderGovernanceStore(str(Path(directory) / "provider.sqlite3"))

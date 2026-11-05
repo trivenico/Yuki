@@ -105,6 +105,22 @@ class SQLiteProviderGovernanceStore:
                     started_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS provider_execution_resolutions (
+                    resolution_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT NOT NULL UNIQUE,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('succeeded', 'failed', 'cancelled')),
+                    evidence_source TEXT NOT NULL,
+                    evidence_sha256 TEXT NOT NULL,
+                    provider_reference TEXT NOT NULL,
+                    resolver_id TEXT NOT NULL,
+                    resolved_at REAL NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS provider_resolutions_no_update
+                    BEFORE UPDATE ON provider_execution_resolutions
+                    BEGIN SELECT RAISE(ABORT, 'provider execution resolutions are immutable'); END;
+                CREATE TRIGGER IF NOT EXISTS provider_resolutions_no_delete
+                    BEFORE DELETE ON provider_execution_resolutions
+                    BEGIN SELECT RAISE(ABORT, 'provider execution resolutions are immutable'); END;
                 CREATE INDEX IF NOT EXISTS idx_provider_executions_status
                     ON provider_execution_records(provider_id, status, updated_at);
                 CREATE TABLE IF NOT EXISTS provider_circuits (
@@ -339,6 +355,68 @@ class SQLiteProviderGovernanceStore:
                 f"FROM provider_execution_records WHERE provider_id=? AND status IN ({placeholders}) "
                 "ORDER BY started_at DESC LIMIT ?",
                 (provider_id, *statuses, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def resolve_uncertain_execution(
+        self, execution_id: str, *, outcome: str, evidence_source: str,
+        evidence_sha256: str, provider_reference: str, resolver_id: str,
+    ) -> bool:
+        """Resolve an uncertain provider execution using attributable evidence.
+
+        Evidence hashes identify the evidence supplied by the trusted caller;
+        they do not independently authenticate the provider or prove its claim.
+        """
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        if outcome not in {"succeeded", "failed", "cancelled"}:
+            raise ValueError("outcome_invalid")
+        if not isinstance(evidence_source, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", evidence_source):
+            raise ValueError("evidence_source_invalid")
+        if not isinstance(evidence_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", evidence_sha256):
+            raise ValueError("evidence_sha256_invalid")
+        if not isinstance(provider_reference, str) or not provider_reference.strip() or len(provider_reference) > 256 or "\\x00" in provider_reference:
+            raise ValueError("provider_reference_invalid")
+        if not isinstance(resolver_id, str) or not _AGENT.fullmatch(resolver_id):
+            raise ValueError("resolver_id_invalid")
+        now = self._clock()
+        with self._connect() as db:
+            record = db.execute(
+                "SELECT * FROM provider_execution_records WHERE execution_id=?", (execution_id,)
+            ).fetchone()
+            if record is None:
+                return False
+            if record["status"] != "uncertain":
+                raise ValueError("execution_not_uncertain")
+            changed = db.execute(
+                "UPDATE provider_execution_records SET status=?, reason='evidence_reconciled', updated_at=? "
+                "WHERE execution_id=? AND status='uncertain'",
+                (outcome, now, execution_id),
+            ).rowcount
+            if changed != 1:
+                raise RuntimeError("execution_resolution_conflict")
+            db.execute(
+                "INSERT INTO provider_execution_resolutions "
+                "(execution_id, outcome, evidence_source, evidence_sha256, provider_reference, resolver_id, resolved_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (execution_id, outcome, evidence_source, evidence_sha256,
+                 provider_reference.strip(), resolver_id, now),
+            )
+            self._event(
+                db, record["provider_id"], record["agent_id"], record["lease_id"],
+                outcome, "evidence_reconciled", now,
+            )
+        return True
+
+    def list_resolutions(self, *, execution_id: str) -> list[dict[str, object]]:
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT execution_id, outcome, evidence_source, evidence_sha256, "
+                "provider_reference, resolver_id, resolved_at "
+                "FROM provider_execution_resolutions WHERE execution_id=?",
+                (execution_id,),
             ).fetchall()
             return [dict(row) for row in rows]
 
