@@ -5,6 +5,7 @@ compatible or that provenance claims are truthful. Those require independent rev
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -75,6 +76,11 @@ def sha256_file(path: str | Path, *, max_bytes: int = 20 * 1024**4) -> str:
     except ModelArtifactManifestError:
         raise
     except OSError as exc:
+        # O_NOFOLLOW reports ELOOP when the final path component is a symlink.
+        if exc.errno == errno.ELOOP:
+            raise ModelArtifactManifestError(
+                "artifact_must_be_regular_non_symlink_file"
+            ) from exc
         raise ModelArtifactManifestError("artifact_unreadable_or_unsafe") from exc
     finally:
         if descriptor is not None:
