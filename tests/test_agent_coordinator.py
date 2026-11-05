@@ -6,6 +6,7 @@ from pathlib import Path
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
 from automation.agent_contracts import AgentContract
+from automation.agent_runtime_readiness import AgentRuntimeReadiness, AgentRuntimeRequirement
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
     _serialize_dependency_context,
@@ -677,6 +678,74 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                         authorize=self.agent_auth,
                     )
 
+
+
+    def test_runtime_requirement_is_persisted_in_agent_manifest(self):
+        requirement = AgentRuntimeRequirement("ollama", "qwen2.5:7b", ("chat",))
+        specialist = SpecialistAgent(
+            "runtime-bound", "Runtime-bound specialist", frozenset({"research"}),
+            "emit", runtime_requirement=requirement,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "runtime-manifest.sqlite3"),
+            [specialist], authorize=self.agent_auth,
+        )
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "runtime-manifest.sqlite3"),
+            (), authorize=self.agent_auth,
+        )
+        manifest = next(
+            item for item in restarted.list_agents(actor_id="alice")
+            if item["agent_id"] == "runtime-bound"
+        )
+        self.assertEqual(manifest["runtime_requirement"]["provider"], "ollama")
+        self.assertEqual(manifest["runtime_requirement"]["model"], "qwen2.5:7b")
+        self.assertEqual(tuple(manifest["runtime_requirement"]["capabilities"]), ("chat",))
+
+    def test_runtime_bound_agent_fails_closed_without_readiness_resolver(self):
+        specialist = SpecialistAgent(
+            "runtime-required", "Runtime-required specialist", frozenset({"research"}),
+            "emit", runtime_requirement=AgentRuntimeRequirement("ollama", "qwen2.5:7b"),
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "runtime-no-resolver.sqlite3"),
+            [specialist], authorize=self.agent_auth,
+        )
+        with self.assertRaisesRegex(AgentPlanError, "readiness evidence is unavailable"):
+            coordinator.submit(
+                actor_id="alice", idempotency_key="runtime-no-resolver",
+                subtasks=[SubtaskSpec("research", "Research", ("research",))],
+            )
+
+    def test_runtime_readiness_is_rechecked_before_dispatch(self):
+        specialist = SpecialistAgent(
+            "runtime-rechecked", "Runtime-rechecked specialist", frozenset({"research"}),
+            "emit", runtime_requirement=AgentRuntimeRequirement("ollama", "qwen2.5:7b"),
+        )
+        checks = []
+        def readiness(_agent):
+            checks.append(True)
+            if len(checks) == 1:
+                return AgentRuntimeReadiness(
+                    "ready", "ollama", "qwen2.5:7b", (), "live",
+                    "matching_live_provider_evidence",
+                )
+            return AgentRuntimeReadiness(
+                "reachable_unverified", "ollama", "qwen2.5:7b", (), "availability_only",
+                "live_verification_no_longer_available",
+            )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "runtime-recheck.sqlite3"),
+            [specialist], authorize=self.agent_auth, runtime_readiness=readiness,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="runtime-recheck",
+            subtasks=[SubtaskSpec("research", "Research", ("research",))],
+        )
+        result = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(result.subtasks[0].status, "blocked")
+        self.assertIsNone(result.subtasks[0].task_id)
 
 if __name__ == "__main__":
     unittest.main()
