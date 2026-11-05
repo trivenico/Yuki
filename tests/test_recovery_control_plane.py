@@ -23,7 +23,7 @@ class RecoveryControlPlaneTests(unittest.TestCase):
         snapshot = self.control.snapshot(now=datetime(2026, 1, 1, tzinfo=timezone.utc))
         self.assertTrue(snapshot["read_only"])
         self.assertFalse(snapshot["automatic_retry_permitted"])
-        self.assertEqual(snapshot["correlation"]["status"], "not_implemented")
+        self.assertEqual(snapshot["correlation"]["status"], "available")
         self.assertEqual(snapshot["health"]["status"], "no_reported_recovery_items")
 
     def test_provider_uncertain_execution_is_visible_and_stale(self):
