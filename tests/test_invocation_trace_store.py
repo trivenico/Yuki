@@ -45,6 +45,9 @@ class InvocationTraceStoreTests(unittest.TestCase):
         invalid = dict(self.record, started_at="2026-11-05T10:00:00")
         with self.assertRaisesRegex(ValueError, "timezone_aware"):
             self.store.append(invalid)
+        invalid = dict(self.record, outcome=[])
+        with self.assertRaisesRegex(ValueError, "invalid_invocation_outcome"):
+            self.store.append(invalid)
 
     def test_records_are_append_only_and_duplicate_ids_fail(self):
         self.store.append(self.record)
@@ -65,6 +68,8 @@ class InvocationTraceStoreTests(unittest.TestCase):
     def test_query_bounds_and_filters(self):
         with self.assertRaises(ValueError):
             self.store.list_recent(limit=501)
+        with self.assertRaisesRegex(ValueError, "invalid_model_id"):
+            self.store.list_recent(model_id="bad\nmodel")
         self.store.append(self.record)
         self.assertEqual(self.store.list_recent(model_id="another-model"), [])
         self.assertEqual(len(self.store.list_recent(model_id="local-model:latest")), 1)

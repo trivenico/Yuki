@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -48,7 +49,7 @@ def _validate_record(record: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid_duration_ms")
     if not math.isfinite(duration) or duration < 0 or duration > 86_400_000:
         raise ValueError("duration_ms_out_of_range")
-    if value["outcome"] not in {"success", "error"}:
+    if not isinstance(value["outcome"], str) or value["outcome"] not in {"success", "error"}:
         raise ValueError("invalid_invocation_outcome")
     for field in ("message_count", "input_chars", "tool_count",
                   "response_chars", "tool_call_count"):
@@ -111,10 +112,22 @@ class InvocationTraceStore:
                 BEGIN SELECT RAISE(ABORT, 'invocation_records_are_append_only'); END
             """)
 
+    @contextmanager
     def _connect(self):
+        """Yield a configured connection and always close its file handles.
+
+        sqlite3.Connection's context manager commits/rolls back but does not
+        close the connection. Explicit closure is important on Windows, where
+        open SQLite handles prevent temporary database cleanup.
+        """
         db = sqlite3.connect(self.database_path, timeout=10)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            # synchronous is connection-scoped; apply it to every connection.
+            db.execute("PRAGMA synchronous=FULL")
+            yield db
+        finally:
+            db.close()
 
     def append(self, record: Mapping[str, Any]) -> None:
         value = _validate_record(record)
@@ -147,7 +160,8 @@ class InvocationTraceStore:
             clauses.append("provider_id = ?")
             params.append(provider_id)
         if model_id is not None:
-            if not isinstance(model_id, str) or not model_id.strip() or len(model_id) > 160:
+            if (not isinstance(model_id, str) or not model_id.strip()
+                    or len(model_id) > 160 or any(ord(ch) < 32 for ch in model_id)):
                 raise ValueError("invalid_model_id")
             clauses.append("model_id = ?")
             params.append(model_id)
