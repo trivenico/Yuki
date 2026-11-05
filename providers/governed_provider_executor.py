@@ -42,6 +42,10 @@ class GovernedProviderExecutor:
         self.request_budget = request_budget
 
     def __call__(self, **request: Any) -> Mapping[str, Any]:
+        # Reject local contract errors before consuming quota or recording provider health.
+        validate = getattr(self.adapter, "validate_inputs", None)
+        if callable(validate):
+            validate(request.get("messages"), request.get("tools"), request.get("tool_choice", "auto"))
         if not self.circuit_breaker.allow_request(self.provider_id):
             raise ProviderCircuitOpen("provider_circuit_open")
         try:

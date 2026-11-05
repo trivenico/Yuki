@@ -76,7 +76,6 @@ class GovernedProviderExecutorTests(unittest.TestCase):
 
     def test_budget_rejection_releases_half_open_probe(self):
         execute = self.build(ReliableLocalModel())
-        self.breaker.record_failure("reliablelocal")
         # Use a clock-controlled circuit to make its probe available.
         now = [0.0]
         breaker = ProviderCircuitBreaker(
@@ -84,22 +83,31 @@ class GovernedProviderExecutorTests(unittest.TestCase):
         )
         breaker.record_failure("reliablelocal")
         now[0] = 1.0
-        occupied = self.budget.acquire(provider_id="reliablelocal", agent_id="other")
+        constrained_budget = ProviderRequestBudget(
+            max_global_concurrent=1, max_provider_concurrent=1,
+            max_agent_concurrent=1, max_agent_requests_per_window=10,
+        )
+        occupied = constrained_budget.acquire(provider_id="reliablelocal", agent_id="other")
         constrained = GovernedProviderExecutor(
             provider_id="reliablelocal", agent_id="assistant",
-            adapter=execute.adapter, circuit_breaker=breaker, request_budget=self.budget,
+            adapter=execute.adapter, circuit_breaker=breaker, request_budget=constrained_budget,
         )
         with self.assertRaises(ProviderBudgetExceeded):
             constrained(**self.request)
         self.assertTrue(breaker.allow_request("reliablelocal"))
-        self.budget.release(occupied)
+        constrained_budget.release(occupied)
 
-    def test_adapter_validation_error_is_released_and_recorded(self):
+    def test_adapter_validation_error_is_rejected_before_admission(self):
         execute = self.build(ReliableLocalModel())
         with self.assertRaises(ValueError):
             execute(messages=[], tools=[], tool_choice="none")
         self.assertEqual(
             self.budget.snapshot(provider_id="reliablelocal", agent_id="assistant").global_active_requests,
+            0,
+        )
+        self.assertEqual(self.breaker.snapshot("reliablelocal").state, "closed")
+        self.assertEqual(
+            self.budget.snapshot(provider_id="reliablelocal", agent_id="assistant").agent_requests_in_window,
             0,
         )
 
