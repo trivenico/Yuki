@@ -89,7 +89,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
     def test_output_contract_rejects_worker_result_before_plan_acceptance(self):
         contract = AgentContract(version='1.0.0', input_schema={'type': 'object', 'properties': {'argument': {'type': 'string'}}, 'required': ['argument'], 'additionalProperties': False}, output_schema={'type': 'string', 'minLength': 5})
         coordinator = SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, contracts={'research': contract})
-        plan = coordinator.submit(actor_id='alice', idempotency_key='contract-output', subtasks=[SubtaskSpec('collect', 'Find evidence', ('research',))])
+        plan = coordinator.submit(actor_id='alice', idempotency_key='contract-output', subtasks=[SubtaskSpec('collect', 'Find evidence', ('research',), requires_approval=False)])
         dispatched = coordinator.advance(actor_id='alice', plan_id=plan.plan_id)
         task_id = dispatched.subtasks[0].task_id
         claimed = self.store.claim_next(worker_id='contract-worker')
