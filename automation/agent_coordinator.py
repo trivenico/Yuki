@@ -302,7 +302,7 @@ class SpecialistAgentCoordinator:
             raise ValueError("enabled must be a boolean.")
         if not isinstance(agent.version, str) or not _VERSION.fullmatch(agent.version):
             raise ValueError("agent version must use MAJOR.MINOR.PATCH numeric semantic versioning.")
-        if agent.risk_tier not in _RISK_TIERS:
+        if not isinstance(agent.risk_tier, str) or agent.risk_tier not in _RISK_TIERS:
             raise ValueError("risk_tier must be low, medium, high, or critical.")
         if type(agent.timeout_seconds) is not int or not 1 <= agent.timeout_seconds <= 86400:
             raise ValueError("timeout_seconds must be between 1 and 86400.")
