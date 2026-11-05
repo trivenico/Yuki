@@ -434,7 +434,7 @@ class AgentExecutionTraceStore:
             placeholders = ','.join('?' for _ in ids)
             status_counts = {row['status']: int(row['count']) for row in db.execute('SELECT status,COUNT(*) AS count FROM agent_execution_traces WHERE execution_id IN (' + placeholders + ') GROUP BY status', ids)}
             failures = db.execute(
-                'SELECT t.agent_id,COUNT(*) AS failure_count FROM agent_execution_traces t WHERE t.execution_id IN (' + placeholders + ') AND t.status IN (\'failed\',\'timed_out\',\'uncertain\') GROUP BY t.agent_id ORDER BY failure_count DESC,t.agent_id LIMIT 50', ids,
+                'SELECT t.agent_id,COUNT(*) AS failure_count FROM agent_execution_traces t WHERE t.execution_id IN (' + placeholders + ') AND t.agent_id NOT LIKE \'provider.%\' AND t.status IN (\'failed\',\'timed_out\',\'uncertain\') GROUP BY t.agent_id ORDER BY failure_count DESC,t.agent_id LIMIT 50', ids,
             ).fetchall()
             slow = db.execute(
                 'SELECT t.execution_id,t.agent_id,t.status,COALESCE(SUM(e.duration_ms),0) AS duration_ms FROM agent_execution_traces t LEFT JOIN agent_execution_events e ON e.execution_id=t.execution_id WHERE t.execution_id IN (' + placeholders + ') GROUP BY t.execution_id HAVING duration_ms>=? ORDER BY duration_ms DESC,t.execution_id LIMIT 100', (*ids, slow_threshold_ms),
