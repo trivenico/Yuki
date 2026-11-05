@@ -48,7 +48,7 @@ def register_artifact(catalog, manifest, artifact_path):
     """Verify bytes and register an artifact in quarantine; no provenance assumed."""
     try:
         normalized = validate_manifest(manifest)
-        if not verify_artifact(artifact_path, normalized):
+        if not verify_artifact(artifact_path, manifest):
             raise ModelCatalogError("artifact_digest_mismatch")
     except ModelArtifactManifestError as exc:
         raise ModelCatalogError(str(exc)) from exc
@@ -98,6 +98,7 @@ def review_provenance(catalog, model_id, model_version, *, provenance_status, li
     if not isinstance(license_status, str) or license_status not in {"verified", "restricted", "not_applicable"}:
         raise ModelCatalogError("invalid_license_status")
     item["provenance_status"] = provenance_status
+    item["ownership_status"] = "verified" if provenance_status == "verified" else "rejected"
     item["license_status"] = license_status
     item["provenance_reviewer"] = reviewer
     if provenance_status == "rejected":

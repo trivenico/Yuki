@@ -44,7 +44,7 @@ class OllamaCatalogReconciliationTests(unittest.TestCase):
         self.assertIsNone(report["installed_models"][0]["matched_artifact"])
 
     def test_invalid_inventory_record_and_duplicate_name_rejected(self):
-        with self.assertRaisesRegex(TypeError, "InstalledModel"):
+        with self.assertRaisesRegex(TypeError, "installed_model_record_required"):
             reconcile_ollama_inventory([{"name": "yuki"}], self.catalog)
         model = InstalledModel("same", self.digest, 100, None, None, None)
         with self.assertRaisesRegex(ValueError, "duplicate"):

@@ -58,8 +58,10 @@ def assess_local_model_readiness(
         if artifact is not None:
             if artifact.get("ownership_status") != "verified":
                 blockers.append("ownership_not_verified")
-            if artifact.get("state") != "reviewed":
-                blockers.append("artifact_not_reviewed")
+            if artifact.get("state") not in {"evaluated", "approved", "staged", "active"}:
+                blockers.append("artifact_not_evaluated")
+            if artifact.get("evaluation_passed") is not True:
+                blockers.append("catalog_evaluation_not_passed")
         records = eval_by_id.get(
             artifact.get("model_id") if artifact else installed.name, []
         )

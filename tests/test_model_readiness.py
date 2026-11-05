@@ -12,7 +12,7 @@ class ModelReadinessTests(unittest.TestCase):
         self.catalog = {"schema_version": 1, "models": [{
             "model_id": "yuki/core", "model_version": "0.1.0",
             "artifact_sha256": self.digest, "ownership_status": "verified",
-            "state": "reviewed",
+            "state": "evaluated", "evaluation_passed": True,
         }]}
         self.registry = {"schema_version": 1, "records": [{
             "model_id": "yuki/core", "benchmark_id": "core-v1",
