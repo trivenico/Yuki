@@ -26,6 +26,7 @@ class AgentRuntimeReadinessTests(unittest.TestCase):
         result = evaluate_agent_runtime_readiness(
             enabled=True, requirement=self.requirement,
             provider_report=report(), configured_model="qwen2.5:7b",
+            now=datetime(2026, 11, 5, 10, 30, tzinfo=timezone.utc),
         )
         self.assertEqual(result.status, "ready")
         self.assertEqual(result.verification_level, "live")
@@ -116,6 +117,7 @@ class AgentRuntimeReadinessTests(unittest.TestCase):
             enabled=True, requirement=self.requirement,
             provider_report=report(capabilities={"chat": False}),
             configured_model="qwen2.5:7b",
+            now=datetime(2026, 11, 5, 10, 30, tzinfo=timezone.utc),
         )
         self.assertEqual(result.status, "capability_mismatch")
         self.assertEqual(result.missing_capabilities, ("chat",))
