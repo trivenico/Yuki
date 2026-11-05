@@ -59,9 +59,14 @@ class ProviderAgentAdapter:
         finish_reason = response.get("finish_reason")
         if not isinstance(text, str) or not isinstance(calls, Mapping) or set(calls) != {"tool_calls"}:
             raise ProviderResponseError("provider_response_fields_invalid")
-        if finish_reason is not None and not isinstance(finish_reason, str):
+        allowed_finish_reasons = {"stop", "length", "tool_calls", "content_filter", "function_call"}
+        if finish_reason is not None and (
+            not isinstance(finish_reason, str) or finish_reason not in allowed_finish_reasons
+        ):
             raise ProviderResponseError("provider_finish_reason_invalid")
         call_list = calls["tool_calls"]
+        if tool_choice == "none" and call_list:
+            raise ProviderResponseError("provider_tool_call_not_permitted")
         if not isinstance(call_list, list) or len(call_list) > 5:
             raise ProviderResponseError("provider_tool_call_batch_invalid")
         allowed_names = {
