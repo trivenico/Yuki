@@ -10,6 +10,7 @@ import hmac
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from providers.dataset_artifact_manifest import (
@@ -35,7 +36,7 @@ class DatasetStore:
             raise DatasetStoreError("database_must_not_be_symlink")
         self.timeout = float(timeout)
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS datasets (
                         dataset_id TEXT NOT NULL,
@@ -64,6 +65,15 @@ class DatasetStore:
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA busy_timeout=%d" % int(self.timeout * 1000))
         return db
+
+    @contextmanager
+    def _connection(self):
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _event_hash(sequence, dataset_id, revision, actor, action, manifest_hash, previous):
@@ -121,7 +131,7 @@ class DatasetStore:
 
     def get(self, dataset_id, dataset_revision):
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 row = db.execute(
                     "SELECT manifest_json,manifest_sha256,state FROM datasets WHERE dataset_id=? AND dataset_revision=?",
                     (dataset_id, dataset_revision),
@@ -144,7 +154,7 @@ class DatasetStore:
         if type(limit) is not int or not 1 <= limit <= 10000:
             raise ValueError("invalid_dataset_limit")
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 rows = db.execute(
                     "SELECT dataset_id,dataset_revision,state,manifest_sha256 FROM datasets ORDER BY dataset_id,dataset_revision LIMIT ?",
                     (limit,),
@@ -156,7 +166,7 @@ class DatasetStore:
 
     def verify_audit_chain(self):
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 rows = db.execute(
                     "SELECT sequence,dataset_id,dataset_revision,actor,action,manifest_sha256,previous_event_sha256,event_sha256 FROM dataset_events ORDER BY sequence"
                 ).fetchall()
