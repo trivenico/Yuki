@@ -1075,7 +1075,10 @@ class WorkflowRunStore:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT o.*, r.state AS task_state, r.lease_owner AS lease_owner, "
-                "r.lease_expires_at AS lease_expires_at FROM workflow_operations o "
+                "r.lease_expires_at AS lease_expires_at, r.definition_json AS definition_json, "
+                "r.request_digest AS request_digest, r.approved_by AS approved_by, "
+                "r.approved_at AS approved_at, r.approved_session_hash AS approved_session_hash, "
+                "r.approval_digest AS approval_digest FROM workflow_operations o "
                 "JOIN workflow_runs r ON r.run_id=o.task_id WHERE o.operation_id=?",
                 (operation_id,),
             ).fetchone()
@@ -1083,6 +1086,15 @@ class WorkflowRunStore:
                 raise KeyError("operation not found.")
             if row["task_state"] != "running" or row["lease_owner"] != worker_id.strip():
                 raise WorkflowTransitionError("worker does not own a running task for this operation.")
+            definition = json.loads(row["definition_json"])
+            if self._requires_approval(definition) and not (
+                row["approved_by"] and row["approved_at"]
+                and row["approved_session_hash"]
+                and row["approval_digest"] == row["request_digest"]
+            ):
+                raise WorkflowTransitionError(
+                    "workflow approval is missing or no longer matches the approved definition."
+                )
             try:
                 expiry = datetime.fromisoformat(row["lease_expires_at"])
                 if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):

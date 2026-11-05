@@ -117,6 +117,23 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(reconciled.version, inflight.version + 1)
         self.assertEqual(len(self.store.list_unresolved_operations(task_id=run.run_id)), 1)
 
+    def test_operation_dispatch_revalidates_approval_inside_claim_transaction(self):
+        run = self.start_worker_run("operation-approval-recheck")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="approval-recheck", action="provider.call",
+            request={"input_digest": "approval"},
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approval_digest='stale' WHERE run_id=?",
+                (run.run_id,),
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.mark_operation_in_flight(
+                operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+            )
+        self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
+
     def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
         run = self.start_worker_run("operation-dispatch-guard")
         operation = self.store.prepare_operation(
