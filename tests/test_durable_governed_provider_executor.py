@@ -61,6 +61,21 @@ class DurableGovernedExecutorTests(unittest.TestCase):
             self.store.list_events(provider_id="localinferenceengine")
         )], ["admitted", "succeeded"])
 
+    def test_provider_execution_is_linked_to_parent_trace(self):
+        from automation.agent_execution_observability import AgentExecutionTraceStore
+        traces = AgentExecutionTraceStore(str(Path(self.tmp.name) / 'traces.sqlite3'))
+        parent = traces.start_execution(agent_id='assistant')
+        engine = LocalInferenceEngine()
+        adapter = ProviderGateway.from_adapter(ProviderAgentAdapter(engine))
+        execute = DurableGovernedProviderExecutor(provider_id=adapter.provider_id, agent_id='assistant', adapter=adapter, governance_store=self.store, trace_store=traces)
+        execute(**self.request, _trace_execution_id=parent['execution_id'])
+        children = traces.list_children(parent['execution_id'])
+        provider_span = next(x for x in children if x['provider_execution_id'])
+        self.assertEqual(provider_span['status'], 'succeeded')
+        events = traces.list_events(provider_span['execution_id'])
+        self.assertEqual([e['event_type'] for e in events][-2:], ['provider.started', 'provider.completed'])
+        self.assertEqual(engine.calls, 1)
+
     def test_provider_exception_is_persisted_and_opens_circuit(self):
         execute = self.build(LocalInferenceEngine(failure="error"))
         with self.assertRaisesRegex(RuntimeError, "transport"):

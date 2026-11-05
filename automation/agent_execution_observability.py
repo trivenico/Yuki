@@ -318,6 +318,26 @@ class AgentExecutionTraceStore:
             ).fetchone()
             return {key: int(row[key] or 0) for key in ("pending", "leased", "delivered")}
 
+    def bind_provider_execution(self, execution_id: str, *, provider_execution_id: str) -> dict[str, Any]:
+        execution_id = self._identifier(execution_id, 'execution_id')
+        provider_execution_id = self._identifier(provider_execution_id, 'provider_execution_id')
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT provider_execution_id FROM agent_execution_traces WHERE execution_id=?', (execution_id,)).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError('execution_not_found')
+            if row['provider_execution_id'] not in (None, provider_execution_id):
+                db.rollback()
+                raise ExecutionTraceError('provider_correlation_conflict')
+            conflict = db.execute('SELECT execution_id FROM agent_execution_traces WHERE provider_execution_id=? AND execution_id<>?', (provider_execution_id, execution_id)).fetchone()
+            if conflict is not None:
+                db.rollback()
+                raise ExecutionTraceError('provider_already_correlated')
+            db.execute('UPDATE agent_execution_traces SET provider_execution_id=?, updated_at=? WHERE execution_id=?', (provider_execution_id, float(self._clock()), execution_id))
+            db.commit()
+        return self.get_execution(execution_id)
+
     def get_execution(self, execution_id: str) -> dict[str, Any] | None:
         execution_id = self._identifier(execution_id, "execution_id")
         with self._connect() as db:
