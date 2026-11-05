@@ -85,9 +85,13 @@ class SQLiteProviderGovernanceStore:
         self.failure_threshold = failure_threshold
         self.reset_timeout_seconds = float(reset_timeout_seconds)
         self._clock = clock
+        setup = sqlite3.connect(self.database_path, timeout=10.0)
+        try:
+            setup.execute("PRAGMA journal_mode=WAL")
+            setup.execute("PRAGMA synchronous=FULL")
+        finally:
+            setup.close()
         with self._connect() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("PRAGMA synchronous=FULL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS provider_circuits (
                     provider_id TEXT PRIMARY KEY,

@@ -82,17 +82,18 @@ class SQLiteProviderGovernanceTests(unittest.TestCase):
             self.make_store().acquire(provider_id="ollama", agent_id="other")
 
     def test_only_half_open_probe_can_close_circuit(self):
-        first = self.store.acquire(provider_id="ollama", agent_id="planner")
-        second = self.store.acquire(provider_id="ollama", agent_id="other")
-        self.store.record_outcome(first.lease_id, outcome="failed")
-        self.store.record_outcome(second.lease_id, outcome="failed")
+        store = self.make_store(max_global_concurrent=4, max_provider_concurrent=4)
+        first = store.acquire(provider_id="ollama", agent_id="planner")
+        second = store.acquire(provider_id="ollama", agent_id="other")
+        stale = store.acquire(provider_id="ollama", agent_id="stale")
+        store.record_outcome(first.lease_id, outcome="failed")
+        store.record_outcome(second.lease_id, outcome="failed")
         self.now[0] += 10
-        probe = self.make_store().acquire(provider_id="ollama", agent_id="probe")
-        stale = self.make_store().acquire(provider_id="ollama", agent_id="stale")
-        self.store.record_outcome(stale.lease_id, outcome="succeeded")
-        self.assertEqual(self.store.snapshot(provider_id="ollama", agent_id="probe")["circuit_state"], "open")
-        self.store.record_outcome(probe.lease_id, outcome="succeeded")
-        self.assertEqual(self.store.snapshot(provider_id="ollama", agent_id="probe")["circuit_state"], "closed")
+        probe = self.make_store(max_global_concurrent=4, max_provider_concurrent=4).acquire(provider_id="ollama", agent_id="probe")
+        store.record_outcome(stale.lease_id, outcome="succeeded")
+        self.assertEqual(store.snapshot(provider_id="ollama", agent_id="probe")["circuit_state"], "open")
+        store.record_outcome(probe.lease_id, outcome="succeeded")
+        self.assertEqual(store.snapshot(provider_id="ollama", agent_id="probe")["circuit_state"], "closed")
 
     def test_cancelled_probe_releases_probe_slot_without_health_penalty(self):
         a = self.store.acquire(provider_id="ollama", agent_id="a")
