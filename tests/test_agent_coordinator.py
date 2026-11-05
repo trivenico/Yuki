@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.agent_execution_observability import AgentExecutionTraceStore
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
     _serialize_dependency_context,
@@ -46,6 +47,24 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
+
+    def test_coordinator_creates_root_and_child_delegation_traces(self):
+        trace_store = AgentExecutionTraceStore(str(Path(self.tmp.name) / 'traces.sqlite3'))
+        coordinator = SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, trace_store=trace_store)
+        plan = coordinator.submit(actor_id='alice', idempotency_key='trace-plan', subtasks=[
+            SubtaskSpec('research-step', 'Collect sources', ('research',)),
+            SubtaskSpec('write-step', 'Draft summary', ('write',)),
+        ])
+        self.assertEqual(trace_store.get_execution(plan.plan_id)['agent_id'], 'coordinator')
+        children = trace_store.list_children(plan.plan_id)
+        self.assertEqual({item['agent_id'] for item in children}, {'research', 'writer'})
+        events = trace_store.list_events(plan.plan_id)
+        self.assertEqual(sum(event['event_type'] == 'agent.delegated' for event in events), 2)
+        coordinator.submit(actor_id='alice', idempotency_key='trace-plan', subtasks=[
+            SubtaskSpec('research-step', 'Collect sources', ('research',)),
+            SubtaskSpec('write-step', 'Draft summary', ('write',)),
+        ])
+        self.assertEqual(len(trace_store.list_children(plan.plan_id)), 2)
 
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(

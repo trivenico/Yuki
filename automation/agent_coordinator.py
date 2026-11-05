@@ -16,6 +16,7 @@ import sqlite3
 from threading import RLock
 from typing import Callable, Iterable
 
+from automation.agent_execution_observability import AgentExecutionTraceStore
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -125,6 +126,7 @@ class SpecialistAgentCoordinator:
         *,
         authorize: Callable[[str, str, str], bool],
         max_subtasks: int = _MAX_SUBTASKS,
+        trace_store: AgentExecutionTraceStore | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -139,6 +141,10 @@ class SpecialistAgentCoordinator:
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
         self.max_subtasks = max_subtasks
+        if trace_store is not None and not isinstance(trace_store, AgentExecutionTraceStore):
+            raise TypeError('trace_store must be an AgentExecutionTraceStore.')
+        self.trace_store = trace_store
+        self.trace_errors = 0
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
         for agent in agents:
@@ -480,6 +486,19 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
+    def _trace_plan(self, plan_id: str, assignments: dict[str, SpecialistAgent]) -> None:
+        if self.trace_store is None:
+            return
+        try:
+            self.trace_store.start_execution(agent_id='coordinator', task_id=plan_id, execution_id=plan_id)
+            self.trace_store.record_event(execution_id=plan_id, event_type='execution.started', actor_id='coordinator', status='running')
+            for subtask_id, agent in assignments.items():
+                child_id = hashlib.sha256(('yuki-agent-span\\0' + plan_id + '\\0' + subtask_id).encode('utf-8')).hexdigest()[:32]
+                self.trace_store.start_execution(agent_id=agent.agent_id, parent_execution_id=plan_id, task_id=subtask_id, execution_id=child_id)
+                self.trace_store.record_event(execution_id=plan_id, event_type='agent.delegated', actor_id='coordinator')
+        except Exception:
+            self.trace_errors += 1
+
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
@@ -550,6 +569,8 @@ class SpecialistAgentCoordinator:
                       json.dumps(sorted(item.required_permissions)),
                       self._agent_identity_digest(agent),
                       json.dumps(list(item.depends_on)), int(item.requires_approval)))
+            if self.trace_store is not None:
+                self._trace_plan(plan_id, assignments)
             return self._read_plan(db, plan_id)
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
