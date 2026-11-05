@@ -43,6 +43,70 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(steps[0].step_id, f"{run.run_id}:0")
         self.assertEqual(self.store.list_steps("unknown-run"), [])
 
+    def test_operation_journal_is_idempotent_and_never_stores_request_plaintext(self):
+        run = self.create(key="operation-journal")
+        run = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=60,
+        )
+        request = {"recipient": "private@example.test", "body": "sensitive payload"}
+        first = self.store.prepare_operation(
+            run.run_id, idempotency_key="send-once", action="message.send", request=request,
+        )
+        second = self.store.prepare_operation(
+            run.run_id, idempotency_key="send-once", action="message.send", request=request,
+        )
+        self.assertEqual(first.operation_id, second.operation_id)
+        self.assertEqual(first.status, "prepared")
+        self.assertNotIn("sensitive payload", repr(first))
+        with self.assertRaises(WorkflowConflict):
+            self.store.prepare_operation(
+                run.run_id, idempotency_key="send-once", action="message.send",
+                request={"recipient": "other@example.test"},
+            )
+
+    def test_operation_dispatch_requires_live_worker_lease_and_records_outcome(self):
+        run = self.create(key="operation-dispatch")
+        run = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=60,
+        )
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="provider-call-1", action="provider.call",
+            request={"input_digest": "abc"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+        )
+        self.assertEqual(inflight.status, "in_flight")
+        resolved = self.store.record_operation_outcome(
+            inflight.operation_id, expected_version=inflight.version,
+            status="succeeded", provider_reference="provider-op-123",
+            outcome={"accepted": True},
+        )
+        self.assertEqual(resolved.status, "succeeded")
+        self.assertEqual(resolved.provider_reference, "provider-op-123")
+        self.assertEqual(self.store.list_unresolved_operations(), [])
+
+    def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
+        run = self.create(key="operation-dispatch-guard")
+        run = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=60,
+        )
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="provider-call-guard", action="provider.call",
+            request={"input_digest": "abc"},
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.mark_operation_in_flight(
+                operation.operation_id, worker_id="worker-b", expected_version=operation.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.mark_operation_in_flight(
+                operation.operation_id, worker_id="worker-a", expected_version=operation.version + 1,
+            )
+
     def test_idempotent_create_does_not_duplicate_step_records(self):
         first = self.create(key="step-idempotency")
         second = self.create(key="step-idempotency")

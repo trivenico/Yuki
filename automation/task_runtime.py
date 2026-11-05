@@ -449,6 +449,42 @@ class TaskRuntime:
         )
         return self._record(self.store.get(retried.run_id))
 
+    def prepare_operation(self, *, actor_id: str, task_id: str, idempotency_key: str,
+                          action: str, request: dict[str, Any]):
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:operation:prepare", task_id):
+            raise PermissionError("operation preparation is not authorized.")
+        return self.store.prepare_operation(
+            task_id, idempotency_key=idempotency_key, action=action, request=request,
+        )
+
+    def mark_operation_in_flight(self, *, actor_id: str, operation_id: str,
+                                 worker_id: str, expected_version: int):
+        actor = self._actor(actor_id)
+        operation = self.store.get_operation(operation_id)
+        if operation is None:
+            raise KeyError("operation not found.")
+        if not self._allowed(actor, "task:operation:dispatch", operation.task_id):
+            raise PermissionError("operation dispatch is not authorized.")
+        return self.store.mark_operation_in_flight(
+            operation_id, worker_id=worker_id, expected_version=expected_version,
+        )
+
+    def record_operation_outcome(self, *, actor_id: str, operation_id: str,
+                                 expected_version: int, status: str,
+                                 provider_reference: str | None = None,
+                                 outcome: dict[str, Any] | list[Any] | None = None):
+        actor = self._actor(actor_id)
+        operation = self.store.get_operation(operation_id)
+        if operation is None:
+            raise KeyError("operation not found.")
+        if not self._allowed(actor, "task:operation:resolve", operation.task_id):
+            raise PermissionError("operation outcome recording is not authorized.")
+        return self.store.record_operation_outcome(
+            operation_id, expected_version=expected_version, status=status,
+            provider_reference=provider_reference, outcome=outcome,
+        )
+
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:cancel", task_id):

@@ -80,6 +80,21 @@ class WorkflowStepRecord:
 
 
 @dataclass(frozen=True)
+class WorkflowOperation:
+    operation_id: str
+    task_id: str
+    idempotency_key: str
+    action: str
+    request_digest: str
+    status: str
+    provider_reference: str | None
+    outcome: dict[str, Any] | list[Any] | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class WorkflowRun:
     run_id: str
     idempotency_key: str
@@ -183,6 +198,28 @@ class WorkflowRunStore:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_steps_run_order "
                 "ON workflow_steps(run_id, step_index)"
+            )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('prepared', 'in_flight', 'succeeded', 'needs_reconciliation')),
+                    provider_reference TEXT,
+                    outcome_json TEXT,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(task_id, idempotency_key),
+                    FOREIGN KEY(task_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_operations_task_status "
+                "ON workflow_operations(task_id, status)"
             )
 
     @contextmanager
@@ -972,6 +1009,156 @@ class WorkflowRunStore:
                     changed.append(self._row(changed_row))
         return changed
 
+
+    @staticmethod
+    def _operation_row(row):
+        if row is None:
+            return None
+        return WorkflowOperation(
+            operation_id=row["operation_id"], task_id=row["task_id"],
+            idempotency_key=row["idempotency_key"], action=row["action"],
+            request_digest=row["request_digest"], status=row["status"],
+            provider_reference=row["provider_reference"],
+            outcome=json.loads(row["outcome_json"]) if row["outcome_json"] else None,
+            version=row["version"], created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
+    def prepare_operation(self, task_id: str, *, idempotency_key: str, action: str,
+                          request: dict[str, Any]) -> WorkflowOperation:
+        """Persist intent before an external side effect; never executes the action."""
+        for value, field, limit in ((task_id, "task_id", 200),
+                                    (idempotency_key, "idempotency_key", _MAX_KEY_CHARS),
+                                    (action, "action", _MAX_NAME_CHARS)):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit or "\\x00" in value:
+                raise ValueError(f"{field} must be non-empty bounded text.")
+        if not isinstance(request, dict):
+            raise ValueError("request must be an object.")
+        canonical = _bounded_json(request, 16 * 1024, "operation request")
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            task = db.execute("SELECT state FROM workflow_runs WHERE run_id=?", (task_id,)).fetchone()
+            if task is None:
+                raise KeyError("task not found.")
+            if task["state"] != "running":
+                raise WorkflowTransitionError("operations can only be prepared for running tasks.")
+            existing = db.execute(
+                "SELECT * FROM workflow_operations WHERE task_id=? AND idempotency_key=?",
+                (task_id, idempotency_key.strip()),
+            ).fetchone()
+            if existing:
+                if existing["action"] != action.strip() or existing["request_digest"] != digest:
+                    raise WorkflowConflict("operation idempotency key was reused with a different request.")
+                return self._operation_row(existing)
+            operation_id = secrets.token_urlsafe(18)
+            db.execute(
+                "INSERT INTO workflow_operations(operation_id, task_id, idempotency_key, action, "
+                "request_digest, status, version, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 'prepared', 0, ?, ?)",
+                (operation_id, task_id, idempotency_key.strip(), action.strip(), digest, now, now),
+            )
+            row = db.execute("SELECT * FROM workflow_operations WHERE operation_id=?",
+                             (operation_id,)).fetchone()
+            return self._operation_row(row)
+
+    def mark_operation_in_flight(self, operation_id: str, *, worker_id: str,
+                                 expected_version: int) -> WorkflowOperation:
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be non-empty text.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT o.*, r.state AS task_state, r.lease_owner AS lease_owner, "
+                "r.lease_expires_at AS lease_expires_at FROM workflow_operations o "
+                "JOIN workflow_runs r ON r.run_id=o.task_id WHERE o.operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("operation not found.")
+            if row["task_state"] != "running" or row["lease_owner"] != worker_id.strip():
+                raise WorkflowTransitionError("worker does not own a running task for this operation.")
+            try:
+                expiry = datetime.fromisoformat(row["lease_expires_at"])
+                if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+                    raise WorkflowTransitionError("worker lease is expired or invalid.")
+            except (TypeError, ValueError):
+                raise WorkflowTransitionError("worker lease is expired or invalid.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("operation version changed; reload before dispatch.")
+            if row["status"] != "prepared":
+                raise WorkflowTransitionError("only prepared operations can be dispatched.")
+            updated = db.execute(
+                "UPDATE workflow_operations SET status='in_flight', version=version+1, updated_at=? "
+                "WHERE operation_id=? AND version=? AND status='prepared'",
+                (now, operation_id, expected_version),
+            )
+            if updated.rowcount != 1:
+                raise WorkflowConflict("operation changed concurrently.")
+            return self._operation_row(db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone())
+
+    def record_operation_outcome(self, operation_id: str, *, expected_version: int,
+                                 status: str, provider_reference: str | None = None,
+                                 outcome: dict[str, Any] | list[Any] | None = None) -> WorkflowOperation:
+        if status not in {"succeeded", "needs_reconciliation"}:
+            raise ValueError("status must be succeeded or needs_reconciliation.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if provider_reference is not None and (
+            not isinstance(provider_reference, str) or len(provider_reference) > 500 or "\\x00" in provider_reference
+        ):
+            raise ValueError("provider_reference must be bounded text.")
+        outcome_json = _bounded_json(outcome, _MAX_RESULT_BYTES, "operation outcome") if outcome is not None else None
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)).fetchone()
+            if row is None:
+                raise KeyError("operation not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("operation version changed; reload before recording outcome.")
+            if row["status"] != "in_flight":
+                raise WorkflowTransitionError("only in-flight operations can record an outcome.")
+            db.execute(
+                "UPDATE workflow_operations SET status=?, provider_reference=?, outcome_json=?, "
+                "version=version+1, updated_at=? WHERE operation_id=? AND version=?",
+                (status, provider_reference, outcome_json, now, operation_id, expected_version),
+            )
+            return self._operation_row(db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone())
+
+    def get_operation(self, operation_id: str) -> WorkflowOperation | None:
+        with self._connect() as db:
+            return self._operation_row(db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone())
+
+    def list_unresolved_operations(self, *, task_id: str | None = None, limit: int = 100):
+        if task_id is not None and (not isinstance(task_id, str) or not task_id.strip()):
+            raise ValueError("task_id must be non-empty text.")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer from 1 to 500.")
+        with self._connect() as db:
+            if task_id is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_operations WHERE status IN ('in_flight', 'needs_reconciliation') "
+                    "ORDER BY created_at LIMIT ?", (limit,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM workflow_operations WHERE task_id=? "
+                    "AND status IN ('in_flight', 'needs_reconciliation') ORDER BY created_at LIMIT ?",
+                    (task_id, limit),
+                ).fetchall()
+            return [self._operation_row(row) for row in rows]
 
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
