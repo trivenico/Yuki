@@ -34,6 +34,7 @@ class DurableLease:
     provider_id: str
     agent_id: str
     expires_at: float
+    execution_id: str
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,19 @@ class SQLiteProviderGovernanceStore:
             setup.close()
         with self._connect() as db:
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS provider_execution_records (
+                    execution_id TEXT PRIMARY KEY,
+                    lease_id TEXT NOT NULL UNIQUE,
+                    provider_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('running', 'succeeded', 'failed', 'cancelled', 'uncertain')),
+                    reason TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_executions_status
+                    ON provider_execution_records(provider_id, status, updated_at);
                 CREATE TABLE IF NOT EXISTS provider_circuits (
                     provider_id TEXT PRIMARY KEY,
                     failures INTEGER NOT NULL DEFAULT 0 CHECK(failures >= 0),
@@ -178,6 +192,11 @@ class SQLiteProviderGovernanceStore:
                 "WHERE provider_id=? AND probe_lease_id=?",
                 (lease["provider_id"], lease["lease_id"]),
             )
+            db.execute(
+                "UPDATE provider_execution_records SET status='uncertain', reason='lease_expired', updated_at=? "
+                "WHERE lease_id=? AND status='running'",
+                (now, lease["lease_id"]),
+            )
             self._event(db, lease["provider_id"], lease["agent_id"], lease["lease_id"],
                         "expired", "lease_expired", now)
 
@@ -185,6 +204,7 @@ class SQLiteProviderGovernanceStore:
         self._validate_ids(provider_id, agent_id)
         now = self._clock()
         lease_id = uuid.uuid4().hex
+        execution_id = uuid.uuid4().hex
         with self._connect() as db:
             self._purge_expired(db, now)
             circuit = db.execute(
@@ -236,8 +256,14 @@ class SQLiteProviderGovernanceStore:
                 db.execute(
                     "INSERT OR IGNORE INTO provider_circuits(provider_id) VALUES (?)", (provider_id,)
                 )
+            db.execute(
+                "INSERT INTO provider_execution_records "
+                "(execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'running', 'admitted', ?, ?)",
+                (execution_id, lease_id, provider_id, agent_id, now, now),
+            )
             self._event(db, provider_id, agent_id, lease_id, "admitted", "capacity_reserved", now)
-        return DurableLease(lease_id, provider_id, agent_id, expires)
+        return DurableLease(lease_id, provider_id, agent_id, expires, execution_id)
 
     def record_outcome(self, lease_id: str, *, outcome: str, reason: str = "provider_result") -> bool:
         if not isinstance(lease_id, str) or not re.fullmatch(r"[0-9a-f]{32}", lease_id):
@@ -284,11 +310,37 @@ class SQLiteProviderGovernanceStore:
                     "UPDATE provider_circuits SET probe_lease_id=NULL WHERE provider_id=?", (provider_id,)
                 )
             db.execute("DELETE FROM provider_leases WHERE lease_id=?", (lease_id,))
+            db.execute(
+                "UPDATE provider_execution_records SET status=?, reason=?, updated_at=? "
+                "WHERE lease_id=? AND status='running'",
+                (outcome, reason, now, lease_id),
+            )
             self._event(db, provider_id, agent_id, lease_id, outcome, reason, now)
         return True
 
     def release(self, lease_id: str) -> bool:
         return self.record_outcome(lease_id, outcome="cancelled", reason="reservation_released")
+
+    def list_executions(
+        self, *, provider_id: str, statuses: tuple[str, ...] = ("running", "uncertain"),
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        if not isinstance(provider_id, str) or not _PROVIDER.fullmatch(provider_id):
+            raise ValueError("provider_id_invalid")
+        allowed = {"running", "succeeded", "failed", "cancelled", "uncertain"}
+        if not isinstance(statuses, tuple) or not statuses or any(s not in allowed for s in statuses):
+            raise ValueError("execution_statuses_invalid")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit_out_of_range")
+        placeholders = ",".join("?" for _ in statuses)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at "
+                f"FROM provider_execution_records WHERE provider_id=? AND status IN ({placeholders}) "
+                "ORDER BY started_at DESC LIMIT ?",
+                (provider_id, *statuses, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def snapshot(self, *, provider_id: str, agent_id: str) -> dict[str, int | str | float]:
         self._validate_ids(provider_id, agent_id)
