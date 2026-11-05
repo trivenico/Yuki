@@ -544,16 +544,24 @@ class TaskRuntimeTests(unittest.TestCase):
         thread.start()
         self.assertTrue(handler_started.wait(1.0))
         deadline = time.monotonic() + 1.0
+        cancelled = False
         while thread.is_alive() and time.monotonic() < deadline:
             current = self.store.get(task.task_id)
-            if current.version == claimed.version:
+            if current.state == "cancelled":
+                cancelled = True
+                break
+            try:
+                self.runtime.cancel(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=current.version,
+                )
+                cancelled = True
+                break
+            except WorkflowConflict:
+                # A heartbeat may advance the task version between the read
+                # and cancellation CAS. Reload and retry while the task runs.
                 time.sleep(0.001)
-                continue
-            break
-        self.runtime.cancel(
-            actor_id="alice", task_id=task.task_id,
-            expected_version=claimed.version,
-        )
+        self.assertTrue(cancelled, "task cancellation did not win the version race")
         thread.join(1.0)
         self.assertFalse(thread.is_alive())
         self.assertEqual(len(outcomes), 1)
