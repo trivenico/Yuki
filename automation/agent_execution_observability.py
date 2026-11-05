@@ -86,6 +86,17 @@ class AgentExecutionTraceStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_execution_events
                     ON agent_execution_events(execution_id, event_id);
+                CREATE TABLE IF NOT EXISTS agent_execution_outbox (
+                    event_id INTEGER PRIMARY KEY REFERENCES agent_execution_events(event_id),
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                    available_at REAL NOT NULL,
+                    lease_owner TEXT,
+                    lease_until REAL,
+                    delivered_at REAL,
+                    last_error_code TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_execution_outbox_ready
+                    ON agent_execution_outbox(delivered_at, available_at, lease_until, event_id);
                 CREATE TRIGGER IF NOT EXISTS agent_execution_events_no_update
                     BEFORE UPDATE ON agent_execution_events
                     BEGIN SELECT RAISE(ABORT, 'execution events are append-only'); END;
@@ -133,10 +144,14 @@ class AgentExecutionTraceStore:
                     "VALUES (?,?,?,?,?,?,'created',?,?)",
                     (new_id,parent_execution_id,root_id,agent,task_id,provider_execution_id,now,now),
                 )
-                db.execute(
+                event = db.execute(
                     "INSERT INTO agent_execution_events "
                     "(execution_id,event_type,actor_id,occurred_at) VALUES (?,'execution.created',?,?)",
                     (new_id,agent,now),
+                )
+                db.execute(
+                    "INSERT INTO agent_execution_outbox(event_id, available_at) VALUES (?, ?)",
+                    (int(event.lastrowid), now),
                 )
                 db.commit()
             except sqlite3.IntegrityError as exc:
@@ -181,6 +196,10 @@ class AgentExecutionTraceStore:
                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (execution_id,event_type,actor_id,permission,decision,*metrics,now),
             )
+            db.execute(
+                "INSERT INTO agent_execution_outbox(event_id, available_at) VALUES (?, ?)",
+                (int(cur.lastrowid), now),
+            )
             if status is not None:
                 db.execute(
                     "UPDATE agent_execution_traces SET status=?, updated_at=? WHERE execution_id=?",
@@ -223,6 +242,81 @@ class AgentExecutionTraceStore:
         if len(rows) > 1:
             raise ExecutionTraceError("task_correlation_ambiguous")
         return self.get_execution(rows[0]["execution_id"]) if rows else None
+
+
+    def claim_outbox(self, *, worker_id: str, limit: int = 50, lease_seconds: int = 30) -> list[dict[str, Any]]:
+        worker_id = self._identifier(worker_id, "worker_id")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("outbox_limit_invalid")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("outbox_lease_invalid")
+        now = float(self._clock())
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT event_id FROM agent_execution_outbox "
+                "WHERE delivered_at IS NULL AND available_at<=? "
+                "AND (lease_until IS NULL OR lease_until<=?) "
+                "ORDER BY event_id LIMIT ?", (now, now, limit),
+            ).fetchall()
+            ids = [int(row["event_id"]) for row in rows]
+            for event_id in ids:
+                db.execute(
+                    "UPDATE agent_execution_outbox SET lease_owner=?, lease_until=?, attempts=attempts+1 "
+                    "WHERE event_id=? AND delivered_at IS NULL",
+                    (worker_id, now + lease_seconds, event_id),
+                )
+            claimed = []
+            for event_id in ids:
+                row = db.execute(
+                    "SELECT o.event_id,o.attempts,e.execution_id,e.event_type,e.actor_id,e.permission,e.decision,"
+                    "e.input_tokens,e.output_tokens,e.duration_ms,e.cost_microunits,e.occurred_at "
+                    "FROM agent_execution_outbox o JOIN agent_execution_events e USING(event_id) "
+                    "WHERE o.event_id=? AND o.lease_owner=? AND o.delivered_at IS NULL",
+                    (event_id, worker_id),
+                ).fetchone()
+                if row is not None:
+                    claimed.append(dict(row))
+            db.commit()
+        return claimed
+
+    def acknowledge_outbox(self, *, worker_id: str, event_id: int) -> bool:
+        worker_id = self._identifier(worker_id, "worker_id")
+        if type(event_id) is not int or event_id < 1:
+            raise ValueError("outbox_event_id_invalid")
+        with self._connect() as db:
+            cur = db.execute(
+                "UPDATE agent_execution_outbox SET delivered_at=?, lease_owner=NULL, lease_until=NULL "
+                "WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL",
+                (float(self._clock()), event_id, worker_id),
+            )
+            return cur.rowcount == 1
+
+    def retry_outbox(self, *, worker_id: str, event_id: int, error_code: str, delay_seconds: int = 30) -> bool:
+        worker_id = self._identifier(worker_id, "worker_id")
+        if type(event_id) is not int or event_id < 1:
+            raise ValueError("outbox_event_id_invalid")
+        if not isinstance(error_code, str) or not re.fullmatch(r"[a-z0-9_.-]{1,64}", error_code):
+            raise ValueError("outbox_error_code_invalid")
+        if type(delay_seconds) is not int or not 1 <= delay_seconds <= 86400:
+            raise ValueError("outbox_delay_invalid")
+        with self._connect() as db:
+            cur = db.execute(
+                "UPDATE agent_execution_outbox SET available_at=?, lease_owner=NULL, lease_until=NULL, last_error_code=? "
+                "WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL",
+                (float(self._clock()) + delay_seconds, error_code, event_id, worker_id),
+            )
+            return cur.rowcount == 1
+
+    def outbox_stats(self) -> dict[str, int]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS pending, "
+                "SUM(CASE WHEN lease_owner IS NOT NULL THEN 1 ELSE 0 END) AS leased, "
+                "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered "
+                "FROM agent_execution_outbox"
+            ).fetchone()
+            return {key: int(row[key] or 0) for key in ("pending", "leased", "delivered")}
 
     def get_execution(self, execution_id: str) -> dict[str, Any] | None:
         execution_id = self._identifier(execution_id, "execution_id")

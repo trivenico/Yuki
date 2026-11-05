@@ -44,6 +44,33 @@ class AgentExecutionTraceStoreTests(unittest.TestCase):
         with self.assertRaises(ExecutionTraceError):
             self.store.bind_task(root["execution_id"], task_id="task-123")
 
+
+    def test_transactional_outbox_claim_ack_and_retry(self):
+        root = self.store.start_execution(agent_id="coordinator")
+        event_id = self.store.record_event(
+            execution_id=root["execution_id"], event_type="execution.started",
+            actor_id="coordinator", status="running",
+        )
+        claimed = self.store.claim_outbox(worker_id="dispatcher", limit=10)
+        self.assertIn(event_id, {item["event_id"] for item in claimed})
+        item = next(item for item in claimed if item["event_id"] == event_id)
+        self.assertFalse(self.store.acknowledge_outbox(worker_id="other", event_id=event_id))
+        self.assertTrue(self.store.retry_outbox(
+            worker_id="dispatcher", event_id=event_id, error_code="sink_unavailable", delay_seconds=5,
+        ))
+        self.assertFalse(any(x["event_id"] == event_id for x in self.store.claim_outbox(worker_id="dispatcher")))
+        self.now[0] += 5
+        retried = self.store.claim_outbox(worker_id="dispatcher")
+        self.assertIn(event_id, {item["event_id"] for item in retried})
+        self.assertTrue(self.store.acknowledge_outbox(worker_id="dispatcher", event_id=event_id))
+        self.assertFalse(self.store.acknowledge_outbox(worker_id="dispatcher", event_id=event_id))
+
+    def test_every_created_execution_event_enters_outbox_atomically(self):
+        root = self.store.start_execution(agent_id="coordinator")
+        claimed = self.store.claim_outbox(worker_id="dispatcher")
+        created = [item for item in claimed if item["execution_id"] == root["execution_id"]]
+        self.assertEqual([item["event_type"] for item in created], ["execution.created"])
+
     def test_permission_decisions_are_structured_and_auditable(self):
         root = self.store.start_execution(agent_id="orchestrator")
         self.store.record_event(
