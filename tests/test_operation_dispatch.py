@@ -203,6 +203,43 @@ class OperationDispatcherTests(unittest.TestCase):
             )
         self.assertEqual(runtime.resolved, [])
 
+    def test_success_response_requires_provider_reference(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider({"status": "succeeded"})
+        )
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.dispatch(
+                actor_id="owner", worker_id="worker-1", operation_id="op-1",
+                provider_name="payments.test", request=request,
+            )
+        self.assertEqual(runtime.recorded[-1]["status"], "needs_reconciliation")
+
+    def test_provider_response_rejects_unknown_fields(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider({"status": "succeeded", "provider_reference": "remote-1",
+                      "debug": "must-not-be-persisted"})
+        )
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.dispatch(
+                actor_id="owner", worker_id="worker-1", operation_id="op-1",
+                provider_name="payments.test", request=request,
+            )
+        self.assertEqual(runtime.recorded[-1]["status"], "needs_reconciliation")
+
+    def test_provider_lookup_rejects_oversized_response(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_response={
+                "status": "succeeded", "idempotency_key": "stable-key",
+                "provider_reference": "x" * 5000,
+            })
+        )
+        operation.status = "needs_reconciliation"
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+        self.assertEqual(runtime.resolved, [])
+
     def test_ambiguous_provider_response_is_not_success(self):
         dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
             Provider({"status": "accepted"})

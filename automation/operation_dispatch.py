@@ -38,6 +38,48 @@ class OperationDispatcher:
             raise ValueError("request exceeds the 16384-byte limit.")
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _validate_provider_response(response: Any, *, lookup: bool) -> Mapping[str, Any]:
+        """Validate a deliberately small provider response contract.
+
+        Provider responses are untrusted input. Reject unknown fields, oversized
+        payloads, malformed statuses and invalid references before persistence.
+        """
+        if not isinstance(response, Mapping):
+            raise OperationDispatchError("provider response must be an object.")
+        allowed = {"status", "provider_reference"}
+        if lookup:
+            allowed.add("idempotency_key")
+        if set(response.keys()) - allowed or "status" not in response:
+            raise OperationDispatchError("provider response contains unsupported fields.")
+        try:
+            encoded = json.dumps(
+                dict(response), ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise OperationDispatchError("provider response is not valid JSON data.") from exc
+        if len(encoded) > 4096:
+            raise OperationDispatchError("provider response exceeds the 4096-byte limit.")
+        status = response.get("status")
+        if not isinstance(status, str) or status not in {
+            "succeeded", "pending", "failed", "not_found",
+        }:
+            raise OperationDispatchError("provider response has an unsupported status.")
+        reference = response.get("provider_reference")
+        if reference is not None and (
+            not isinstance(reference, str) or not reference.strip()
+            or len(reference) > 500 or "\\x00" in reference
+        ):
+            raise OperationDispatchError("provider response has an invalid reference.")
+        if status == "succeeded" and reference is None:
+            raise OperationDispatchError("successful provider response requires a reference.")
+        if lookup:
+            key = response.get("idempotency_key")
+            if not isinstance(key, str) or not key.strip() or len(key) > 200 or "\\x00" in key:
+                raise OperationDispatchError("provider lookup response requires a valid idempotency key.")
+        return response
+
     def reconcile(self, *, actor_id: str, operation_id: str, provider_name: str):
         """Use provider lookup only; absence or ambiguity never clears uncertainty."""
         operation = self.runtime._authorized_operation(
@@ -57,8 +99,7 @@ class OperationDispatcher:
             raise OperationDispatchError("provider lookup failed; operation remains uncertain.") from exc
         if response is None:
             return operation
-        if not isinstance(response, Mapping):
-            raise OperationDispatchError("provider lookup returned an invalid response; operation remains uncertain.")
+        response = self._validate_provider_response(response, lookup=True)
         if response.get("status") != "succeeded":
             return operation
         if response.get("idempotency_key") != operation.idempotency_key:
@@ -97,16 +138,9 @@ class OperationDispatcher:
             response = registered.provider.execute(
                 inflight.action, request, idempotency_key=inflight.idempotency_key,
             )
-            if not isinstance(response, Mapping):
-                raise TypeError("provider response must be an object.")
-            status = response.get("status")
-            if status != "succeeded":
-                status = "needs_reconciliation"
-            reference = response.get("provider_reference")
-            if reference is not None and (
-                not isinstance(reference, str) or not reference.strip() or len(reference) > 500
-            ):
-                status, reference = "needs_reconciliation", None
+            response = self._validate_provider_response(response, lookup=False)
+            status = "succeeded" if response.get("status") == "succeeded" else "needs_reconciliation"
+            reference = response.get("provider_reference") if status == "succeeded" else None
             safe_outcome = {"provider_status": status}
             if status == "needs_reconciliation":
                 safe_outcome["reason"] = "provider outcome was not conclusively successful"
