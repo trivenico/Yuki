@@ -6,6 +6,7 @@ coordination, not distributed consensus or an authorization system.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import sqlite3
@@ -164,7 +165,7 @@ class ModelCatalogStore:
                 event["revision"], event["actor"], event["action"],
                 event["catalog_sha256"], previous,
             )
-            if not hashlib.compare_digest(expected, event["event_sha256"]):
+            if not hmac.compare_digest(expected, event["event_sha256"]):
                 return False
             previous = event["event_sha256"]
         state = self.load()
@@ -175,4 +176,4 @@ class ModelCatalogStore:
         current_hash = hashlib.sha256(
             self._serialize(state["catalog"]).encode("utf-8")
         ).hexdigest()
-        return hashlib.compare_digest(current_hash, events[-1]["catalog_sha256"])
+        return hmac.compare_digest(current_hash, events[-1]["catalog_sha256"])
