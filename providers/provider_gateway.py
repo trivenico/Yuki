@@ -30,7 +30,8 @@ class ProviderGateway(ProviderAgentAdapter):
         provider = adapter.provider
         provider_id = getattr(provider, "provider_id", None)
         if not isinstance(provider_id, str) or not provider_id.strip():
-            provider_id = type(provider).__name__.removesuffix("Provider").lower()
+            provider_name = type(provider).__name__.removesuffix("Provider").removesuffix("Model")
+            provider_id = provider_name.lower()
         return cls(provider, provider_id=provider_id, cloud_opt_in=cloud_opt_in,
                    default_timeout_seconds=adapter.default_timeout_seconds)
 
