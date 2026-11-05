@@ -1090,7 +1090,7 @@ class WorkflowRunStore:
             if self._requires_approval(definition) and not (
                 row["approved_by"] and row["approved_at"]
                 and row["approved_session_hash"]
-                and row["approval_digest"] == row["request_digest"]
+                and row["approval_digest"] == row["run_request_digest"]
             ):
                 raise WorkflowTransitionError(
                     "workflow approval is missing or no longer matches the approved definition."
