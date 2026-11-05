@@ -7,6 +7,7 @@ reachability as proof of live compatibility.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 from providers.provider_readiness import ProviderReadiness
 
@@ -46,6 +47,7 @@ class AgentRuntimeReadiness:
 def evaluate_agent_runtime_readiness(
     *, enabled: bool, requirement: AgentRuntimeRequirement | None,
     provider_report: ProviderReadiness | None, configured_model: str | None,
+    now: datetime | None = None,
 ) -> AgentRuntimeReadiness:
     """Return ready only when exact provider/model and live capability evidence match."""
     if type(enabled) is not bool:
@@ -80,6 +82,26 @@ def evaluate_agent_runtime_readiness(
         return AgentRuntimeReadiness(
             provider_report.status, provider_report.provider, configured_model, requirement.capabilities,
             provider_report.verification_level, "provider_has_no_passing_live_conformance_evidence",
+        )
+    if provider_report.model != requirement.model:
+        return AgentRuntimeReadiness(
+            "model_mismatch", provider_report.provider, provider_report.model, requirement.capabilities,
+            provider_report.verification_level, "live_evidence_model_does_not_match_requirement",
+        )
+    try:
+        verified_at = datetime.fromisoformat(provider_report.verified_at.replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(provider_report.expires_at.replace("Z", "+00:00"))
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None or current_time.utcoffset() is None:
+            raise ValueError("readiness_clock_timezone_required")
+        if verified_at.tzinfo is None or expires_at.tzinfo is None:
+            raise ValueError("readiness_evidence_timezone_required")
+        if expires_at <= verified_at or verified_at > current_time or current_time >= expires_at:
+            raise ValueError("readiness_evidence_expired")
+    except (AttributeError, TypeError, ValueError):
+        return AgentRuntimeReadiness(
+            "stale_evidence", provider_report.provider, configured_model, requirement.capabilities,
+            provider_report.verification_level, "live_verification_evidence_missing_invalid_or_expired",
         )
     missing = tuple(sorted(
         capability for capability in requirement.capabilities

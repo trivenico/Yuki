@@ -1,6 +1,6 @@
 import unittest
 
-from providers.provider_readiness import classify_readiness
+from providers.provider_readiness import classify_readiness, inspect_configured_provider
 
 
 class ProviderReadinessClassificationTests(unittest.TestCase):
@@ -39,6 +39,14 @@ class ProviderReadinessClassificationTests(unittest.TestCase):
             provider_name="ollama", configured=True, reachable=True,
             live_status="fail",
         ), "live_check_failed")
+
+    def test_live_pass_requires_model_and_time_bounded_evidence(self):
+        with self.assertRaisesRegex(ValueError, "live_report_model_invalid"):
+            inspect_configured_provider(
+                config={"provider": "ollama"},
+                provider_factory=lambda _config: type("RealAdapter", (), {"is_available": lambda self: True})(),
+                live_report={"provider": "ollama", "verification_level": "live", "status": "pass"},
+            )
 
 
 if __name__ == "__main__":

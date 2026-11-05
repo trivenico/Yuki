@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from providers.adapter_conformance import inspect_provider_adapter
@@ -17,6 +18,9 @@ class ProviderReadiness:
     capabilities: dict[str, bool]
     verification_level: str
     detail: str
+    model: str | None = None
+    verified_at: str | None = None
+    expires_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -63,6 +67,9 @@ def inspect_configured_provider(
     else:
         reachable = None
     live_status = None
+    verified_model = None
+    verified_at = None
+    expires_at = None
     if live_report is not None:
         if not isinstance(live_report, dict) or live_report.get("provider") != name:
             raise ValueError("live_report_provider_mismatch")
@@ -71,6 +78,26 @@ def inspect_configured_provider(
         live_status = live_report.get("status")
         if live_status not in {"pass", "fail", "partial"}:
             raise ValueError("live_report_status_invalid")
+        if live_status == "pass":
+            verified_model = live_report.get("model")
+            if not isinstance(verified_model, str) or not verified_model.strip() or len(verified_model) > 120:
+                raise ValueError("live_report_model_invalid")
+            verified_at = live_report.get("verified_at")
+            expires_at = live_report.get("expires_at")
+            for field, value in (("verified_at", verified_at), ("expires_at", expires_at)):
+                if not isinstance(value, str):
+                    raise ValueError(f"live_report_{field}_invalid")
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise ValueError(f"live_report_{field}_invalid") from exc
+                if parsed.tzinfo is None or parsed.utcoffset() is None:
+                    raise ValueError(f"live_report_{field}_timezone_required")
+            if datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= datetime.fromisoformat(verified_at.replace("Z", "+00:00")):
+                raise ValueError("live_report_expiry_invalid")
+            configured_model = config.get("model")
+            if configured_model is not None and configured_model != verified_model:
+                raise ValueError("live_report_model_mismatch")
     capabilities = {"chat": False, "streaming_interface": False,
                     "cooperative_execution_context": False,
                     "streaming_execution_context": False}
@@ -102,6 +129,7 @@ def inspect_configured_provider(
         provider=name, status=status, configured=True, reachable=reachable,
         live_verified=live_status == "pass", capabilities=capabilities,
         verification_level=verification, detail=detail,
+        model=verified_model, verified_at=verified_at, expires_at=expires_at,
     )
 
 
