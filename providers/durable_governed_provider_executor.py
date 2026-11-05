@@ -89,7 +89,12 @@ class DurableGovernedProviderExecutor:
             raise DurableProviderAdmissionRejected(str(exc)) from exc
 
         try:
-            response = self.adapter(**request)
+            provider = getattr(self.adapter, "provider", None)
+            native_idempotency = getattr(provider, "idempotency_mode", None) == "native"
+            adapter_request = dict(request)
+            if native_idempotency and _idempotency_key is not None:
+                adapter_request["idempotency_key"] = _idempotency_key
+            response = self.adapter(**adapter_request)
         except ProviderCancelled:
             self.governance_store.record_outcome(
                 lease.lease_id, outcome="cancelled", reason="provider_cancelled",

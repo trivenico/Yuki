@@ -128,6 +128,25 @@ class DurableGovernedExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "canonical_json"):
             execute(**request, _idempotency_key="operation-100")
 
+
+    def test_native_idempotency_contract_forwards_key_only_when_declared(self):
+        class NativeEngine(LocalInferenceEngine):
+            idempotency_mode = "native"
+            def generate_chat(self, *, messages, tools, tool_choice, idempotency_key):
+                self.last_key = idempotency_key
+                return super().generate_chat(messages=messages, tools=tools, tool_choice=tool_choice)
+
+        engine = NativeEngine()
+        execute = self.build(engine)
+        execute(**self.request, _idempotency_key="native-op-1")
+        self.assertEqual(engine.last_key, "native-op-1")
+
+    def test_unsupported_provider_does_not_receive_internal_idempotency_key(self):
+        engine = LocalInferenceEngine()
+        execute = self.build(engine)
+        execute(**self.request, _idempotency_key="local-dedupe-1")
+        self.assertEqual(engine.calls, 1)
+
     def test_lease_timeout_must_exceed_adapter_timeout(self):
         engine = LocalInferenceEngine()
         adapter = ProviderGateway.from_adapter(ProviderAgentAdapter(engine))

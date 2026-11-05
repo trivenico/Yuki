@@ -185,6 +185,18 @@ class ProviderAgentAdapter:
         kwargs = {"messages": normalized, "tools": list(tools), "tool_choice": tool_choice}
         if accepts_context:
             kwargs["execution_context"] = context
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 128 or "\\x00" in idempotency_key:
+                raise ValueError("provider_idempotency_key_invalid")
+            if getattr(self.provider, "idempotency_mode", None) != "native":
+                raise RuntimeError("provider_native_idempotency_not_supported")
+            try:
+                supports_key = "idempotency_key" in inspect.signature(self.provider.generate_chat).parameters
+            except (TypeError, ValueError):
+                supports_key = False
+            if not supports_key:
+                raise RuntimeError("provider_idempotency_contract_mismatch")
+            kwargs["idempotency_key"] = idempotency_key
         response = self.provider.generate_chat(**kwargs)
         self._check_execution(context)
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
