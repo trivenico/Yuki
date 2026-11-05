@@ -392,6 +392,18 @@ class SQLiteProviderGovernanceStore:
     def release(self, lease_id: str) -> bool:
         return self.record_outcome(lease_id, outcome="cancelled", reason="reservation_released")
 
+    def get_execution(self, execution_id: str) -> dict[str, object] | None:
+        """Return one provider execution's non-sensitive correlation metadata."""
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at "
+                "FROM provider_execution_records WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def list_executions(
         self, *, provider_id: str, statuses: tuple[str, ...] = ("running", "uncertain"),
         limit: int = 100,
