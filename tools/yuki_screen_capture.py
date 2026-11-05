@@ -72,23 +72,27 @@ def _read_local_grant(session_id: str, *, now_epoch: int, runtime_dir: str | Non
     return grant
 
 
-def _capture_command(env: dict[str, str]) -> list[str]:
+def _capture_command(env: dict[str, str], executable_lookup=shutil.which) -> list[str]:
     wayland = env.get("WAYLAND_DISPLAY")
     display = env.get("DISPLAY")
-    if wayland and shutil.which("grim"):
-        return [shutil.which("grim"), "-"]
-    if display and shutil.which("import"):
-        return [shutil.which("import"), "-window", "root", "png:-"]
+    if wayland:
+        grim = executable_lookup("grim")
+        if grim:
+            return [grim, "-"]
+    if display:
+        image_import = executable_lookup("import")
+        if image_import:
+            return [image_import, "-window", "root", "png:-"]
     raise CaptureError("no_supported_graphical_capture_backend")
 
 
-def capture_png(*, session_id: str, now_epoch: int | None = None, env=None, runner=subprocess.run, runtime_dir=None) -> bytes:
+def capture_png(*, session_id: str, now_epoch: int | None = None, env=None, runner=subprocess.run, runtime_dir=None, executable_lookup=shutil.which) -> bytes:
     session_id = _validate_session_id(session_id)
     environment = dict(os.environ if env is None else env)
     if now_epoch is None:
         now_epoch = int(time.time())
     _read_local_grant(session_id, now_epoch=now_epoch, runtime_dir=runtime_dir)
-    command = _capture_command(environment)
+    command = _capture_command(environment, executable_lookup=executable_lookup)
     try:
         result = runner(
             command,
