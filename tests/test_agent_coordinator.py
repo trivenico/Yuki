@@ -24,7 +24,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
         self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
+            "agent:plan", "agent:plan_without_approval", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
         }
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
@@ -234,6 +234,30 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="missing", subtasks=[
                 SubtaskSpec("a", "A", ("research",), depends_on=("missing",)),
             ])
+
+    def test_unapproved_dispatch_requires_separate_authorization(self):
+        restricted = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "restricted.sqlite3"),
+            self.agents,
+            authorize=lambda actor, action, resource: (
+                actor == "alice" and action in {"agent:plan", "agent:dispatch", "agent:read"}
+            ),
+        )
+        # Ordinary plans remain available to an actor with plan permission.
+        ordinary = restricted.submit(
+            actor_id="alice", idempotency_key="approval-required",
+            subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",))],
+        )
+        self.assertTrue(ordinary.subtasks[0].requires_approval)
+        # Removing the approval gate is a separate privilege, not implied by plan creation.
+        with self.assertRaises(PermissionError):
+            restricted.submit(
+                actor_id="alice", idempotency_key="approval-bypass-denied",
+                subtasks=[SubtaskSpec(
+                    "collect", "Collect evidence", ("research",),
+                    requires_approval=False,
+                )],
+            )
 
     def test_missing_capability_and_disabled_agent_fail_closed(self):
         with self.assertRaises(AgentPlanError):

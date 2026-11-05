@@ -417,6 +417,12 @@ class SpecialistAgentCoordinator:
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
+        if any(not item.requires_approval for item in items) and not self._allowed(
+            actor_id, "agent:plan_without_approval", ""
+        ):
+            raise PermissionError(
+                "creating specialist tasks without human approval requires separate authorization."
+            )
         # Hash the caller's request, not today's routing decision. A retry must
         # return its original persisted plan even if a specialist was disabled or
         # the registry changed after the first successful submission.
