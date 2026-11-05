@@ -2,6 +2,13 @@
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+import inspect
+import threading
+import time
+
+from providers.provider_execution import (
+    ProviderCancelled, ProviderDeadlineExceeded, ProviderExecutionContext,
+)
 
 
 class ProviderAgentAdapter:
@@ -12,14 +19,40 @@ class ProviderAgentAdapter:
     execution exclusively in StructuredToolProtocol.
     """
 
-    def __init__(self, provider: Any):
+    def __init__(self, provider: Any, *, default_timeout_seconds: float = 60.0):
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
+        if isinstance(default_timeout_seconds, bool) or not isinstance(default_timeout_seconds, (int, float)) or not 0.1 <= default_timeout_seconds <= 3600:
+            raise ValueError("default_timeout_seconds must be between 0.1 and 3600.")
         self.provider = provider
+        self.default_timeout_seconds = float(default_timeout_seconds)
+
+    @staticmethod
+    def _execution_context(provider_method, timeout_seconds, cancellation_event):
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0.1 <= timeout_seconds <= 3600:
+            raise ValueError("timeout_seconds must be between 0.1 and 3600.")
+        if cancellation_event is not None and not isinstance(cancellation_event, threading.Event):
+            raise TypeError("cancellation_event must be a threading.Event.")
+        deadline = time.monotonic() + float(timeout_seconds)
+        context = ProviderExecutionContext(deadline=deadline, cancellation_event=cancellation_event or threading.Event())
+        try:
+            accepts_context = "execution_context" in inspect.signature(provider_method).parameters
+        except (TypeError, ValueError):
+            accepts_context = False
+        return context, accepts_context
+
+    @staticmethod
+    def _check_execution(context):
+        if context.cancellation_event.is_set():
+            raise ProviderCancelled("provider execution was cancelled.")
+        if time.monotonic() >= context.deadline:
+            raise ProviderDeadlineExceeded("provider execution deadline exceeded; outcome may be uncertain.")
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
+        timeout_seconds: float | None = None,
+        cancellation_event: threading.Event | None = None,
     ):
         """Expose provider streaming through the agent loop's normalized event contract."""
         stream = getattr(self.provider, "generate_chat_stream", None)
@@ -27,7 +60,17 @@ class ProviderAgentAdapter:
             raise RuntimeError("configured provider does not support native streaming.")
         # Reuse the same input contract as the non-streaming adapter.
         self.validate_inputs(messages, tools, tool_choice)
-        return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+        context, accepts_context = self._execution_context(
+            stream, self.default_timeout_seconds if timeout_seconds is None else timeout_seconds,
+            cancellation_event,
+        )
+        self._check_execution(context)
+        kwargs = {"messages": list(messages), "tools": list(tools), "tool_choice": tool_choice}
+        if accepts_context:
+            kwargs["execution_context"] = context
+        result = stream(**kwargs)
+        self._check_execution(context)
+        return result
 
     @staticmethod
     def validate_inputs(messages, tools, tool_choice):
@@ -51,6 +94,8 @@ class ProviderAgentAdapter:
     def __call__(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
+        timeout_seconds: float | None = None,
+        cancellation_event: threading.Event | None = None,
     ) -> Mapping[str, Any]:
         if not isinstance(messages, (list, tuple)) or not messages:
             raise ValueError("messages must be a non-empty sequence.")
@@ -72,9 +117,17 @@ class ProviderAgentAdapter:
             raise ValueError("tools must contain at most 32 definitions.")
         if tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
-        response = self.provider.generate_chat(
-            messages=normalized, tools=list(tools), tool_choice=tool_choice,
+        context, accepts_context = self._execution_context(
+            self.provider.generate_chat,
+            self.default_timeout_seconds if timeout_seconds is None else timeout_seconds,
+            cancellation_event,
         )
+        self._check_execution(context)
+        kwargs = {"messages": normalized, "tools": list(tools), "tool_choice": tool_choice}
+        if accepts_context:
+            kwargs["execution_context"] = context
+        response = self.provider.generate_chat(**kwargs)
+        self._check_execution(context)
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")

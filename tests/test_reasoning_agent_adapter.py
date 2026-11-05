@@ -166,6 +166,46 @@ class ReasoningAgentAdapterTests(unittest.TestCase):
         self.assertTrue(all(call["actor_id"] == "owner" for call in calls))
         self.assertTrue(all(call["agent_id"] == "research" for call in calls))
 
+    def test_provider_adapter_passes_cooperative_execution_context(self):
+        seen = {}
+        class ContextProvider:
+            def generate_chat(self, *, messages, tools, tool_choice, execution_context):
+                seen["context"] = execution_context
+                execution_context.check()
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+        adapter = ProviderAgentAdapter(ContextProvider(), default_timeout_seconds=2)
+        result = adapter(
+            messages=[{"role": "user", "content": "hello"}], tools=[],
+        )
+        self.assertEqual(result["text"], "ok")
+        self.assertGreater(seen["context"].remaining_seconds(), 0)
+
+    def test_provider_adapter_rejects_invalid_deadline_and_pre_cancelled_call(self):
+        import threading
+        from providers.provider_execution import ProviderCancelled
+        adapter = ProviderAgentAdapter(self.provider, default_timeout_seconds=2)
+        with self.assertRaises(ValueError):
+            adapter(messages=[{"role": "user", "content": "hello"}], tools=[], timeout_seconds=0)
+        cancelled = threading.Event()
+        cancelled.set()
+        with self.assertRaises(ProviderCancelled):
+            adapter(
+                messages=[{"role": "user", "content": "hello"}], tools=[],
+                cancellation_event=cancelled,
+            )
+        self.assertIsNone(self.provider.received)
+
+    def test_legacy_provider_overrun_is_classified_as_uncertain_deadline(self):
+        import time
+        from providers.provider_execution import ProviderDeadlineExceeded
+        class SlowProvider:
+            def generate_chat(self, *, messages, tools, tool_choice):
+                time.sleep(0.03)
+                return {"text": "completed", "tool_calls": {"tool_calls": []}}
+        adapter = ProviderAgentAdapter(SlowProvider(), default_timeout_seconds=0.01)
+        with self.assertRaises(ProviderDeadlineExceeded):
+            adapter(messages=[{"role": "user", "content": "hello"}], tools=[])
+
     def test_provider_tool_definitions_are_forwarded_unchanged(self):
         tools = [{"type": "function", "function": {"name": "read_only_lookup"}}]
         self.adapter(
