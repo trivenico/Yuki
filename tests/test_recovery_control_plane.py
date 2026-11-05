@@ -13,7 +13,11 @@ class RecoveryControlPlaneTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.provider = SQLiteProviderGovernanceStore(str(Path(self.tmp.name) / "provider.db"))
+        self.clock_value = [1000.0]
+        self.provider = SQLiteProviderGovernanceStore(
+            str(Path(self.tmp.name) / "provider.db"),
+            lease_timeout_seconds=300, clock=lambda: self.clock_value[0],
+        )
         self.workflow = WorkflowRunStore(str(Path(self.tmp.name) / "workflow.db"))
         self.control = YukiRecoveryControlPlane(
             workflow_store=self.workflow, provider_store=self.provider,
@@ -28,7 +32,7 @@ class RecoveryControlPlaneTests(unittest.TestCase):
 
     def test_provider_uncertain_execution_is_visible_and_stale(self):
         lease = self.provider.acquire(provider_id="localengine", agent_id="assistant")
-        self.provider._clock = lambda: 1000.0
+        self.clock_value[0] += 301
         self.provider.snapshot(provider_id="localengine", agent_id="assistant")
         snapshot = self.control.snapshot(
             now=datetime.fromtimestamp(2000, tz=timezone.utc),
