@@ -69,14 +69,14 @@ class OperationDispatcher:
         reference = response.get("provider_reference")
         if reference is not None and (
             not isinstance(reference, str) or not reference.strip()
-            or len(reference) > 500 or "\\x00" in reference
+            or len(reference) > 500 or "\x00" in reference
         ):
             raise OperationDispatchError("provider response has an invalid reference.")
         if status == "succeeded" and reference is None:
             raise OperationDispatchError("successful provider response requires a reference.")
         if lookup:
             key = response.get("idempotency_key")
-            if not isinstance(key, str) or not key.strip() or len(key) > 200 or "\\x00" in key:
+            if not isinstance(key, str) or not key.strip() or len(key) > 200 or "\x00" in key:
                 raise OperationDispatchError("provider lookup response requires a valid idempotency key.")
         return response
 

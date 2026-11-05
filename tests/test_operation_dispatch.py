@@ -240,6 +240,31 @@ class OperationDispatcherTests(unittest.TestCase):
             )
         self.assertEqual(runtime.resolved, [])
 
+    def test_provider_response_rejects_embedded_nul_reference(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider({"status": "succeeded", "provider_reference": "remote\x00forged"})
+        )
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.dispatch(
+                actor_id="owner", worker_id="worker-1", operation_id="op-1",
+                provider_name="payments.test", request=request,
+            )
+        self.assertEqual(runtime.recorded[-1]["status"], "needs_reconciliation")
+
+    def test_provider_lookup_rejects_embedded_nul_idempotency_key(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_response={
+                "status": "succeeded", "idempotency_key": "stable\x00key",
+                "provider_reference": "remote-1",
+            })
+        )
+        operation.status = "needs_reconciliation"
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+        self.assertEqual(runtime.resolved, [])
+
     def test_ambiguous_provider_response_is_not_success(self):
         dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
             Provider({"status": "accepted"})
