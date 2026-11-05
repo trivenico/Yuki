@@ -92,7 +92,7 @@ def build_local_worker_runtime(
         ],
         authorize=lambda actor_id, action, _resource: (
             actor_id == LOCAL_OPERATOR_ACTOR
-            and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
+            and action in {"agent:plan", "agent:plan_without_approval", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
     )
     if provider_manager is not None:
