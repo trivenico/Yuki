@@ -18,6 +18,7 @@ from typing import Callable, Iterable
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
 from automation.agent_contracts import AgentContract, validate_agent_input, validate_agent_output
+from automation.agent_runtime_readiness import AgentRuntimeReadiness, AgentRuntimeRequirement
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -46,6 +47,7 @@ class SpecialistAgent:
     risk_tier: str = 'low'
     timeout_seconds: int = 60
     max_concurrency: int = 1
+    runtime_requirement: AgentRuntimeRequirement | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,7 @@ class SpecialistAgentCoordinator:
         max_subtasks: int = _MAX_SUBTASKS,
         trace_store: AgentExecutionTraceStore | None = None,
         contracts: dict[str, AgentContract] | None = None,
+        runtime_readiness: Callable[[SpecialistAgent], AgentRuntimeReadiness] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -150,6 +153,9 @@ class SpecialistAgentCoordinator:
         if trace_store is not None and not isinstance(trace_store, AgentExecutionTraceStore):
             raise TypeError('trace_store must be an AgentExecutionTraceStore.')
         self.trace_store = trace_store
+        if runtime_readiness is not None and not callable(runtime_readiness):
+            raise TypeError("runtime_readiness must be callable.")
+        self.runtime_readiness = runtime_readiness
         if contracts is not None and not isinstance(contracts, dict):
             raise TypeError('contracts must be a mapping of agent IDs to AgentContract values.')
         self.trace_errors = 0
@@ -239,6 +245,7 @@ class SpecialistAgentCoordinator:
                     risk_tier TEXT NOT NULL DEFAULT 'low',
                     timeout_seconds INTEGER NOT NULL DEFAULT 60 CHECK(timeout_seconds BETWEEN 1 AND 86400),
                     max_concurrency INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrency BETWEEN 1 AND 100),
+                    runtime_requirement_json TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -249,6 +256,7 @@ class SpecialistAgentCoordinator:
                 ("risk_tier", "TEXT NOT NULL DEFAULT 'low'"),
                 ("timeout_seconds", "INTEGER NOT NULL DEFAULT 60"),
                 ("max_concurrency", "INTEGER NOT NULL DEFAULT 1"),
+                ("runtime_requirement_json", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if column not in agent_columns:
                     db.execute(f"ALTER TABLE specialist_agents ADD COLUMN {column} {declaration}")
@@ -257,13 +265,15 @@ class SpecialistAgentCoordinator:
                 db.execute("""
                     INSERT OR IGNORE INTO specialist_agents(
                         agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, version, risk_tier, timeout_seconds, max_concurrency, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        enabled, version, risk_tier, timeout_seconds, max_concurrency, runtime_requirement_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     agent.agent_id, agent.name,
                     json.dumps(sorted(agent.capabilities)), agent.action,
                     json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                    agent.version, agent.risk_tier, agent.timeout_seconds, agent.max_concurrency, now, now,
+                    agent.version, agent.risk_tier, agent.timeout_seconds, agent.max_concurrency,
+                    json.dumps(asdict(agent.runtime_requirement), sort_keys=True) if agent.runtime_requirement else "",
+                    now, now,
                 ))
         self._refresh_agent_registry()
 
@@ -280,6 +290,7 @@ class SpecialistAgentCoordinator:
             "risk_tier": agent.risk_tier,
             "timeout_seconds": agent.timeout_seconds,
             "max_concurrency": agent.max_concurrency,
+            "runtime_requirement": asdict(agent.runtime_requirement) if agent.runtime_requirement else None,
         }
         encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -324,6 +335,8 @@ class SpecialistAgentCoordinator:
             raise ValueError("timeout_seconds must be between 1 and 86400.")
         if type(agent.max_concurrency) is not int or not 1 <= agent.max_concurrency <= 100:
             raise ValueError("max_concurrency must be between 1 and 100.")
+        if agent.runtime_requirement is not None and not isinstance(agent.runtime_requirement, AgentRuntimeRequirement):
+            raise ValueError("runtime_requirement must be an AgentRuntimeRequirement.")
 
     def _allowed(self, actor_id: str, action: str, resource_id: str) -> bool:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
@@ -426,6 +439,14 @@ class SpecialistAgentCoordinator:
                 enabled=bool(row["enabled"]),
                 version=row["version"], risk_tier=row["risk_tier"],
                 timeout_seconds=row["timeout_seconds"], max_concurrency=row["max_concurrency"],
+                runtime_requirement=(
+                    AgentRuntimeRequirement(
+                        provider=json.loads(row["runtime_requirement_json"])["provider"],
+                        model=json.loads(row["runtime_requirement_json"])["model"],
+                        capabilities=tuple(json.loads(row["runtime_requirement_json"]).get("capabilities", ())),
+                    )
+                    if row["runtime_requirement_json"] else None
+                ),
             )
             SpecialistAgentCoordinator._validate_agent(agent)
             if row["enabled"] not in (0, 1):
@@ -458,12 +479,14 @@ class SpecialistAgentCoordinator:
                     db.execute("""
                         INSERT INTO specialist_agents(
                             agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, version, risk_tier, timeout_seconds, max_concurrency, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            enabled, version, risk_tier, timeout_seconds, max_concurrency, runtime_requirement_json, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
                         agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        agent.version, agent.risk_tier, agent.timeout_seconds, agent.max_concurrency, now, now,
+                        agent.version, agent.risk_tier, agent.timeout_seconds, agent.max_concurrency,
+                        json.dumps(asdict(agent.runtime_requirement), sort_keys=True) if agent.runtime_requirement else "",
+                        now, now,
                     ))
             except sqlite3.IntegrityError as exc:
                 raise AgentPlanError("agent ID is already registered.") from exc
@@ -509,6 +532,7 @@ class SpecialistAgentCoordinator:
                     "risk_tier": agent.risk_tier,
                     "timeout_seconds": agent.timeout_seconds,
                     "max_concurrency": agent.max_concurrency,
+                    "runtime_requirement": asdict(agent.runtime_requirement) if agent.runtime_requirement else None,
                 }
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
@@ -519,6 +543,19 @@ class SpecialistAgentCoordinator:
             self._allowed(actor_id, f"agent:permission:{permission}", resource_id)
             for permission in permissions
         )
+
+    def _assert_runtime_ready(self, agent: SpecialistAgent) -> None:
+        if agent.runtime_requirement is None:
+            return
+        if self.runtime_readiness is None:
+            raise AgentPlanError("agent runtime readiness evidence is unavailable.")
+        try:
+            result = self.runtime_readiness(agent)
+        except Exception as exc:
+            raise AgentPlanError("agent runtime readiness check failed.") from exc
+        if not isinstance(result, AgentRuntimeReadiness) or result.status != "ready":
+            status = result.status if isinstance(result, AgentRuntimeReadiness) else "invalid_evidence"
+            raise AgentPlanError(f"agent runtime is not ready: {status}.")
 
     def _route(self, subtask: SubtaskSpec, *, actor_id: str) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
@@ -536,7 +573,9 @@ class SpecialistAgentCoordinator:
             if not candidates:
                 raise AgentPlanError(f"no enabled specialist supports subtask {subtask.subtask_id}.")
             # Deterministic least-overprovisioned match, then stable ID tie-break.
-            return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+            selected = sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
+        self._assert_runtime_ready(selected)
+        return selected
 
     def _trace_plan(self, plan_id: str, assignments: dict[str, SpecialistAgent]) -> None:
         if self.trace_store is None:
@@ -705,6 +744,16 @@ class SpecialistAgentCoordinator:
                     kind=("subtask.agent_identity_changed" if agent is not None and not identity_matches
                           else "subtask.permission_revoked"),
                     payload={"subtask_id": row["subtask_id"], "agent_id": row["agent_id"]},
+                )
+                row["status"] = "blocked"
+                continue
+            try:
+                self._assert_runtime_ready(agent)
+            except AgentPlanError as exc:
+                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                self._append_plan_event(
+                    plan_id, actor_id=actor_id, kind="subtask.runtime_not_ready",
+                    payload={"subtask_id": row["subtask_id"], "agent_id": agent.agent_id},
                 )
                 row["status"] = "blocked"
                 continue
