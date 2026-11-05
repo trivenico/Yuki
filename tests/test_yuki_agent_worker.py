@@ -62,7 +62,7 @@ class AgentWorkerTests(unittest.TestCase):
 
     def test_worker_emits_privacy_safe_execution_trace(self):
         task = self.submit()
-        trace_store = AgentExecutionTraceStore(str(Path(self.store.database_path).parent / "traces.sqlite3"))
+        trace_store = AgentExecutionTraceStore(str(Path(self.store.database).parent / "traces.sqlite3"))
         worker = AgentWorker(
             self.store, worker_id="worker-1",
             handlers={"echo": lambda payload, ctx: {"echo": payload["message"]}},
@@ -70,7 +70,6 @@ class AgentWorkerTests(unittest.TestCase):
         )
         outcome = worker.run_once()
         self.assertEqual(outcome.status, "succeeded")
-        traces = trace_store.list_children("root-not-used") if False else None
         with trace_store._connect() as db:
             row = db.execute(
                 "SELECT execution_id,status,task_id FROM agent_execution_traces WHERE task_id=?",
@@ -87,8 +86,8 @@ class AgentWorkerTests(unittest.TestCase):
 
     def test_trace_store_failure_does_not_change_worker_execution(self):
         task = self.submit()
-        trace_store = AgentExecutionTraceStore(str(Path(self.store.database_path).parent / "traces.sqlite3"))
-        trace_store.database_path = str(Path(self.store.database_path).parent / "missing" / "trace.sqlite3")
+        trace_store = AgentExecutionTraceStore(str(Path(self.store.database).parent / "traces.sqlite3"))
+        trace_store.database_path = str(Path(self.store.database).parent / "missing" / "trace.sqlite3")
         worker = AgentWorker(
             self.store, worker_id="worker-1",
             handlers={"echo": lambda payload, ctx: {"ok": True}},
