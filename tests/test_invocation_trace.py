@@ -78,5 +78,37 @@ class InvocationTraceTests(unittest.TestCase):
         self.assertNotIn("safe output", repr(self.records[0]))
 
 
+
+    def test_early_stream_close_is_recorded_as_error(self):
+        class StreamingProvider(FakeProvider):
+            def generate_chat_stream(self, *, messages, tools, tool_choice):
+                yield {"type": "text_delta", "text": "partial"}
+                yield {"type": "response", "response": {
+                    "text": "partial", "tool_calls": {"tool_calls": []}
+                }}
+        adapter = InvocationRecordingProviderAdapter(
+            StreamingProvider(), provider_id="ollama", model_id="stream-model",
+            record_sink=self.records.append,
+            utc_now=lambda: datetime(2026, 11, 5, tzinfo=timezone.utc),
+        )
+        stream = adapter.stream_model(messages=self.messages, tools=[])
+        next(stream)
+        stream.close()
+        self.assertEqual(self.records[0]["outcome"], "error")
+        self.assertEqual(self.records[0]["error_type"], "StreamClosedEarly")
+
+    def test_runtime_decorator_uses_owner_only_for_configuration(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        from providers.invocation_trace import create_invocation_trace_decorator
+        decorate = create_invocation_trace_decorator(
+            record_sink=self.records.append,
+            provider_id_for_owner=lambda owner: "ollama",
+            model_id_for_owner=lambda owner: "local-model:latest",
+        )
+        adapter = decorate("owner-secret", ProviderAgentAdapter(FakeProvider()))
+        adapter(messages=self.messages, tools=[])
+        self.assertEqual(self.records[0]["model_id"], "local-model:latest")
+        self.assertNotIn("owner-secret", repr(self.records[0]))
+
 if __name__ == "__main__":
     unittest.main()

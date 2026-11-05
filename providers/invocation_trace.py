@@ -114,6 +114,13 @@ class InvocationRecordingProviderAdapter(ProviderAgentAdapter):
                     input_chars=input_chars, tool_count=tool_count, outcome="success",
                     response_chars=response_chars, tool_call_count=len(calls),
                 )
+            except GeneratorExit:
+                self._record(
+                    started=started, started_at=started_at, message_count=message_count,
+                    input_chars=input_chars, tool_count=tool_count, outcome="error",
+                    response_chars=response_chars, error_type="StreamClosedEarly",
+                )
+                raise
             except Exception as exc:
                 self._record(
                     started=started, started_at=started_at, message_count=message_count,
@@ -122,3 +129,27 @@ class InvocationRecordingProviderAdapter(ProviderAgentAdapter):
                 )
                 raise
         return observed()
+
+ 
+def create_invocation_trace_decorator(
+    *, record_sink: Callable[[dict[str, Any]], None],
+    provider_id_for_owner: Callable[[str], str],
+    model_id_for_owner: Callable[[str], str],
+) -> Callable[[str, ProviderAgentAdapter], ProviderAgentAdapter]:
+    """Build an owner-scoped runtime decorator backed by a durable record sink."""
+    if not callable(record_sink) or not callable(provider_id_for_owner) or not callable(model_id_for_owner):
+        raise TypeError("invocation_trace_decorator_callbacks_must_be_callable")
+
+    def decorate(owner_id: str, adapter: ProviderAgentAdapter) -> ProviderAgentAdapter:
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("invalid_authenticated_owner_id")
+        if not isinstance(adapter, ProviderAgentAdapter):
+            raise TypeError("provider_adapter_must_be_ProviderAgentAdapter")
+        return InvocationRecordingProviderAdapter(
+            adapter.provider,
+            provider_id=provider_id_for_owner(owner_id),
+            model_id=model_id_for_owner(owner_id),
+            record_sink=record_sink,
+        )
+
+    return decorate
