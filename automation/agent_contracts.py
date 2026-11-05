@@ -62,7 +62,7 @@ def _validate_schema(schema: Any, depth: int = 0) -> None:
     if set(schema) - _SCHEMA_KEYS:
         raise ValueError("contract_schema_unsupported_keyword")
     kind = schema.get("type")
-    if kind not in _TYPES:
+    if not isinstance(kind, str) or kind not in _TYPES:
         raise ValueError("contract_schema_type_invalid")
     if "enum" in schema:
         values = schema["enum"]
@@ -83,7 +83,7 @@ def _validate_schema(schema: Any, depth: int = 0) -> None:
     if kind == "object":
         properties = schema.get("properties", {})
         required = schema.get("required", [])
-        if not isinstance(properties, dict) or len(properties) > 100:
+        if not isinstance(properties, dict) or len(properties) > 100 or any(not isinstance(key, str) for key in properties):
             raise ValueError("contract_schema_properties_invalid")
         if not isinstance(required, list) or len(required) > 100 or any(not isinstance(k, str) for k in required):
             raise ValueError("contract_schema_required_invalid")
