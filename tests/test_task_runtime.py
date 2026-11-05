@@ -31,6 +31,46 @@ class TaskRuntimeTests(unittest.TestCase):
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
 
+    def test_operation_access_checks_hide_existence_from_unauthorized_actors(self):
+        task = self.create("operation-auth")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="auth-key",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        for method, kwargs in (
+            (self.runtime.mark_operation_in_flight, {
+                "actor_id": "supervisor", "operation_id": operation.operation_id,
+                "worker_id": "worker-a", "expected_version": operation.version,
+            }),
+            (self.runtime.reconcile_abandoned_operation, {
+                "actor_id": "alice", "operation_id": operation.operation_id,
+                "expected_version": operation.version,
+            }),
+            (self.runtime.record_operation_outcome, {
+                "actor_id": "alice", "operation_id": operation.operation_id,
+                "expected_version": operation.version, "status": "succeeded",
+            }),
+        ):
+            with self.assertRaises(PermissionError):
+                method(**kwargs)
+        for method, kwargs in (
+            (self.runtime.mark_operation_in_flight, {
+                "actor_id": "alice", "operation_id": "missing-operation",
+                "worker_id": "worker-a", "expected_version": 0,
+            }),
+            (self.runtime.reconcile_abandoned_operation, {
+                "actor_id": "alice", "operation_id": "missing-operation",
+                "expected_version": 0,
+            }),
+            (self.runtime.record_operation_outcome, {
+                "actor_id": "alice", "operation_id": "missing-operation",
+                "expected_version": 0, "status": "succeeded",
+            }),
+        ):
+            with self.assertRaises(PermissionError):
+                method(**kwargs)
+
     def test_enqueue_and_creation_event_roll_back_together(self):
         with self.store._connect() as db:
             db.execute("""

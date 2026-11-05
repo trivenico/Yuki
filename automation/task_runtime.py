@@ -449,6 +449,13 @@ class TaskRuntime:
         )
         return self._record(self.store.get(retried.run_id))
 
+    def _authorized_operation(self, actor: str, operation_id: str, action: str):
+        operation = self.store.get_operation(operation_id)
+        if operation is None or not self._allowed(actor, action, operation.task_id):
+            # Do not expose whether an operation ID exists to unauthorized callers.
+            raise PermissionError("operation access is not authorized.")
+        return operation
+
     def prepare_operation(self, *, actor_id: str, task_id: str, idempotency_key: str,
                           action: str, request: dict[str, Any]):
         actor = self._actor(actor_id)
@@ -461,11 +468,7 @@ class TaskRuntime:
     def mark_operation_in_flight(self, *, actor_id: str, operation_id: str,
                                  worker_id: str, expected_version: int):
         actor = self._actor(actor_id)
-        operation = self.store.get_operation(operation_id)
-        if operation is None:
-            raise KeyError("operation not found.")
-        if not self._allowed(actor, "task:operation:dispatch", operation.task_id):
-            raise PermissionError("operation dispatch is not authorized.")
+        self._authorized_operation(actor, operation_id, "task:operation:dispatch")
         return self.store.mark_operation_in_flight(
             operation_id, worker_id=worker_id, expected_version=expected_version,
         )
@@ -473,11 +476,7 @@ class TaskRuntime:
     def reconcile_abandoned_operation(self, *, actor_id: str, operation_id: str,
                                       expected_version: int):
         actor = self._actor(actor_id)
-        operation = self.store.get_operation(operation_id)
-        if operation is None:
-            raise KeyError("operation not found.")
-        if not self._allowed(actor, "task:operation:recover", operation.task_id):
-            raise PermissionError("operation recovery is not authorized.")
+        self._authorized_operation(actor, operation_id, "task:operation:recover")
         return self.store.reconcile_abandoned_operation(
             operation_id, expected_version=expected_version,
         )
@@ -487,11 +486,7 @@ class TaskRuntime:
                                  provider_reference: str | None = None,
                                  outcome: dict[str, Any] | list[Any] | None = None):
         actor = self._actor(actor_id)
-        operation = self.store.get_operation(operation_id)
-        if operation is None:
-            raise KeyError("operation not found.")
-        if not self._allowed(actor, "task:operation:resolve", operation.task_id):
-            raise PermissionError("operation outcome recording is not authorized.")
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
         return self.store.record_operation_outcome(
             operation_id, expected_version=expected_version, status=status,
             provider_reference=provider_reference, outcome=outcome,
