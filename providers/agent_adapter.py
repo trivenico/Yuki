@@ -155,6 +155,7 @@ class ProviderAgentAdapter:
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
         timeout_seconds: float | None = None,
         cancellation_event: threading.Event | None = None,
+        idempotency_key: str | None = None,
     ) -> Mapping[str, Any]:
         if not isinstance(messages, (list, tuple)) or not messages:
             raise ValueError("messages must be a non-empty sequence.")
