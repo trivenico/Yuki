@@ -7,3 +7,6 @@ cryptography>=44.0.0,<47.0.0
 # Pooled PostgreSQL backend for production deployments.
 psycopg[binary]>=3.2.3,<4
 psycopg-pool>=3.2.4,<4
+
+# ASGI server for the authenticated local API and Yuki Desktop.
+uvicorn>=0.30.0,<1.0
