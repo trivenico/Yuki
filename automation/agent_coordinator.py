@@ -232,6 +232,21 @@ class SpecialistAgentCoordinator:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_events_plan_sequence ON agent_plan_events(plan_id, sequence)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_handoff_audit (
+                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plan_id TEXT NOT NULL,
+                    source_subtask_id TEXT NOT NULL,
+                    destination_subtask_id TEXT NOT NULL,
+                    source_agent_id TEXT NOT NULL,
+                    source_task_id TEXT NOT NULL,
+                    content_bytes INTEGER NOT NULL CHECK(content_bytes >= 0),
+                    created_at TEXT NOT NULL,
+                    UNIQUE(plan_id, source_subtask_id, destination_subtask_id),
+                    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_handoff_audit_plan ON agent_handoff_audit(plan_id, audit_id)")
 
             db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
@@ -459,7 +474,15 @@ class SpecialistAgentCoordinator:
         """Reload SQLite as the source of truth, including changes from other processes."""
         with self._connect() as db:
             rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
-        refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
+        refreshed = {}
+        for row in rows:
+            try:
+                refreshed[row["agent_id"]] = self._agent_from_row(row)
+            except AgentPlanError:
+                # A tampered or malformed persisted manifest is excluded from
+                # routing. Existing plans then fail closed at dispatch with an
+                # identity-change event instead of crashing registry refresh.
+                continue
         with self._agent_lock:
             self.agents = refreshed
 
@@ -741,7 +764,7 @@ class SpecialistAgentCoordinator:
                 self._set_subtask(plan_id, row["subtask_id"], status="blocked")
                 self._append_plan_event(
                     plan_id, actor_id=actor_id,
-                    kind=("subtask.agent_identity_changed" if agent is not None and not identity_matches
+                    kind=("subtask.agent_identity_changed" if agent is None or not identity_matches
                           else "subtask.permission_revoked"),
                     payload={"subtask_id": row["subtask_id"], "agent_id": row["agent_id"]},
                 )
@@ -759,6 +782,10 @@ class SpecialistAgentCoordinator:
                 continue
             argument = row["description"]
             if dependency_outputs:
+                self._record_handoff_audits(
+                    plan_id=plan_id, destination_subtask_id=row["subtask_id"],
+                    dependency_outputs=dependency_outputs,
+                )
                 base = argument + "\n\n"
                 budget = max(0, _MAX_DEPENDENCY_CONTEXT_BYTES - len(base.encode("utf-8")))
                 encoded = _serialize_dependency_context(
@@ -829,6 +856,47 @@ class SpecialistAgentCoordinator:
             if state != row["status"]:
                 self._set_subtask(plan_id, row["subtask_id"], status=state)
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
+    def _record_handoff_audits(self, *, plan_id: str, destination_subtask_id: str,
+                               dependency_outputs: list[tuple[str, str, str, str]]) -> None:
+        """Persist provenance and byte counts only; never persist dependency content."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.executemany(
+                """INSERT OR IGNORE INTO agent_handoff_audit(
+                    plan_id, source_subtask_id, destination_subtask_id,
+                    source_agent_id, source_task_id, content_bytes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (plan_id, source_subtask_id, destination_subtask_id,
+                     source_agent_id, source_task_id,
+                     len(content.encode("utf-8")), now)
+                    for source_subtask_id, source_agent_id, source_task_id, content
+                    in dependency_outputs
+                ],
+            )
+
+    def handoff_audit(self, *, actor_id: str, plan_id: str, limit: int = 100) -> tuple[dict, ...]:
+        """Return bounded, authorized handoff metadata without exposing content."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be between 1 and 500.")
+        if not self._allowed(actor_id, "agent:audit", plan_id):
+            raise PermissionError("agent handoff audit is not authorized.")
+        with self._connect() as db:
+            plan = db.execute(
+                "SELECT owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            if plan["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan ownership mismatch.")
+            rows = db.execute(
+                """SELECT source_subtask_id, destination_subtask_id,
+                          source_agent_id, source_task_id, content_bytes, created_at
+                   FROM agent_handoff_audit WHERE plan_id=?
+                   ORDER BY audit_id LIMIT ?""", (plan_id, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
 
     def recover_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Interrupt expired worker leases for this plan without replaying work.
