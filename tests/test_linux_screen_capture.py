@@ -2,11 +2,13 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 
 from tools.yuki_screen_capture import CaptureError, capture_png
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux desktop capture helper")
 class LinuxScreenCaptureTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -48,6 +50,7 @@ class LinuxScreenCaptureTests(unittest.TestCase):
             session_id=self.session, now_epoch=100,
             env={"WAYLAND_DISPLAY": "wayland-0"}, runner=runner,
             runtime_dir=str(self.runtime),
+            executable_lookup=lambda name: "/usr/bin/grim" if name == "grim" else None,
         )
         self.assertEqual(output, self.png)
         self.assertEqual(calls, [["/usr/bin/grim", "-"]])
@@ -57,6 +60,7 @@ class LinuxScreenCaptureTests(unittest.TestCase):
             session_id=self.session, now_epoch=100,
             env={"DISPLAY": ":0"}, runner=self.runner(),
             runtime_dir=str(self.runtime),
+            executable_lookup=lambda name: "/usr/bin/import" if name == "import" else None,
         )
         self.assertEqual(output, self.png)
 
