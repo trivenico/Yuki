@@ -1,0 +1,34 @@
+name: Yuki Desktop Shell
+
+on:
+  push:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/yuki-desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/yuki-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install frontend dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build Windows desktop bundles
+        run: npm run build
