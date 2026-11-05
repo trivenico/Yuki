@@ -64,6 +64,13 @@ class ProviderWorkflowReconciliation:
         if not isinstance(evidence_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", evidence_sha256):
             raise ValueError("evidence_sha256_invalid")
 
+        correlation = self.provider_store.link_workflow_operation(
+            execution_id=execution_id, operation_id=operation_id,
+            provider_id=str(execution["provider_id"]), linked_by=resolver_id,
+        )
+        if correlation["provider_id"] != operation.provider_name:
+            raise WorkflowTransitionError("provider_workflow_correlation_provider_mismatch")
+
         resolutions = self.provider_store.list_resolutions(execution_id=execution_id)
         if execution["status"] == "uncertain":
             self.provider_store.resolve_uncertain_execution(

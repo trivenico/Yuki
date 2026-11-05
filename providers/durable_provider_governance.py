@@ -148,6 +148,17 @@ class SQLiteProviderGovernanceStore:
                     reason_code TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS provider_workflow_correlations (
+                    correlation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT NOT NULL UNIQUE,
+                    operation_id TEXT NOT NULL UNIQUE,
+                    provider_id TEXT NOT NULL,
+                    linked_by TEXT NOT NULL,
+                    linked_at REAL NOT NULL,
+                    FOREIGN KEY(execution_id) REFERENCES provider_execution_records(execution_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_workflow_correlations_operation
+                    ON provider_workflow_correlations(operation_id);
                 CREATE INDEX IF NOT EXISTS idx_provider_recovery_attempts_execution
                     ON provider_recovery_attempts(execution_id, attempt_id);
                 CREATE TRIGGER IF NOT EXISTS provider_recovery_attempts_no_update
@@ -409,6 +420,86 @@ class SQLiteProviderGovernanceStore:
 
     def release(self, lease_id: str) -> bool:
         return self.record_outcome(lease_id, outcome="cancelled", reason="reservation_released")
+
+    def link_workflow_operation(
+        self, *, execution_id: str, operation_id: str, provider_id: str, linked_by: str,
+    ) -> dict[str, object]:
+        """Create an explicit one-to-one execution/operation correlation.
+
+        This store can validate provider execution ownership, but the caller
+        must independently verify that the workflow operation exists and uses
+        the same provider before creating the link.
+        """
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        if not isinstance(operation_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id):
+            raise ValueError("operation_id_invalid")
+        if not isinstance(provider_id, str) or not _PROVIDER.fullmatch(provider_id):
+            raise ValueError("provider_id_invalid")
+        if not isinstance(linked_by, str) or not _AGENT.fullmatch(linked_by):
+            raise ValueError("linked_by_invalid")
+        with self._connect() as db:
+            execution = db.execute(
+                "SELECT provider_id FROM provider_execution_records WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if execution is None:
+                raise KeyError("provider execution not found")
+            if execution["provider_id"] != provider_id:
+                raise ValueError("provider_execution_identity_mismatch")
+            existing = db.execute(
+                "SELECT execution_id, operation_id, provider_id, linked_by, linked_at "
+                "FROM provider_workflow_correlations WHERE execution_id=? OR operation_id=?",
+                (execution_id, operation_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["execution_id"] == execution_id and existing["operation_id"] == operation_id and existing["provider_id"] == provider_id:
+                    return dict(existing)
+                raise ValueError("provider_workflow_correlation_conflict")
+            cursor = db.execute(
+                "INSERT INTO provider_workflow_correlations "
+                "(execution_id, operation_id, provider_id, linked_by, linked_at) VALUES (?, ?, ?, ?, ?)",
+                (execution_id, operation_id, provider_id, linked_by, self._clock()),
+            )
+            row = db.execute(
+                "SELECT execution_id, operation_id, provider_id, linked_by, linked_at "
+                "FROM provider_workflow_correlations WHERE correlation_id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return dict(row)
+
+    def get_workflow_correlation(self, *, execution_id: str | None = None,
+                                 operation_id: str | None = None) -> dict[str, object] | None:
+        if (execution_id is None) == (operation_id is None):
+            raise ValueError("exactly_one_correlation_identifier_required")
+        if execution_id is not None and (
+            not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id)
+        ):
+            raise ValueError("execution_id_invalid")
+        if operation_id is not None and (
+            not isinstance(operation_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+        ):
+            raise ValueError("operation_id_invalid")
+        field, value = ("execution_id", execution_id) if execution_id is not None else ("operation_id", operation_id)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT execution_id, operation_id, provider_id, linked_by, linked_at "
+                f"FROM provider_workflow_correlations WHERE {field}=?", (value,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_workflow_correlations(self, *, limit: int = 100, after_id: int = 0) -> list[dict[str, object]]:
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit_out_of_range")
+        if type(after_id) is not int or after_id < 0:
+            raise ValueError("after_id_invalid")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT correlation_id, execution_id, operation_id, provider_id, linked_by, linked_at "
+                "FROM provider_workflow_correlations WHERE correlation_id>? "
+                "ORDER BY correlation_id LIMIT ?", (after_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
 
     def get_execution(self, execution_id: str) -> dict[str, object] | None:
         """Return one provider execution's non-sensitive correlation metadata."""

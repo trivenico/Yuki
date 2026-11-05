@@ -85,6 +85,22 @@ class YukiRecoveryControlPlane:
             }
             for row in workflow_rows
         ]
+        correlations = self.provider_store.list_workflow_correlations(limit=limit)
+        correlation_checks = []
+        for link in correlations:
+            execution = self.provider_store.get_execution(link["execution_id"])
+            operation = self.workflow_store.get_operation(link["operation_id"])
+            if execution is None or operation is None:
+                status = "orphaned"
+            elif execution["provider_id"] != link["provider_id"] or operation.provider_name != link["provider_id"]:
+                status = "provider_mismatch"
+            else:
+                status = "verified"
+            correlation_checks.append({
+                **link, "status": status,
+                "provider_execution_status": execution["status"] if execution else None,
+                "workflow_operation_status": operation.status if operation else None,
+            })
         provider_uncertain = sum(row["status"] == "uncertain" for row in provider_items)
         provider_running = sum(row["status"] == "running" for row in provider_items)
         workflow_reconcile = sum(row["status"] == "needs_reconciliation" for row in workflow_items)
@@ -108,12 +124,13 @@ class YukiRecoveryControlPlane:
                 "stale": workflow_stale,
             },
             "correlation": {
-                "status": "not_implemented",
-                "matched": 0,
-                "warning": (
-                    "Provider execution IDs are not yet durably linked to workflow operation IDs. "
-                    "No relationship was inferred from provider names, timestamps, or digests."
-                ),
+                "status": "available",
+                "items": correlation_checks,
+                "returned": len(correlation_checks),
+                "verified": sum(row["status"] == "verified" for row in correlation_checks),
+                "orphaned": sum(row["status"] == "orphaned" for row in correlation_checks),
+                "provider_mismatch": sum(row["status"] == "provider_mismatch" for row in correlation_checks),
+                "warning": "Only explicit durable links are inspected; unlinked records are not inferred.",
             },
             "health": {
                 "status": "attention_required" if (

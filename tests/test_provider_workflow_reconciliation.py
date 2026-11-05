@@ -107,5 +107,26 @@ class ProviderWorkflowReconciliationTests(unittest.TestCase):
         self.assertEqual(self.provider_store.get_execution(execution_id)["status"], "uncertain")
 
 
+
+    def test_reconciliation_creates_explicit_one_to_one_correlation(self):
+        operation, execution_id = self._uncertain_pair()
+        args = dict(
+            actor_id="owner", operation_id=operation.operation_id,
+            execution_id=execution_id, expected_version=operation.version,
+            provider_reference="provider-request-456", evidence_source="localengine",
+            evidence_sha256="d" * 64, resolver_id="assistant",
+        )
+        self.bridge.reconcile_success(**args)
+        link = self.provider_store.get_workflow_correlation(execution_id=execution_id)
+        self.assertEqual(link["operation_id"], operation.operation_id)
+        self.assertEqual(
+            self.provider_store.get_workflow_correlation(operation_id=operation.operation_id)["execution_id"],
+            execution_id,
+        )
+        self.assertEqual(
+            self.provider_store.get_workflow_correlation(execution_id=execution_id),
+            self.provider_store.get_workflow_correlation(operation_id=operation.operation_id),
+        )
+
 if __name__ == "__main__":
     unittest.main()
