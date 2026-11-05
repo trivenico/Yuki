@@ -181,6 +181,47 @@ class ReasoningRuntimeFactoryTests(unittest.TestCase):
         self.assertIsNot(loop_a.model.provider_adapter, loop_b.model.provider_adapter)
         self.assertEqual(loop_a.model.provider_adapter.provider_id, "ollama")
 
+    def test_runtime_persists_owner_scoped_invocation_metadata(self):
+        from providers.invocation_trace_store import InvocationTraceStore
+        trace_store = InvocationTraceStore(str(Path(self.temp.name) / "invocations.sqlite3"))
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(
+                self.providers.setdefault(owner, _Provider())
+            ),
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())
+            ),
+            agent_id="assistant",
+            system_policy="Never disclose private data.",
+            invocation_trace_store=trace_store,
+            provider_id_for_owner=lambda owner: "ollama",
+            model_id_for_owner=lambda owner: "local-model:latest",
+        )
+        result = factory("owner-persisted").run("hello", tools=[])
+        self.assertEqual(result.status, "completed")
+        records = trace_store.list_recent(provider_id="ollama", model_id="local-model:latest")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "success")
+        self.assertNotIn("owner-persisted", repr(records[0]))
+        self.assertNotIn("hello", repr(records[0]))
+
+    def test_trace_store_requires_both_identity_resolvers(self):
+        from providers.invocation_trace_store import InvocationTraceStore
+        trace_store = InvocationTraceStore(str(Path(self.temp.name) / "invalid-invocations.sqlite3"))
+        with self.assertRaisesRegex(TypeError, "trace_provider_and_model_resolvers"):
+            create_owner_scoped_agent_loop_factory(
+                provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(_Provider()),
+                context_builder=self.builder,
+                tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                    GuardedToolRuntime({}, _AllowNothing())
+                ),
+                agent_id="assistant",
+                system_policy="Never disclose private data.",
+                invocation_trace_store=trace_store,
+                provider_id_for_owner=lambda owner: "ollama",
+            )
+
     def test_owner_scoped_adapter_decorator_must_return_provider_adapter(self):
         factory = create_owner_scoped_agent_loop_factory(
             provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(_Provider()),

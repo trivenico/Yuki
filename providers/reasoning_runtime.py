@@ -14,6 +14,8 @@ from core.reasoning.context_builder import ReasoningContextBuilder
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.reasoning_agent_adapter import ReasoningAgentAdapter
+from providers.invocation_trace import create_invocation_trace_decorator
+from providers.invocation_trace_store import InvocationTraceStore
 
 
 def create_owner_scoped_agent_loop_factory(
@@ -30,6 +32,9 @@ def create_owner_scoped_agent_loop_factory(
     max_context_chars: int = 12_000,
     execution_options: dict[str, Any] | None = None,
     provider_adapter_decorator_for_owner: Callable[[str, ProviderAgentAdapter], ProviderAgentAdapter] | None = None,
+    invocation_trace_store: InvocationTraceStore | None = None,
+    provider_id_for_owner: Callable[[str], str] | None = None,
+    model_id_for_owner: Callable[[str], str] | None = None,
 ) -> Callable[[str], AgentExecutionLoop]:
     """Return a factory suitable for ConversationService(agent_loop_factory=...).
 
@@ -53,6 +58,19 @@ def create_owner_scoped_agent_loop_factory(
         raise TypeError("owner_preferences_for_owner_must_be_callable")
     if provider_adapter_decorator_for_owner is not None and not callable(provider_adapter_decorator_for_owner):
         raise TypeError("provider_adapter_decorator_for_owner_must_be_callable")
+    trace_configured = invocation_trace_store is not None or provider_id_for_owner is not None or model_id_for_owner is not None
+    if trace_configured:
+        if not isinstance(invocation_trace_store, InvocationTraceStore):
+            raise TypeError("invocation_trace_store_must_be_InvocationTraceStore")
+        if not callable(provider_id_for_owner) or not callable(model_id_for_owner):
+            raise TypeError("trace_provider_and_model_resolvers_must_be_callable")
+        if provider_adapter_decorator_for_owner is not None:
+            raise ValueError("configure_either_trace_store_or_custom_adapter_decorator")
+        provider_adapter_decorator_for_owner = create_invocation_trace_decorator(
+            record_sink=invocation_trace_store.append,
+            provider_id_for_owner=provider_id_for_owner,
+            model_id_for_owner=model_id_for_owner,
+        )
     if type(include_shared) is not bool or type(include_unverified) is not bool:
         raise ValueError("retrieval_flags_must_be_boolean")
     if type(evidence_limit) is not int or not 1 <= evidence_limit <= 20:
