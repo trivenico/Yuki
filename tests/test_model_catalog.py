@@ -50,14 +50,15 @@ class ModelCatalogTests(unittest.TestCase):
         item = self.register()
         self.assertTrue(item["artifact_verified"])
         self.assertEqual(item["state"], "quarantined")
-        self.assertEqual(item["ownership"], "yuki_finetuned")
+        self.assertEqual(item["ownership_claim"], "yuki_finetuned")
+        self.assertEqual(item["ownership_status"], "unverified")
         self.assertEqual(item["provenance_status"], "unverified")
         self.assertEqual(item["license_status"], "unknown")
         self.assertEqual(item["activation_policy"], "manual_review_required")
 
     def test_distinguishes_imported_and_from_scratch(self):
-        self.assertEqual(self.register("imported")["ownership"], "imported")
-        self.assertEqual(self.register("from_scratch", "0.2.0")["ownership"], "yuki_trained_from_scratch")
+        self.assertEqual(self.register("imported")["ownership_claim"], "imported")
+        self.assertEqual(self.register("from_scratch", "0.2.0")["ownership_claim"], "yuki_trained_from_scratch")
 
     def test_rejects_digest_mismatch_and_duplicate(self):
         bad = manifest("0" * 64)
