@@ -1,2 +1,1 @@
-# Optional ASGI web server for Yuki's browser interface.
-uvicorn[standard]>=0.30,<1.0
+# Optional ASGI web server for Yuki's browser interface.\nuvicorn[standard]>=0.30.0,<1.0\n
