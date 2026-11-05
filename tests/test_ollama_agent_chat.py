@@ -80,6 +80,26 @@ class OllamaAgentChatTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "value"})
         self.assertEqual(timeout, self.provider.timeout)
 
+    def test_local_runtime_failure_is_propagated_without_provider_fallback(self):
+        class OfflineOpener:
+            def __init__(self):
+                self.request = None
+
+            def open(self, request, timeout):
+                self.request = request
+                raise OSError("local Ollama is unavailable")
+
+        offline = OfflineOpener()
+        with patch("providers.ollama.urllib.request.build_opener", return_value=offline):
+            with self.assertRaisesRegex(RuntimeError, "Local Ollama chat request failed"):
+                self.provider.generate_chat(messages=self.messages, tools=self.tools)
+
+        self.assertIsNotNone(offline.request)
+        self.assertEqual(
+            offline.request.full_url,
+            "http://127.0.0.1:11434/api/chat",
+        )
+
     def test_no_tool_choice_omits_tools(self):
         fake = FakeOpener({"message": {"content": "Hello", "tool_calls": []}}, self.requests)
         with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
