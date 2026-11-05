@@ -174,6 +174,38 @@ class WorkflowRunStoreTests(unittest.TestCase):
             ["prepared"],
         )
 
+    def test_provider_timeout_is_uncertain_and_never_implicitly_retryable(self):
+        run = self.start_worker_run("operation-timeout")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="timeout-once", action="provider.call",
+            request={"input_digest": "timeout"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a",
+            expected_version=operation.version, provider_name="test-provider",
+        )
+        with self.assertRaises(ValueError):
+            self.store.record_operation_timeout(
+                inflight.operation_id, expected_version=inflight.version,
+                timeout_seconds=0,
+            )
+        timed_out = self.store.record_operation_timeout(
+            inflight.operation_id, expected_version=inflight.version,
+            timeout_seconds=30, principal_id="operator-1",
+        )
+        self.assertEqual(timed_out.status, "needs_reconciliation")
+        self.assertEqual(timed_out.version, inflight.version + 1)
+        self.assertEqual(timed_out.outcome["reason"], "provider_timeout")
+        self.assertFalse(timed_out.outcome["automatic_retry_permitted"])
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.mark_operation_in_flight(
+                timed_out.operation_id, worker_id="worker-a",
+                expected_version=timed_out.version, provider_name="test-provider",
+            )
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual(events[-1].principal_id, "operator-1")
+        self.assertEqual(events[-1].to_status, "needs_reconciliation")
+
     def test_abandoned_inflight_operation_requires_expired_lease_and_is_not_replayed(self):
         run = self.start_worker_run("operation-abandoned")
         operation = self.store.prepare_operation(

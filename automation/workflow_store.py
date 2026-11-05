@@ -1306,6 +1306,24 @@ class WorkflowRunStore:
             )
             return self._operation_row(updated_row)
 
+    def record_operation_timeout(
+        self, operation_id: str, *, expected_version: int, timeout_seconds: int,
+        principal_id: str | None = None,
+    ) -> WorkflowOperation:
+        """Record a provider timeout as uncertain; never infer provider failure."""
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600:
+            raise ValueError("timeout_seconds must be an integer between 1 and 3600.")
+        return self.record_operation_outcome(
+            operation_id, expected_version=expected_version,
+            status="needs_reconciliation",
+            outcome={
+                "reason": "provider_timeout",
+                "timeout_seconds": timeout_seconds,
+                "automatic_retry_permitted": False,
+            },
+            principal_id=principal_id,
+        )
+
     def get_operation(self, operation_id: str) -> WorkflowOperation | None:
         with self._connect() as db:
             return self._operation_row(db.execute(

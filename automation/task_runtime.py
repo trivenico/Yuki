@@ -517,6 +517,18 @@ class TaskRuntime:
             provider_reference=provider_reference, outcome=outcome, principal_id=actor,
         )
 
+    def record_operation_timeout(
+        self, *, actor_id: str, operation_id: str, expected_version: int,
+        timeout_seconds: int,
+    ):
+        """Record an uncertain provider timeout after checking resolve authority."""
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
+        return self.store.record_operation_timeout(
+            operation_id, expected_version=expected_version,
+            timeout_seconds=timeout_seconds, principal_id=actor,
+        )
+
     def resolve_reconciled_operation(
         self, *, actor_id: str, operation_id: str, expected_version: int,
         provider_reference: str, evidence_source: str, evidence_digest: str,
