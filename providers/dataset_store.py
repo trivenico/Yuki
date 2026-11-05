@@ -97,7 +97,7 @@ class DatasetStore:
             event = self._event_hash(sequence, dataset_id, revision, actor,
                                      "dataset.register", digest, previous)
             db.execute(
-                "INSERT INTO dataset_events VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO dataset_events VALUES(?,?,?,?,?,?,?,?)",
                 (sequence, dataset_id, revision, actor, "dataset.register",
                  digest, previous, event),
             )
