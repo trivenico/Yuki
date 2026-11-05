@@ -1,16 +1,28 @@
 """Durable governed provider dispatch backed by shared SQLite reservations."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Callable, Mapping
 
 from providers.durable_provider_governance import (
-    DurableBudgetExceeded, DurableCircuitOpen, SQLiteProviderGovernanceStore,
+    DurableBudgetExceeded, DurableCircuitOpen, DurableDuplicateExecution,
+    DurableIdempotencyConflict, SQLiteProviderGovernanceStore,
 )
 from providers.provider_execution import ProviderCancelled
 
 
 class DurableProviderAdmissionRejected(RuntimeError):
     """Durable provider admission denied execution."""
+
+
+class DurableProviderDuplicate(RuntimeError):
+    """Request was already admitted; caller must inspect the original execution."""
+
+    def __init__(self, execution_id: str, status: str):
+        self.execution_id = execution_id
+        self.status = status
+        super().__init__("provider_execution_already_exists")
 
 
 class DurableProviderLeaseLost(RuntimeError):
@@ -45,7 +57,18 @@ class DurableGovernedProviderExecutor:
         self.adapter = adapter
         self.governance_store = governance_store
 
-    def __call__(self, **request: Any) -> Mapping[str, Any]:
+    @staticmethod
+    def _request_fingerprint(request: Mapping[str, Any]) -> str:
+        try:
+            canonical = json.dumps(
+                request, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise ValueError("provider_request_not_canonical_json") from exc
+        return hashlib.sha256(canonical).hexdigest()
+
+    def __call__(self, *, _idempotency_key: str | None = None, **request: Any) -> Mapping[str, Any]:
         validate = getattr(self.adapter, "validate_inputs", None)
         if callable(validate):
             validate(
@@ -53,9 +76,15 @@ class DurableGovernedProviderExecutor:
                 request.get("tool_choice", "auto"),
             )
         try:
+            fingerprint = self._request_fingerprint(request) if _idempotency_key is not None else None
             lease = self.governance_store.acquire(
                 provider_id=self.provider_id, agent_id=self.agent_id,
+                idempotency_key=_idempotency_key, request_fingerprint=fingerprint,
             )
+        except DurableDuplicateExecution as exc:
+            raise DurableProviderDuplicate(exc.execution_id, exc.status) from exc
+        except DurableIdempotencyConflict as exc:
+            raise DurableProviderAdmissionRejected("idempotency_key_conflict") from exc
         except (DurableBudgetExceeded, DurableCircuitOpen) as exc:
             raise DurableProviderAdmissionRejected(str(exc)) from exc
 
@@ -80,5 +109,5 @@ class DurableGovernedProviderExecutor:
 
 __all__ = [
     "DurableGovernedProviderExecutor", "DurableProviderAdmissionRejected",
-    "DurableProviderLeaseLost",
+    "DurableProviderDuplicate", "DurableProviderLeaseLost",
 ]

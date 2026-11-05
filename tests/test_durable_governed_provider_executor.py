@@ -102,6 +102,32 @@ class DurableGovernedExecutorTests(unittest.TestCase):
         self.assertEqual(snapshot["agent_requests_in_window"], 0)
         self.assertEqual(snapshot["global_active_requests"], 0)
 
+    def test_executor_idempotency_deduplicates_without_second_provider_call(self):
+        from providers.durable_governed_provider_executor import DurableProviderDuplicate
+        engine = LocalInferenceEngine()
+        execute = self.build(engine)
+        result = execute(**self.request, _idempotency_key="conversation-1:turn-7")
+        self.assertEqual(result["text"], "ok")
+        with self.assertRaises(DurableProviderDuplicate) as caught:
+            execute(**self.request, _idempotency_key="conversation-1:turn-7")
+        self.assertEqual(caught.exception.status, "succeeded")
+        self.assertEqual(engine.calls, 1)
+
+    def test_executor_rejects_idempotency_key_reuse_with_changed_request(self):
+        execute = self.build(LocalInferenceEngine())
+        execute(**self.request, _idempotency_key="operation-99")
+        changed = dict(self.request)
+        changed["messages"] = [{"role": "user", "content": "different"}]
+        with self.assertRaisesRegex(DurableProviderAdmissionRejected, "idempotency_key_conflict"):
+            execute(**changed, _idempotency_key="operation-99")
+
+    def test_non_json_request_cannot_use_idempotency_fingerprint(self):
+        execute = self.build(LocalInferenceEngine())
+        request = dict(self.request)
+        request["extra"] = object()
+        with self.assertRaisesRegex(ValueError, "canonical_json"):
+            execute(**request, _idempotency_key="operation-100")
+
     def test_lease_timeout_must_exceed_adapter_timeout(self):
         engine = LocalInferenceEngine()
         adapter = ProviderGateway.from_adapter(ProviderAgentAdapter(engine))
