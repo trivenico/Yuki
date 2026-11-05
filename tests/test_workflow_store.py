@@ -23,6 +23,17 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def start_worker_run(self, key, worker_id="worker-a"):
+        run = self.create(key=key)
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        return self.store.transition(
+            approved.run_id, expected_version=approved.version, to_state="running",
+            lease_owner=worker_id, lease_seconds=60,
+        )
+
     def test_create_persists_ordered_step_metadata_without_arguments(self):
         run = self.store.create(
             idempotency_key="step-records",
@@ -44,11 +55,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list_steps("unknown-run"), [])
 
     def test_operation_journal_is_idempotent_and_never_stores_request_plaintext(self):
-        run = self.create(key="operation-journal")
-        run = self.store.transition(
-            run.run_id, expected_version=run.version, to_state="running",
-            lease_owner="worker-a", lease_seconds=60,
-        )
+        run = self.start_worker_run("operation-journal")
         request = {"recipient": "private@example.test", "body": "sensitive payload"}
         first = self.store.prepare_operation(
             run.run_id, idempotency_key="send-once", action="message.send", request=request,
@@ -66,11 +73,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             )
 
     def test_operation_dispatch_requires_live_worker_lease_and_records_outcome(self):
-        run = self.create(key="operation-dispatch")
-        run = self.store.transition(
-            run.run_id, expected_version=run.version, to_state="running",
-            lease_owner="worker-a", lease_seconds=60,
-        )
+        run = self.start_worker_run("operation-dispatch")
         operation = self.store.prepare_operation(
             run.run_id, idempotency_key="provider-call-1", action="provider.call",
             request={"input_digest": "abc"},
@@ -89,11 +92,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list_unresolved_operations(), [])
 
     def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
-        run = self.create(key="operation-dispatch-guard")
-        run = self.store.transition(
-            run.run_id, expected_version=run.version, to_state="running",
-            lease_owner="worker-a", lease_seconds=60,
-        )
+        run = self.start_worker_run("operation-dispatch-guard")
         operation = self.store.prepare_operation(
             run.run_id, idempotency_key="provider-call-guard", action="provider.call",
             request={"input_digest": "abc"},
