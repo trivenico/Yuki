@@ -470,21 +470,22 @@ class SpecialistAgentCoordinator:
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
 
-    def _refresh_agent_registry(self) -> None:
-        """Reload SQLite as the source of truth, including changes from other processes."""
+    def _refresh_agent_registry(self, *, strict: bool = True) -> None:
+        """Reload SQLite as source of truth; dispatch mode quarantines malformed identities."""
         with self._connect() as db:
             rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
         refreshed = {}
+        invalid_ids = set()
         for row in rows:
             try:
                 refreshed[row["agent_id"]] = self._agent_from_row(row)
             except AgentPlanError:
-                # A tampered or malformed persisted manifest is excluded from
-                # routing. Existing plans then fail closed at dispatch with an
-                # identity-change event instead of crashing registry refresh.
-                continue
+                invalid_ids.add(row["agent_id"])
+                if strict:
+                    raise
         with self._agent_lock:
             self.agents = refreshed
+            self._invalid_agent_ids = invalid_ids
 
     def register_agent(self, *, actor_id: str, agent: SpecialistAgent) -> None:
         """Register a specialist at runtime after explicit registry authorization.
@@ -693,7 +694,7 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent dispatch is not authorized.")
         # Refresh persisted operator changes before dispatch. A coordinator that
         # has been running for a long time must not keep using stale enablement.
-        self._refresh_agent_registry()
+        self._refresh_agent_registry(strict=False)
         # Never hold a coordinator SQLite write lock while calling TaskRuntime:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
@@ -761,7 +762,8 @@ class SpecialistAgentCoordinator:
                 # Re-check both the specialist manifest and the owner's current
                 # grants immediately before dispatch; revoked access never rides
                 # along on a previously persisted plan.
-                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                disabled = agent is not None and not agent.enabled
+                self._set_subtask(plan_id, row["subtask_id"], status="failed" if disabled else "blocked")
                 self._append_plan_event(
                     plan_id, actor_id=actor_id,
                     kind=("subtask.agent_identity_changed" if agent is None or not identity_matches
@@ -815,7 +817,7 @@ class SpecialistAgentCoordinator:
             if self.trace_store is not None:
                 try:
                     span_id = hashlib.sha256(
-                        ("yuki-agent-span\\0" + plan_id + "\\0" + row["subtask_id"]).encode("utf-8")
+                        ("yuki-agent-span\0" + plan_id + "\0" + row["subtask_id"]).encode("utf-8")
                     ).hexdigest()[:32]
                     self.trace_store.bind_task(span_id, task_id=task.task_id)
                     self.trace_store.record_event(
