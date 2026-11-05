@@ -38,6 +38,37 @@ class OperationDispatcher:
             raise ValueError("request exceeds the 16384-byte limit.")
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
+    def reconcile(self, *, actor_id: str, operation_id: str, provider_name: str):
+        """Use provider lookup only; absence or ambiguity never clears uncertainty."""
+        operation = self.runtime._authorized_operation(
+            self.runtime._actor(actor_id), operation_id, "task:operation:resolve",
+        )
+        if operation.status != "needs_reconciliation":
+            raise OperationDispatchError("only uncertain operations can be reconciled.")
+        try:
+            registered = self.providers.require_operation_lookup(provider_name)
+        except (KeyError, ProviderCapabilityError) as exc:
+            raise OperationDispatchError("provider lookup is unavailable.") from exc
+        try:
+            response = registered.provider.lookup(idempotency_key=operation.idempotency_key)
+        except Exception as exc:
+            raise OperationDispatchError("provider lookup failed; operation remains uncertain.") from exc
+        if response is None:
+            return operation
+        if not isinstance(response, Mapping):
+            raise OperationDispatchError("provider lookup returned an invalid response; operation remains uncertain.")
+        if response.get("status") != "succeeded":
+            return operation
+        if response.get("idempotency_key") != operation.idempotency_key:
+            raise OperationDispatchError("provider lookup identity mismatch; operation remains uncertain.")
+        reference = response.get("provider_reference")
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 500:
+            raise OperationDispatchError("provider lookup lacks a valid reference; operation remains uncertain.")
+        return self.runtime.resolve_reconciled_operation(
+            actor_id=actor_id, operation_id=operation_id,
+            expected_version=operation.version, provider_reference=reference,
+        )
+
     def dispatch(
         self, *, actor_id: str, worker_id: str, operation_id: str,
         provider_name: str, request: Mapping[str, Any],

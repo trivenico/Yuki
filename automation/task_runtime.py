@@ -516,6 +516,15 @@ class TaskRuntime:
             provider_reference=provider_reference, outcome=outcome, principal_id=actor,
         )
 
+    def resolve_reconciled_operation(self, *, actor_id: str, operation_id: str,
+                                     expected_version: int, provider_reference: str):
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
+        return self.store.resolve_reconciled_operation(
+            operation_id, expected_version=expected_version,
+            provider_reference=provider_reference, principal_id=actor,
+        )
+
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:cancel", task_id):

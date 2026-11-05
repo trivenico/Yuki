@@ -1360,6 +1360,54 @@ class WorkflowRunStore:
             )
             return self._operation_row(updated_row)
 
+    def resolve_reconciled_operation(self, operation_id: str, *, expected_version: int,
+                                     provider_reference: str, principal_id: str | None = None) -> WorkflowOperation:
+        """Resolve an uncertain operation only when lookup positively confirms success."""
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be non-empty text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if not isinstance(provider_reference, str) or not provider_reference.strip() or len(provider_reference) > 500 or "\\x00" in provider_reference:
+            raise ValueError("provider_reference must be non-empty bounded text.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 200 or "\\x00" in principal_id
+        ):
+            raise ValueError("principal_id must be non-empty bounded text.")
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id.strip(),)
+            ).fetchone()
+            if row is None:
+                raise KeyError("operation not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("operation version changed; reload before reconciliation.")
+            if row["status"] != "needs_reconciliation":
+                raise WorkflowTransitionError("only uncertain operations can be resolved by provider lookup.")
+            updated = db.execute(
+                "UPDATE workflow_operations SET status='succeeded', provider_reference=?, "
+                "outcome_json=?, version=version+1, updated_at=? "
+                "WHERE operation_id=? AND version=? AND status='needs_reconciliation'",
+                (provider_reference.strip(), _bounded_json(
+                    {"reconciliation": "provider_lookup_confirmed_success"}, _MAX_RESULT_BYTES,
+                    "operation outcome",
+                ), now, operation_id.strip(), expected_version),
+            )
+            if updated.rowcount != 1:
+                raise WorkflowConflict("operation changed concurrently.")
+            updated_row = db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id.strip(),)
+            ).fetchone()
+            self._append_operation_event(
+                db, operation=updated_row, from_status="needs_reconciliation",
+                to_status="succeeded", actor_type="system", actor_id="provider_reconciler",
+                reason="provider_lookup_confirmed_success", created_at=now,
+                principal_id=principal_id,
+            )
+            return self._operation_row(updated_row)
+
     def list_unresolved_operations(self, *, task_id: str | None = None, limit: int = 100):
         if task_id is not None and (not isinstance(task_id, str) or not task_id.strip()):
             raise ValueError("task_id must be non-empty text.")

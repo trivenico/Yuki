@@ -20,6 +20,7 @@ class FakeRuntime:
     def __init__(self, operation):
         self.operation = operation
         self.recorded = []
+        self.resolved = []
 
     def _actor(self, actor):
         return actor
@@ -43,10 +44,17 @@ class FakeRuntime:
         self.operation.version += 1
         return self.operation
 
+    def resolve_reconciled_operation(self, **kwargs):
+        self.resolved.append(kwargs)
+        self.operation.status = "succeeded"
+        self.operation.version += 1
+        return self.operation
+
 
 class Provider:
-    def __init__(self, response=None, error=None):
+    def __init__(self, response=None, error=None, lookup_response=None, lookup_error=None):
         self.response, self.error, self.keys = response, error, []
+        self.lookup_response, self.lookup_error, self.lookup_keys = lookup_response, lookup_error, []
 
     def execute(self, action, request, *, idempotency_key):
         self.keys.append(idempotency_key)
@@ -55,7 +63,10 @@ class Provider:
         return self.response
 
     def lookup(self, *, idempotency_key):
-        return None
+        self.lookup_keys.append(idempotency_key)
+        if self.lookup_error:
+            raise self.lookup_error
+        return self.lookup_response
 
 
 def digest(request):
@@ -122,6 +133,60 @@ class OperationDispatcherTests(unittest.TestCase):
             )
         self.assertEqual(provider.keys, ["stable-key"])
         self.assertEqual(runtime.recorded[-1]["status"], "needs_reconciliation")
+
+    def test_reconcile_confirms_success_only_with_matching_provider_identity(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_response={
+                "status": "succeeded", "idempotency_key": "stable-key",
+                "provider_reference": "remote-confirmed",
+            })
+        )
+        operation.status = "needs_reconciliation"
+        operation.version = 3
+        result = dispatcher.reconcile(
+            actor_id="owner", operation_id="op-1", provider_name="payments.test",
+        )
+        self.assertEqual(provider.lookup_keys, ["stable-key"])
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(runtime.resolved[0]["provider_reference"], "remote-confirmed")
+
+    def test_reconcile_not_found_or_pending_preserves_uncertainty(self):
+        for response in (None, {"status": "pending"}, {"status": "failed"}):
+            dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+                Provider(lookup_response=response)
+            )
+            operation.status = "needs_reconciliation"
+            operation.version = 4
+            result = dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+            self.assertEqual(result.status, "needs_reconciliation")
+            self.assertEqual(runtime.resolved, [])
+
+    def test_reconcile_rejects_mismatched_idempotency_identity(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_response={
+                "status": "succeeded", "idempotency_key": "different-key",
+                "provider_reference": "remote-1",
+            })
+        )
+        operation.status = "needs_reconciliation"
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+        self.assertEqual(runtime.resolved, [])
+
+    def test_reconcile_provider_lookup_exception_preserves_uncertainty(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider(lookup_error=TimeoutError())
+        )
+        operation.status = "needs_reconciliation"
+        with self.assertRaises(OperationDispatchError):
+            dispatcher.reconcile(
+                actor_id="owner", operation_id="op-1", provider_name="payments.test",
+            )
+        self.assertEqual(runtime.resolved, [])
 
     def test_ambiguous_provider_response_is_not_success(self):
         dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
