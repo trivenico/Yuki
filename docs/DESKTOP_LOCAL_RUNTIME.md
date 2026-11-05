@@ -9,7 +9,7 @@ Install the Python dependencies, configure a real provider in `config.yaml`
 (or the documented environment variables), then run:
 
 ```powershell
-python -m api.server
+python yuki_cli.py serve
 ```
 
 The server binds only to an IP loopback address. Non-loopback bind addresses
