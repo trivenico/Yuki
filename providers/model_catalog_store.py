@@ -10,6 +10,7 @@ import hmac
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from providers.model_catalog import list_models, new_catalog
@@ -33,7 +34,7 @@ class ModelCatalogStore:
             raise ModelCatalogStoreError("database_must_not_be_symlink")
         self.timeout = float(timeout)
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 db.executescript("""
                     CREATE TABLE IF NOT EXISTS catalog_state (
                         singleton INTEGER PRIMARY KEY CHECK(singleton=1),
@@ -62,6 +63,16 @@ class ModelCatalogStore:
         db.execute("PRAGMA busy_timeout=%d" % int(self.timeout * 1000))
         return db
 
+    @contextmanager
+    def _connection(self):
+        """Commit/rollback through the SQLite context manager and always close."""
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     @staticmethod
     def _serialize(catalog):
         try:
@@ -78,7 +89,7 @@ class ModelCatalogStore:
 
     def load(self):
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 row = db.execute(
                     "SELECT revision,catalog_json FROM catalog_state WHERE singleton=1"
                 ).fetchone()
@@ -143,7 +154,7 @@ class ModelCatalogStore:
         if type(limit) is not int or not 1 <= limit <= 10000:
             raise ValueError("invalid_audit_limit")
         try:
-            with self._connect() as db:
+            with self._connection() as db:
                 rows = db.execute(
                     """SELECT revision,actor,action,catalog_sha256,
                     previous_event_sha256,event_sha256

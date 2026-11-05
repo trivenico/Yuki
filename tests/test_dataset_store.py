@@ -3,7 +3,27 @@ import unittest
 from pathlib import Path
 
 from providers.dataset_store import DatasetStore, DatasetStoreError
-from tests.test_dataset_artifact_manifest import dataset_manifest
+
+
+def dataset_manifest():
+    return {
+        "schema_version": 1,
+        "dataset_id": "yuki/core-instruct",
+        "dataset_revision": "2026-11-05.1",
+        "source_uri": "https://example.org/datasets/core",
+        "source_revision": "git:0123456789abcdef",
+        "artifact_sha256": "a" * 64,
+        "license_id": "Apache-2.0",
+        "license_evidence": "review-ticket:DATA-001",
+        "rights_status": "unverified",
+        "consent_status": "unverified",
+        "privacy_status": "unverified",
+        "review_status": "quarantined",
+        "size_bytes": 1024,
+        "file_count": 4,
+        "retrieved_at": "2026-11-05T09:00:00Z",
+        "contains_executable_code": False,
+    }
 
 
 class DatasetStoreTests(unittest.TestCase):
