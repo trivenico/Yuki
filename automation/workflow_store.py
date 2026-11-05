@@ -905,7 +905,7 @@ class WorkflowRunStore:
                 if not (
                     row["approved_by"] and row["approved_at"]
                     and row["approved_session_hash"]
-                    and row["approval_digest"] == row["run_request_digest"]
+                    and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
