@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+import json
 import inspect
 import threading
 import time
@@ -9,6 +10,10 @@ import time
 from providers.provider_execution import (
     ProviderCancelled, ProviderDeadlineExceeded, ProviderExecutionContext,
 )
+
+
+class ProviderResponseError(ValueError):
+    """Provider returned an envelope outside Yuki's normalized contract."""
 
 
 class ProviderAgentAdapter:
@@ -43,10 +48,64 @@ class ProviderAgentAdapter:
 
     @staticmethod
     def _check_execution(context):
-        if context.cancellation_event.is_set():
-            raise ProviderCancelled("provider execution was cancelled.")
-        if time.monotonic() >= context.deadline:
-            raise ProviderDeadlineExceeded("provider execution deadline exceeded; outcome may be uncertain.")
+        context.check()
+
+    @staticmethod
+    def _validate_response(response, tools):
+        if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
+            raise ProviderResponseError("provider_response_envelope_invalid")
+        text = response.get("text", "")
+        calls = response.get("tool_calls", {"tool_calls": []})
+        finish_reason = response.get("finish_reason")
+        if not isinstance(text, str) or not isinstance(calls, Mapping) or set(calls) != {"tool_calls"}:
+            raise ProviderResponseError("provider_response_fields_invalid")
+        if finish_reason is not None and not isinstance(finish_reason, str):
+            raise ProviderResponseError("provider_finish_reason_invalid")
+        call_list = calls["tool_calls"]
+        if not isinstance(call_list, list) or len(call_list) > 5:
+            raise ProviderResponseError("provider_tool_call_batch_invalid")
+        allowed_names = {
+            item.get("function", {}).get("name")
+            for item in tools
+            if isinstance(item, Mapping) and isinstance(item.get("function"), Mapping)
+            and isinstance(item["function"].get("name"), str)
+        }
+        try:
+            from core.structured_tool_protocol import parse_tool_calls
+            normalized = parse_tool_calls(json.dumps(dict(calls), ensure_ascii=False))
+        except (TypeError, ValueError) as exc:
+            raise ProviderResponseError("provider_tool_call_protocol_invalid") from exc
+        for call in normalized:
+            if call["name"] not in allowed_names:
+                raise ProviderResponseError("provider_tool_name_not_requested")
+        return {"text": text, "tool_calls": dict(calls), "finish_reason": finish_reason}
+
+    @classmethod
+    def _validated_stream(cls, result, context, tools):
+        if not hasattr(result, "__iter__"):
+            raise ProviderResponseError("provider_stream_not_iterable")
+        iterator = iter(result)
+        try:
+            for event in iterator:
+                cls._check_execution(context)
+                if not isinstance(event, Mapping) or not isinstance(event.get("type"), str):
+                    raise ProviderResponseError("provider_stream_event_invalid")
+                event_type = event["type"]
+                if event_type == "text_delta":
+                    if set(event) != {"type", "text"} or not isinstance(event["text"], str) or not event["text"]:
+                        raise ProviderResponseError("provider_stream_text_delta_invalid")
+                    yield {"type": "text_delta", "text": event["text"]}
+                elif event_type == "response":
+                    if set(event) != {"type", "response"}:
+                        raise ProviderResponseError("provider_stream_response_event_invalid")
+                    yield {"type": "response", "response": cls._validate_response(event["response"], tools)}
+                else:
+                    raise ProviderResponseError("provider_stream_event_type_unsupported")
+            cls._check_execution(context)
+        finally:
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
@@ -70,7 +129,7 @@ class ProviderAgentAdapter:
             kwargs["execution_context"] = context
         result = stream(**kwargs)
         self._check_execution(context)
-        return result
+        return self._validated_stream(result, context, tools)
 
     @staticmethod
     def validate_inputs(messages, tools, tool_choice):
