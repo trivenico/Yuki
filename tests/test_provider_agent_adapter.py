@@ -29,7 +29,8 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             {"id": "c1", "name": "echo", "arguments": {"value": "x"}}
         ]}})
         result = ProviderAgentAdapter(provider)(
-            messages=[{"role": "user", "content": "do"}], tools=[], tool_choice="auto")
+            messages=[{"role": "user", "content": "do"}],
+            tools=[{"type": "function", "function": {"name": "echo"}}], tool_choice="auto")
         self.assertEqual(len(result["tool_calls"]["tool_calls"]), 1)
 
     def test_rejects_invalid_message_roles_and_shapes(self):
