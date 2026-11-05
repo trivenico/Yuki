@@ -263,6 +263,44 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
 
+    def test_concurrent_operation_dispatch_has_exactly_one_winner(self):
+        run = self.start_worker_run("operation-concurrent-dispatch")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="one-provider-side-effect",
+            action="provider.call", request={"input_digest": "race"},
+        )
+        barrier = threading.Barrier(2)
+        outcomes = []
+        errors = []
+
+        def dispatch(worker):
+            try:
+                barrier.wait(timeout=3)
+                result = self.store.mark_operation_in_flight(
+                    operation.operation_id, worker_id="worker-a",
+                    expected_version=operation.version, provider_name="test-provider",
+                )
+                outcomes.append(result.status)
+            except (WorkflowConflict, WorkflowTransitionError) as exc:
+                errors.append(type(exc).__name__)
+            except Exception as exc:
+                errors.append(f"unexpected:{type(exc).__name__}:{exc}")
+
+        threads = [threading.Thread(target=dispatch, args=(f"attempt-{i}",)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(outcomes, ["in_flight"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn(errors[0], {"WorkflowConflict", "WorkflowTransitionError"})
+        current = self.store.get_operation(operation.operation_id)
+        self.assertEqual(current.status, "in_flight")
+        self.assertEqual(current.version, operation.version + 1)
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual([event.to_status for event in events], ["prepared", "in_flight"])
+
     def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
         run = self.start_worker_run("operation-dispatch-guard")
         operation = self.store.prepare_operation(
