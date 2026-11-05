@@ -1,14 +1,17 @@
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 from providers.kaggle_compute import (
     KaggleIntegrationError,
     KaggleKernelSpec,
     build_kernel_push_argv,
     discover_kaggle_auth,
+    verify_kaggle_cli_auth,
 )
 
 
@@ -61,19 +64,50 @@ class KaggleComputeTests(unittest.TestCase):
             self.assertFalse(status.configured)
             self.assertEqual(status.warning, "run_kaggle_auth_login_or_configure_api_token")
 
+    def test_verifies_oauth_cli_session_without_returning_cli_output(self):
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="private kernel name", stderr=""))
+        status = verify_kaggle_cli_auth(executable="/usr/bin/kaggle", runner=runner)
+        self.assertTrue(status.configured)
+        self.assertEqual(status.source, "kaggle_cli_verified")
+        self.assertNotIn("private kernel name", repr(status))
+        self.assertEqual(runner.call_args.args[0], [
+            "/usr/bin/kaggle", "kernels", "list", "--mine", "--page", "1"
+        ])
+        self.assertTrue(runner.call_args.kwargs["capture_output"])
+        self.assertNotIn("shell", runner.call_args.kwargs)
+
+    def test_cli_auth_failure_is_generic_and_timeout_bounded(self):
+        runner = Mock(return_value=subprocess.CompletedProcess([], 1, stdout="", stderr="token detail"))
+        status = verify_kaggle_cli_auth(executable="/usr/bin/kaggle", runner=runner)
+        self.assertFalse(status.configured)
+        self.assertEqual(status.warning, "kaggle_authentication_or_network_check_failed")
+        timeout_runner = Mock(side_effect=subprocess.TimeoutExpired("kaggle", 20))
+        timed_out = verify_kaggle_cli_auth(executable="/usr/bin/kaggle", runner=timeout_runner)
+        self.assertEqual(timed_out.warning, "kaggle_auth_check_timed_out")
+
     def test_requires_explicit_approval_and_valid_spec(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
-            (folder / "kernel-metadata.json").write_text("{}")
+            (folder / "kernel-metadata.json").write_text(json.dumps({"id": "owner/yuki"}))
             with self.assertRaises(KaggleIntegrationError):
                 build_kernel_push_argv(KaggleKernelSpec("owner/yuki", str(folder)))
             with self.assertRaises(KaggleIntegrationError):
                 build_kernel_push_argv(KaggleKernelSpec("owner;bad/yuki", str(folder), approved=True))
 
+    def test_rejects_metadata_id_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "kernel-metadata.json").write_text(json.dumps({"id": "someone/else"}))
+            with self.assertRaises(KaggleIntegrationError):
+                build_kernel_push_argv(
+                    KaggleKernelSpec("owner/yuki", str(folder), approved=True),
+                    executable="/usr/bin/kaggle",
+                )
+
     def test_builds_accelerator_command_only_after_approval(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
-            (folder / "kernel-metadata.json").write_text("{}")
+            (folder / "kernel-metadata.json").write_text(json.dumps({"id": "owner/yuki"}))
             argv = build_kernel_push_argv(
                 KaggleKernelSpec("owner/yuki", str(folder), "NvidiaTeslaT4",
                                  timeout_seconds=1800, approved=True),
@@ -92,7 +126,7 @@ class KaggleComputeTests(unittest.TestCase):
                     executable="/usr/bin/kaggle",
                 )
             folder = Path(directory)
-            (folder / "kernel-metadata.json").write_text("{}")
+            (folder / "kernel-metadata.json").write_text(json.dumps({"id": "owner/yuki"}))
             with self.assertRaises(KaggleIntegrationError):
                 build_kernel_push_argv(
                     KaggleKernelSpec("owner/yuki", str(folder), "UntrustedGPU",

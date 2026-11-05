@@ -1,9 +1,8 @@
 """Kaggle compute preflight and explicit notebook submission planning.
 
-This adapter never reads credential contents into results, never prints
-secrets, and never launches a paid/remote job. It only discovers supported
-local authentication sources and builds a fixed Kaggle CLI argv after an
-explicit caller approval flag.
+Credential discovery never returns credential values. OAuth-backed CLI sessions
+can be verified with a bounded, read-only CLI request. Remote notebook submission
+is only planned after explicit caller approval.
 """
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import subprocess
 
 
 class KaggleIntegrationError(ValueError):
@@ -46,6 +46,11 @@ _ACCELERATORS = {
 
 
 def discover_kaggle_auth(*, environ=None, home=None) -> KaggleAuthStatus:
+    """Detect supported token files without exposing their contents.
+
+    OAuth credentials created by `kaggle auth login` are verified separately
+    with `verify_kaggle_cli_auth`, because their storage format is CLI-managed.
+    """
     env = os.environ if environ is None else environ
     home_path = Path.home() if home is None else Path(home)
     if isinstance(env.get("KAGGLE_API_TOKEN"), str) and env["KAGGLE_API_TOKEN"].strip():
@@ -84,6 +89,31 @@ def discover_kaggle_auth(*, environ=None, home=None) -> KaggleAuthStatus:
     return KaggleAuthStatus(False, None, None, "run_kaggle_auth_login_or_configure_api_token")
 
 
+def verify_kaggle_cli_auth(*, executable: str | None = None, timeout_seconds: int = 20,
+                           runner=subprocess.run) -> KaggleAuthStatus:
+    """Verify the active Kaggle CLI session, including OAuth, without exposing output."""
+    command = executable or shutil.which("kaggle")
+    if not isinstance(command, str) or not command:
+        return KaggleAuthStatus(False, None, None, "kaggle_cli_not_installed")
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 60:
+        return KaggleAuthStatus(False, None, None, "invalid_auth_check_timeout")
+    try:
+        result = runner(
+            [command, "kernels", "list", "--mine", "--page", "1"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return KaggleAuthStatus(False, None, None, "kaggle_auth_check_timed_out")
+    except OSError:
+        return KaggleAuthStatus(False, None, None, "kaggle_cli_execution_failed")
+    if getattr(result, "returncode", 1) == 0:
+        return KaggleAuthStatus(True, "kaggle_cli_verified", None)
+    return KaggleAuthStatus(False, None, None, "kaggle_authentication_or_network_check_failed")
+
+
 def build_kernel_push_argv(
     spec: KaggleKernelSpec,
     *,
@@ -98,8 +128,15 @@ def build_kernel_push_argv(
     if not isinstance(spec.folder, str) or not os.path.isabs(spec.folder):
         raise KaggleIntegrationError("kernel_folder_must_be_absolute")
     folder = Path(spec.folder)
-    if not folder.is_dir() or not (folder / "kernel-metadata.json").is_file():
+    metadata_path = folder / "kernel-metadata.json"
+    if not folder.is_dir() or not metadata_path.is_file() or metadata_path.is_symlink():
         raise KaggleIntegrationError("kernel_folder_or_metadata_missing")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise KaggleIntegrationError("kernel_metadata_invalid") from None
+    if not isinstance(metadata, dict) or metadata.get("id") != spec.kernel_id:
+        raise KaggleIntegrationError("kernel_metadata_id_mismatch")
     if spec.accelerator not in _ACCELERATORS:
         raise KaggleIntegrationError("unsupported_kaggle_accelerator")
     if type(spec.timeout_seconds) is not int or not 60 <= spec.timeout_seconds <= 43200:
