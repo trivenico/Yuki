@@ -152,10 +152,9 @@ class OperationDispatcher:
             if status != "succeeded":
                 raise OperationDispatchError("provider outcome requires reconciliation.")
             return resolved
-        except OperationDispatchError:
-            raise
         except Exception as exc:
-            # Once dispatch has started, an exception may follow a successful
+            # Once dispatch has started, every exception—including a malformed
+            # provider response—may follow a successful remote side effect.
             # remote side effect. Record uncertainty; never retry automatically.
             try:
                 self.runtime.record_operation_outcome(
