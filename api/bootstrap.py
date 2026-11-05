@@ -40,8 +40,8 @@ def _prompt_from_messages(messages: list[dict[str, str]]) -> str:
         total += len(content)
         if total > 100_000:
             raise ValueError("Conversation transcript exceeds the size limit.")
-        parts.append(f"<|{role}|>\n{content}")
-    return "\n\n".join(parts)
+        parts.append(f"<|{role}|>\\n{content}")
+    return "\\n\\n".join(parts)
 
 
 def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRuntime:
@@ -58,7 +58,7 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
     provider = create_provider(config)
 
     def model(*, messages, tools, tool_choice="auto") -> dict[str, Any]:
-        if tools or tool_choice != "none":
+        if tools:
             raise ValueError("This runtime has no enabled tools.")
         prompt = _prompt_from_messages(list(messages))
         answer = provider.generate(prompt)
