@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import os
 import stat
@@ -112,7 +113,7 @@ def parse_dataset_records(
                 raise DatasetRecordError("record_count_limit_exceeded")
     else:
         try:
-            reader = csv.DictReader(text.splitlines())
+            reader = csv.DictReader(io.StringIO(text, newline=""))
             if reader.fieldnames is None or not {"prompt", "response"}.issubset(reader.fieldnames):
                 raise DatasetRecordError("csv_prompt_response_columns_required")
             if set(reader.fieldnames) - _ALLOWED_FIELDS:
@@ -120,6 +121,12 @@ def parse_dataset_records(
             for index, item in enumerate(reader, 1):
                 if None in item:
                     raise DatasetRecordError("invalid_csv_row_width")
+                row_size = sum(
+                    len(value.encode("utf-8")) for value in item.values()
+                    if isinstance(value, str)
+                )
+                if row_size > max_record_bytes:
+                    raise DatasetRecordError("record_size_limit_exceeded")
                 records.append(_canonical_record(item, index))
                 if len(records) > max_records:
                     raise DatasetRecordError("record_count_limit_exceeded")
