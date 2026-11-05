@@ -102,7 +102,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         with self.assertRaises(WorkflowTransitionError):
             self.store.transition(
-                run.run_id, expected_version=run.version + 1, to_state="cancelled",
+                run.run_id, expected_version=run.version, to_state="cancelled",
             )
         self.assertEqual(self.store.get(run.run_id).state, "running")
         self.assertEqual(self.store.get_operation(inflight.operation_id).status, "in_flight")
@@ -111,7 +111,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
             status="succeeded", provider_reference="provider-cancel-race",
         )
         cancelled = self.store.transition(
-            run.run_id, expected_version=run.version + 1, to_state="cancelled",
+            run.run_id, expected_version=run.version, to_state="cancelled",
         )
         self.assertEqual(resolved.status, "succeeded")
         self.assertEqual(cancelled.state, "cancelled")
