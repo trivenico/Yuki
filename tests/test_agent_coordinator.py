@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
+from automation.agent_contracts import AgentContract
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
     _serialize_dependency_context,
