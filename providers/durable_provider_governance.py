@@ -28,6 +28,20 @@ class DurableCircuitOpen(RuntimeError):
     """Durable provider circuit is open."""
 
 
+class DurableDuplicateExecution(RuntimeError):
+    """An idempotency key already identifies an existing execution."""
+
+    def __init__(self, execution_id: str, status: str, *, fingerprint_matches: bool):
+        self.execution_id = execution_id
+        self.status = status
+        self.fingerprint_matches = fingerprint_matches
+        super().__init__("idempotency_key_already_used")
+
+
+class DurableIdempotencyConflict(RuntimeError):
+    """An idempotency key was reused with different request metadata."""
+
+
 @dataclass(frozen=True)
 class DurableLease:
     lease_id: str
@@ -104,6 +118,15 @@ class SQLiteProviderGovernanceStore:
                     reason TEXT NOT NULL,
                     started_at REAL NOT NULL,
                     updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS provider_idempotency_keys (
+                    provider_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL,
+                    execution_id TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY(provider_id, agent_id, idempotency_key)
                 );
                 CREATE TABLE IF NOT EXISTS provider_execution_resolutions (
                     resolution_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -216,13 +239,38 @@ class SQLiteProviderGovernanceStore:
             self._event(db, lease["provider_id"], lease["agent_id"], lease["lease_id"],
                         "expired", "lease_expired", now)
 
-    def acquire(self, *, provider_id: str, agent_id: str) -> DurableLease:
+    def acquire(
+        self, *, provider_id: str, agent_id: str,
+        idempotency_key: str | None = None,
+        request_fingerprint: str | None = None,
+    ) -> DurableLease:
         self._validate_ids(provider_id, agent_id)
+        if idempotency_key is None:
+            if request_fingerprint is not None:
+                raise ValueError("request_fingerprint_requires_idempotency_key")
+        else:
+            if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", idempotency_key):
+                raise ValueError("idempotency_key_invalid")
+            if not isinstance(request_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", request_fingerprint):
+                raise ValueError("request_fingerprint_invalid")
         now = self._clock()
         lease_id = uuid.uuid4().hex
         execution_id = uuid.uuid4().hex
         with self._connect() as db:
             self._purge_expired(db, now)
+            if idempotency_key is not None:
+                existing = db.execute(
+                    "SELECT k.request_fingerprint, r.execution_id, r.status "
+                    "FROM provider_idempotency_keys k JOIN provider_execution_records r "
+                    "ON r.execution_id=k.execution_id WHERE k.provider_id=? AND k.agent_id=? AND k.idempotency_key=?",
+                    (provider_id, agent_id, idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_fingerprint"] != request_fingerprint:
+                        raise DurableIdempotencyConflict("idempotency_key_request_mismatch")
+                    raise DurableDuplicateExecution(
+                        existing["execution_id"], existing["status"], fingerprint_matches=True,
+                    )
             circuit = db.execute(
                 "SELECT failures, opened_until, probe_lease_id FROM provider_circuits WHERE provider_id=?",
                 (provider_id,),
@@ -278,6 +326,13 @@ class SQLiteProviderGovernanceStore:
                 "VALUES (?, ?, ?, ?, 'running', 'admitted', ?, ?)",
                 (execution_id, lease_id, provider_id, agent_id, now, now),
             )
+            if idempotency_key is not None:
+                db.execute(
+                    "INSERT INTO provider_idempotency_keys "
+                    "(provider_id, agent_id, idempotency_key, request_fingerprint, execution_id, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (provider_id, agent_id, idempotency_key, request_fingerprint, execution_id, now),
+                )
             self._event(db, provider_id, agent_id, lease_id, "admitted", "capacity_reserved", now)
         return DurableLease(lease_id, provider_id, agent_id, expires, execution_id)
 
@@ -472,5 +527,6 @@ class SQLiteProviderGovernanceStore:
 
 __all__ = [
     "DurableBudgetExceeded", "DurableCircuitOpen", "DurableCircuitSnapshot",
+    "DurableDuplicateExecution", "DurableIdempotencyConflict",
     "DurableLease", "SQLiteProviderGovernanceStore",
 ]

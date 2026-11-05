@@ -67,6 +67,47 @@ class DurableProviderExecutionRecordTests(unittest.TestCase):
                 )
             self.assertEqual(store.list_executions(provider_id="local.engine")[0]["status"], "running")
 
+    def test_idempotency_key_returns_duplicate_without_new_admission(self):
+        import hashlib
+        from providers.durable_provider_governance import DurableDuplicateExecution
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderGovernanceStore(str(Path(directory) / "provider.sqlite3"))
+            fingerprint = hashlib.sha256(b"normalized-request").hexdigest()
+            first = store.acquire(
+                provider_id="local.engine", agent_id="planner",
+                idempotency_key="task-42", request_fingerprint=fingerprint,
+            )
+            with self.assertRaises(DurableDuplicateExecution) as caught:
+                store.acquire(
+                    provider_id="local.engine", agent_id="planner",
+                    idempotency_key="task-42", request_fingerprint=fingerprint,
+                )
+            self.assertEqual(caught.exception.execution_id, first.execution_id)
+            self.assertEqual(caught.exception.status, "running")
+            self.assertEqual(store.snapshot(
+                provider_id="local.engine", agent_id="planner"
+            )["global_active_requests"], 1)
+
+    def test_reusing_idempotency_key_with_different_fingerprint_is_rejected(self):
+        import hashlib
+        from providers.durable_provider_governance import DurableIdempotencyConflict
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderGovernanceStore(str(Path(directory) / "provider.sqlite3"))
+            store.acquire(
+                provider_id="local.engine", agent_id="planner",
+                idempotency_key="task-43",
+                request_fingerprint=hashlib.sha256(b"request-a").hexdigest(),
+            )
+            with self.assertRaises(DurableIdempotencyConflict):
+                store.acquire(
+                    provider_id="local.engine", agent_id="planner",
+                    idempotency_key="task-43",
+                    request_fingerprint=hashlib.sha256(b"request-b").hexdigest(),
+                )
+            self.assertEqual(store.snapshot(
+                provider_id="local.engine", agent_id="planner"
+            )["global_active_requests"], 1)
+
     def test_completed_execution_is_not_reported_as_unresolved(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderGovernanceStore(str(Path(directory) / "provider.sqlite3"))
