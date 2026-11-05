@@ -51,7 +51,7 @@ class ProviderAgentAdapter:
         context.check()
 
     @staticmethod
-    def _validate_response(response, tools):
+    def _validate_response(response, tools, tool_choice="auto"):
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
             raise ProviderResponseError("provider_response_envelope_invalid")
         text = response.get("text", "")
@@ -65,6 +65,8 @@ class ProviderAgentAdapter:
         ):
             raise ProviderResponseError("provider_finish_reason_invalid")
         call_list = calls["tool_calls"]
+        if tool_choice == "none" and call_list:
+            raise ProviderResponseError("provider_tool_call_not_permitted")
         if not isinstance(call_list, list) or len(call_list) > 5:
             raise ProviderResponseError("provider_tool_call_batch_invalid")
         allowed_names = {
@@ -101,7 +103,7 @@ class ProviderAgentAdapter:
                 elif event_type == "response":
                     if set(event) != {"type", "response"}:
                         raise ProviderResponseError("provider_stream_response_event_invalid")
-                    yield {"type": "response", "response": cls._validate_response(event["response"], tools)}
+                    yield {"type": "response", "response": cls._validate_response(event["response"], tools, context.tool_choice if hasattr(context, "tool_choice") else "auto")}
                 else:
                     raise ProviderResponseError("provider_stream_event_type_unsupported")
             cls._check_execution(context)
@@ -203,4 +205,4 @@ class ProviderAgentAdapter:
             kwargs["idempotency_key"] = idempotency_key
         response = self.provider.generate_chat(**kwargs)
         self._check_execution(context)
-        return self._validate_response(response, tools)
+        return self._validate_response(response, tools, tool_choice)
