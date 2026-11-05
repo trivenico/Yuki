@@ -28,9 +28,12 @@ _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 
 
 def _safe_member_name(name: str) -> str:
-    if not isinstance(name, str) or not name or "\\x00" in name:
+    if not isinstance(name, str) or not name or "\x00" in name:
         raise DatasetArchiveError("invalid_archive_member_name")
-    normalized = name.replace("\\\\", "/")
+    normalized = name.replace("\\", "/")
+    normalized = normalized.rstrip("/")
+    if not normalized:
+        raise DatasetArchiveError("invalid_archive_member_name")
     windows = PureWindowsPath(name)
     path = PurePosixPath(normalized)
     if (normalized.startswith("/") or path.is_absolute() or windows.is_absolute()
