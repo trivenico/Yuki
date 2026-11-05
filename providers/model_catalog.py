@@ -60,14 +60,15 @@ def register_artifact(catalog, manifest, artifact_path):
     if any((x.get("model_id"), x.get("model_version")) == key for x in catalog["models"] if isinstance(x, dict)):
         raise ModelCatalogError("model_version_already_registered")
     method = normalized["training_method"]
-    ownership = "imported" if method == "imported" else (
+    ownership_claim = "imported" if method == "imported" else (
         "yuki_trained_from_scratch" if method == "from_scratch" else "yuki_finetuned"
     )
     record = {
         "model_id": normalized["model_id"],
         "model_version": normalized["model_version"],
         "artifact_sha256": normalized["artifact_sha256"],
-        "ownership": ownership,
+        "ownership_claim": ownership_claim,
+        "ownership_status": "unverified",
         "training_method": method,
         "source": normalized["source"],
         "license_id": normalized["license_id"],
