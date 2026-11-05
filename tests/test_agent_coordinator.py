@@ -307,10 +307,12 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         matching = [run for run in runs if run.run_id == task_id]
         self.assertEqual(len(matching), 1)
         self.assertEqual(len(runs), 1)
-        self.assertEqual(
-            matching[0].idempotency_key,
-            f"agent-plan:{plan.plan_id and self.store.get(task_id).idempotency_key.split(':', 2)[1]}:collect",
-        )
+        with self.coordinator._connect() as db:
+            plan_key = db.execute(
+                "SELECT idempotency_key FROM agent_plans WHERE plan_id=?",
+                (plan.plan_id,),
+            ).fetchone()["idempotency_key"]
+        self.assertEqual(matching[0].idempotency_key, f"agent-plan:{plan_key}:collect")
 
     def test_plan_recovery_quarantines_expired_worker_without_replay(self):
         plan = self.coordinator.submit(
