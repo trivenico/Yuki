@@ -25,7 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
-\n    serve = sub.add_parser("serve", help="Start the authenticated loopback API for desktop and local clients")
+    serve = sub.add_parser(
+        "serve",
+        help="Start the authenticated loopback API for desktop and local clients",
+    )
     serve.add_argument("--host", default="127.0.0.1", help="Loopback IP address only")
     serve.add_argument("--port", type=int, default=8765, help="Local API port")
     return parser
