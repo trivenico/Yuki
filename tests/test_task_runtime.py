@@ -38,6 +38,7 @@ class TaskRuntimeTests(unittest.TestCase):
             actor_id="alice", task_id=task.task_id, idempotency_key="auth-key",
             action="provider.call", request={"payload_digest": "safe"},
         )
+        self.grants.remove("task:operation:resolve")
         for method, kwargs in (
             (self.runtime.mark_operation_in_flight, {
                 "actor_id": "bob", "operation_id": operation.operation_id,
@@ -819,7 +820,7 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(WorkflowConflict):
                 self.runtime.complete(
                     actor_id="alice", task_id=task.task_id,
-                    worker_id="worker-a", provider_name="payments.test", expected_version=claimed.version,
+                    worker_id="worker-a", expected_version=claimed.version,
                     result={"ok": True},
                 )
             self.assertEqual(self.store.get(task.task_id).state, "running")
@@ -846,7 +847,7 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(WorkflowConflict):
                 self.runtime.fail(
                     actor_id="alice", task_id=task.task_id,
-                    worker_id="worker-a", provider_name="payments.test", expected_version=claimed.version,
+                    worker_id="worker-a", expected_version=claimed.version,
                     error_code="worker_error",
                 )
             self.assertEqual(self.store.get(task.task_id).state, "running")

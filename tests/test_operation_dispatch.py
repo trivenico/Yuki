@@ -156,7 +156,11 @@ class OperationDispatcherTests(unittest.TestCase):
         self.assertEqual(runtime.resolved[0]["provider_reference"], "remote-confirmed")
 
     def test_reconcile_not_found_or_pending_preserves_uncertainty(self):
-        for response in (None, {"status": "pending"}, {"status": "failed"}):
+        for response in (
+            None,
+            {"status": "pending", "idempotency_key": "stable-key"},
+            {"status": "failed", "idempotency_key": "stable-key"},
+        ):
             dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
                 Provider(lookup_response=response)
             )
