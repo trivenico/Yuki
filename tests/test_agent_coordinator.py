@@ -6,6 +6,7 @@ from pathlib import Path
 
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
+    _serialize_dependency_context,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
@@ -180,6 +181,29 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertIsNotNone(dispatched.subtasks[0].task_id)
         self.assertEqual(dispatched.subtasks[0].status, "queued")
+
+    def test_dependency_context_schema_rejects_invalid_provenance(self):
+        invalid = [
+            ("bad id", "research", "task-1", "content"),
+            ("collect", "bad agent!", "task-1", "content"),
+            ("collect", "research", "", "content"),
+            ("collect", "research", "task-1", "bad\\x00content"),
+        ]
+        for item in invalid:
+            with self.subTest(item=item), self.assertRaises(ValueError):
+                _serialize_dependency_context([item], available_bytes=2_000)
+
+    def test_dependency_context_schema_rejects_duplicate_sources(self):
+        item = ("collect", "research", "task-1", "content")
+        with self.assertRaises(ValueError):
+            _serialize_dependency_context([item, item], available_bytes=2_000)
+
+    def test_dependency_context_schema_has_version_and_honors_byte_budget(self):
+        item = ("collect", "research", "task-1", "evidence")
+        envelope = json.loads(_serialize_dependency_context([item], available_bytes=2_000))
+        self.assertEqual(envelope["schema_version"], 1)
+        self.assertEqual(envelope["results"][0]["content"], "evidence")
+        self.assertIsNone(_serialize_dependency_context([item], available_bytes=1))
 
     def test_dependency_prevents_early_dispatch(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-1", subtasks=[
