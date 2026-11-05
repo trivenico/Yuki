@@ -50,8 +50,8 @@ class DatasetRecordTests(unittest.TestCase):
         with self.assertRaisesRegex(DatasetRecordError, "record_size_limit_exceeded"):
             parse_dataset_records(path, max_record_bytes=2)
         path.write_text(
-            '{"prompt":"one","response":"first"}\\n'
-            '{"prompt":"two","response":"second"}\\n',
+            '{"prompt":"one","response":"first"}\n'
+            '{"prompt":"two","response":"second"}\n',
             encoding="utf-8",
         )
         with self.assertRaisesRegex(DatasetRecordError, "record_count_limit_exceeded"):
@@ -59,9 +59,9 @@ class DatasetRecordTests(unittest.TestCase):
 
     def test_csv_supports_quoted_newlines_and_record_size_limit(self):
         path = self.root / "multiline.csv"
-        path.write_text('prompt,response\\n"hello\\nthere","world"\\n', encoding="utf-8")
+        path.write_text('prompt,response\n"hello\nthere","world"\n', encoding="utf-8")
         result = parse_dataset_records(path)
-        self.assertEqual(result["records"][0]["prompt"], "hello\\nthere")
+        self.assertEqual(result["records"][0]["prompt"], "hello\nthere")
         with self.assertRaisesRegex(DatasetRecordError, "record_size_limit_exceeded"):
             parse_dataset_records(path, max_record_bytes=4)
 
