@@ -608,8 +608,8 @@ class SpecialistAgentCoordinator:
             self.trace_store.start_execution(agent_id='coordinator', task_id=plan_id, execution_id=plan_id)
             self.trace_store.record_event(execution_id=plan_id, event_type='execution.started', actor_id='coordinator', status='running')
             for subtask_id, agent in assignments.items():
-                child_id = hashlib.sha256(('yuki-agent-span\\0' + plan_id + '\\0' + subtask_id).encode('utf-8')).hexdigest()[:32]
-                self.trace_store.start_execution(agent_id=agent.agent_id, parent_execution_id=plan_id, task_id=subtask_id, execution_id=child_id)
+                child_id = hashlib.sha256(('yuki-agent-span\0' + plan_id + '\0' + subtask_id).encode('utf-8')).hexdigest()[:32]
+                self.trace_store.start_execution(agent_id=agent.agent_id, parent_execution_id=plan_id, execution_id=child_id)
                 self.trace_store.record_event(execution_id=plan_id, event_type='agent.delegated', actor_id='coordinator')
         except Exception:
             self.trace_errors += 1
