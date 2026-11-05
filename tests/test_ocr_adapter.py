@@ -19,13 +19,14 @@ class OCRAdapterTests(unittest.TestCase):
         )
 
     def call(self, **kwargs):
-        return extract_screen_text(
-            self.png, grant=self.grant, owner_id="owner",
-            device_id="device", session_id="session",
-            transport="local", now_epoch=10,
-            executable_lookup=lambda name: "/usr/bin/tesseract",
-            **kwargs,
-        )
+        options = {
+            "grant": self.grant, "owner_id": "owner",
+            "device_id": "device", "session_id": "session",
+            "transport": "local", "now_epoch": 10,
+            "executable_lookup": lambda name: "/usr/bin/tesseract",
+        }
+        options.update(kwargs)
+        return extract_screen_text(self.png, **options)
 
     def test_extracts_local_ocr_text(self):
         seen = {}
