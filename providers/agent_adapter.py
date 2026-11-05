@@ -86,7 +86,7 @@ class ProviderAgentAdapter:
         return {"text": text, "tool_calls": dict(calls), "finish_reason": finish_reason}
 
     @classmethod
-    def _validated_stream(cls, result, context, tools):
+    def _validated_stream(cls, result, context, tools, tool_choice="auto"):
         if not hasattr(result, "__iter__"):
             raise ProviderResponseError("provider_stream_not_iterable")
         iterator = iter(result)
@@ -103,7 +103,7 @@ class ProviderAgentAdapter:
                 elif event_type == "response":
                     if set(event) != {"type", "response"}:
                         raise ProviderResponseError("provider_stream_response_event_invalid")
-                    yield {"type": "response", "response": cls._validate_response(event["response"], tools, context.tool_choice if hasattr(context, "tool_choice") else "auto")}
+                    yield {"type": "response", "response": cls._validate_response(event["response"], tools, tool_choice)}
                 else:
                     raise ProviderResponseError("provider_stream_event_type_unsupported")
             cls._check_execution(context)
@@ -134,7 +134,7 @@ class ProviderAgentAdapter:
             kwargs["execution_context"] = context
         result = stream(**kwargs)
         self._check_execution(context)
-        return self._validated_stream(result, context, tools)
+        return self._validated_stream(result, context, tools, tool_choice)
 
     @staticmethod
     def validate_inputs(messages, tools, tool_choice):
