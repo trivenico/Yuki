@@ -71,6 +71,21 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 method(**kwargs)
 
+    def test_dispatch_transition_requires_outcome_permission_too(self):
+        task = self.create("operation-dispatch-resolve-grant")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="dispatch-resolve-key",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        # Alice currently has dispatch permission but not resolve permission.
+        with self.assertRaises(PermissionError):
+            self.runtime.mark_operation_in_flight(
+                actor_id="alice", operation_id=operation.operation_id,
+                worker_id="worker-a", expected_version=operation.version,
+            )
+        self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
+
     def test_enqueue_and_creation_event_roll_back_together(self):
         with self.store._connect() as db:
             db.execute("""
