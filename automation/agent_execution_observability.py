@@ -311,8 +311,8 @@ class AgentExecutionTraceStore:
     def outbox_stats(self) -> dict[str, int]:
         with self._connect() as db:
             row = db.execute(
-                "SELECT COUNT(*) AS pending, "
-                "SUM(CASE WHEN lease_owner IS NOT NULL THEN 1 ELSE 0 END) AS leased, "
+                "SELECT SUM(CASE WHEN delivered_at IS NULL THEN 1 ELSE 0 END) AS pending, "
+                "SUM(CASE WHEN delivered_at IS NULL AND lease_owner IS NOT NULL THEN 1 ELSE 0 END) AS leased, "
                 "SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered "
                 "FROM agent_execution_outbox"
             ).fetchone()
