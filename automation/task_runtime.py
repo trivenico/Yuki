@@ -473,6 +473,7 @@ class TaskRuntime:
             raise PermissionError("operation preparation is not authorized.")
         return self.store.prepare_operation(
             task_id, idempotency_key=idempotency_key, action=action, request=request,
+            principal_id=actor,
         )
 
     def mark_operation_in_flight(self, *, actor_id: str, operation_id: str,
@@ -484,6 +485,7 @@ class TaskRuntime:
         self.authorize_operation_dispatch(actor_id=actor, operation_id=operation_id)
         return self.store.mark_operation_in_flight(
             operation_id, worker_id=worker_id, expected_version=expected_version,
+            principal_id=actor,
         )
 
     def reconcile_abandoned_operation(self, *, actor_id: str, operation_id: str,
@@ -491,7 +493,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         self._authorized_operation(actor, operation_id, "task:operation:recover")
         return self.store.reconcile_abandoned_operation(
-            operation_id, expected_version=expected_version,
+            operation_id, expected_version=expected_version, principal_id=actor,
         )
 
     def record_operation_outcome(self, *, actor_id: str, operation_id: str,
@@ -502,7 +504,7 @@ class TaskRuntime:
         self._authorized_operation(actor, operation_id, "task:operation:resolve")
         return self.store.record_operation_outcome(
             operation_id, expected_version=expected_version, status=status,
-            provider_reference=provider_reference, outcome=outcome,
+            provider_reference=provider_reference, outcome=outcome, principal_id=actor,
         )
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:

@@ -71,6 +71,28 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 method(**kwargs)
 
+    def test_operation_audit_preserves_authenticated_principal_and_worker(self):
+        task = self.create("operation-audit-principal")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="audit-principal",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        inflight = self.runtime.mark_operation_in_flight(
+            actor_id="alice", operation_id=operation.operation_id,
+            worker_id="worker-a", expected_version=operation.version,
+        )
+        self.runtime.record_operation_outcome(
+            actor_id="alice", operation_id=inflight.operation_id,
+            expected_version=inflight.version, status="succeeded",
+            provider_reference="provider-audit",
+        )
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual([event.principal_id for event in events], ["alice", "alice", "alice"])
+        self.assertEqual(events[0].actor_id, "workflow_store")
+        self.assertEqual(events[1].actor_id, "worker-a")
+        self.assertEqual(events[2].actor_id, "workflow_store")
+
     def test_dispatch_transition_requires_outcome_permission_too(self):
         task = self.create("operation-dispatch-resolve-grant")
         self.store.claim_next(worker_id="worker-a")

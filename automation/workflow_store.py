@@ -104,6 +104,7 @@ class OperationAuditEvent:
     to_status: str
     actor_type: str
     actor_id: str
+    principal_id: str | None
     reason: str
     created_at: str
 
@@ -246,6 +247,7 @@ class WorkflowRunStore:
                         ('prepared', 'in_flight', 'succeeded', 'needs_reconciliation')),
                     actor_type TEXT NOT NULL CHECK(actor_type IN ('system', 'worker')),
                     actor_id TEXT NOT NULL,
+                    principal_id TEXT,
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     UNIQUE(operation_id, sequence),
@@ -253,6 +255,9 @@ class WorkflowRunStore:
                     FOREIGN KEY(operation_id) REFERENCES workflow_operations(operation_id) ON DELETE RESTRICT
                 )
             """)
+            event_columns = {row["name"] for row in db.execute("PRAGMA table_info(operation_events)")}
+            if "principal_id" not in event_columns:
+                db.execute("ALTER TABLE operation_events ADD COLUMN principal_id TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_operation_events_task_created "
                 "ON operation_events(task_id, event_id)"
@@ -1083,7 +1088,7 @@ class WorkflowRunStore:
     def _append_operation_event(db: sqlite3.Connection, *, operation: sqlite3.Row,
                                 from_status: str | None, to_status: str,
                                 actor_type: str, actor_id: str, reason: str,
-                                created_at: str) -> None:
+                                created_at: str, principal_id: str | None = None) -> None:
         if actor_type not in {"system", "worker"}:
             raise ValueError("invalid operation audit actor type.")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
@@ -1096,9 +1101,10 @@ class WorkflowRunStore:
         ).fetchone()[0]
         db.execute(
             "INSERT INTO operation_events(task_id, operation_id, sequence, from_status, "
-            "to_status, actor_type, actor_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "to_status, actor_type, actor_id, principal_id, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (operation["task_id"], operation["operation_id"], sequence, from_status,
-             to_status, actor_type, actor_id.strip(), reason.strip(), created_at),
+             to_status, actor_type, actor_id.strip(), principal_id, reason.strip(), created_at),
         )
 
     @staticmethod
@@ -1108,7 +1114,8 @@ class WorkflowRunStore:
             operation_id=row["operation_id"], sequence=row["sequence"],
             from_status=row["from_status"], to_status=row["to_status"],
             actor_type=row["actor_type"], actor_id=row["actor_id"],
-            reason=row["reason"], created_at=row["created_at"],
+            principal_id=row["principal_id"], reason=row["reason"],
+            created_at=row["created_at"],
         )
 
     def list_operation_events(self, operation_id: str, *, limit: int = 100,
@@ -1133,13 +1140,18 @@ class WorkflowRunStore:
             return [self._operation_event_row(row) for row in rows]
 
     def prepare_operation(self, task_id: str, *, idempotency_key: str, action: str,
-                          request: dict[str, Any]) -> WorkflowOperation:
+                          request: dict[str, Any], principal_id: str | None = None) -> WorkflowOperation:
         """Persist intent before an external side effect; never executes the action."""
         for value, field, limit in ((task_id, "task_id", 200),
                                     (idempotency_key, "idempotency_key", _MAX_KEY_CHARS),
                                     (action, "action", _MAX_NAME_CHARS)):
             if not isinstance(value, str) or not value.strip() or len(value) > limit or "\\x00" in value:
                 raise ValueError(f"{field} must be non-empty bounded text.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 200 or "\\x00" in principal_id
+        ):
+            raise ValueError("principal_id must be non-empty bounded text.")
         if not isinstance(request, dict):
             raise ValueError("request must be an object.")
         canonical = _bounded_json(request, 16 * 1024, "operation request")
@@ -1172,18 +1184,23 @@ class WorkflowRunStore:
             self._append_operation_event(
                 db, operation=row, from_status=None, to_status="prepared",
                 actor_type="system", actor_id="workflow_store",
-                reason="operation_prepared", created_at=now,
+                reason="operation_prepared", created_at=now, principal_id=principal_id,
             )
             return self._operation_row(row)
 
     def mark_operation_in_flight(self, operation_id: str, *, worker_id: str,
-                                 expected_version: int) -> WorkflowOperation:
+                                 expected_version: int, principal_id: str | None = None) -> WorkflowOperation:
         if not isinstance(operation_id, str) or not operation_id.strip():
             raise ValueError("operation_id must be non-empty text.")
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 200 or "\\x00" in principal_id
+        ):
+            raise ValueError("principal_id must be non-empty bounded text.")
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1232,15 +1249,21 @@ class WorkflowRunStore:
             self._append_operation_event(
                 db, operation=updated_row, from_status="prepared", to_status="in_flight",
                 actor_type="worker", actor_id=worker_id.strip(),
-                reason="provider_dispatch_started", created_at=now,
+                reason="provider_dispatch_started", created_at=now, principal_id=principal_id,
             )
             return self._operation_row(updated_row)
 
     def record_operation_outcome(self, operation_id: str, *, expected_version: int,
                                  status: str, provider_reference: str | None = None,
-                                 outcome: dict[str, Any] | list[Any] | None = None) -> WorkflowOperation:
+                                 outcome: dict[str, Any] | list[Any] | None = None,
+                                 principal_id: str | None = None) -> WorkflowOperation:
         if status not in {"succeeded", "needs_reconciliation"}:
             raise ValueError("status must be succeeded or needs_reconciliation.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 200 or "\\x00" in principal_id
+        ):
+            raise ValueError("principal_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if provider_reference is not None and (
@@ -1270,7 +1293,7 @@ class WorkflowRunStore:
                 db, operation=updated_row, from_status="in_flight", to_status=status,
                 actor_type="system", actor_id="workflow_store",
                 reason="provider_outcome_recorded" if status == "succeeded" else "provider_outcome_uncertain",
-                created_at=now,
+                created_at=now, principal_id=principal_id,
             )
             return self._operation_row(updated_row)
 
@@ -1281,7 +1304,8 @@ class WorkflowRunStore:
             ).fetchone())
 
     def reconcile_abandoned_operation(self, operation_id: str, *, expected_version: int,
-                                      now: datetime | None = None) -> WorkflowOperation:
+                                      now: datetime | None = None,
+                                      principal_id: str | None = None) -> WorkflowOperation:
         """Move an uncertain dispatch to reconciliation only after its task lease is gone.
 
         This is deliberately not a retry or provider lookup. An operator or a
@@ -1291,6 +1315,11 @@ class WorkflowRunStore:
             raise ValueError("operation_id must be non-empty text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        if principal_id is not None and (
+            not isinstance(principal_id, str) or not principal_id.strip()
+            or len(principal_id) > 200 or "\\x00" in principal_id
+        ):
+            raise ValueError("principal_id must be non-empty bounded text.")
         current_time = now or datetime.now(timezone.utc)
         if current_time.tzinfo is None:
             raise ValueError("now must be timezone-aware.")
@@ -1327,7 +1356,7 @@ class WorkflowRunStore:
                 db, operation=updated_row, from_status="in_flight",
                 to_status="needs_reconciliation", actor_type="system",
                 actor_id="workflow_store", reason="expired_lease_requires_reconciliation",
-                created_at=cutoff,
+                created_at=cutoff, principal_id=principal_id,
             )
             return self._operation_row(updated_row)
 
