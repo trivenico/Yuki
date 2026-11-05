@@ -65,8 +65,6 @@ class ProviderAgentAdapter:
         ):
             raise ProviderResponseError("provider_finish_reason_invalid")
         call_list = calls["tool_calls"]
-        if tool_choice == "none" and call_list:
-            raise ProviderResponseError("provider_tool_call_not_permitted")
         if not isinstance(call_list, list) or len(call_list) > 5:
             raise ProviderResponseError("provider_tool_call_batch_invalid")
         allowed_names = {
