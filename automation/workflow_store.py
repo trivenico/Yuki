@@ -1141,6 +1141,50 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_operations WHERE operation_id=?", (operation_id,)
             ).fetchone())
 
+    def reconcile_abandoned_operation(self, operation_id: str, *, expected_version: int,
+                                      now: datetime | None = None) -> WorkflowOperation:
+        """Move an uncertain dispatch to reconciliation only after its task lease is gone.
+
+        This is deliberately not a retry or provider lookup. An operator or a
+        provider-specific reconciler must establish the external outcome.
+        """
+        if not isinstance(operation_id, str) or not operation_id.strip():
+            raise ValueError("operation_id must be non-empty text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            raise ValueError("now must be timezone-aware.")
+        cutoff = current_time.astimezone(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT o.*, r.state AS task_state, r.lease_expires_at AS lease_expires_at "
+                "FROM workflow_operations o JOIN workflow_runs r ON r.run_id=o.task_id "
+                "WHERE o.operation_id=?", (operation_id.strip(),),
+            ).fetchone()
+            if row is None:
+                raise KeyError("operation not found.")
+            if row["version"] != expected_version:
+                raise WorkflowConflict("operation version changed; reload before reconciliation.")
+            if row["status"] != "in_flight":
+                raise WorkflowTransitionError("only in-flight operations can be reconciled.")
+            expiry = row["lease_expires_at"]
+            lease_gone = row["task_state"] != "running" or expiry is None or expiry < cutoff
+            if not lease_gone:
+                raise WorkflowTransitionError("operation cannot be reconciled while its task lease is live.")
+            updated = db.execute(
+                "UPDATE workflow_operations SET status='needs_reconciliation', version=version+1, "
+                "updated_at=? WHERE operation_id=? AND version=? AND status='in_flight'",
+                (cutoff, operation_id.strip(), expected_version),
+            )
+            if updated.rowcount != 1:
+                raise WorkflowConflict("operation changed concurrently.")
+            return self._operation_row(db.execute(
+                "SELECT * FROM workflow_operations WHERE operation_id=?",
+                (operation_id.strip(),),
+            ).fetchone())
+
     def list_unresolved_operations(self, *, task_id: str | None = None, limit: int = 100):
         if task_id is not None and (not isinstance(task_id, str) or not task_id.strip()):
             raise ValueError("task_id must be non-empty text.")

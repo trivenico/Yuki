@@ -470,6 +470,18 @@ class TaskRuntime:
             operation_id, worker_id=worker_id, expected_version=expected_version,
         )
 
+    def reconcile_abandoned_operation(self, *, actor_id: str, operation_id: str,
+                                      expected_version: int):
+        actor = self._actor(actor_id)
+        operation = self.store.get_operation(operation_id)
+        if operation is None:
+            raise KeyError("operation not found.")
+        if not self._allowed(actor, "task:operation:recover", operation.task_id):
+            raise PermissionError("operation recovery is not authorized.")
+        return self.store.reconcile_abandoned_operation(
+            operation_id, expected_version=expected_version,
+        )
+
     def record_operation_outcome(self, *, actor_id: str, operation_id: str,
                                  expected_version: int, status: str,
                                  provider_reference: str | None = None,

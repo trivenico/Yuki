@@ -91,6 +91,32 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(resolved.provider_reference, "provider-op-123")
         self.assertEqual(self.store.list_unresolved_operations(), [])
 
+    def test_abandoned_inflight_operation_requires_expired_lease_and_is_not_replayed(self):
+        run = self.start_worker_run("operation-abandoned")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="provider-uncertain", action="provider.call",
+            request={"input_digest": "abc"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.reconcile_abandoned_operation(
+                inflight.operation_id, expected_version=inflight.version,
+            )
+        expired_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), run.run_id),
+            )
+        reconciled = self.store.reconcile_abandoned_operation(
+            inflight.operation_id, expected_version=inflight.version, now=expired_at,
+        )
+        self.assertEqual(reconciled.status, "needs_reconciliation")
+        self.assertEqual(reconciled.version, inflight.version + 1)
+        self.assertEqual(len(self.store.list_unresolved_operations(task_id=run.run_id)), 1)
+
     def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
         run = self.start_worker_run("operation-dispatch-guard")
         operation = self.store.prepare_operation(
