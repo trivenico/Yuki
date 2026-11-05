@@ -35,13 +35,14 @@ def _prompt_from_messages(messages: list[dict[str, str]]) -> str:
         if not isinstance(item, dict) or set(item) != {"role", "content"}:
             raise ValueError("Each message must contain only role and content.")
         role, content = item["role"], item["content"]
-        if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+        if (not isinstance(role, str) or role not in {"system", "user", "assistant"}
+                or not isinstance(content, str)):
             raise ValueError("Message role or content is invalid.")
         total += len(content)
         if total > 100_000:
             raise ValueError("Conversation transcript exceeds the size limit.")
-        parts.append(f"<|{role}|>\\n{content}")
-    return "\\n\\n".join(parts)
+        parts.append(f"<|{role}|>{chr(10)}{content}")
+    return (chr(10) * 2).join(parts)
 
 
 def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRuntime:
