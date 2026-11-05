@@ -164,8 +164,9 @@ def inspect_dataset_archive(
             identity_after = (after.st_dev, after.st_ino)
             identity_path = (current_path.st_dev, current_path.st_ino)
             stable_fields = ("st_size", "st_mtime_ns", "st_ctime_ns")
+            if not stat.S_ISREG(current_path.st_mode):
+                raise DatasetArchiveError("archive_must_be_regular_non_symlink_file")
             if (identity_before != identity_after or identity_before != identity_path
-                    or not stat.S_ISREG(current_path.st_mode)
                     or any(getattr(opened, field) != getattr(after, field)
                            for field in stable_fields)):
                 raise DatasetArchiveError("archive_changed_during_inspection")
