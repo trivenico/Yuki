@@ -201,6 +201,50 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(reconciled.version, inflight.version + 1)
         self.assertEqual(len(self.store.list_unresolved_operations(task_id=run.run_id)), 1)
 
+    def test_reconciled_operation_requires_provider_matched_digest_evidence(self):
+        run = self.start_worker_run("operation-reconcile-evidence")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="reconcile-evidence", action="provider.call",
+            request={"input_digest": "evidence"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a",
+            expected_version=operation.version, provider_name="test-provider",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat(), run.run_id),
+            )
+        expired_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+        uncertain = self.store.reconcile_abandoned_operation(
+            inflight.operation_id, expected_version=inflight.version, now=expired_at,
+        )
+        digest = "a" * 64
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.resolve_reconciled_operation(
+                uncertain.operation_id, expected_version=uncertain.version,
+                provider_reference="provider-123", evidence_source="other-provider",
+                evidence_digest=digest,
+            )
+        with self.assertRaises(ValueError):
+            self.store.resolve_reconciled_operation(
+                uncertain.operation_id, expected_version=uncertain.version,
+                provider_reference="provider-123", evidence_source="test-provider",
+                evidence_digest="not-a-digest",
+            )
+        resolved = self.store.resolve_reconciled_operation(
+            uncertain.operation_id, expected_version=uncertain.version,
+            provider_reference="provider-123", evidence_source="test-provider",
+            evidence_digest=digest, principal_id="reviewer-1",
+        )
+        self.assertEqual(resolved.status, "succeeded")
+        self.assertEqual(resolved.outcome["evidence_source"], "test-provider")
+        self.assertEqual(resolved.outcome["evidence_sha256"], digest)
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual(events[-1].principal_id, "reviewer-1")
+        self.assertEqual(events[-1].to_status, "succeeded")
+
     def test_operation_dispatch_revalidates_approval_inside_claim_transaction(self):
         run = self.start_worker_run("operation-approval-recheck")
         operation = self.store.prepare_operation(

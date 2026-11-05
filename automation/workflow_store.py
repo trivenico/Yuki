@@ -1369,9 +1369,16 @@ class WorkflowRunStore:
             )
             return self._operation_row(updated_row)
 
-    def resolve_reconciled_operation(self, operation_id: str, *, expected_version: int,
-                                     provider_reference: str, principal_id: str | None = None) -> WorkflowOperation:
-        """Resolve an uncertain operation only when lookup positively confirms success."""
+    def resolve_reconciled_operation(
+        self, operation_id: str, *, expected_version: int, provider_reference: str,
+        evidence_source: str, evidence_digest: str, principal_id: str | None = None,
+    ) -> WorkflowOperation:
+        """Record an operator/provider attestation backed by externally retained evidence.
+
+        The store cannot independently contact or authenticate a provider. The
+        caller must verify the lookup out of band and supply its source plus a
+        SHA-256 digest so the attestation is attributable and auditable.
+        """
         if not isinstance(operation_id, str) or not operation_id.strip():
             raise ValueError("operation_id must be non-empty text.")
         if type(expected_version) is not int or expected_version < 0:
@@ -1383,6 +1390,13 @@ class WorkflowRunStore:
             or len(principal_id) > 200 or "\\x00" in principal_id
         ):
             raise ValueError("principal_id must be non-empty bounded text.")
+        if (
+            not isinstance(evidence_source, str) or not evidence_source.strip()
+            or len(evidence_source) > 120 or "\\x00" in evidence_source
+        ):
+            raise ValueError("evidence_source must be non-empty bounded text.")
+        if not isinstance(evidence_digest, str) or not re.fullmatch(r"[a-f0-9]{64}", evidence_digest):
+            raise ValueError("evidence_digest must be a lowercase SHA-256 hex digest.")
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1395,13 +1409,18 @@ class WorkflowRunStore:
                 raise WorkflowConflict("operation version changed; reload before reconciliation.")
             if row["status"] != "needs_reconciliation":
                 raise WorkflowTransitionError("only uncertain operations can be resolved by provider lookup.")
+            if row["provider_name"] != evidence_source.strip():
+                raise WorkflowTransitionError("reconciliation evidence source does not match the dispatched provider.")
             updated = db.execute(
                 "UPDATE workflow_operations SET status='succeeded', provider_reference=?, "
                 "outcome_json=?, version=version+1, updated_at=? "
                 "WHERE operation_id=? AND version=? AND status='needs_reconciliation'",
                 (provider_reference.strip(), _bounded_json(
-                    {"reconciliation": "provider_lookup_confirmed_success"}, _MAX_RESULT_BYTES,
-                    "operation outcome",
+                    {
+                        "reconciliation": "provider_lookup_confirmed_success",
+                        "evidence_source": evidence_source.strip(),
+                        "evidence_sha256": evidence_digest,
+                    }, _MAX_RESULT_BYTES, "operation outcome",
                 ), now, operation_id.strip(), expected_version),
             )
             if updated.rowcount != 1:
