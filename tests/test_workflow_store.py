@@ -80,7 +80,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         inflight = self.store.mark_operation_in_flight(
             operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-        )
+        , provider_name="test-provider")
         self.assertEqual(inflight.status, "in_flight")
         resolved = self.store.record_operation_outcome(
             inflight.operation_id, expected_version=inflight.version,
@@ -99,7 +99,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         inflight = self.store.mark_operation_in_flight(
             operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-        )
+        , provider_name="test-provider")
         with self.assertRaises(WorkflowTransitionError):
             self.store.transition(
                 run.run_id, expected_version=run.version, to_state="cancelled",
@@ -124,7 +124,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         inflight = self.store.mark_operation_in_flight(
             operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-        )
+        , provider_name="test-provider")
         completed = self.store.record_operation_outcome(
             inflight.operation_id, expected_version=inflight.version,
             status="succeeded", provider_reference="provider-123",
@@ -163,7 +163,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.store.mark_operation_in_flight(
                 operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-            )
+            , provider_name="test-provider")
         self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
         self.assertEqual(
             [event.to_status for event in self.store.list_operation_events(operation.operation_id)],
@@ -178,7 +178,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         inflight = self.store.mark_operation_in_flight(
             operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-        )
+        , provider_name="test-provider")
         with self.assertRaises(WorkflowTransitionError):
             self.store.reconcile_abandoned_operation(
                 inflight.operation_id, expected_version=inflight.version,
@@ -210,7 +210,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.store.mark_operation_in_flight(
                 operation.operation_id, worker_id="worker-a", expected_version=operation.version,
-            )
+            , provider_name="test-provider")
         self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
 
     def test_operation_dispatch_rejects_wrong_worker_and_stale_version(self):
@@ -222,11 +222,11 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.store.mark_operation_in_flight(
                 operation.operation_id, worker_id="worker-b", expected_version=operation.version,
-            )
+            , provider_name="test-provider")
         with self.assertRaises(WorkflowConflict):
             self.store.mark_operation_in_flight(
                 operation.operation_id, worker_id="worker-a", expected_version=operation.version + 1,
-            )
+            , provider_name="test-provider")
 
     def test_idempotent_create_does_not_duplicate_step_records(self):
         first = self.create(key="step-idempotency")
