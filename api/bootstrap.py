@@ -61,8 +61,18 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
     def model(*, messages, tools, tool_choice="auto") -> dict[str, Any]:
         if tools:
             raise ValueError("This runtime has no enabled tools.")
-        prompt = _prompt_from_messages(list(messages))
-        answer = provider.generate(prompt)
+        if callable(getattr(provider, "generate_chat", None)):
+            response = provider.generate_chat(
+                messages=list(messages), tools=[], tool_choice="none"
+            )
+            if not isinstance(response, dict) or not isinstance(response.get("text"), str):
+                raise RuntimeError("Configured provider returned an invalid chat response.")
+            envelope = response.get("tool_calls", {"tool_calls": []})
+            if envelope != {"tool_calls": []}:
+                raise RuntimeError("Configured provider proposed tools in the no-tools runtime.")
+            answer = response["text"]
+        else:
+            answer = provider.generate(_prompt_from_messages(list(messages)))
         if not isinstance(answer, str) or not answer.strip():
             raise RuntimeError("Configured provider returned an invalid response.")
         return {"text": answer.strip(), "tool_calls": {"tool_calls": []}}
