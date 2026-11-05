@@ -52,6 +52,17 @@ def make_spec(**overrides):
         "model_version": "0.1.0",
         "training_method": "lora",
         "base_model_sha256": "b" * 64,
+        "base_model_evidence": {
+            "model_id": "org/pretrained-model",
+            "source_uri": "https://huggingface.co/org/pretrained-model",
+            "source_revision": "0123456789abcdef",
+            "artifact_sha256": "b" * 64,
+            "license_id": "Apache-2.0",
+            "license_evidence": "review-ticket:MODEL-001",
+            "rights_status": "verified",
+            "fine_tuning_allowed": True,
+            "commercial_use_allowed": True,
+        },
         "datasets": [approved_manifest()],
         "split_manifest": split_manifest(),
         "benchmark_id": "yuki-core-quality",
@@ -78,6 +89,22 @@ class TrainingExperimentTests(unittest.TestCase):
 
     def test_spec_is_deterministic_for_same_inputs(self):
         self.assertEqual(make_spec()["experiment_sha256"], make_spec()["experiment_sha256"])
+
+    def test_rejects_unapproved_base_model_rights(self):
+        evidence = make_spec()["base_model_evidence"]
+        evidence["fine_tuning_allowed"] = False
+        with self.assertRaisesRegex(TrainingExperimentError, "base_model_rights_not_approved"):
+            make_spec(base_model_evidence=evidence)
+
+    def test_rejects_base_model_digest_mismatch(self):
+        evidence = make_spec()["base_model_evidence"]
+        evidence["artifact_sha256"] = "d" * 64
+        with self.assertRaisesRegex(TrainingExperimentError, "base_model_digest_mismatch"):
+            make_spec(base_model_evidence=evidence)
+
+    def test_rejects_from_scratch_training(self):
+        with self.assertRaisesRegex(TrainingExperimentError, "invalid_training_method"):
+            make_spec(training_method="from_scratch")
 
     def test_rejects_unapproved_dataset(self):
         item = approved_manifest()

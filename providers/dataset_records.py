@@ -67,7 +67,7 @@ def _canonical_record(value, index):
                                    separators=(",", ":"), allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise DatasetRecordError("invalid_record_metadata") from exc
-    normalize_newlines = lambda value: value.replace("\\r\\n", "\\n").replace("\\r", "\\n")
+    normalize_newlines = lambda value: value.replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10))
     return {
         "schema_version": 1,
         "prompt": normalize_newlines(prompt.strip()),

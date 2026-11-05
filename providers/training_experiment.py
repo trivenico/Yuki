@@ -18,7 +18,7 @@ from providers.dataset_artifact_manifest import (
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,159}$")
-_METHODS = {"lora", "qlora", "full_finetune", "from_scratch"}
+_METHODS = {"lora", "qlora", "full_finetune"}
 _HYPERPARAMETERS = {
     "epochs", "learning_rate", "batch_size", "gradient_accumulation_steps",
     "max_sequence_length", "warmup_ratio", "weight_decay", "lora_rank",
@@ -88,6 +88,7 @@ def create_experiment_spec(
     model_version,
     training_method,
     base_model_sha256,
+    base_model_evidence,
     datasets,
     split_manifest,
     benchmark_id,
@@ -106,6 +107,24 @@ def create_experiment_spec(
     if training_method not in _METHODS:
         raise TrainingExperimentError("invalid_training_method")
     base_digest = _digest(base_model_sha256, "base_model_sha256")
+    if not isinstance(base_model_evidence, dict) or set(base_model_evidence) != {
+        "model_id", "source_uri", "source_revision", "artifact_sha256",
+        "license_id", "license_evidence", "rights_status",
+        "fine_tuning_allowed", "commercial_use_allowed",
+    }:
+        raise TrainingExperimentError("invalid_base_model_evidence")
+    for field in ("model_id", "license_id"):
+        _id(base_model_evidence.get(field), "base_model_" + field)
+    for field in ("source_uri", "source_revision", "license_evidence"):
+        value = base_model_evidence.get(field)
+        if not isinstance(value, str) or not value.strip() or len(value) > 2048:
+            raise TrainingExperimentError("invalid_base_model_" + field)
+    if _digest(base_model_evidence.get("artifact_sha256"), "base_model_artifact_sha256") != base_digest:
+        raise TrainingExperimentError("base_model_digest_mismatch")
+    if (base_model_evidence.get("rights_status") != "verified"
+            or base_model_evidence.get("fine_tuning_allowed") is not True
+            or base_model_evidence.get("commercial_use_allowed") is not True):
+        raise TrainingExperimentError("base_model_rights_not_approved")
     baseline_digest = _digest(baseline_evaluation_sha256, "baseline_evaluation_sha256")
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2**63 - 1:
         raise TrainingExperimentError("invalid_seed")
@@ -176,6 +195,10 @@ def create_experiment_spec(
         "model_version": model_version,
         "training_method": training_method,
         "base_model_sha256": base_digest,
+        "base_model_evidence": {
+            **base_model_evidence,
+            "artifact_sha256": base_digest,
+        },
         "datasets": dataset_evidence,
         "split_manifest_sha256": split_digest,
         "split_counts": {name: len(splits[name]) for name in ("train", "validation", "test")},
