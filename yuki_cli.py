@@ -1,7 +1,7 @@
 """Thin CLI entry point for Yuki's shared provider and readiness services.
 
-This first CLI slice intentionally offers chat and diagnostics only. It does not
-execute tools; task execution remains in the guarded interactive runtime.
+The CLI exposes diagnostics, provider chat, and the authenticated local API.
+Tool execution remains disabled in this initial local runtime.
 """
 from __future__ import annotations
 
