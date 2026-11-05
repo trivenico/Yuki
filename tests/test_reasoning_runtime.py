@@ -12,6 +12,7 @@ from core.unified_knowledge_api import UnifiedKnowledgeAPI
 from core.owner_identity import memory_actor_id_for_owner
 from core.owner_profile import OwnerProfileStore
 from providers.agent_adapter import ProviderAgentAdapter
+from providers.provider_registry import ProviderRegistry
 from providers.reasoning_runtime import create_owner_scoped_agent_loop_factory
 
 
@@ -41,6 +42,60 @@ class ReasoningRuntimeFactoryTests(unittest.TestCase):
                 tool_protocol_for_owner=lambda owner: StructuredToolProtocol(GuardedToolRuntime({}, _AllowNothing())),
                 agent_id="assistant", system_policy="safe",
             )("owner-a")
+
+    def test_owner_runtime_uses_capability_router_and_registry(self):
+        class LocalProvider(_Provider):
+            privacy_class = "local"
+        registry = ProviderRegistry()
+        created = []
+        registry.register(
+            provider_id="ollama-local", version="1.0.0", privacy_class="local",
+            capabilities={"chat"},
+            factory=lambda: created.append(True) or ProviderAgentAdapter(LocalProvider()),
+        )
+        evidence = {"ollama-local": {"status": "live_verified",
+                    "verification_level": "live", "reachable": True}}
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: self.fail("legacy resolver must not run"),
+            provider_registry_for_owner=lambda owner: registry,
+            provider_readiness_for_owner=lambda owner: evidence,
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())),
+            agent_id="assistant", system_policy="safe",
+        )
+        loop = factory("owner-routed")
+        self.assertEqual(loop.model.provider_adapter.provider_id, "ollama-local")
+        self.assertEqual(created, [True])
+
+    def test_owner_runtime_routing_fails_closed_without_live_readiness(self):
+        registry = ProviderRegistry()
+        registry.register(
+            provider_id="local", version="1.0.0", privacy_class="local",
+            capabilities={"chat"}, factory=lambda: ProviderAgentAdapter(_Provider()),
+        )
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: self.fail("legacy resolver must not run"),
+            provider_registry_for_owner=lambda owner: registry,
+            provider_readiness_for_owner=lambda owner: {},
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())),
+            agent_id="assistant", system_policy="safe",
+        )
+        with self.assertRaisesRegex(LookupError, "no_provider_satisfies"):
+            factory("owner-unverified")
+
+    def test_registry_and_readiness_resolvers_must_be_paired(self):
+        with self.assertRaisesRegex(ValueError, "configured_together"):
+            create_owner_scoped_agent_loop_factory(
+                provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(_Provider()),
+                provider_registry_for_owner=lambda owner: ProviderRegistry(),
+                context_builder=self.builder,
+                tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                    GuardedToolRuntime({}, _AllowNothing())),
+                agent_id="assistant", system_policy="safe",
+            )
 
     def test_gateway_cloud_provider_requires_explicit_owner_opt_in(self):
         class CloudProvider(_Provider):

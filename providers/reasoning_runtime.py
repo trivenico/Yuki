@@ -5,7 +5,7 @@ This module never accepts an actor identity from an HTTP payload.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -14,6 +14,8 @@ from core.reasoning.context_builder import ReasoningContextBuilder
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.provider_gateway import ProviderGateway
+from providers.provider_registry import ProviderRegistry
+from providers.provider_router import ProviderRouter
 from providers.reasoning_agent_adapter import ReasoningAgentAdapter
 from providers.invocation_trace import create_invocation_trace_decorator
 from providers.invocation_trace_store import InvocationTraceStore
@@ -37,6 +39,9 @@ def create_owner_scoped_agent_loop_factory(
     provider_id_for_owner: Callable[[str], str] | None = None,
     model_id_for_owner: Callable[[str], str] | None = None,
     cloud_opt_in_for_owner: Callable[[str], bool] | None = None,
+    provider_registry_for_owner: Callable[[str], ProviderRegistry] | None = None,
+    provider_readiness_for_owner: Callable[[str], Mapping[str, Mapping[str, Any]]] | None = None,
+    required_provider_capabilities: set[str] | frozenset[str] = frozenset({"chat"}),
 ) -> Callable[[str], AgentExecutionLoop]:
     """Return a factory suitable for ConversationService(agent_loop_factory=...).
 
@@ -60,6 +65,14 @@ def create_owner_scoped_agent_loop_factory(
         raise TypeError("owner_preferences_for_owner_must_be_callable")
     if cloud_opt_in_for_owner is not None and not callable(cloud_opt_in_for_owner):
         raise TypeError("cloud_opt_in_for_owner_must_be_callable")
+    if (provider_registry_for_owner is None) != (provider_readiness_for_owner is None):
+        raise ValueError("provider_registry_and_readiness_resolvers_must_be_configured_together")
+    if provider_registry_for_owner is not None and not callable(provider_registry_for_owner):
+        raise TypeError("provider_registry_for_owner_must_be_callable")
+    if provider_readiness_for_owner is not None and not callable(provider_readiness_for_owner):
+        raise TypeError("provider_readiness_for_owner_must_be_callable")
+    if not isinstance(required_provider_capabilities, (set, frozenset)) or not required_provider_capabilities:
+        raise ValueError("required_provider_capabilities_must_be_nonempty_set")
     if provider_adapter_decorator_for_owner is not None and not callable(provider_adapter_decorator_for_owner):
         raise TypeError("provider_adapter_decorator_for_owner_must_be_callable")
     trace_configured = invocation_trace_store is not None or provider_id_for_owner is not None or model_id_for_owner is not None
@@ -93,16 +106,32 @@ def create_owner_scoped_agent_loop_factory(
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
             raise ValueError("invalid_authenticated_owner_id")
         owner = owner_id.strip()
-        provider_adapter = provider_adapter_for_owner(owner)
-        if not isinstance(provider_adapter, ProviderAgentAdapter):
-            raise TypeError("provider_factory_must_return_ProviderAgentAdapter")
-        provider_adapter = ProviderGateway.from_adapter(
-            provider_adapter,
-            cloud_opt_in=(
-                cloud_opt_in_for_owner(owner)
-                if cloud_opt_in_for_owner is not None else False
-            ),
-        )
+        cloud_opt_in = cloud_opt_in_for_owner(owner) if cloud_opt_in_for_owner is not None else False
+        if type(cloud_opt_in) is not bool:
+            raise TypeError("cloud_opt_in_resolver_must_return_boolean")
+        if provider_registry_for_owner is not None:
+            registry = provider_registry_for_owner(owner)
+            if not isinstance(registry, ProviderRegistry):
+                raise TypeError("provider_registry_resolver_must_return_ProviderRegistry")
+            readiness = provider_readiness_for_owner(owner)
+            if not isinstance(readiness, Mapping):
+                raise TypeError("provider_readiness_resolver_must_return_mapping")
+            decision = ProviderRouter(registry).select(
+                required_capabilities=required_provider_capabilities,
+                readiness=readiness,
+                privacy_policy="cloud_opt_in" if cloud_opt_in else "local_only",
+                cloud_opt_in=cloud_opt_in,
+            )
+            provider_adapter = registry.resolve(
+                decision.provider_id,
+                required_capabilities=required_provider_capabilities,
+                cloud_opt_in=cloud_opt_in,
+            )
+        else:
+            provider_adapter = provider_adapter_for_owner(owner)
+            if not isinstance(provider_adapter, ProviderAgentAdapter):
+                raise TypeError("provider_factory_must_return_ProviderAgentAdapter")
+            provider_adapter = ProviderGateway.from_adapter(provider_adapter, cloud_opt_in=cloud_opt_in)
         if provider_adapter_decorator_for_owner is not None:
             provider_adapter = provider_adapter_decorator_for_owner(owner, provider_adapter)
             if not isinstance(provider_adapter, ProviderAgentAdapter):
