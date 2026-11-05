@@ -120,5 +120,31 @@ class SQLiteProviderGovernanceTests(unittest.TestCase):
         self.assertTrue(self.store.release(lease.lease_id))
         self.assertFalse(self.store.record_outcome(lease.lease_id, outcome="failed"))
 
+
+    def test_recovery_queue_keyset_pagination(self):
+        self.store.acquire(provider_id="provider-a", agent_id="agent-a")
+        self.store.acquire(provider_id="provider-a", agent_id="agent-b")
+        page1 = self.store.list_recovery_queue(limit=1)
+        self.assertEqual(len(page1), 1)
+        cursor = (page1[0]["updated_at"], page1[0]["execution_id"])
+        page2 = self.store.list_recovery_queue(limit=1, after=cursor)
+        self.assertEqual(len(page2), 1)
+        self.assertNotEqual(page1[0]["execution_id"], page2[0]["execution_id"])
+        with self.assertRaises(ValueError):
+            self.store.list_recovery_queue(limit=501)
+
+    def test_recovery_attempt_audit_is_metadata_only(self):
+        lease = self.store.acquire(provider_id="provider-a", agent_id="agent-a")
+        attempt = self.store.record_recovery_attempt(
+            execution_id=lease.execution_id, actor_id="operator", action="inspect",
+            result="completed", reason_code="evidence_not_checked", operation_id="operation-123",
+        )
+        rows = self.store.list_recovery_attempts(execution_id=lease.execution_id)
+        self.assertEqual(rows[0]["attempt_id"], attempt)
+        self.assertNotIn("prompt", rows[0])
+        self.assertNotIn("request", rows[0])
+        with self.assertRaises(ValueError):
+            self.store.list_recovery_attempts(execution_id=lease.execution_id, limit=0)
+
 if __name__ == "__main__":
     unittest.main()

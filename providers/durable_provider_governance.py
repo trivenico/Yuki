@@ -138,6 +138,24 @@ class SQLiteProviderGovernanceStore:
                     resolver_id TEXT NOT NULL,
                     resolved_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS provider_recovery_attempts (
+                    attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT NOT NULL,
+                    operation_id TEXT,
+                    actor_id TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('inspect', 'reconcile', 'defer')),
+                    result TEXT NOT NULL CHECK(result IN ('started', 'completed', 'blocked', 'failed')),
+                    reason_code TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_provider_recovery_attempts_execution
+                    ON provider_recovery_attempts(execution_id, attempt_id);
+                CREATE TRIGGER IF NOT EXISTS provider_recovery_attempts_no_update
+                    BEFORE UPDATE ON provider_recovery_attempts
+                    BEGIN SELECT RAISE(ABORT, 'provider recovery attempts are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS provider_recovery_attempts_no_delete
+                    BEFORE DELETE ON provider_recovery_attempts
+                    BEGIN SELECT RAISE(ABORT, 'provider recovery attempts are append-only'); END;
                 CREATE TRIGGER IF NOT EXISTS provider_resolutions_no_update
                     BEFORE UPDATE ON provider_execution_resolutions
                     BEGIN SELECT RAISE(ABORT, 'provider execution resolutions are immutable'); END;
@@ -423,6 +441,85 @@ class SQLiteProviderGovernanceStore:
                 "ORDER BY started_at DESC LIMIT ?",
                 (provider_id, *statuses, limit),
             ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_recovery_queue(self, *, limit: int = 100, after: tuple[float, str] | None = None) -> list[dict[str, object]]:
+        """List running/uncertain executions with stable keyset pagination."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit_out_of_range")
+        if after is not None and (
+            not isinstance(after, tuple) or len(after) != 2
+            or type(after[0]) not in (int, float)
+            or not isinstance(after[1], str)
+            or not re.fullmatch(r"[0-9a-f]{32}", after[1])
+        ):
+            raise ValueError("recovery_cursor_invalid")
+        with self._connect() as db:
+            if after is None:
+                rows = db.execute(
+                    "SELECT execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at "
+                    "FROM provider_execution_records WHERE status IN ('running','uncertain') "
+                    "ORDER BY updated_at, execution_id LIMIT ?", (limit,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at "
+                    "FROM provider_execution_records WHERE status IN ('running','uncertain') "
+                    "AND (updated_at > ? OR (updated_at = ? AND execution_id > ?)) "
+                    "ORDER BY updated_at, execution_id LIMIT ?",
+                    (after[0], after[0], after[1], limit),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_recovery_attempt(self, *, execution_id: str, actor_id: str, action: str,
+                                result: str, reason_code: str, operation_id: str | None = None) -> int:
+        """Append metadata-only audit event; does not perform recovery."""
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        if not isinstance(actor_id, str) or not _AGENT.fullmatch(actor_id):
+            raise ValueError("actor_id_invalid")
+        if action not in {"inspect", "reconcile", "defer"}:
+            raise ValueError("recovery_action_invalid")
+        if result not in {"started", "completed", "blocked", "failed"}:
+            raise ValueError("recovery_result_invalid")
+        if not isinstance(reason_code, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,63}", reason_code):
+            raise ValueError("reason_code_invalid")
+        if operation_id is not None and (
+            not isinstance(operation_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", operation_id)
+        ):
+            raise ValueError("operation_id_invalid")
+        with self._connect() as db:
+            if db.execute("SELECT 1 FROM provider_execution_records WHERE execution_id=?", (execution_id,)).fetchone() is None:
+                raise KeyError("provider execution not found")
+            cur = db.execute(
+                "INSERT INTO provider_recovery_attempts "
+                "(execution_id, operation_id, actor_id, action, result, reason_code, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (execution_id, operation_id, actor_id, action, result, reason_code, self._clock()),
+            )
+            return int(cur.lastrowid)
+
+    def list_recovery_attempts(self, *, execution_id: str, limit: int = 100,
+                               before_attempt_id: int | None = None) -> list[dict[str, object]]:
+        if not isinstance(execution_id, str) or not re.fullmatch(r"[0-9a-f]{32}", execution_id):
+            raise ValueError("execution_id_invalid")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit_out_of_range")
+        if before_attempt_id is not None and (type(before_attempt_id) is not int or before_attempt_id < 1):
+            raise ValueError("before_attempt_id_invalid")
+        with self._connect() as db:
+            if before_attempt_id is None:
+                rows = db.execute(
+                    "SELECT attempt_id, execution_id, operation_id, actor_id, action, result, reason_code, created_at "
+                    "FROM provider_recovery_attempts WHERE execution_id=? ORDER BY attempt_id DESC LIMIT ?",
+                    (execution_id, limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT attempt_id, execution_id, operation_id, actor_id, action, result, reason_code, created_at "
+                    "FROM provider_recovery_attempts WHERE execution_id=? AND attempt_id < ? "
+                    "ORDER BY attempt_id DESC LIMIT ?", (execution_id, before_attempt_id, limit),
+                ).fetchall()
             return [dict(row) for row in rows]
 
     def resolve_uncertain_execution(
