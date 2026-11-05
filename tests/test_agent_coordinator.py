@@ -19,7 +19,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.db_path = db
         self.store = WorkflowRunStore(db)
-        self.grants = {"task:create", "task:read", "task:cancel"}
+        self.grants = {"task:create", "task:read", "task:cancel", "task:recover"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
@@ -28,7 +28,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             actor == "alice" and (
                 action in {
                     "agent:plan", "agent:plan_without_approval", "agent:dispatch",
-                    "agent:read", "agent:cancel", "agent:register", "agent:manage",
+                    "agent:read", "agent:cancel", "agent:recover", "agent:register", "agent:manage",
                 }
                 or action.startswith("agent:permission:")
             )
@@ -276,6 +276,45 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.handoff_audit(actor_id="mallory", plan_id=plan.plan_id)
         with self.assertRaises(ValueError):
             self.coordinator.handoff_audit(actor_id="alice", plan_id=plan.plan_id, limit=0)
+
+    def test_plan_recovery_quarantines_expired_worker_without_replay(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="recover-expired-plan",
+            subtasks=[SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            )],
+        )
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, task_id)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00+00:00", task_id),
+            )
+
+        recovered = self.coordinator.recover_plan(
+            actor_id="alice", plan_id=plan.plan_id,
+        )
+        self.assertEqual(recovered.subtasks[0].status, "failed")
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "interrupted")
+        events = self.coordinator.plan_events(actor_id="alice", plan_id=plan.plan_id)
+        recovery_event = next(event for event in events if event["kind"] == "subtask.worker_lease_expired")
+        self.assertFalse(recovery_event["payload"]["automatic_replay"])
+
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].task_id, task_id)
+        self.assertEqual(advanced.subtasks[0].status, "failed")
+
+    def test_plan_recovery_requires_authorization_and_owner_scope(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="recover-auth",
+            subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",))],
+        )
+        with self.assertRaises(PermissionError):
+            self.coordinator.recover_plan(actor_id="mallory", plan_id=plan.plan_id)
 
     def test_plan_cancellation_cancels_dispatched_and_pending_subtasks(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-plan", subtasks=[

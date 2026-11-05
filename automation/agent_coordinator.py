@@ -681,6 +681,54 @@ class SpecialistAgentCoordinator:
                 self._set_subtask(plan_id, row["subtask_id"], status=state)
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
+    def recover_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        """Interrupt expired worker leases for this plan without replaying work.
+
+        Recovery is deliberately separate from dispatch. Expired running tasks
+        are quarantined by TaskRuntime; affected subtasks become failed and
+        require an explicit new plan or operator decision before any retry.
+        """
+        if not self._allowed(actor_id, "agent:recover", plan_id):
+            raise PermissionError("agent plan recovery is not authorized.")
+        with self._connect() as db:
+            plan = db.execute(
+                "SELECT owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            if plan["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan ownership mismatch.")
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? AND task_id IS NOT NULL "
+                "ORDER BY subtask_id", (plan_id,),
+            ).fetchall()]
+
+        expired_ids = {
+            run.run_id for run in self.runtime.store.list_expired_runs(
+                now=datetime.now(timezone.utc).isoformat(), limit=100,
+            )
+        }
+        for row in rows:
+            task_id = row["task_id"]
+            if task_id not in expired_ids:
+                continue
+            recovered = self.runtime.recover_expired(
+                actor_id=actor_id, task_id=task_id,
+            )
+            if recovered.state != "interrupted":
+                continue
+            self._set_subtask(plan_id, row["subtask_id"], status="failed")
+            self._append_plan_event(
+                plan_id, actor_id=actor_id, kind="subtask.worker_lease_expired",
+                payload={
+                    "subtask_id": row["subtask_id"],
+                    "agent_id": row["agent_id"],
+                    "task_id": task_id,
+                    "automatic_replay": False,
+                },
+            )
+        return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
     def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Cancel every non-terminal subtask in a plan using versioned task transitions.
 
