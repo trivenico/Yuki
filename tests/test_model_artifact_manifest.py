@@ -89,6 +89,28 @@ class ModelArtifactManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(ModelArtifactManifestError, "symlink"):
                 sha256_file(link)
 
+    def test_rejects_invalid_max_bytes(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+
+        with TemporaryDirectory() as directory:
+            artifact = Path(directory) / "weights.bin"
+            artifact.write_bytes(b"weights")
+            for value in (True, 0, -1, 1.5, "10"):
+                with self.subTest(value=value):
+                    with self.assertRaisesRegex(ModelArtifactManifestError, "invalid_max_bytes"):
+                        sha256_file(artifact, max_bytes=value)
+
+    def test_rejects_artifact_over_size_limit(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+
+        with TemporaryDirectory() as directory:
+            artifact = Path(directory) / "weights.bin"
+            artifact.write_bytes(b"weights")
+            with self.assertRaisesRegex(ModelArtifactManifestError, "artifact_size_out_of_bounds"):
+                sha256_file(artifact, max_bytes=3)
+
     def test_manifest_serialization_is_stable(self):
         item = manifest("C" * 64)
         self.assertEqual(

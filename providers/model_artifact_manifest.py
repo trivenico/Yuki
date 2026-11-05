@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -21,24 +23,62 @@ class ModelArtifactManifestError(ValueError):
     """Invalid model artifact manifest or artifact input."""
 
 
+def _same_file_snapshot(left, right):
+    return (
+        left.st_dev, left.st_ino, left.st_size, left.st_mtime_ns, left.st_ctime_ns
+    ) == (
+        right.st_dev, right.st_ino, right.st_size, right.st_mtime_ns, right.st_ctime_ns
+    )
+
+
 def sha256_file(path: str | Path, *, max_bytes: int = 20 * 1024**4) -> str:
-    """Hash a regular, non-symlink file without loading it into memory."""
+    """Hash a stable regular file without following symlinks or loading it in memory."""
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise ModelArtifactManifestError("invalid_max_bytes")
     target = Path(path)
-    if target.is_symlink():
-        raise ModelArtifactManifestError("artifact_must_not_be_symlink")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
     try:
-        if not target.is_file():
-            raise ModelArtifactManifestError("artifact_must_be_regular_file")
-        size = target.stat().st_size
-        if size < 1 or size > max_bytes:
+        # O_NOFOLLOW closes the symlink-swap window on platforms that support it.
+        descriptor = os.open(target, flags)
+        opened = os.fstat(descriptor)
+        current = os.lstat(target)
+        if not stat.S_ISREG(opened.st_mode) or stat.S_ISLNK(current.st_mode):
+            raise ModelArtifactManifestError("artifact_must_be_regular_non_symlink_file")
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise ModelArtifactManifestError("artifact_changed_during_open")
+        if opened.st_size < 1 or opened.st_size > max_bytes:
             raise ModelArtifactManifestError("artifact_size_out_of_bounds")
         digest = hashlib.sha256()
-        with target.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        total = 0
+        with os.fdopen(descriptor, "rb", closefd=True) as handle:
+            descriptor = None
+            while True:
+                chunk = handle.read(min(1024 * 1024, max_bytes + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ModelArtifactManifestError("artifact_size_out_of_bounds")
                 digest.update(chunk)
+            final = os.fstat(handle.fileno())
+        latest_path = os.lstat(target)
+        if not _same_file_snapshot(opened, final):
+            raise ModelArtifactManifestError("artifact_changed_during_hash")
+        if stat.S_ISLNK(latest_path.st_mode) or (final.st_dev, final.st_ino) != (
+            latest_path.st_dev, latest_path.st_ino
+        ):
+            raise ModelArtifactManifestError("artifact_path_changed_during_hash")
+        if total != final.st_size or total < 1:
+            raise ModelArtifactManifestError("artifact_size_changed_during_hash")
         return digest.hexdigest()
+    except ModelArtifactManifestError:
+        raise
     except OSError as exc:
-        raise ModelArtifactManifestError("artifact_unreadable") from exc
+        raise ModelArtifactManifestError("artifact_unreadable_or_unsafe") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def validate_manifest(value: Any) -> dict:
@@ -113,7 +153,7 @@ def validate_manifest(value: Any) -> dict:
 
 
 def verify_artifact(path: str | Path, manifest: dict) -> bool:
-    """Compare file bytes to the declared digest; does not verify provenance/license."""
+    """Compare stable file bytes to the declared digest; not provenance/license review."""
     normalized = validate_manifest(manifest)
     return sha256_file(path) == normalized["artifact_sha256"]
 
