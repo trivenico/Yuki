@@ -115,7 +115,7 @@ def create_experiment_spec(
         raise TrainingExperimentError("invalid_split_manifest")
     split_digest = _digest(split_manifest.get("split_manifest_sha256"), "split_manifest_sha256")
     split_payload = {key: value for key, value in split_manifest.items()
-                     if key != "split_manifest_sha256"}
+                     if key not in {"split_manifest_sha256", "schema_version"}}
     calculated_split = hashlib.sha256(
         json.dumps(split_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
