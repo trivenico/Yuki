@@ -48,6 +48,8 @@ class ProviderWorkflowReconciliation:
         if operation.version != expected_version and operation.status != "succeeded":
             from automation.workflow_store import WorkflowConflict
             raise WorkflowConflict("operation version changed; reload before reconciliation.")
+        if operation.status not in {"needs_reconciliation", "succeeded"}:
+            raise WorkflowTransitionError("workflow_operation_not_awaiting_reconciliation")
         if operation.provider_name != evidence_source:
             raise WorkflowTransitionError("evidence_source_does_not_match_workflow_provider")
         execution = self.provider_store.get_execution(execution_id)
@@ -55,7 +57,7 @@ class ProviderWorkflowReconciliation:
             raise KeyError("provider execution not found.")
         if execution["provider_id"] != operation.provider_name:
             raise WorkflowTransitionError("provider_execution_does_not_match_workflow_provider")
-        if execution["agent_id"] != resolver_id and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", resolver_id or ""):
+        if not isinstance(resolver_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", resolver_id):
             raise ValueError("resolver_id_invalid")
         if not isinstance(provider_reference, str) or not provider_reference.strip():
             raise ValueError("provider_reference_required")
@@ -87,8 +89,13 @@ class ProviderWorkflowReconciliation:
         if current is None:
             raise KeyError("operation not found.")
         if current.status == "succeeded":
-            if current.provider_reference != provider_reference:
-                raise WorkflowTransitionError("workflow_provider_reference_conflict")
+            expected_outcome = {
+                "reconciliation": "provider_lookup_confirmed_success",
+                "evidence_source": evidence_source,
+                "evidence_sha256": evidence_sha256,
+            }
+            if current.provider_reference != provider_reference or current.outcome != expected_outcome:
+                raise WorkflowTransitionError("workflow_provider_resolution_conflict")
             return current
         if current.status != "needs_reconciliation":
             raise WorkflowTransitionError("workflow_operation_not_awaiting_reconciliation")
