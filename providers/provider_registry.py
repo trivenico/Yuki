@@ -107,7 +107,7 @@ class ProviderRegistry:
         actual_privacy = getattr(adapter.provider, "privacy_class", "unknown")
         if actual_privacy != registration.privacy_class:
             raise ValueError("provider_privacy_metadata_mismatch")
-        return ProviderGateway.from_adapter(adapter, cloud_opt_in=cloud_opt_in)
+        return ProviderGateway.from_adapter(adapter, cloud_opt_in=cloud_opt_in, provider_id=registration.provider_id)
 
 
 __all__ = ["ProviderRegistration", "ProviderRegistry"]
