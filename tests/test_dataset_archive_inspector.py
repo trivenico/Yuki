@@ -1,14 +1,11 @@
-import os
+import hashlib
 import tarfile
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
-from providers.dataset_archive_inspector import (
-    DatasetArchiveError,
-    inspect_dataset_archive,
-)
+from providers.dataset_archive_inspector import DatasetArchiveError, inspect_dataset_archive
 
 
 class DatasetArchiveInspectorTests(unittest.TestCase):
@@ -26,18 +23,33 @@ class DatasetArchiveInspectorTests(unittest.TestCase):
                 archive.writestr(member, data)
         return path
 
-    def test_inspects_safe_zip_without_extracting(self):
+    def test_inspects_safe_zip_without_extracting_and_returns_digest(self):
         path = self._zip("safe.zip", [("records/data.jsonl", '{"ok":true}\n')])
         result = inspect_dataset_archive(path)
         self.assertEqual(result["format"], "zip")
         self.assertEqual(result["member_count"], 1)
         self.assertEqual(result["entries"][0]["path"], "records/data.jsonl")
+        self.assertEqual(result["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
         self.assertFalse((self.root / "records").exists())
 
+    def test_requires_expected_digest_to_match(self):
+        path = self._zip("digest.zip", [("data.jsonl", "data")])
+        with self.assertRaisesRegex(DatasetArchiveError, "archive_sha256_mismatch"):
+            inspect_dataset_archive(path, expected_sha256="0" * 64)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertEqual(inspect_dataset_archive(path, expected_sha256=digest)["sha256"], digest)
+
+    def test_rejects_invalid_expected_digest_and_archive_size_limit(self):
+        path = self._zip("bounded.zip", [("data.txt", "data")])
+        with self.assertRaisesRegex(DatasetArchiveError, "invalid_expected_sha256"):
+            inspect_dataset_archive(path, expected_sha256="bad")
+        with self.assertRaisesRegex(DatasetArchiveError, "archive_compressed_size_limit_exceeded"):
+            inspect_dataset_archive(path, max_archive_bytes=1)
+
     def test_rejects_traversal_and_absolute_paths(self):
-        for name in ("../escape.txt", "/absolute.txt", "C:\\escape.txt"):
+        for index, name in enumerate(("../escape.txt", "/absolute.txt", "C:\\escape.txt")):
             with self.subTest(name=name):
-                path = self._zip("unsafe.zip", [(name, "bad")])
+                path = self._zip(f"unsafe-{index}.zip", [(name, "bad")])
                 with self.assertRaises(DatasetArchiveError):
                     inspect_dataset_archive(path)
 
