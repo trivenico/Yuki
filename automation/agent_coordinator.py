@@ -1003,7 +1003,8 @@ class _Connection:
         finally:
             self.db.close()
         return False
-)
+
+
 _RISK_TIERS = frozenset({'low', 'medium', 'high', 'critical'})
 
 
