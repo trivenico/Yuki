@@ -29,6 +29,7 @@ def create_owner_scoped_agent_loop_factory(
     evidence_limit: int = 8,
     max_context_chars: int = 12_000,
     execution_options: dict[str, Any] | None = None,
+    provider_adapter_decorator_for_owner: Callable[[str, ProviderAgentAdapter], ProviderAgentAdapter] | None = None,
 ) -> Callable[[str], AgentExecutionLoop]:
     """Return a factory suitable for ConversationService(agent_loop_factory=...).
 
@@ -50,6 +51,8 @@ def create_owner_scoped_agent_loop_factory(
         raise ValueError("system_policy_required")
     if owner_preferences_for_owner is not None and not callable(owner_preferences_for_owner):
         raise TypeError("owner_preferences_for_owner_must_be_callable")
+    if provider_adapter_decorator_for_owner is not None and not callable(provider_adapter_decorator_for_owner):
+        raise TypeError("provider_adapter_decorator_for_owner_must_be_callable")
     if type(include_shared) is not bool or type(include_unverified) is not bool:
         raise ValueError("retrieval_flags_must_be_boolean")
     if type(evidence_limit) is not int or not 1 <= evidence_limit <= 20:
@@ -71,6 +74,10 @@ def create_owner_scoped_agent_loop_factory(
         provider_adapter = provider_adapter_for_owner(owner)
         if not isinstance(provider_adapter, ProviderAgentAdapter):
             raise TypeError("provider_factory_must_return_ProviderAgentAdapter")
+        if provider_adapter_decorator_for_owner is not None:
+            provider_adapter = provider_adapter_decorator_for_owner(owner, provider_adapter)
+            if not isinstance(provider_adapter, ProviderAgentAdapter):
+                raise TypeError("provider_adapter_decorator_must_return_ProviderAgentAdapter")
         tool_protocol = tool_protocol_for_owner(owner)
         if not isinstance(tool_protocol, StructuredToolProtocol):
             raise TypeError("tool_protocol_factory_must_return_StructuredToolProtocol")

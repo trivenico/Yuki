@@ -154,6 +154,47 @@ class ReasoningRuntimeFactoryTests(unittest.TestCase):
         self.assertIn("detailed", prompt_b)
         self.assertNotIn("concise", prompt_b)
 
+    def test_owner_scoped_adapter_decorator_is_applied_before_reasoning(self):
+        decorated = []
+        def decorate(owner, adapter):
+            decorated.append(owner)
+            from providers.invocation_trace import InvocationRecordingProviderAdapter
+            return InvocationRecordingProviderAdapter(
+                adapter.provider,
+                provider_id="ollama",
+                model_id="test-model",
+                record_sink=lambda record: None,
+            )
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(_Provider()),
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())
+            ),
+            agent_id="assistant",
+            system_policy="Never disclose private data.",
+            provider_adapter_decorator_for_owner=decorate,
+        )
+        loop_a = factory("owner-a")
+        loop_b = factory("owner-b")
+        self.assertEqual(decorated, ["owner-a", "owner-b"])
+        self.assertIsNot(loop_a.model.provider_adapter, loop_b.model.provider_adapter)
+        self.assertEqual(loop_a.model.provider_adapter.provider_id, "ollama")
+
+    def test_owner_scoped_adapter_decorator_must_return_provider_adapter(self):
+        factory = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(_Provider()),
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(
+                GuardedToolRuntime({}, _AllowNothing())
+            ),
+            agent_id="assistant",
+            system_policy="Never disclose private data.",
+            provider_adapter_decorator_for_owner=lambda owner, adapter: object(),
+        )
+        with self.assertRaisesRegex(TypeError, "decorator_must_return_ProviderAgentAdapter"):
+            factory("owner-a")
+
     def test_invalid_authenticated_owner_is_rejected(self):
         with self.assertRaises(ValueError):
             self.factory(" ")
