@@ -16,7 +16,7 @@ from providers.provider_gateway import ProviderGateway
 from providers.provider_policy import is_mock_provider
 
 _PROVIDER_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,47}$")
-_VERSION = re.compile(r"^[0-9]+\\.[0-9]+\\.[0-9]+$")
+_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 _CAPABILITIES = frozenset({
     "chat", "streaming", "tool_calling", "vision", "embeddings",
     "reranking", "speech_input", "speech_output", "code",
