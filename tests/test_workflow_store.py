@@ -91,6 +91,31 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(resolved.provider_reference, "provider-op-123")
         self.assertEqual(self.store.list_unresolved_operations(), [])
 
+    def test_task_cancellation_is_blocked_during_external_dispatch(self):
+        run = self.start_worker_run("operation-cancel-race")
+        operation = self.store.prepare_operation(
+            run.run_id, idempotency_key="cancel-race", action="provider.call",
+            request={"input_digest": "cancel"},
+        )
+        inflight = self.store.mark_operation_in_flight(
+            operation.operation_id, worker_id="worker-a", expected_version=operation.version,
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                run.run_id, expected_version=run.version + 1, to_state="cancelled",
+            )
+        self.assertEqual(self.store.get(run.run_id).state, "running")
+        self.assertEqual(self.store.get_operation(inflight.operation_id).status, "in_flight")
+        resolved = self.store.record_operation_outcome(
+            inflight.operation_id, expected_version=inflight.version,
+            status="succeeded", provider_reference="provider-cancel-race",
+        )
+        cancelled = self.store.transition(
+            run.run_id, expected_version=run.version + 1, to_state="cancelled",
+        )
+        self.assertEqual(resolved.status, "succeeded")
+        self.assertEqual(cancelled.state, "cancelled")
+
     def test_operation_audit_captures_atomic_redacted_lifecycle(self):
         run = self.start_worker_run("operation-audit")
         operation = self.store.prepare_operation(

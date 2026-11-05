@@ -956,6 +956,16 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
+            if to_state == "cancelled":
+                active_operation = db.execute(
+                    "SELECT 1 FROM workflow_operations WHERE task_id=? AND status='in_flight' LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                if active_operation is not None:
+                    raise WorkflowTransitionError(
+                        "task cancellation is blocked while an external operation is in flight; "
+                        "resolve or reconcile the operation first."
+                    )
             if current.state == "running" and to_state in {"succeeded", "failed"} and expected_lease_owner is None:
                 raise WorkflowConflict("worker completion and failure require the active worker identity.")
             if expected_lease_owner is not None:
