@@ -24,6 +24,9 @@ class FakeRuntime:
     def _actor(self, actor):
         return actor
 
+    def authorize_operation_dispatch(self, *, actor_id, operation_id):
+        return self._authorized_operation(actor_id, operation_id, "task:operation:dispatch")
+
     def _authorized_operation(self, actor, operation_id, action):
         if operation_id != self.operation.operation_id or actor != "owner":
             raise PermissionError()
@@ -70,6 +73,19 @@ class OperationDispatcherTests(unittest.TestCase):
         registry = OperationProviderRegistry()
         registry.register("payments.test", provider, ProviderCapabilities(True, True))
         return OperationDispatcher(runtime, registry), runtime, operation, request, provider
+
+    def test_dispatch_preflight_requires_outcome_permission_before_provider_call(self):
+        dispatcher, runtime, operation, request, provider = self.setup_dispatcher(
+            Provider({"status": "succeeded"})
+        )
+        runtime.authorize_operation_dispatch = lambda **kwargs: (_ for _ in ()).throw(PermissionError())
+        with self.assertRaises(PermissionError):
+            dispatcher.dispatch(
+                actor_id="owner", worker_id="worker-1", operation_id="op-1",
+                provider_name="payments.test", request=request,
+            )
+        self.assertEqual(provider.keys, [])
+        self.assertEqual(operation.status, "prepared")
 
     def test_success_passes_stable_key_and_records_success(self):
         dispatcher, runtime, operation, request, provider = self.setup_dispatcher(

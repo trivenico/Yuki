@@ -44,8 +44,8 @@ class OperationDispatcher:
     ):
         if not isinstance(request, Mapping):
             raise ValueError("request must be an object.")
-        operation = self.runtime._authorized_operation(
-            self.runtime._actor(actor_id), operation_id, "task:operation:dispatch"
+        operation = self.runtime.authorize_operation_dispatch(
+            actor_id=actor_id, operation_id=operation_id,
         )
         if operation.status != "prepared":
             raise OperationDispatchError("only prepared operations can be dispatched.")

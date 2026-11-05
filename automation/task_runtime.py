@@ -449,6 +449,16 @@ class TaskRuntime:
         )
         return self._record(self.store.get(retried.run_id))
 
+    def authorize_operation_dispatch(self, *, actor_id: str, operation_id: str):
+        """Preflight both dispatch and outcome permissions before a provider side effect."""
+        actor = self._actor(actor_id)
+        operation = self._authorized_operation(
+            actor, operation_id, "task:operation:dispatch",
+        )
+        if not self._allowed(actor, "task:operation:resolve", operation.task_id):
+            raise PermissionError("operation access is not authorized.")
+        return operation
+
     def _authorized_operation(self, actor: str, operation_id: str, action: str):
         operation = self.store.get_operation(operation_id)
         if operation is None or not self._allowed(actor, action, operation.task_id):
