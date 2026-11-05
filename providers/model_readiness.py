@@ -38,7 +38,17 @@ def assess_local_model_readiness(
             eval_by_id.setdefault(record.get("model_id"), []).append(record)
 
     available_host = hardware_snapshot.get("available_memory_bytes")
-    available_gpu = hardware_snapshot.get("gpu", {}).get("memory_bytes")
+    gpu_snapshot = hardware_snapshot.get("gpu")
+    # Hardware probes can be partial on CPU-only and remote workers. Treat a
+    # malformed optional GPU section as unavailable evidence, not as a crash.
+    available_gpu = (
+        gpu_snapshot.get("memory_bytes")
+        if isinstance(gpu_snapshot, dict) else None
+    )
+    if available_gpu is not None and (
+        type(available_gpu) is not int or available_gpu < 0
+    ):
+        available_gpu = None
     candidates, excluded = [], []
     for installed, match in zip(
         installed_models, reconciliation["installed_models"]
@@ -82,6 +92,14 @@ def assess_local_model_readiness(
                 blockers.append("coverage_out_of_range")
             if type(evaluation.get("successful_cases")) is not int or evaluation["successful_cases"] < 1:
                 blockers.append("successful_benchmark_cases_missing")
+            latency = evaluation.get("mean_latency_ms")
+            if latency is not None and (
+                isinstance(latency, bool)
+                or not isinstance(latency, (int, float))
+                or not math.isfinite(latency)
+                or latency < 0
+            ):
+                blockers.append("invalid_benchmark_latency")
         resource = None
         if type(available_host) is int and available_host >= 0:
             resource = assess_resource_fit(

@@ -63,6 +63,25 @@ class ModelReadinessTests(unittest.TestCase):
         self.assertIn("host_memory_snapshot_missing", blockers)
         self.assertIn("benchmark_evidence_missing", blockers)
 
+    def test_malformed_optional_gpu_snapshot_is_treated_as_missing(self):
+        self.hardware["gpu"] = None
+        report = assess_local_model_readiness(
+            self.installed, self.catalog, self.registry, self.hardware,
+            benchmark_id="core-v1",
+        )
+        self.assertEqual(len(report["recommendations"]), 1)
+        self.assertIsNone(report["recommendations"][0]["resource_assessment"]["available_gpu_memory_bytes"])
+
+    def test_non_finite_or_negative_latency_blocks_candidate(self):
+        for latency in (float("nan"), float("inf"), -1, True):
+            with self.subTest(latency=latency):
+                self.registry["records"][0]["mean_latency_ms"] = latency
+                report = assess_local_model_readiness(
+                    self.installed, self.catalog, self.registry, self.hardware,
+                    benchmark_id="core-v1",
+                )
+                self.assertIn("invalid_benchmark_latency", report["excluded_candidates"][0]["blockers"])
+
     def test_report_does_not_mutate_inputs(self):
         before = repr((self.catalog, self.registry, self.hardware))
         assess_local_model_readiness(
