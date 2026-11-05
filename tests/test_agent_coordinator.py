@@ -277,6 +277,41 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.coordinator.handoff_audit(actor_id="alice", plan_id=plan.plan_id, limit=0)
 
+    def test_dispatch_recovers_after_enqueue_before_plan_binding_without_duplicate_task(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="dispatch-crash-window",
+            subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",))],
+        )
+        original_set = self.coordinator._set_subtask
+        calls = {"count": 0}
+
+        def fail_once(plan_id, subtask_id, *, status, task_id=None):
+            if task_id is not None and calls["count"] == 0:
+                calls["count"] += 1
+                raise RuntimeError("simulated coordinator crash after task enqueue")
+            return original_set(plan_id, subtask_id, status=status, task_id=task_id)
+
+        self.coordinator._set_subtask = fail_once
+        with self.assertRaisesRegex(RuntimeError, "simulated coordinator crash"):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+
+        # A fresh coordinator retries the deterministic task idempotency key.
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        recovered = restarted.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = recovered.subtasks[0].task_id
+        self.assertIsNotNone(task_id)
+        self.assertEqual(recovered.subtasks[0].status, "queued")
+        runs = self.store.list_runs(limit=100)
+        matching = [run for run in runs if run.run_id == task_id]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(
+            matching[0].idempotency_key,
+            f"agent-plan:{plan.plan_id and self.store.get(task_id).idempotency_key.split(':', 2)[1]}:collect",
+        )
+
     def test_plan_recovery_quarantines_expired_worker_without_replay(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="recover-expired-plan",
