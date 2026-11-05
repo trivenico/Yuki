@@ -43,7 +43,7 @@ class ProviderWorkflowReconciliationTests(unittest.TestCase):
     def _uncertain_pair(self):
         run = self.workflow_store.create(
             idempotency_key="workflow-once", workflow_name="external-action",
-            definition=[{"name": "send", "action": "provider.call", "requires_approval": False}],
+            definition=[{"name": "send", "action": "emit", "requires_approval": False}],
         )
         self.workflow_store.claim_next(worker_id="worker-a")
         operation = self.workflow_store.prepare_operation(
