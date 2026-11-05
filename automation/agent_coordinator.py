@@ -152,6 +152,15 @@ class SpecialistAgentCoordinator:
         self.trace_store = trace_store
         if contracts is not None and not isinstance(contracts, dict):
             raise TypeError('contracts must be a mapping of agent IDs to AgentContract values.')
+        self.trace_errors = 0
+        self._agent_lock = RLock()
+        agent_map: dict[str, SpecialistAgent] = {}
+        for agent in agents:
+            self._validate_agent(agent)
+            if agent.agent_id in agent_map:
+                raise ValueError("agent IDs must be unique.")
+            agent_map[agent.agent_id] = agent
+        self.agents = agent_map
         self.contracts = {}
         for agent_id, contract in (contracts or {}).items():
             if not isinstance(agent_id, str) or not _ID.fullmatch(agent_id):
@@ -164,15 +173,6 @@ class SpecialistAgentCoordinator:
             if contract.version != agent.version:
                 raise ValueError('agent contract version must match the registered agent version.')
             self.contracts[agent_id] = contract
-        self.trace_errors = 0
-        self._agent_lock = RLock()
-        agent_map: dict[str, SpecialistAgent] = {}
-        for agent in agents:
-            self._validate_agent(agent)
-            if agent.agent_id in agent_map:
-                raise ValueError("agent IDs must be unique.")
-            agent_map[agent.agent_id] = agent
-        self.agents = agent_map
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plans (
