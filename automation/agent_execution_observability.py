@@ -373,6 +373,44 @@ class AgentExecutionTraceStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def execution_timeline(self, root_execution_id: str, *, max_executions: int = 500, max_events: int = 2000) -> dict[str, Any]:
+        """Return a bounded, read-only tree and event timeline for one root."""
+        root_execution_id = self._identifier(root_execution_id, 'root_execution_id')
+        if type(max_executions) is not int or not 1 <= max_executions <= 2000:
+            raise ValueError('max_executions_out_of_range')
+        if type(max_events) is not int or not 1 <= max_events <= 10000:
+            raise ValueError('max_events_out_of_range')
+        with self._connect() as db:
+            root = db.execute(
+                'SELECT execution_id,parent_execution_id,root_execution_id,agent_id,task_id,provider_execution_id,status,created_at,updated_at FROM agent_execution_traces WHERE execution_id=? AND root_execution_id=?',
+                (root_execution_id, root_execution_id),
+            ).fetchone()
+            if root is None:
+                raise KeyError('root_execution_not_found')
+            executions = db.execute(
+                'SELECT execution_id,parent_execution_id,root_execution_id,agent_id,task_id,provider_execution_id,status,created_at,updated_at FROM agent_execution_traces WHERE root_execution_id=? ORDER BY created_at,execution_id LIMIT ?',
+                (root_execution_id, max_executions + 1),
+            ).fetchall()
+            if len(executions) > max_executions:
+                raise ExecutionTraceError('timeline_execution_limit_exceeded')
+            events = db.execute(
+                'SELECT e.event_id,e.execution_id,e.event_type,e.actor_id,e.permission,e.decision,e.input_tokens,e.output_tokens,e.duration_ms,e.cost_microunits,e.occurred_at FROM agent_execution_events e JOIN agent_execution_traces t ON t.execution_id=e.execution_id WHERE t.root_execution_id=? ORDER BY e.occurred_at,e.event_id LIMIT ?',
+                (root_execution_id, max_events + 1),
+            ).fetchall()
+            if len(events) > max_events:
+                raise ExecutionTraceError('timeline_event_limit_exceeded')
+            totals = db.execute(
+                'SELECT COALESCE(SUM(e.input_tokens),0) AS input_tokens,COALESCE(SUM(e.output_tokens),0) AS output_tokens,COALESCE(SUM(e.duration_ms),0) AS duration_ms,COALESCE(SUM(e.cost_microunits),0) AS cost_microunits FROM agent_execution_events e JOIN agent_execution_traces t ON t.execution_id=e.execution_id WHERE t.root_execution_id=?',
+                (root_execution_id,),
+            ).fetchone()
+            return {
+                'root_execution_id': root_execution_id,
+                'executions': [dict(row) for row in executions],
+                'events': [dict(row) for row in events],
+                'resource_totals': dict(totals),
+                'complete': True,
+            }
+
     def resource_totals(self, root_execution_id: str) -> dict[str, int]:
         root_execution_id = self._identifier(root_execution_id, "root_execution_id")
         with self._connect() as db:

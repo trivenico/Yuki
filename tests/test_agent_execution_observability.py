@@ -81,6 +81,28 @@ class AgentExecutionTraceStoreTests(unittest.TestCase):
         self.assertEqual(event["decision"], "denied")
         self.assertEqual(event["permission"], "tool:browser")
 
+    def test_execution_timeline_joins_tree_events_and_resource_totals(self):
+        root = self.store.start_execution(agent_id='coordinator', task_id='plan-1')
+        specialist = self.store.start_execution(agent_id='research', parent_execution_id=root['execution_id'], task_id='task-1')
+        provider = self.store.start_execution(agent_id='provider.local', parent_execution_id=specialist['execution_id'], provider_execution_id='provider-exec-1')
+        self.store.record_event(execution_id=specialist['execution_id'], event_type='agent.accepted', actor_id='coordinator', status='running')
+        self.store.record_event(execution_id=provider['execution_id'], event_type='provider.completed', actor_id='research', input_tokens=10, output_tokens=4, duration_ms=25, cost_microunits=7, status='succeeded')
+        timeline = self.store.execution_timeline(root['execution_id'])
+        self.assertEqual(len(timeline['executions']), 3)
+        self.assertEqual(timeline['executions'][2]['provider_execution_id'], 'provider-exec-1')
+        self.assertEqual([event['event_type'] for event in timeline['events']], ['execution.created', 'execution.created', 'execution.created', 'agent.accepted', 'provider.completed'])
+        self.assertEqual(timeline['resource_totals'], {'input_tokens': 10, 'output_tokens': 4, 'duration_ms': 25, 'cost_microunits': 7})
+        self.assertTrue(timeline['complete'])
+
+    def test_timeline_rejects_unknown_root_and_bounds(self):
+        with self.assertRaises(KeyError):
+            self.store.execution_timeline('missing-root')
+        root = self.store.start_execution(agent_id='coordinator')
+        with self.assertRaises(ValueError):
+            self.store.execution_timeline(root['execution_id'], max_events=0)
+        with self.assertRaises(ExecutionTraceError):
+            self.store.execution_timeline(root['execution_id'], max_executions=1) if self.store.start_execution(agent_id='child', parent_execution_id=root['execution_id']) else None
+
     def test_sensitive_payload_fields_are_not_part_of_event_schema(self):
         root = self.store.start_execution(agent_id="orchestrator")
         event = self.store.list_events(root["execution_id"])[0]
