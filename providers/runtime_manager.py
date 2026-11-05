@@ -16,6 +16,7 @@ from typing import Any, Callable, Mapping
 from providers.catalog import build_provider_catalog
 from providers.factory import create_provider
 from providers.provider_readiness import inspect_configured_provider
+from providers.provider_policy import is_mock_provider
 
 
 class ProviderRuntimeManager:
@@ -56,6 +57,13 @@ class ProviderRuntimeManager:
             name = str(self.config.get("provider", "")).strip().lower()
             if not name or name == "mock":
                 raise RuntimeError("real_provider_selection_required")
+            if is_mock_provider(self.adapter.provider):
+                raise RuntimeError("mock_provider_forbidden")
+            # Readiness must describe the same implementation that will receive
+            # requests. Provider constructors must not perform network calls.
+            expected = self.provider_factory(dict(self.config), environ=self.environ)
+            if is_mock_provider(expected) or type(expected) is not type(self.adapter.provider):
+                raise RuntimeError("active_provider_configuration_mismatch")
             return inspect_configured_provider(
                 config=self.config,
                 provider_factory=lambda _config: self.adapter.provider,
@@ -77,7 +85,7 @@ class ProviderRuntimeManager:
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
-            if candidate is None or type(candidate).__name__.lower() == "mockprovider":
+            if candidate is None or is_mock_provider(candidate):
                 raise ValueError("mock_provider_forbidden")
             self._persist(name)
             self.adapter.provider = candidate
@@ -113,6 +121,8 @@ class ProviderRuntimeManager:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
+        if is_mock_provider(candidate):
+            raise RuntimeError("Persisted provider selection resolved to a forbidden mock provider.")
         self.adapter.provider = candidate
         self.config["provider"] = name
 

@@ -89,6 +89,38 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "real_provider_selection_required"):
                 manager.readiness()
 
+    def test_selection_rejects_explicitly_marked_mock_provider(self):
+        class TestAdapter:
+            is_test_provider = True
+        with tempfile.TemporaryDirectory() as directory:
+            config = {"provider": "openai"}
+            adapter = SimpleNamespace(provider="original")
+            manager = ProviderRuntimeManager(
+                config, adapter, Path(directory) / "selection.json",
+                environ={}, provider_factory=lambda cfg, environ: TestAdapter(),
+                catalog_factory=_catalog,
+            )
+            with self.assertRaisesRegex(ValueError, "mock_provider_forbidden"):
+                manager.select("openai")
+            self.assertEqual(adapter.provider, "original")
+            self.assertEqual(config["provider"], "openai")
+            self.assertFalse((Path(directory) / "selection.json").exists())
+
+    def test_readiness_rejects_active_adapter_configuration_mismatch(self):
+        class ExpectedProvider:
+            pass
+        class ActiveProvider:
+            pass
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ProviderRuntimeManager(
+                {"provider": "ollama"}, SimpleNamespace(provider=ActiveProvider()),
+                Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: ExpectedProvider(),
+                catalog_factory=_catalog,
+            )
+            with self.assertRaisesRegex(RuntimeError, "active_provider_configuration_mismatch"):
+                manager.readiness()
+
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "provider-selection.json"
