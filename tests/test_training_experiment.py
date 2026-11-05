@@ -1,0 +1,110 @@
+import copy
+import hashlib
+import unittest
+
+from providers.dataset_records import deduplicate_dataset_records, deterministic_dataset_split
+from providers.dataset_artifact_manifest import DatasetManifestError
+from providers.training_experiment import (
+    TrainingExperimentError,
+    create_experiment_spec,
+    verify_experiment_spec,
+)
+from tests.test_dataset_artifact_manifest import dataset_manifest
+
+
+def approved_manifest():
+    item = dataset_manifest()
+    item.update({
+        "rights_status": "verified",
+        "consent_status": "verified",
+        "privacy_status": "verified",
+        "review_status": "approved",
+    })
+    return item
+
+
+def split_manifest():
+    records = deduplicate_dataset_records([
+        {"prompt": f"prompt-{i}", "response": f"response-{i}"} for i in range(80)
+    ])["records"]
+    return {"schema_version": 1, **deterministic_dataset_split(records, seed="train-exp-1")}
+
+
+def make_spec(**overrides):
+    args = {
+        "experiment_id": "yuki-core-exp-001",
+        "model_id": "yuki/core",
+        "model_version": "0.1.0",
+        "training_method": "lora",
+        "base_model_sha256": "b" * 64,
+        "datasets": [approved_manifest()],
+        "split_manifest": split_manifest(),
+        "benchmark_id": "yuki-core-quality",
+        "benchmark_version": "1.0",
+        "baseline_evaluation_sha256": "c" * 64,
+        "seed": 42,
+        "hyperparameters": {
+            "epochs": 2, "learning_rate": 0.0002, "batch_size": 4,
+            "gradient_accumulation_steps": 8, "max_sequence_length": 2048,
+            "lora_rank": 16, "lora_alpha": 32, "lora_dropout": 0.05,
+        },
+        "created_at": "2026-11-05T10:00:00Z",
+    }
+    args.update(overrides)
+    return create_experiment_spec(**args)
+
+
+class TrainingExperimentTests(unittest.TestCase):
+    def test_creates_content_addressed_spec_and_verifies(self):
+        spec = make_spec()
+        self.assertTrue(verify_experiment_spec(spec))
+        self.assertEqual(spec["execution_policy"], "manual_training_approval_required")
+        self.assertEqual(spec["activation_policy"], "manual_model_release_approval_required")
+
+    def test_spec_is_deterministic_for_same_inputs(self):
+        self.assertEqual(make_spec()["experiment_sha256"], make_spec()["experiment_sha256"])
+
+    def test_rejects_unapproved_dataset(self):
+        item = approved_manifest()
+        item["rights_status"] = "unverified"
+        with self.assertRaisesRegex(TrainingExperimentError, "dataset_not_approved"):
+            make_spec(datasets=[item])
+
+    def test_rejects_split_digest_tampering_and_leakage(self):
+        split = split_manifest()
+        split["split_manifest_sha256"] = "0" * 64
+        with self.assertRaisesRegex(TrainingExperimentError, "split_manifest_digest_mismatch"):
+            make_spec(split_manifest=split)
+        split = split_manifest()
+        first = split["splits"]["train"][0]
+        split["splits"]["validation"].append(first)
+        payload = {key: value for key, value in split.items() if key != "split_manifest_sha256"}
+        split["split_manifest_sha256"] = hashlib.sha256(
+            __import__("json").dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        with self.assertRaisesRegex(TrainingExperimentError, "split_leakage_detected"):
+            make_spec(split_manifest=split)
+
+    def test_rejects_invalid_lora_and_qlora_parameters(self):
+        with self.assertRaisesRegex(TrainingExperimentError, "lora_configuration_required"):
+            make_spec(hyperparameters={"epochs": 1})
+        with self.assertRaisesRegex(TrainingExperimentError, "qlora_requires_four_bit"):
+            make_spec(training_method="qlora", hyperparameters={
+                "epochs": 1, "lora_rank": 16, "lora_alpha": 32, "quantization_bits": 8,
+            })
+
+    def test_rejects_invalid_seed_and_unknown_parameters(self):
+        with self.assertRaisesRegex(TrainingExperimentError, "invalid_seed"):
+            make_spec(seed=True)
+        with self.assertRaisesRegex(TrainingExperimentError, "invalid_hyperparameters"):
+            make_spec(hyperparameters={"epochs": 1, "shell_command": "run me"})
+
+    def test_detects_spec_mutation(self):
+        spec = make_spec()
+        spec["hyperparameters"]["epochs"] = 99
+        with self.assertRaisesRegex(TrainingExperimentError, "experiment_digest_mismatch"):
+            verify_experiment_spec(spec)
+
+
+if __name__ == "__main__":
+    unittest.main()
