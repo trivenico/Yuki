@@ -200,11 +200,4 @@ class ProviderAgentAdapter:
             kwargs["idempotency_key"] = idempotency_key
         response = self.provider.generate_chat(**kwargs)
         self._check_execution(context)
-        if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
-            raise ValueError("provider returned an unsupported response envelope.")
-        text = response.get("text", "")
-        calls = response.get("tool_calls", {"tool_calls": []})
-        if not isinstance(text, str) or not isinstance(calls, Mapping):
-            raise ValueError("provider response fields are invalid.")
-        return {"text": text, "tool_calls": dict(calls),
-                "finish_reason": response.get("finish_reason")}
+        return self._validate_response(response, tools)
