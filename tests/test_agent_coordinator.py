@@ -66,6 +66,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         ])
         self.assertEqual(len(trace_store.list_children(plan.plan_id)), 2)
 
+    def test_dispatched_task_is_bound_to_specialist_span(self):
+        traces = AgentExecutionTraceStore(str(Path(self.tmp.name) / "trace-correlation.sqlite3"))
+        coordinator = SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, trace_store=traces)
+        plan = coordinator.submit(actor_id="alice", idempotency_key="bind-task", subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))])
+        result = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = result.subtasks[0].task_id
+        span = __import__("hashlib").sha256(("yuki-agent-span\\0" + plan.plan_id + "\\0collect").encode("utf-8")).hexdigest()[:32]
+        self.assertEqual(traces.get_execution(span)["task_id"], task_id)
+
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
             "translator", "Translation specialist", frozenset({"translate"}), "emit",

@@ -676,6 +676,17 @@ class SpecialistAgentCoordinator:
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            if self.trace_store is not None:
+                try:
+                    span_id = hashlib.sha256(
+                        ("yuki-agent-span\\0" + plan_id + "\\0" + row["subtask_id"]).encode("utf-8")
+                    ).hexdigest()[:32]
+                    self.trace_store.bind_task(span_id, task_id=task.task_id)
+                    self.trace_store.record_event(
+                        execution_id=span_id, event_type="agent.accepted", actor_id="coordinator",
+                    )
+                except Exception:
+                    self.trace_errors += 1
             self._append_plan_event(
                 plan_id, actor_id=actor_id, kind="subtask.dispatched",
                 payload={"subtask_id": row["subtask_id"], "agent_id": agent.agent_id, "task_id": task.task_id},

@@ -105,9 +105,13 @@ class AgentWorker:
         if self.trace_store is None:
             return None
         try:
-            trace = self.trace_store.start_execution(
-                agent_id=task["task_type"], task_id=task["id"],
+            trace = self.trace_store.get_execution_by_task(
+                task["id"], agent_id=task["task_type"],
             )
+            if trace is None:
+                trace = self.trace_store.start_execution(
+                    agent_id=task["task_type"], task_id=task["id"],
+                )
             self.trace_store.record_event(
                 execution_id=trace["execution_id"], event_type="execution.started",
                 actor_id=self.worker_id, status="running",

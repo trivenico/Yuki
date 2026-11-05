@@ -194,6 +194,36 @@ class AgentExecutionTraceStore:
             db.commit()
             return int(cur.lastrowid)
 
+
+    def bind_task(self, execution_id: str, *, task_id: str) -> dict[str, Any]:
+        execution_id = self._identifier(execution_id, "execution_id")
+        task_id = self._identifier(task_id, "task_id")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT task_id FROM agent_execution_traces WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("execution_not_found")
+            if row["task_id"] not in (None, task_id):
+                db.rollback()
+                raise ExecutionTraceError("task_correlation_conflict")
+            conflict = db.execute("SELECT execution_id FROM agent_execution_traces WHERE task_id=? AND execution_id<>?", (task_id, execution_id)).fetchone()
+            if conflict is not None:
+                db.rollback()
+                raise ExecutionTraceError("task_already_correlated")
+            db.execute("UPDATE agent_execution_traces SET task_id=?, updated_at=? WHERE execution_id=?", (task_id, float(self._clock()), execution_id))
+            db.commit()
+        return self.get_execution(execution_id)
+
+    def get_execution_by_task(self, task_id: str, *, agent_id: str) -> dict[str, Any] | None:
+        task_id = self._identifier(task_id, "task_id")
+        agent_id = self._identifier(agent_id, "agent_id")
+        with self._connect() as db:
+            rows = db.execute("SELECT execution_id FROM agent_execution_traces WHERE task_id=? AND agent_id=? LIMIT 2", (task_id, agent_id)).fetchall()
+        if len(rows) > 1:
+            raise ExecutionTraceError("task_correlation_ambiguous")
+        return self.get_execution(rows[0]["execution_id"]) if rows else None
+
     def get_execution(self, execution_id: str) -> dict[str, Any] | None:
         execution_id = self._identifier(execution_id, "execution_id")
         with self._connect() as db:

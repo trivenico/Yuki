@@ -34,6 +34,16 @@ class AgentExecutionTraceStoreTests(unittest.TestCase):
             "duration_ms": 800, "cost_microunits": 17,
         })
 
+    def test_task_binding_rejects_conflicts(self):
+        root = self.store.start_execution(agent_id="coordinator")
+        child = self.store.start_execution(agent_id="research", parent_execution_id=root["execution_id"])
+        self.store.bind_task(child["execution_id"], task_id="task-123")
+        self.assertEqual(self.store.get_execution_by_task("task-123", agent_id="research")["execution_id"], child["execution_id"])
+        with self.assertRaises(ExecutionTraceError):
+            self.store.bind_task(child["execution_id"], task_id="task-456")
+        with self.assertRaises(ExecutionTraceError):
+            self.store.bind_task(root["execution_id"], task_id="task-123")
+
     def test_permission_decisions_are_structured_and_auditable(self):
         root = self.store.start_execution(agent_id="orchestrator")
         self.store.record_event(
