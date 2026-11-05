@@ -76,6 +76,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(enabled.enabled)
 
+    def test_dispatch_blocks_if_specialist_execution_identity_changes_after_planning(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="identity-snapshot",
+            subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE specialist_agents SET action=? WHERE agent_id=?",
+                ("different_action", "research"),
+            )
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "blocked")
+        self.assertIsNone(advanced.subtasks[0].task_id)
+        events = self.coordinator.plan_events(actor_id="alice", plan_id=plan.plan_id)
+        self.assertIn("subtask.agent_identity_changed", [event["kind"] for event in events])
+
     def test_dispatch_observes_agent_disabled_by_another_instance(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="external-disable", subtasks=[
             SubtaskSpec("collect", "Collect sources", ("research",)),

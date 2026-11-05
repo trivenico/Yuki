@@ -128,6 +128,7 @@ class SpecialistAgentCoordinator:
                     description TEXT NOT NULL,
                     capabilities_json TEXT NOT NULL,
                     permissions_json TEXT NOT NULL DEFAULT "[]",
+                    agent_identity_digest TEXT NOT NULL DEFAULT "",
                     dependencies_json TEXT NOT NULL,
                     requires_approval INTEGER NOT NULL,
                     task_id TEXT,
@@ -139,6 +140,8 @@ class SpecialistAgentCoordinator:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
             if "permissions_json" not in columns:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
+            if "agent_identity_digest" not in columns:
+                db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN agent_identity_digest TEXT NOT NULL DEFAULT ""')
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_events (
@@ -181,6 +184,18 @@ class SpecialistAgentCoordinator:
                 ))
         self._refresh_agent_registry()
 
+
+    @staticmethod
+    def _agent_identity_digest(agent: SpecialistAgent) -> str:
+        """Fingerprint the exact execution authority bound into a planned task."""
+        manifest = {
+            "agent_id": agent.agent_id,
+            "action": agent.action,
+            "capabilities": sorted(agent.capabilities),
+            "permissions": sorted(agent.permissions),
+        }
+        encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
@@ -485,11 +500,12 @@ class SpecialistAgentCoordinator:
                 db.execute("""
                     INSERT INTO agent_plan_subtasks(
                         plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
-                        dependencies_json, requires_approval, task_id, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')
+                        agent_identity_digest, dependencies_json, requires_approval, task_id, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')
                 """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
                       json.dumps(sorted(item.required_capabilities)),
                       json.dumps(sorted(item.required_permissions)),
+                      self._agent_identity_digest(agent),
                       json.dumps(list(item.depends_on)), int(item.requires_approval)))
             return self._read_plan(db, plan_id)
 
@@ -551,8 +567,13 @@ class SpecialistAgentCoordinator:
                 continue
             agent = self.agents.get(row["agent_id"])
             required_permissions = tuple(json.loads(row["permissions_json"]))
+            identity_matches = (
+                agent is not None
+                and bool(row.get("agent_identity_digest"))
+                and self._agent_identity_digest(agent) == row["agent_identity_digest"]
+            )
             if (
-                agent is None or not agent.enabled
+                agent is None or not agent.enabled or not identity_matches
                 or not set(required_permissions) <= agent.permissions
                 or not self._has_permissions(actor_id, required_permissions, row["subtask_id"])
             ):
@@ -561,7 +582,9 @@ class SpecialistAgentCoordinator:
                 # along on a previously persisted plan.
                 self._set_subtask(plan_id, row["subtask_id"], status="blocked")
                 self._append_plan_event(
-                    plan_id, actor_id=actor_id, kind="subtask.permission_revoked",
+                    plan_id, actor_id=actor_id,
+                    kind=("subtask.agent_identity_changed" if agent is not None and not identity_matches
+                          else "subtask.permission_revoked"),
                     payload={"subtask_id": row["subtask_id"], "agent_id": row["agent_id"]},
                 )
                 row["status"] = "blocked"
