@@ -41,7 +41,7 @@ class TaskRuntimeTests(unittest.TestCase):
         for method, kwargs in (
             (self.runtime.mark_operation_in_flight, {
                 "actor_id": "bob", "operation_id": operation.operation_id,
-                "worker_id": "worker-a", "expected_version": operation.version,
+                "worker_id": "worker-a", "provider_name": "payments.test", "expected_version": operation.version,
             }),
             (self.runtime.reconcile_abandoned_operation, {
                 "actor_id": "bob", "operation_id": operation.operation_id,
@@ -57,7 +57,7 @@ class TaskRuntimeTests(unittest.TestCase):
         for method, kwargs in (
             (self.runtime.mark_operation_in_flight, {
                 "actor_id": "bob", "operation_id": "missing-operation",
-                "worker_id": "worker-a", "expected_version": 0,
+                "worker_id": "worker-a", "provider_name": "payments.test", "expected_version": 0,
             }),
             (self.runtime.reconcile_abandoned_operation, {
                 "actor_id": "alice", "operation_id": "missing-operation",
@@ -80,7 +80,7 @@ class TaskRuntimeTests(unittest.TestCase):
         )
         inflight = self.runtime.mark_operation_in_flight(
             actor_id="alice", operation_id=operation.operation_id,
-            worker_id="worker-a", expected_version=operation.version,
+            worker_id="worker-a", provider_name="payments.test", expected_version=operation.version,
         )
         self.runtime.record_operation_outcome(
             actor_id="alice", operation_id=inflight.operation_id,
@@ -122,7 +122,7 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.mark_operation_in_flight(
                 actor_id="alice", operation_id=operation.operation_id,
-                worker_id="worker-a", expected_version=operation.version,
+                worker_id="worker-a", provider_name="payments.test", expected_version=operation.version,
             )
         self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
 
@@ -818,7 +818,7 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(WorkflowConflict):
                 self.runtime.complete(
                     actor_id="alice", task_id=task.task_id,
-                    worker_id="worker-a", expected_version=claimed.version,
+                    worker_id="worker-a", provider_name="payments.test", expected_version=claimed.version,
                     result={"ok": True},
                 )
             self.assertEqual(self.store.get(task.task_id).state, "running")
@@ -845,7 +845,7 @@ class TaskRuntimeTests(unittest.TestCase):
             with self.assertRaises(WorkflowConflict):
                 self.runtime.fail(
                     actor_id="alice", task_id=task.task_id,
-                    worker_id="worker-a", expected_version=claimed.version,
+                    worker_id="worker-a", provider_name="payments.test", expected_version=claimed.version,
                     error_code="worker_error",
                 )
             self.assertEqual(self.store.get(task.task_id).state, "running")
