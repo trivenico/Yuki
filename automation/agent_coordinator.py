@@ -27,8 +27,8 @@ _MAX_SUBTASKS = 20
 _MAX_PLAN_BYTES = 24 * 1024
 _MAX_DEPENDENCY_CONTEXT_BYTES = 2_000
 _MAX_DEPENDENCY_RESULT_BYTES = 500
-_VERSION = re.compile(r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)
-
+_VERSION = re.compile(r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
+_RISK_TIERS = frozenset({'low', 'medium', 'high', 'critical'})
 class AgentPlanError(ValueError):
     """A plan is malformed, unsafe, cyclic, or cannot be routed."""
 
