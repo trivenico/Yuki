@@ -43,8 +43,12 @@ def sha256_file(path: str | Path, *, max_bytes: int = 20 * 1024**4) -> str:
 
 def validate_manifest(value: Any) -> dict:
     """Validate and return a normalized schema-v1 manifest."""
+    allowed = {"schema_version", "model_id", "model_version", "artifact_sha256", "source",
+               "license_id", "base_model", "training_method", "dataset_sha256", "created_at"}
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise ModelArtifactManifestError("unsupported_manifest_schema")
+    if set(value) != allowed:
+        raise ModelArtifactManifestError("unexpected_manifest_fields")
 
     def identity(field: str, *, optional: bool = False):
         item = value.get(field)
@@ -70,7 +74,7 @@ def validate_manifest(value: Any) -> dict:
 
     base_model = identity("base_model", optional=True)
     training_method = value.get("training_method")
-    if training_method not in {"from_scratch", "full_finetune", "lora", "qlora", "imported"}:
+    if not isinstance(training_method, str) or training_method not in {"from_scratch", "full_finetune", "lora", "qlora", "imported"}:
         raise ModelArtifactManifestError("invalid_training_method")
 
     datasets = value.get("dataset_sha256")
@@ -85,8 +89,10 @@ def validate_manifest(value: Any) -> dict:
     if not isinstance(created_at, str) or len(created_at) > 40 or not created_at.endswith("Z"):
         raise ModelArtifactManifestError("invalid_created_at")
     try:
-        from datetime import datetime
-        datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        from datetime import datetime, timezone
+        parsed_created_at = datetime.fromisoformat(created_at[:-1] + "+00:00")
+        if parsed_created_at.tzinfo is None or parsed_created_at.utcoffset() != timezone.utc.utcoffset(parsed_created_at):
+            raise ValueError("timestamp_must_be_utc")
     except ValueError as exc:
         raise ModelArtifactManifestError("invalid_created_at") from exc
 

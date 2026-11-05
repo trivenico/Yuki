@@ -54,8 +54,11 @@ class ModelArtifactManifestTests(unittest.TestCase):
             {"artifact_sha256": "not-a-digest"},
             {"license_id": "unknown license with spaces"},
             {"training_method": "automatic_activation"},
+            {"training_method": []},
+            {"unexpected": "field"},
             {"dataset_sha256": ["bad"]},
             {"created_at": "yesterday"},
+            {"created_at": "2026-11-05T09:00:00+04:00Z"},
             {"model_id": "../escape"},
         ]
         for change in changes:
