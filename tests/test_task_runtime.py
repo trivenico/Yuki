@@ -16,7 +16,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list", "task:step:start", "task:step:finish", "task:step:reconcile"}
+                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
@@ -40,11 +40,11 @@ class TaskRuntimeTests(unittest.TestCase):
         )
         for method, kwargs in (
             (self.runtime.mark_operation_in_flight, {
-                "actor_id": "supervisor", "operation_id": operation.operation_id,
+                "actor_id": "bob", "operation_id": operation.operation_id,
                 "worker_id": "worker-a", "expected_version": operation.version,
             }),
             (self.runtime.reconcile_abandoned_operation, {
-                "actor_id": "alice", "operation_id": operation.operation_id,
+                "actor_id": "bob", "operation_id": operation.operation_id,
                 "expected_version": operation.version,
             }),
             (self.runtime.record_operation_outcome, {
@@ -56,7 +56,7 @@ class TaskRuntimeTests(unittest.TestCase):
                 method(**kwargs)
         for method, kwargs in (
             (self.runtime.mark_operation_in_flight, {
-                "actor_id": "alice", "operation_id": "missing-operation",
+                "actor_id": "bob", "operation_id": "missing-operation",
                 "worker_id": "worker-a", "expected_version": 0,
             }),
             (self.runtime.reconcile_abandoned_operation, {
