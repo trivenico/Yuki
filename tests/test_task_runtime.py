@@ -16,7 +16,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:operation:read", "task:step:start", "task:step:finish", "task:step:reconcile"}
+                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:operation:resolve", "task:operation:read", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
@@ -119,6 +119,7 @@ class TaskRuntimeTests(unittest.TestCase):
             action="provider.call", request={"payload_digest": "safe"},
         )
         # Alice currently has dispatch permission but not resolve permission.
+        self.grants.remove("task:operation:resolve")
         with self.assertRaises(PermissionError):
             self.runtime.mark_operation_in_flight(
                 actor_id="alice", operation_id=operation.operation_id,

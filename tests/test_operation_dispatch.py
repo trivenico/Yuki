@@ -14,6 +14,7 @@ class Operation:
     request_digest: str
     status: str = "prepared"
     version: int = 0
+    provider_name: str | None = "payments.test"
 
 
 class FakeRuntime:
@@ -26,10 +27,14 @@ class FakeRuntime:
         return actor
 
     def authorize_operation_dispatch(self, *, actor_id, operation_id):
-        return self._authorized_operation(actor_id, operation_id, "task:operation:dispatch")
+        operation = self._authorized_operation(actor_id, operation_id, "task:operation:dispatch")
+        self._authorized_operation(actor_id, operation_id, "task:operation:resolve")
+        return operation
 
     def _authorized_operation(self, actor, operation_id, action):
         if operation_id != self.operation.operation_id or actor != "owner":
+            raise PermissionError()
+        if action not in {"task:operation:dispatch", "task:operation:resolve"}:
             raise PermissionError()
         return self.operation
 
