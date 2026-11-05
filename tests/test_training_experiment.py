@@ -1,4 +1,3 @@
-import copy
 import hashlib
 import unittest
 
@@ -94,7 +93,8 @@ class TrainingExperimentTests(unittest.TestCase):
         split = split_manifest()
         first = split["splits"]["train"][0]
         split["splits"]["validation"].append(first)
-        payload = {key: value for key, value in split.items() if key != "split_manifest_sha256"}
+        payload = {key: value for key, value in split.items()
+                   if key not in {"split_manifest_sha256", "schema_version"}}
         split["split_manifest_sha256"] = hashlib.sha256(
             __import__("json").dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
