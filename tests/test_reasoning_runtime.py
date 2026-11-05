@@ -30,6 +30,37 @@ class _Provider:
 
 
 class ReasoningRuntimeFactoryTests(unittest.TestCase):
+    def test_owner_runtime_rejects_mock_provider(self):
+        class MockProvider:
+            def generate_chat(self, *, messages, tools, tool_choice):
+                return {"text": "fake", "tool_calls": {"tool_calls": []}}
+        with self.assertRaisesRegex(ValueError, "mock_provider_forbidden"):
+            create_owner_scoped_agent_loop_factory(
+                provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(MockProvider()),
+                context_builder=self.builder,
+                tool_protocol_for_owner=lambda owner: StructuredToolProtocol(GuardedToolRuntime({}, _AllowNothing())),
+                agent_id="assistant", system_policy="safe",
+            )("owner-a")
+
+    def test_gateway_cloud_provider_requires_explicit_owner_opt_in(self):
+        class CloudProvider(_Provider):
+            privacy_class = "cloud_provider"
+        with self.assertRaisesRegex(PermissionError, "cloud_provider_requires_explicit_opt_in"):
+            create_owner_scoped_agent_loop_factory(
+                provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(CloudProvider()),
+                context_builder=self.builder,
+                tool_protocol_for_owner=lambda owner: StructuredToolProtocol(GuardedToolRuntime({}, _AllowNothing())),
+                agent_id="assistant", system_policy="safe",
+            )("owner-a")
+        loop = create_owner_scoped_agent_loop_factory(
+            provider_adapter_for_owner=lambda owner: ProviderAgentAdapter(CloudProvider()),
+            context_builder=self.builder,
+            tool_protocol_for_owner=lambda owner: StructuredToolProtocol(GuardedToolRuntime({}, _AllowNothing())),
+            agent_id="assistant", system_policy="safe",
+            cloud_opt_in_for_owner=lambda owner: True,
+        )("owner-a")
+        self.assertIsInstance(loop, AgentExecutionLoop)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
