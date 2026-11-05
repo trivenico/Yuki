@@ -75,6 +75,32 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         span = __import__("hashlib").sha256(("yuki-agent-span\\0" + plan.plan_id + "\\0collect").encode("utf-8")).hexdigest()[:32]
         self.assertEqual(traces.get_execution(span)["task_id"], task_id)
 
+    def test_input_contract_blocks_dispatch_before_task_creation(self):
+        contract = AgentContract(version='1.0.0', input_schema={'type': 'object', 'properties': {'argument': {'type': 'string', 'maxLength': 3}}, 'required': ['argument'], 'additionalProperties': False}, output_schema={'type': 'string'})
+        coordinator = SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, contracts={'research': contract})
+        plan = coordinator.submit(actor_id='alice', idempotency_key='contract-input', subtasks=[SubtaskSpec('collect', 'This input is too long', ('research',))])
+        result = coordinator.advance(actor_id='alice', plan_id=plan.plan_id)
+        self.assertEqual(result.subtasks[0].status, 'blocked')
+        self.assertIsNone(result.subtasks[0].task_id)
+        self.assertEqual(self.store.list_runs(limit=100), [])
+
+    def test_output_contract_rejects_worker_result_before_plan_acceptance(self):
+        contract = AgentContract(version='1.0.0', input_schema={'type': 'object', 'properties': {'argument': {'type': 'string'}}, 'required': ['argument'], 'additionalProperties': False}, output_schema={'type': 'string', 'minLength': 5})
+        coordinator = SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, contracts={'research': contract})
+        plan = coordinator.submit(actor_id='alice', idempotency_key='contract-output', subtasks=[SubtaskSpec('collect', 'Find evidence', ('research',))])
+        dispatched = coordinator.advance(actor_id='alice', plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        claimed = self.store.claim_next(worker_id='contract-worker')
+        self.store.transition(claimed.run_id, expected_version=claimed.version, to_state='succeeded', result={'ok': True, 'output': 'no'}, expected_lease_owner='contract-worker', event_kind='task.completed', event_actor_id='alice', event_payload={'state_version': claimed.version + 1})
+        result = coordinator.advance(actor_id='alice', plan_id=plan.plan_id)
+        self.assertEqual(result.subtasks[0].status, 'failed')
+        self.assertEqual(result.subtasks[0].task_id, task_id)
+
+    def test_contract_version_must_match_agent_manifest(self):
+        contract = AgentContract(version='9.0.0', input_schema={'type': 'string'}, output_schema={'type': 'string'})
+        with self.assertRaises(ValueError):
+            SpecialistAgentCoordinator(self.runtime, self.db_path, self.agents, authorize=self.agent_auth, contracts={'research': contract})
+
     def test_agent_manifest_persists_version_risk_and_runtime_budgets(self):
         specialist = SpecialistAgent('budgeted', 'Budgeted agent', frozenset({'research'}), 'emit', version='2.3.1', risk_tier='high', timeout_seconds=120, max_concurrency=3)
         self.coordinator.register_agent(actor_id='alice', agent=specialist)

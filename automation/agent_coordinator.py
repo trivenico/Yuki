@@ -17,6 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
+from automation.agent_contracts import AgentContract, validate_agent_input, validate_agent_output
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -131,6 +132,7 @@ class SpecialistAgentCoordinator:
         authorize: Callable[[str, str, str], bool],
         max_subtasks: int = _MAX_SUBTASKS,
         trace_store: AgentExecutionTraceStore | None = None,
+        contracts: dict[str, AgentContract] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -148,6 +150,20 @@ class SpecialistAgentCoordinator:
         if trace_store is not None and not isinstance(trace_store, AgentExecutionTraceStore):
             raise TypeError('trace_store must be an AgentExecutionTraceStore.')
         self.trace_store = trace_store
+        if contracts is not None and not isinstance(contracts, dict):
+            raise TypeError('contracts must be a mapping of agent IDs to AgentContract values.')
+        self.contracts = {}
+        for agent_id, contract in (contracts or {}).items():
+            if not isinstance(agent_id, str) or not _ID.fullmatch(agent_id):
+                raise ValueError('contract agent IDs must be bounded identifiers.')
+            if not isinstance(contract, AgentContract):
+                raise TypeError('every registered contract must be an AgentContract.')
+            agent = agent_map.get(agent_id)
+            if agent is None:
+                raise ValueError('contracts may only be bound to registered agents.')
+            if contract.version != agent.version:
+                raise ValueError('agent contract version must match the registered agent version.')
+            self.contracts[agent_id] = contract
         self.trace_errors = 0
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
@@ -701,6 +717,14 @@ class SpecialistAgentCoordinator:
                 )
                 if encoded is not None:
                     argument = base + encoded
+            contract = self.contracts.get(agent.agent_id)
+            if contract is not None:
+                issues = validate_agent_input(contract, {'argument': argument})
+                if issues:
+                    self._set_subtask(plan_id, row['subtask_id'], status='blocked')
+                    self._append_plan_event(plan_id, actor_id=actor_id, kind='subtask.input_contract_rejected', payload={'subtask_id': row['subtask_id'], 'agent_id': agent.agent_id, 'contract_version': contract.version, 'issue_codes': sorted({issue.code for issue in issues})})
+                    row['status'] = 'blocked'
+                    continue
             task = self.runtime.enqueue(
                 actor_id=actor_id,
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
@@ -739,8 +763,16 @@ class SpecialistAgentCoordinator:
             if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
                 continue
             task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
-            if task.state == "succeeded":
-                state = "succeeded"
+            if task.state == 'succeeded':
+                contract = self.contracts.get(row['agent_id'])
+                if contract is not None:
+                    output = task.result.get('output') if isinstance(task.result, dict) and 'output' in task.result else task.result
+                    issues = validate_agent_output(contract, output)
+                    if issues:
+                        self._set_subtask(plan_id, row['subtask_id'], status='failed')
+                        self._append_plan_event(plan_id, actor_id=actor_id, kind='subtask.output_contract_rejected', payload={'subtask_id': row['subtask_id'], 'agent_id': row['agent_id'], 'contract_version': contract.version, 'issue_codes': sorted({issue.code for issue in issues})})
+                        continue
+                state = 'succeeded'
             elif task.state in {"failed", "cancelled", "interrupted"}:
                 state = "cancelled" if task.state == "cancelled" else "failed"
             else:
