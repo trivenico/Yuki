@@ -44,6 +44,7 @@ class UnifiedModelEvaluationTests(unittest.TestCase):
         self.assertNotIn("private prompt sentinel", serialized)
         self.assertNotIn("response sentinel", serialized)
         self.assertIn("secret-case", serialized)
+        self.assertEqual(report["results"][0]["matched_term_count"], 1)
 
     def test_provider_failure_is_redacted(self):
         def fail(_):

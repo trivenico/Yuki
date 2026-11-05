@@ -82,8 +82,8 @@ def evaluate_candidate(
             "latency_ms": latency,
             "score": metrics["score"],
             "metric": metrics["metric"],
-            "matched_terms": metrics["matched_terms"],
-            "missing_terms": metrics["missing_terms"],
+            "matched_term_count": len(metrics["matched_terms"]),
+            "expected_term_count": len(case["expected_terms"]),
         })
 
     successful = [item for item in results if item["status"] == "ok"]
