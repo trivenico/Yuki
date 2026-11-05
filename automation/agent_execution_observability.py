@@ -411,6 +411,52 @@ class AgentExecutionTraceStore:
                 'complete': True,
             }
 
+    def execution_health_report(self, *, since: float | None = None, limit: int = 1000, slow_threshold_ms: int = 30000) -> dict[str, Any]:
+        """Return bounded, read-only health signals; never mutate policies or executions."""
+        if since is not None and (type(since) not in (int, float) or since < 0):
+            raise ValueError('since_invalid')
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError('health_limit_out_of_range')
+        if type(slow_threshold_ms) is not int or not 1 <= slow_threshold_ms <= 86400000:
+            raise ValueError('slow_threshold_out_of_range')
+        with self._connect() as db:
+            where = 'WHERE created_at>=?' if since is not None else ''
+            args = (float(since),) if since is not None else ()
+            executions = db.execute(
+                'SELECT execution_id,parent_execution_id,agent_id,task_id,provider_execution_id,status,created_at,updated_at FROM agent_execution_traces ' + where + ' ORDER BY created_at DESC,execution_id LIMIT ?',
+                (*args, limit + 1),
+            ).fetchall()
+            if len(executions) > limit:
+                raise ExecutionTraceError('health_execution_limit_exceeded')
+            ids = [row['execution_id'] for row in executions]
+            if not ids:
+                return {'window_since': since, 'execution_count': 0, 'status_counts': {}, 'agent_failures': [], 'slow_executions': [], 'correlation_gaps': [], 'provider_failures': 0, 'resource_totals': {'input_tokens': 0, 'output_tokens': 0, 'duration_ms': 0, 'cost_microunits': 0}, 'recommendations': [], 'evidence_complete': True}
+            placeholders = ','.join('?' for _ in ids)
+            status_counts = {row['status']: int(row['count']) for row in db.execute('SELECT status,COUNT(*) AS count FROM agent_execution_traces WHERE execution_id IN (' + placeholders + ') GROUP BY status', ids)}
+            failures = db.execute(
+                'SELECT t.agent_id,COUNT(*) AS failure_count FROM agent_execution_traces t WHERE t.execution_id IN (' + placeholders + ') AND t.status IN (\'failed\',\'timed_out\',\'uncertain\') GROUP BY t.agent_id ORDER BY failure_count DESC,t.agent_id LIMIT 50', ids,
+            ).fetchall()
+            slow = db.execute(
+                'SELECT t.execution_id,t.agent_id,t.status,COALESCE(SUM(e.duration_ms),0) AS duration_ms FROM agent_execution_traces t LEFT JOIN agent_execution_events e ON e.execution_id=t.execution_id WHERE t.execution_id IN (' + placeholders + ') GROUP BY t.execution_id HAVING duration_ms>=? ORDER BY duration_ms DESC,t.execution_id LIMIT 100', (*ids, slow_threshold_ms),
+            ).fetchall()
+            gaps = db.execute(
+                'SELECT execution_id,parent_execution_id,agent_id,task_id,provider_execution_id FROM agent_execution_traces WHERE execution_id IN (' + placeholders + ') AND ((parent_execution_id IS NOT NULL AND task_id IS NULL) OR (agent_id LIKE \'provider.%\' AND provider_execution_id IS NULL)) ORDER BY created_at DESC LIMIT 100', ids,
+            ).fetchall()
+            provider_failures = db.execute(
+                'SELECT COUNT(*) AS count FROM agent_execution_events WHERE execution_id IN (' + placeholders + ') AND event_type=\'provider.failed\'', ids,
+            ).fetchone()['count']
+            totals = db.execute(
+                'SELECT COALESCE(SUM(input_tokens),0) AS input_tokens,COALESCE(SUM(output_tokens),0) AS output_tokens,COALESCE(SUM(duration_ms),0) AS duration_ms,COALESCE(SUM(cost_microunits),0) AS cost_microunits FROM agent_execution_events WHERE execution_id IN (' + placeholders + ')', ids,
+            ).fetchone()
+            recommendations = []
+            if failures:
+                recommendations.append({'signal': 'execution_failures', 'detail': 'Review the highest failure-count agents and their traces; no policy changes were made.'})
+            if slow:
+                recommendations.append({'signal': 'slow_executions', 'detail': 'Inspect the longest recorded execution durations and their provider/tool spans.'})
+            if gaps:
+                recommendations.append({'signal': 'correlation_gaps', 'detail': 'Repair instrumentation so delegated and provider spans carry their durable identifiers.'})
+            return {'window_since': since, 'execution_count': len(executions), 'status_counts': status_counts, 'agent_failures': [dict(row) for row in failures], 'slow_executions': [dict(row) for row in slow], 'correlation_gaps': [dict(row) for row in gaps], 'provider_failures': int(provider_failures), 'resource_totals': dict(totals), 'recommendations': recommendations, 'evidence_complete': True}
+
     def resource_totals(self, root_execution_id: str) -> dict[str, int]:
         root_execution_id = self._identifier(root_execution_id, "root_execution_id")
         with self._connect() as db:

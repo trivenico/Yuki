@@ -103,6 +103,33 @@ class AgentExecutionTraceStoreTests(unittest.TestCase):
         with self.assertRaises(ExecutionTraceError):
             self.store.execution_timeline(root['execution_id'], max_executions=1) if self.store.start_execution(agent_id='child', parent_execution_id=root['execution_id']) else None
 
+    def test_health_report_identifies_failures_slow_work_and_correlation_gaps(self):
+        root = self.store.start_execution(agent_id='coordinator')
+        failed = self.store.start_execution(agent_id='research', parent_execution_id=root['execution_id'], task_id='task-fail')
+        self.store.record_event(execution_id=failed['execution_id'], event_type='execution.failed', actor_id='worker', duration_ms=45000, status='failed')
+        provider = self.store.start_execution(agent_id='provider.local', parent_execution_id=root['execution_id'])
+        self.store.record_event(execution_id=provider['execution_id'], event_type='provider.failed', actor_id='research', status='uncertain')
+        report = self.store.execution_health_report(slow_threshold_ms=30000)
+        self.assertEqual(report['execution_count'], 3)
+        self.assertEqual(report['status_counts']['failed'], 1)
+        self.assertEqual(report['agent_failures'][0], {'agent_id': 'research', 'failure_count': 1})
+        self.assertEqual(report['provider_failures'], 1)
+        self.assertEqual(report['slow_executions'][0]['execution_id'], failed['execution_id'])
+        self.assertEqual({row['execution_id'] for row in report['correlation_gaps']}, {provider['execution_id']})
+        self.assertTrue(report['evidence_complete'])
+        self.assertGreaterEqual(len(report['recommendations']), 3)
+
+    def test_health_report_is_bounded_and_read_only(self):
+        self.store.start_execution(agent_id='coordinator')
+        before = self.store.outbox_stats()
+        report = self.store.execution_health_report(limit=10)
+        self.assertEqual(report['execution_count'], 1)
+        self.assertEqual(self.store.outbox_stats(), before)
+        with self.assertRaises(ValueError):
+            self.store.execution_health_report(limit=0)
+        with self.assertRaises(ValueError):
+            self.store.execution_health_report(slow_threshold_ms=0)
+
     def test_sensitive_payload_fields_are_not_part_of_event_schema(self):
         root = self.store.start_execution(agent_id="orchestrator")
         event = self.store.list_events(root["execution_id"])[0]
