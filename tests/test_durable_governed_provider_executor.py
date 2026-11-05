@@ -36,7 +36,7 @@ class DurableGovernedExecutorTests(unittest.TestCase):
         self.store = SQLiteProviderGovernanceStore(
             self.path, max_global_concurrent=2, max_provider_concurrent=2,
             max_agent_concurrent=1, max_agent_requests_per_window=20,
-            lease_timeout_seconds=120,
+            lease_timeout_seconds=120, failure_threshold=1,
         )
         self.request = {
             "messages": [{"role": "user", "content": "hello"}],
