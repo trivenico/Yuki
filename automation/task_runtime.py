@@ -466,6 +466,15 @@ class TaskRuntime:
             raise PermissionError("operation access is not authorized.")
         return operation
 
+    def operation_events(self, *, actor_id: str, operation_id: str,
+                         limit: int = 100, before_event_id: int | None = None):
+        """Read bounded operation audit history after a dedicated authorization check."""
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:read")
+        return self.store.list_operation_events(
+            operation_id, limit=limit, before_event_id=before_event_id,
+        )
+
     def prepare_operation(self, *, actor_id: str, task_id: str, idempotency_key: str,
                           action: str, request: dict[str, Any]):
         actor = self._actor(actor_id)

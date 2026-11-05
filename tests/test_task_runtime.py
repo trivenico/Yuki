@@ -16,7 +16,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:lease:renew", "task:complete", "task:fail", "task:cancel",
-                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:step:start", "task:step:finish", "task:step:reconcile"}
+                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:operation:read", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
@@ -92,6 +92,24 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(events[0].actor_id, "workflow_store")
         self.assertEqual(events[1].actor_id, "worker-a")
         self.assertEqual(events[2].actor_id, "workflow_store")
+
+    def test_operation_audit_reads_require_dedicated_capability_and_are_bounded(self):
+        task = self.create("operation-audit-read")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="audit-read",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        self.assertEqual(len(self.runtime.operation_events(
+            actor_id="alice", operation_id=operation.operation_id, limit=1,
+        )), 1)
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="bob", operation_id=operation.operation_id)
+        self.grants.remove("task:operation:read")
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="alice", operation_id=operation.operation_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="alice", operation_id="missing-operation")
 
     def test_dispatch_transition_requires_outcome_permission_too(self):
         task = self.create("operation-dispatch-resolve-grant")
