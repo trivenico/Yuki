@@ -880,7 +880,7 @@ class SpecialistAgentCoordinator:
         """Return bounded, authorized handoff metadata without exposing content."""
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500.")
-        if not self._allowed(actor_id, "agent:audit", plan_id):
+        if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent handoff audit is not authorized.")
         with self._connect() as db:
             plan = db.execute(
