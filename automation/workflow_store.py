@@ -905,7 +905,7 @@ class WorkflowRunStore:
                 if not (
                     row["approved_by"] and row["approved_at"]
                     and row["approved_session_hash"]
-                    and row["approval_digest"] == row["request_digest"]
+                    and row["approval_digest"] == row["run_request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
@@ -1076,7 +1076,7 @@ class WorkflowRunStore:
             row = db.execute(
                 "SELECT o.*, r.state AS task_state, r.lease_owner AS lease_owner, "
                 "r.lease_expires_at AS lease_expires_at, r.definition_json AS definition_json, "
-                "r.request_digest AS request_digest, r.approved_by AS approved_by, "
+                "r.request_digest AS run_request_digest, r.approved_by AS approved_by, "
                 "r.approved_at AS approved_at, r.approved_session_hash AS approved_session_hash, "
                 "r.approval_digest AS approval_digest FROM workflow_operations o "
                 "JOIN workflow_runs r ON r.run_id=o.task_id WHERE o.operation_id=?",
