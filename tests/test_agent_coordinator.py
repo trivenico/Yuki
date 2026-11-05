@@ -75,6 +75,28 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         span = __import__("hashlib").sha256(("yuki-agent-span\\0" + plan.plan_id + "\\0collect").encode("utf-8")).hexdigest()[:32]
         self.assertEqual(traces.get_execution(span)["task_id"], task_id)
 
+    def test_agent_manifest_persists_version_risk_and_runtime_budgets(self):
+        specialist = SpecialistAgent('budgeted', 'Budgeted agent', frozenset({'research'}), 'emit', version='2.3.1', risk_tier='high', timeout_seconds=120, max_concurrency=3)
+        self.coordinator.register_agent(actor_id='alice', agent=specialist)
+        restarted = SpecialistAgentCoordinator(self.runtime, self.db_path, (), authorize=self.agent_auth)
+        registered = next(item for item in restarted.list_agents(actor_id='alice') if item['agent_id'] == 'budgeted')
+        self.assertEqual(registered['version'], '2.3.1')
+        self.assertEqual(registered['risk_tier'], 'high')
+        self.assertEqual(registered['timeout_seconds'], 120)
+        self.assertEqual(registered['max_concurrency'], 3)
+
+    def test_agent_manifest_rejects_invalid_version_risk_and_budgets(self):
+        invalid = [
+            SpecialistAgent('bad-version', 'Bad', frozenset({'research'}), 'emit', version='v1'),
+            SpecialistAgent('bad-risk', 'Bad', frozenset({'research'}), 'emit', risk_tier='untrusted'),
+            SpecialistAgent('bad-timeout', 'Bad', frozenset({'research'}), 'emit', timeout_seconds=0),
+            SpecialistAgent('bad-concurrency', 'Bad', frozenset({'research'}), 'emit', max_concurrency=101),
+        ]
+        for agent in invalid:
+            with self.subTest(agent=agent.agent_id):
+                with self.assertRaises(ValueError):
+                    self.coordinator.register_agent(actor_id='alice', agent=agent)
+
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
             "translator", "Translation specialist", frozenset({"translate"}), "emit",
