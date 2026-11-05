@@ -526,6 +526,7 @@ class SQLiteProviderGovernanceStore:
             raise ValueError("limit_out_of_range")
         placeholders = ",".join("?" for _ in statuses)
         with self._connect() as db:
+            self._purge_expired(db, self._clock())
             rows = db.execute(
                 "SELECT execution_id, lease_id, provider_id, agent_id, status, reason, started_at, updated_at "
                 f"FROM provider_execution_records WHERE provider_id=? AND status IN ({placeholders}) "
