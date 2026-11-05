@@ -23,9 +23,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
-        self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
-            "agent:plan", "agent:plan_without_approval", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
-        }
+        self.agent_auth = lambda actor, action, plan: (
+            actor == "alice" and (
+                action in {
+                    "agent:plan", "agent:plan_without_approval", "agent:dispatch",
+                    "agent:read", "agent:cancel", "agent:register", "agent:manage",
+                }
+                or action.startswith("agent:permission:")
+            )
+        )
         self.agents = [
             SpecialistAgent("research", "Research specialist", frozenset({"research", "summarize"}),
                             "emit", frozenset({"web:read"})),
@@ -223,6 +229,44 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="no-permission", subtasks=[
                 SubtaskSpec("collect", "Collect private sources", ("research",), required_permissions=("billing:write",)),
             ])
+
+    def test_required_permissions_must_be_granted_to_requesting_principal(self):
+        denied = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "permission-denied.sqlite3"),
+            self.agents,
+            authorize=lambda actor, action, resource: (
+                actor == "alice" and action in {"agent:plan", "agent:read"}
+            ),
+        )
+        with self.assertRaisesRegex(PermissionError, "lacks permissions"):
+            denied.submit(
+                actor_id="alice", idempotency_key="ungranted-web-access",
+                subtasks=[SubtaskSpec(
+                    "collect", "Collect public sources", ("research",),
+                    required_permissions=("web:read",),
+                )],
+            )
+
+    def test_revoked_permission_blocks_pending_subtask_before_dispatch(self):
+        grants = {"agent:plan", "agent:read", "agent:dispatch", "agent:permission:web:read"}
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, str(Path(self.tmp.name) / "revoked-permission.sqlite3"),
+            self.agents,
+            authorize=lambda actor, action, resource: actor == "alice" and action in grants,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="permission-revocation",
+            subtasks=[SubtaskSpec(
+                "collect", "Collect public sources", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        grants.remove("agent:permission:web:read")
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(advanced.subtasks[0].status, "blocked")
+        self.assertIsNone(advanced.subtasks[0].task_id)
+        events = coordinator.plan_events(actor_id="alice", plan_id=plan.plan_id)
+        self.assertIn("subtask.permission_revoked", [event["kind"] for event in events])
 
     def test_cycles_and_unknown_dependencies_are_rejected(self):
         with self.assertRaises(AgentPlanError):

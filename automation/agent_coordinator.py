@@ -397,9 +397,20 @@ class SpecialistAgentCoordinator:
                 for agent in sorted(self.agents.values(), key=lambda item: item.agent_id)
             )
 
-    def _route(self, subtask: SubtaskSpec) -> SpecialistAgent:
+    def _has_permissions(self, actor_id: str, permissions: Iterable[str], resource_id: str) -> bool:
+        """Check the requesting principal's current grants for each delegated permission."""
+        return all(
+            self._allowed(actor_id, f"agent:permission:{permission}", resource_id)
+            for permission in permissions
+        )
+
+    def _route(self, subtask: SubtaskSpec, *, actor_id: str) -> SpecialistAgent:
         needed = set(subtask.required_capabilities)
         needed_permissions = set(subtask.required_permissions)
+        if not self._has_permissions(actor_id, needed_permissions, subtask.subtask_id):
+            raise PermissionError(
+                f"requesting principal lacks permissions required by subtask {subtask.subtask_id}."
+            )
         with self._agent_lock:
             candidates = [
                 agent for agent in self.agents.values()
@@ -458,7 +469,7 @@ class SpecialistAgentCoordinator:
 
             # Route only after idempotency lookup, from one fresh registry snapshot.
             self._refresh_agent_registry()
-            assignments = {item.subtask_id: self._route(item) for item in items}
+            assignments = {item.subtask_id: self._route(item, actor_id=owner_id) for item in items}
             db.execute(
                 "INSERT INTO agent_plans(plan_id, idempotency_key, request_key, owner_id, request_digest, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -539,9 +550,21 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed")
-                row["status"] = "failed"
+            required_permissions = tuple(json.loads(row["permissions_json"]))
+            if (
+                agent is None or not agent.enabled
+                or not set(required_permissions) <= agent.permissions
+                or not self._has_permissions(actor_id, required_permissions, row["subtask_id"])
+            ):
+                # Re-check both the specialist manifest and the owner's current
+                # grants immediately before dispatch; revoked access never rides
+                # along on a previously persisted plan.
+                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                self._append_plan_event(
+                    plan_id, actor_id=actor_id, kind="subtask.permission_revoked",
+                    payload={"subtask_id": row["subtask_id"], "agent_id": row["agent_id"]},
+                )
+                row["status"] = "blocked"
                 continue
             argument = row["description"]
             if dependency_outputs:
