@@ -126,6 +126,10 @@ class InvocationTraceStore:
             # synchronous is connection-scoped; apply it to every connection.
             db.execute("PRAGMA synchronous=FULL")
             yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
