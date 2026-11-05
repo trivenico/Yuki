@@ -44,6 +44,13 @@ class ProviderCircuitBreakerTests(unittest.TestCase):
         self.assertEqual(snapshot.state, "closed")
         self.assertEqual(snapshot.consecutive_failures, 0)
 
+    def test_stale_success_cannot_close_open_circuit(self):
+        self.breaker.record_failure("ollama")
+        self.breaker.record_failure("ollama")
+        self.breaker.record_success("ollama")
+        self.assertEqual(self.breaker.snapshot("ollama").state, "open")
+        self.assertFalse(self.breaker.allow_request("ollama"))
+
     def test_probe_failure_reopens_circuit(self):
         self.breaker.record_failure("ollama")
         self.breaker.record_failure("ollama")

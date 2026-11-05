@@ -76,6 +76,12 @@ class ProviderCircuitBreaker:
     def record_success(self, provider_id: str) -> None:
         self._validate_provider_id(provider_id)
         with self._lock:
+            circuit = self._circuits.setdefault(provider_id, _Circuit())
+            # A success from an older in-flight call must not close a circuit
+            # opened by a later failure. Only the reserved half-open probe can
+            # close an open circuit.
+            if circuit.opened_until is not None and not circuit.probe_in_flight:
+                return
             self._circuits[provider_id] = _Circuit()
 
     def record_failure(self, provider_id: str) -> None:
