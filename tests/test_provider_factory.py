@@ -3,7 +3,6 @@ import unittest
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 from providers.ollama import OllamaProvider
 
@@ -58,6 +57,10 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertIsInstance(provider.local_provider, OllamaProvider)
         self.assertIsNone(provider.cloud_provider)
         self.assertEqual(provider.cloud_tasks, frozenset())
+
+    def test_mock_provider_selection_is_forbidden(self):
+        with self.assertRaisesRegex(ValueError, "mock providers are forbidden"):
+            create_provider({"provider": "mock"})
 
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):

@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 
 from providers.catalog import build_provider_catalog
 from providers.factory import create_provider
+from providers.provider_readiness import inspect_configured_provider
 
 
 class ProviderRuntimeManager:
@@ -49,6 +50,18 @@ class ProviderRuntimeManager:
         with self._lock:
             return self.catalog_factory(config=self.config, environ=self.environ)
 
+    def readiness(self, *, live_report: dict[str, Any] | None = None):
+        """Inspect the active provider without prompting or silently switching it."""
+        with self._lock:
+            name = str(self.config.get("provider", "")).strip().lower()
+            if not name or name == "mock":
+                raise RuntimeError("real_provider_selection_required")
+            return inspect_configured_provider(
+                config=self.config,
+                provider_factory=lambda _config: self.adapter.provider,
+                live_report=live_report,
+            )
+
     def select(self, provider_name: str) -> dict[str, Any]:
         if not isinstance(provider_name, str) or len(provider_name) > 32:
             raise ValueError("invalid_provider")
@@ -64,6 +77,8 @@ class ProviderRuntimeManager:
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
+            if candidate is None or type(candidate).__name__.lower() == "mockprovider":
+                raise ValueError("mock_provider_forbidden")
             self._persist(name)
             self.adapter.provider = candidate
             self.config["provider"] = name
