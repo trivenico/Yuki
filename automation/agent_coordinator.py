@@ -94,7 +94,7 @@ def _serialize_dependency_context(results, *, available_bytes: int) -> str | Non
             or subtask_id in seen
             or not isinstance(task_id, str) or not task_id.strip()
             or len(task_id) > 200 or any(ord(ch) < 32 for ch in task_id)
-            or not isinstance(content, str) or "\x00" in content
+            or not isinstance(content, str) or "\\x00" in content
         ):
             raise ValueError("dependency result provenance or content is invalid.")
         seen.add(subtask_id)
@@ -200,24 +200,6 @@ class SpecialistAgentCoordinator:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_events_plan_sequence ON agent_plan_events(plan_id, sequence)")
-
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS agent_handoff_audit (
-                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    plan_id TEXT NOT NULL,
-                    source_subtask_id TEXT NOT NULL,
-                    destination_subtask_id TEXT NOT NULL,
-                    source_agent_id TEXT NOT NULL,
-                    source_task_id TEXT NOT NULL,
-                    content_sha256 TEXT NOT NULL,
-                    content_bytes INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(plan_id, source_subtask_id, destination_subtask_id),
-                    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
-                )
-            """)
-            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_handoff_audit_plan ON agent_handoff_audit(plan_id, audit_id)")
-
 
             db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
@@ -662,22 +644,6 @@ class SpecialistAgentCoordinator:
                 )
                 if encoded is not None:
                     argument = base + encoded
-                    envelope = json.loads(encoded)
-                    with self._connect() as db:
-                        now = datetime.now(timezone.utc).isoformat()
-                        for result in envelope["results"]:
-                            payload = result["content"].encode("utf-8")
-                            db.execute("""
-                                INSERT OR IGNORE INTO agent_handoff_audit(
-                                    plan_id, source_subtask_id, destination_subtask_id,
-                                    source_agent_id, source_task_id, content_sha256,
-                                    content_bytes, created_at
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                plan_id, result["subtask_id"], row["subtask_id"],
-                                result["agent_id"], result["task_id"],
-                                hashlib.sha256(payload).hexdigest(), len(payload), now,
-                            ))
             task = self.runtime.enqueue(
                 actor_id=actor_id,
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
@@ -805,23 +771,6 @@ class SpecialistAgentCoordinator:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (plan_id, sequence, actor, kind, encoded, now),
             )
-
-
-    def handoff_audit(self, *, actor_id: str, plan_id: str, limit: int = 100) -> list[dict]:
-        """Read bounded, content-free provenance records for an authorized plan."""
-        if not self._allowed(actor_id, "agent:read", plan_id):
-            raise PermissionError("agent plan read is not authorized.")
-        if type(limit) is not int or not 1 <= limit <= 500:
-            raise ValueError("limit must be an integer from 1 to 500.")
-        with self._connect() as db:
-            if db.execute("SELECT 1 FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone() is None:
-                raise KeyError("agent plan not found.")
-            rows = db.execute("""
-                SELECT source_subtask_id, destination_subtask_id, source_agent_id,
-                       source_task_id, content_sha256, content_bytes, created_at
-                FROM agent_handoff_audit WHERE plan_id=? ORDER BY audit_id LIMIT ?
-            """, (plan_id, limit)).fetchall()
-        return [dict(row) for row in rows]
 
     def plan_events(
         self, *, actor_id: str, plan_id: str, after_sequence: int = 0, limit: int = 100,
