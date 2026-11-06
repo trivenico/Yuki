@@ -164,7 +164,23 @@ def main():
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    raw_provider = create_provider(config)
+    usage_ledger = UsageLedger(workspace / "provider-usage.sqlite3")
+    if callable(getattr(raw_provider, "generate_chat", None)):
+        active_provider = UsageMeteredProvider(
+            raw_provider, ledger=usage_ledger,
+            provider_id=str(config.get("provider", "unknown")),
+            model_id=str(
+                getattr(raw_provider, "model", None)
+                or getattr(getattr(raw_provider, "local_provider", None), "model", None)
+                or config.get("openai_model", "configured-model")
+            ),
+            session_id="terminal",
+        )
+    else:
+        active_provider = raw_provider
+    ai = YukiAgent(active_provider)
+    api_handle = _start_local_api()
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
@@ -219,11 +235,13 @@ def main():
             command = input("\nYou > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nYuki > Goodbye.")
+            _stop_local_api(api_handle)
             return
         if not command:
             continue
         if command in {"/quit", "/exit"}:
             print("Yuki > Goodbye.")
+            _stop_local_api(api_handle)
             return
         if command == "/help":
             print_help()
@@ -267,6 +285,16 @@ def main():
                 print(f"Yuki recovery: {result.status} — {result.message}")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Recovery request rejected: {exc}")
+        elif command == "/usage":
+            report = usage_ledger.summary()
+            print("Provider usage:")
+            print(f"- Events: {report['events']}")
+            print(f"- Input tokens: {report['input_tokens']}")
+            print(f"- Output tokens: {report['output_tokens']}")
+            print(f"- Total tokens: {report['total_tokens']}")
+            print(f"- Estimated events: {report['estimated_events']}")
+            print(f"- Unknown-cost events: {report['unknown_cost_events']}")
+            print(f"- Cost by currency: {report['cost_by_currency']}")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
