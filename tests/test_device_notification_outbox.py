@@ -196,7 +196,7 @@ class CompanionReminderDeviceChannelTests(unittest.TestCase):
         self.assertEqual(len(outbox.poll(first.token).events), 1)
 
     def test_reminder_channel_rejects_invalid_envelopes(self):
-        from companion.reminder_dispatcher import DeviceNotificationChannel
+        from companion.reminder_dispatcher import DeviceNotificationChannel, NoActiveReminderDevices
 
         class EmptyPairing:
             def list_devices(self, owner_id):
@@ -212,7 +212,7 @@ class CompanionReminderDeviceChannelTests(unittest.TestCase):
                 "owner_id": "owner-a", "reminder_id": "not-an-id",
                 "text": "Reminder", "due_at": "2026-11-06T15:00:00+00:00",
             })
-        with self.assertRaisesRegex(Exception, "no_active_paired_devices"):
+        with self.assertRaisesRegex(NoActiveReminderDevices, "no_active_paired_devices"):
             channel({
                 "owner_id": "owner-a", "reminder_id": "b" * 32,
                 "text": "Reminder", "due_at": "2026-11-06T15:00:00+00:00",
