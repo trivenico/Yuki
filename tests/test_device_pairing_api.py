@@ -61,6 +61,28 @@ class DevicePairingAPITests(unittest.TestCase):
             return messages[0]["status"], json.loads(messages[1]["body"])
         return asyncio.run(run())
 
+    def test_pairing_service_fallback_lists_and_revokes_devices(self):
+        status, challenge = self.request(
+            "POST", "/v1/devices/pairing-challenges", self.session.token
+        )
+        self.assertEqual(status, 201)
+        status, paired = self.request(
+            "POST", "/v1/devices/pair", payload={
+                "code": challenge["code"], "name": "Yuki Desktop"
+            }, scheme="http", client=("127.0.0.1", 8765)
+        )
+        self.assertEqual(status, 201)
+        device_id = paired["device"]["device_id"]
+        status, listing = self.request("GET", "/v1/devices", self.session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["device_id"] for item in listing["devices"]], [device_id])
+        status, revoked = self.request(
+            "DELETE", "/v1/devices/" + device_id, self.session.token
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(revoked["revoked"])
+        self.assertIsNone(self.pairing.authenticate_device(paired["device_token"]))
+
     def test_challenge_requires_owner_session_and_returns_one_time_code(self):
         status, _ = self.request("POST", "/v1/devices/pairing-challenges")
         self.assertEqual(status, 401)
