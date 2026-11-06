@@ -283,7 +283,7 @@ fn save_notification_opt_in(app: &AppHandle, enabled: bool) -> Result<(), String
     let path = notification_opt_in_path(app)?;
     let parent = path.parent().ok_or_else(|| "Notification preference path is invalid.".to_string())?;
     std::fs::create_dir_all(parent).map_err(|_| "Could not create notification preference directory.".to_string())?;
-    let value = if enabled { "enabled\\n" } else { "disabled\\n" };
+    let value = if enabled { "enabled\n" } else { "disabled\n" };
     let mut file = std::fs::File::create(path).map_err(|_| "Could not save notification preference.".to_string())?;
     file.write_all(value.as_bytes()).and_then(|_| file.sync_all())
         .map_err(|_| "Could not persist notification preference.".to_string())
