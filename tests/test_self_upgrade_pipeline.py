@@ -103,6 +103,24 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
         with self.assertRaises(ToolInputError):
             self.builder.build([change])
 
+    def test_builder_rejects_windows_separators_and_traversal_allowlists(self):
+        for path in (r"src\\example.py", "src/../secret.py", "src//example.py"):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    SelfUpgradeProposalBuilder([path])
+
+    def test_review_store_rejects_backslash_traversal_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            malformed = UpgradeProposal(
+                proposal_id="upgrade_" + "c" * 24,
+                content_digest="d" * 64,
+                changed_paths=(r"src\\..\\secret.py",),
+                patch_bytes=1,
+            )
+            with self.assertRaisesRegex(ValueError, "invariants"):
+                store.record(malformed)
+
     def test_sensitive_path_rejected_even_if_allowlisted(self):
         builder = SelfUpgradeProposalBuilder([".env"])
         change = FileChange(".env", self.digest, "TOKEN=example\n")
