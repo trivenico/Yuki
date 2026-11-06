@@ -15,6 +15,7 @@ from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.agent_memory import AgentMemoryStore
+from core.owner_profile import OwnerProfileStore
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.factory import create_provider
 
@@ -31,6 +32,7 @@ _MEMORY_OWNER = re.compile(r"^owner-[a-f0-9]{64}$")
 _MEMORY_ACTIONS = frozenset({
     "agent_memory:read", "agent_memory:write", "agent_memory:correct",
     "agent_memory:review", "agent_memory:retire", "agent_memory:delete",
+    "owner_profile:read", "owner_profile:write", "owner_profile:delete",
 })
 
 
@@ -39,7 +41,7 @@ def _authorize_companion_memory(actor_id: str, action: str, agent_id: str) -> bo
     return (
         isinstance(actor_id, str)
         and _MEMORY_OWNER.fullmatch(actor_id) is not None
-        and agent_id == "assistant"
+        and agent_id in {"assistant", "owner_profile"}
         and action in _MEMORY_ACTIONS
     )
 
@@ -109,12 +111,17 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         str(workspace / "companion-memory.sqlite3"),
         authorize=_authorize_companion_memory,
     )
+    owner_profile_store = OwnerProfileStore(
+        str(workspace / "owner-profile.sqlite3"),
+        authorize=_authorize_companion_memory,
+    )
     return build_conversation_runtime(
         config,
         auth_service=auth,
         agent_loop=agent_loop,
         tools_for_user=lambda _user: [],
         memory_store=memory_store,
+        owner_profile_store=owner_profile_store,
         provider_catalog=lambda: [{
             "name": str(config.get("provider", "unknown")),
             "status": "configured",
