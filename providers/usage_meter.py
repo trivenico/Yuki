@@ -123,6 +123,25 @@ class UsageMeteredProvider:
                 except Exception:
                     pass
 
+    def is_available(self) -> bool:
+        available = getattr(self.provider, "is_available", None)
+        return bool(available()) if callable(available) else True
+
+    def generate(self, prompt: str) -> str:
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("prompt_must_be_non_empty")
+        response = self.generate_chat(
+            messages=[{"role": "user", "content": prompt.strip()}],
+            tools=[], tool_choice="none",
+        )
+        calls = response.get("tool_calls", {"tool_calls": []})
+        if calls != {"tool_calls": []}:
+            raise UsageMeteringError("plain_generation_returned_tool_calls")
+        result = response.get("text")
+        if not isinstance(result, str):
+            raise UsageMeteringError("provider_text_response_invalid")
+        return result
+
     def generate_chat(self, **kwargs):
         response = self.provider.generate_chat(**kwargs)
         if isinstance(response, Mapping):
