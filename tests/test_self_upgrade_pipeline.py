@@ -105,6 +105,11 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             store.review(proposal.proposal_id, "approve", reviewer="operator")
             row = store.record_test_evidence(**evidence)
             self.assertEqual(row["content_digest"], proposal.content_digest)
+            self.assertEqual(
+                row["runner_attestation_digest"],
+                hashlib.sha256(evidence["runner_attestation"].encode("utf-8")).hexdigest(),
+            )
+            self.assertNotIn("runner_attestation", row)
             self.assertEqual(store.record_test_evidence(**evidence)["run_id"], evidence["run_id"])
             self.assertEqual(len(store.list_test_evidence(proposal.proposal_id)), 1)
 
