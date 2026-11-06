@@ -117,6 +117,10 @@ class UsageLedger:
         return value
 
     @staticmethod
+    def _decimal_text(value: Decimal) -> str:
+        return format(value.normalize(), "f")
+
+    @staticmethod
     def _price(value: Any, label: str) -> Decimal | None:
         if value is None:
             return None
@@ -172,8 +176,8 @@ class UsageLedger:
         values = (
             event_id, request_id, session_id, agent_id, provider, model,
             input_tokens, output_tokens, int(estimated),
-            None if input_price is None else format(input_price, "f"),
-            None if output_price is None else format(output_price, "f"),
+            None if input_price is None else self._decimal_text(input_price),
+            None if output_price is None else self._decimal_text(output_price),
             currency_value, version_value, cost, created_at,
         )
         with self._connect() as connection:
