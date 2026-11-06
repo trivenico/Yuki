@@ -274,14 +274,14 @@ fn main() {
             show_native_notification
         ])
         .setup(|app| {
-            let url = server_url()?;
+            let _url = server_url()?;
             let mut process = start_server()?;
             if let Err(error) = wait_until_ready(&mut process.child) {
                 stop_process(&mut process);
                 return Err(error.into());
             }
 
-            if let Err(error) = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+            if let Err(error) = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Yuki")
                 .inner_size(1200.0, 820.0)
                 .min_inner_size(800.0, 600.0)
