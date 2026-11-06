@@ -17,6 +17,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
 from companion.reminder_store import CompanionReminderStore
+from companion.reminder_dispatcher import ReminderDispatcher, DeviceNotificationChannel
 from core.device_pairing import DevicePairingService
 from core.device_notification_outbox import DeviceNotificationOutbox
 from core.structured_tool_protocol import StructuredToolProtocol
@@ -135,6 +136,10 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
     notification_outbox = DeviceNotificationOutbox(
         str(workspace / "device-notifications.sqlite3"), device_pairing
     )
+    reminder_dispatcher = ReminderDispatcher(
+        reminder_store,
+        DeviceNotificationChannel(device_pairing, notification_outbox),
+    )
     return build_conversation_runtime(
         config,
         auth_service=auth,
@@ -143,6 +148,7 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         memory_store=memory_store,
         owner_profile_store=owner_profile_store,
         reminder_store=reminder_store,
+        reminder_dispatcher=reminder_dispatcher,
         device_pairing=device_pairing,
         notification_outbox=notification_outbox,
         provider_catalog=lambda: [{
