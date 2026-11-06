@@ -58,7 +58,17 @@ class ReminderDispatcher:
         self._stop.set()
         task, self._task = self._task, None
         if task is not None:
-            try:
+            # Cancellation or lease replacement may happen after claim but before
+        # this worker reaches the delivery boundary. Revalidate immediately
+        # before invoking the external channel; this narrows (but cannot make
+        # atomic) the race with cancellation during an in-flight send.
+        current = await self._store_call(
+            "is_lease_current", reminder_id=reminder_id, lease_token=token
+        )
+        if not current:
+            logger.info("Skipping stale or cancelled reminder lease (reminder_id=%s)", reminder_id)
+            return
+        try:
                 await asyncio.wait_for(task, timeout=10)
             except asyncio.TimeoutError:
                 task.cancel()
