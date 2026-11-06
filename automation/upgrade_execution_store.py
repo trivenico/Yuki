@@ -324,6 +324,11 @@ class UpgradeExecutionStore:
         except EvidenceVerificationError as exc:
             target_state = "rejected"
             reason = str(exc)[:100]
+        except Exception:
+            # Fail closed: an unexpected verifier failure must never leave a
+            # request eligible for an automatic retry or verified promotion.
+            target_state = "rejected"
+            reason = "verification_internal_error"
         else:
             target_state = "verified_pass" if evidence.outcome == "passed" and evidence.exit_code == 0 else "verified_fail"
             reason = "signature_and_claims_verified"
