@@ -303,15 +303,16 @@ class SelfUpgradeReviewStore:
                             ("result_digest", result_digest)):
             if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise ValueError(f"{name}_invalid")
-        if (not isinstance(test_target, str) or not test_target.strip()
-                or len(test_target) > 200 or "\\" in test_target
-                or "\x00" in test_target):
+        if (not isinstance(test_target, str) or len(test_target) > 200
+                or not re.fullmatch(
+                    r"tests(?:\\.[A-Za-z_][A-Za-z0-9_]*)+", test_target
+                )):
             raise ValueError("test_target_invalid")
-        if outcome not in {"passed", "failed", "timed_out"}:
+        if not isinstance(outcome, str) or outcome not in {"passed", "failed", "timed_out"}:
             raise ValueError("test_outcome_invalid")
         if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not -255 <= exit_code <= 255:
             raise ValueError("test_exit_code_invalid")
-        if runner_kind not in {"github_actions", "container", "vm"}:
+        if not isinstance(runner_kind, str) or runner_kind not in {"github_actions", "container", "vm"}:
             raise ValueError("runner_kind_must_be_isolated")
         if (not isinstance(runner_attestation, str) or not runner_attestation.strip()
                 or len(runner_attestation) > 16384):
