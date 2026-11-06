@@ -41,8 +41,8 @@ def _authorize_companion_memory(actor_id: str, action: str, agent_id: str) -> bo
     return (
         isinstance(actor_id, str)
         and _MEMORY_OWNER.fullmatch(actor_id) is not None
-        and agent_id in {"assistant", "owner_profile"}
         and action in _MEMORY_ACTIONS
+        and action.split(":", 1)[0] == agent_id
     )
 
 
