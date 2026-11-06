@@ -38,17 +38,25 @@ class ApprovedUpgradeExecutor:
         approve_execution: Callable[[str, str, str, str, str], bool],
         audit: Callable[[dict], None],
         allowed_paths: Sequence[str],
+        staging_workspace_validator: Callable[[Path], bool],
     ) -> None:
         if not isinstance(review_store, SelfUpgradeReviewStore):
             raise TypeError("review_store must be a SelfUpgradeReviewStore")
-        if not callable(trusted_principal) or not callable(approve_execution) or not callable(audit):
-            raise TypeError("trusted-principal, execution-approval, and audit callbacks are required")
+        if (not callable(trusted_principal) or not callable(approve_execution)
+                or not callable(audit) or not callable(staging_workspace_validator)):
+            raise TypeError("trusted-principal, execution-approval, audit, and staging-workspace validation callbacks are required")
         if not isinstance(allowed_paths, (tuple, list)) or not allowed_paths:
             raise ValueError("an explicit workspace path allow-list is required")
         self.review_store = review_store
         self.workspace = Path(workspace).expanduser().resolve()
         if not self.workspace.is_dir():
             raise ValueError("workspace must be an existing directory")
+        try:
+            staging_allowed = staging_workspace_validator(self.workspace) is True
+        except Exception:
+            staging_allowed = False
+        if not staging_allowed:
+            raise PermissionError("workspace is not an approved disposable staging checkout")
         self.trusted_principal = trusted_principal
         self.approve_execution = approve_execution
         self.audit = audit
