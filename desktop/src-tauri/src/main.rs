@@ -79,6 +79,20 @@ fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
     Ok(child)
 }
 
+fn health_response_is_ready(response: &[u8]) -> bool {
+    let response = String::from_utf8_lossy(response);
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    if headers.lines().next() != Some("HTTP/1.1 200 OK") {
+        return false;
+    }
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    payload.get("status").and_then(serde_json::Value::as_str) == Some("ok")
+}
+
 fn health_check() -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&server_addr(), Duration::from_millis(300)) else {
         return false;
@@ -97,13 +111,7 @@ fn health_check() -> bool {
     {
         return false;
     }
-    let response = String::from_utf8_lossy(&response);
-    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
-        return false;
-    };
-    headers.lines().next() == Some("HTTP/1.1 200 OK")
-        && body.contains("\"status\"")
-        && body.contains("\"ok\"")
+    health_response_is_ready(&response)
 }
 
 fn wait_until_ready(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> {
@@ -171,5 +179,30 @@ fn main() {
             eprintln!("Yuki Desktop startup failed: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::health_response_is_ready;
+
+    #[test]
+    fn accepts_only_successful_health_response() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\"}";
+        assert!(health_response_is_ready(response));
+    }
+
+    #[test]
+    fn rejects_non_success_http_status() {
+        let response = b"HTTP/1.1 503 Service Unavailable\r\n\r\n{\"status\":\"ok\"}";
+        assert!(!health_response_is_ready(response));
+    }
+
+    #[test]
+    fn rejects_malformed_or_unhealthy_json() {
+        assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{"));
+        assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{\"status\":\"starting\"}"));
+        assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{\"message\":\"ok\"}"));
     }
 }
