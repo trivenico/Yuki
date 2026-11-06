@@ -59,6 +59,40 @@ def test_dispatcher_records_delivery_failure_and_releases_lease(tmp_path):
 
 
 
+
+def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
+    store = _store(tmp_path)
+    first = store.create(
+        owner_id="owner-a", text="Slow first delivery",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    second = store.create(
+        owner_id="owner-a", text="Second delivery gets a fresh lease",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    received = []
+
+    async def deliver(envelope):
+        received.append(envelope["reminder_id"])
+        if envelope["reminder_id"] == first["reminder_id"]:
+            await asyncio.sleep(5.2)
+
+    dispatcher = ReminderDispatcher(
+        store, deliver, poll_interval_seconds=0.1, batch_size=2, lease_seconds=5,
+    )
+
+    async def scenario():
+        await dispatcher.start()
+        for _ in range(400):
+            if len(received) == 2:
+                break
+            await asyncio.sleep(0.02)
+        await dispatcher.stop()
+
+    asyncio.run(scenario())
+    assert received == [first["reminder_id"], second["reminder_id"]]
+    assert store.list(owner_id="owner-a", include_inactive=True) == []
+
 def test_dispatcher_skips_delivery_when_reminder_was_cancelled_after_claim(tmp_path):
     store = _store(tmp_path)
     reminder = store.create(
