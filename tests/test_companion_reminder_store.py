@@ -146,7 +146,8 @@ class CompanionReminderStoreTests(unittest.TestCase):
         for attempt in range(1, self.store.MAX_DELIVERY_ATTEMPTS + 1):
             claim = self.store.claim_due(now=now)[0]
             result = self.store.record_delivery_failure(
-                reminder_id=item["reminder_id"], lease_token=claim["lease_token"], failed_at=now,
+                reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+                failed_at=now, now=now,
             )
             self.assertEqual(result["attempts"], attempt)
             self.assertEqual(result["exhausted"], attempt == self.store.MAX_DELIVERY_ATTEMPTS)
