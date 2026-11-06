@@ -1,6 +1,6 @@
 import io
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
 from yuki_cli import _reminder_request
@@ -15,10 +15,9 @@ class YukiReminderHttpClientTests(unittest.TestCase):
         open_url.assert_not_called()
 
     def test_request_is_loopback_only_and_uses_bearer_auth(self):
-        response = io.BytesIO(b'{"reminders":[]}')
-        response.status = 200
-        response.__enter__ = lambda self: self
-        response.__exit__ = lambda self, *_args: False
+        response = MagicMock()
+        response.read.return_value = b'{"reminders":[]}'
+        response.__enter__.return_value = response
         with patch("yuki_cli.urlopen", return_value=response) as open_url:
             result, status = _reminder_request(
                 "/v1/companion/reminders", token="x" * 32,
