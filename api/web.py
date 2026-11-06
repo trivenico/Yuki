@@ -125,7 +125,23 @@ class YukiWebApplication:
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
-            if method == "OPTIONS" and desktop_origin:
+            await self.api(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET").upper()
+        path = scope.get("path", "/")
+        rejection = self._request_rejection(scope, method)
+        if rejection is not None:
+            status, code = rejection
+            await self._respond(
+                send, status, json.dumps({"error": code}).encode("utf-8"),
+                "application/json; charset=utf-8", method,
+            )
+            return
+
+        origins = self._header_values(scope, "origin")
+        desktop_origin = bool(origins and origins[0] in self.allowed_origins)
+        if method == "OPTIONS" and desktop_origin:
             await send({
                 "type": "http.response.start", "status": 204,
                 "headers": [
@@ -139,34 +155,11 @@ class YukiWebApplication:
             await send({"type": "http.response.body", "body": b""})
             return
 
-        if desktop_origin:
-            async def cors_send(message):
-                if message.get("type") == "http.response.start":
-                    headers = list(message.get("headers", []))
-                    headers.extend([
-                        (b"access-control-allow-origin", origins[0].encode("ascii")),
-                        (b"vary", b"Origin"),
-                    ])
-                    message = {**message, "headers": headers}
-                await send(message)
-            await self.api(scope, receive, cors_send)
-            return
-        await self.api(scope, receive, send)
-            return
-        method = scope.get("method", "GET").upper()
-        path = scope.get("path", "/")
-        rejection = self._request_rejection(scope, method)
-        if rejection is not None:
-            status, code = rejection
-            await self._respond(
-                send, status, json.dumps({"error": code}).encode("utf-8"),
-                "application/json; charset=utf-8", method,
-            )
-            return
         if path == "/healthz" and method in {"GET", "HEAD"}:
             body = json.dumps({"status": "ok", "service": "yuki"}).encode("utf-8")
             await self._respond(send, 200, body, "application/json; charset=utf-8", method)
             return
+
         asset = _ASSETS.get(path)
         if asset is not None:
             if method not in {"GET", "HEAD"}:
@@ -182,6 +175,20 @@ class YukiWebApplication:
             cache = b"no-store" if filename == "index.html" else b"public, max-age=300"
             await self._respond(send, 200, body, content_type, method, cache=cache)
             return
+
+        if desktop_origin:
+            async def cors_send(message):
+                if message.get("type") == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.extend([
+                        (b"access-control-allow-origin", origins[0].encode("ascii")),
+                        (b"vary", b"Origin"),
+                    ])
+                    message = {**message, "headers": headers}
+                await send(message)
+            await self.api(scope, receive, cors_send)
+            return
+
         await self.api(scope, receive, send)
 
     @staticmethod
