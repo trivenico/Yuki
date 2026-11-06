@@ -84,13 +84,13 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
         nested = self.root / "src"
         nested.mkdir()
         target = nested / "module.py"
-        target.write_text("VALUE = 1\\n", encoding="utf-8")
+        target.write_text("VALUE = 1\n", encoding="utf-8")
         service = self.service(allowed=("src/module.py",))
         old = target.read_bytes()
-        change = FileChange("src/module.py", hashlib.sha256(old).hexdigest(), "VALUE = 2\\n")
+        change = FileChange("src/module.py", hashlib.sha256(old).hexdigest(), "VALUE = 2\n")
         result = service.apply(principal=self.principal, changes=[change])
         self.assertEqual(result.changed_paths, ("src/module.py",))
-        self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 2\\n")
+        self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 2\n")
 
     def test_symlink_paths_rejected(self):
         target = self.root / "target.py"
