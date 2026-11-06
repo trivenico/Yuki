@@ -40,6 +40,22 @@ def build_parser() -> argparse.ArgumentParser:
     reminder_cancel = reminder_commands.add_parser("cancel", help="Cancel one of your reminders")
     reminder_cancel.add_argument("reminder_id")
 
+    notifications = sub.add_parser(
+        "notifications", help="Inspect notifications delivered to this paired device"
+    )
+    notification_commands = notifications.add_subparsers(
+        dest="notification_command", required=True
+    )
+    notification_list = notification_commands.add_parser(
+        "list", help="List pending device notifications"
+    )
+    notification_list.add_argument("--after-sequence", type=int, default=0)
+    notification_list.add_argument("--limit", type=int, default=50)
+    notification_ack = notification_commands.add_parser(
+        "ack", help="Acknowledge one device notification"
+    )
+    notification_ack.add_argument("event_id")
+
     serve = sub.add_parser(
         "serve",
         help="Start the authenticated loopback API for desktop and local clients",
@@ -113,6 +129,75 @@ def _run_reminders(args, output_fn: Callable[[str], object]) -> int:
     return status
 
 
+def _device_request(
+    path: str, *, method: str = "GET", token: str | None = None,
+) -> tuple[dict | None, int]:
+    """Call only the fixed loopback device feed with a paired-device credential."""
+    credential = token or os.environ.get("YUKI_DEVICE_TOKEN")
+    if not isinstance(credential, str) or not 20 <= len(credential) <= 256:
+        return {"error": "Set YUKI_DEVICE_TOKEN to a valid paired-device token."}, 2
+    if not (
+        path == "/v1/devices/notifications"
+        or (
+            path.startswith("/v1/devices/notifications/evt_")
+            and path.endswith("/ack")
+            and len(path) == len("/v1/devices/notifications/") + 36 + len("/ack")
+        )
+    ):
+        return {"error": "Invalid device notification endpoint."}, 2
+    request = Request(
+        _LOCAL_API + path,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + credential,
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            raw = response.read(24_001)
+            if len(raw) > 24_000:
+                return {"error": "Yuki API response exceeded the size limit."}, 4
+            decoded = json.loads(raw.decode("utf-8")) if raw else {}
+            return decoded, 0
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            return {"error": "Paired-device credential is invalid, revoked, or expired."}, 3
+        if exc.code == 503:
+            return {"error": "Yuki device notifications are unavailable."}, 3
+        return {"error": f"Yuki API request failed (HTTP {exc.code})."}, 4
+    except (URLError, TimeoutError, OSError):
+        return {"error": "Could not reach Yuki at 127.0.0.1:8765."}, 3
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"error": "Yuki API returned an invalid response."}, 4
+
+
+def _run_notifications(args, output_fn: Callable[[str], object]) -> int:
+    if args.notification_command == "list":
+        if args.after_sequence < 0 or not 1 <= args.limit <= 100:
+            output_fn("Invalid notification cursor or page size (limit must be 1-100).")
+            return 2
+        path = (
+            "/v1/devices/notifications"
+            f"?after_sequence={args.after_sequence}&limit={args.limit}"
+        )
+        result, status = _device_request(path)
+    else:
+        if (
+            len(args.event_id) != 36
+            or not args.event_id.startswith("evt_")
+            or any(c not in "0123456789abcdef" for c in args.event_id[4:])
+        ):
+            output_fn("Invalid notification event ID.")
+            return 2
+        result, status = _device_request(
+            "/v1/devices/notifications/" + args.event_id + "/ack",
+            method="POST",
+        )
+    _write_json(result, output_fn)
+    return status
+
+
 def _safe_ask(provider, prompt: str) -> tuple[str, int]:
     """Return a sanitized response and non-zero status for provider failures."""
     if not isinstance(prompt, str) or not prompt.strip():
@@ -150,6 +235,9 @@ def run_cli(
 
     if args.command == "reminders":
         return _run_reminders(args, output_fn)
+
+    if args.command == "notifications":
+        return _run_notifications(args, output_fn)
 
     try:
         config = config_loader()
