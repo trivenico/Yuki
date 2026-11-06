@@ -1,4 +1,5 @@
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -155,6 +156,57 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
                 stored.execution_id, expected_version=stored.version,
                 evidence=self.evidence(),
             )
+
+    def test_audit_events_are_append_only_at_database_boundary(self):
+        row = self.store.create(self.request)
+        with self.store._connect() as db:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_event_is_append_only"):
+                db.execute(
+                    "UPDATE upgrade_execution_events SET reason_code='rewritten' WHERE execution_id=?",
+                    (row.execution_id,),
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_event_is_append_only"):
+                db.execute(
+                    "DELETE FROM upgrade_execution_events WHERE execution_id=?",
+                    (row.execution_id,),
+                )
+        self.assertEqual(self.store.list_events(row.execution_id)[0]["reason_code"], "admitted")
+
+    def test_request_snapshot_and_execution_records_cannot_be_rewritten_or_deleted(self):
+        row = self.store.create(self.request)
+        with self.store._connect() as db:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_request_snapshot_is_immutable"):
+                db.execute(
+                    "UPDATE upgrade_executions SET request_json='{}' WHERE execution_id=?",
+                    (row.execution_id,),
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_execution_is_retained"):
+                db.execute(
+                    "DELETE FROM upgrade_executions WHERE execution_id=?",
+                    (row.execution_id,),
+                )
+        self.assertEqual(self.store.get(row.execution_id).request_digest, self.request.request_digest)
+
+    def test_recorded_evidence_cannot_be_replaced_at_database_boundary(self):
+        row = self.store.create(self.request)
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="running",
+            actor_id="runner", reason_code="started",
+        )
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="evidence_pending",
+            actor_id="runner", reason_code="finished",
+        )
+        stored = self.store.record_evidence(
+            row.execution_id, expected_version=row.version, evidence=self.evidence(),
+        )
+        with self.store._connect() as db:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_evidence_is_write_once"):
+                db.execute(
+                    "UPDATE upgrade_executions SET evidence_json='{}' WHERE execution_id=?",
+                    (stored.execution_id,),
+                )
+        self.assertEqual(self.store.get(stored.execution_id).evidence_json, stored.evidence_json)
 
     def test_evidence_for_another_snapshot_is_rejected(self):
         row = self.store.create(self.request)
