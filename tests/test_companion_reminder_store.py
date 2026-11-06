@@ -105,6 +105,25 @@ class CompanionReminderStoreTests(unittest.TestCase):
                 now += timedelta(seconds=2 ** attempt * 5)
         self.assertEqual(self.store.claim_due(now=now + timedelta(days=1)), [])
 
+    def test_crashed_leases_consume_attempt_budget_and_eventually_exhaust(self):
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        item = self.store.create(owner_id="owner-a", text="Recover from worker crashes", due_at=now)
+        for attempt in range(1, self.store.MAX_DELIVERY_ATTEMPTS + 1):
+            claim = self.store.claim_due(now=now, lease_seconds=5)[0]
+            self.assertEqual(claim["attempts"], attempt)
+            # Simulate a process crash: no failure callback and no acknowledgement.
+            now += timedelta(seconds=6)
+        self.assertEqual(self.store.claim_due(now=now, lease_seconds=5), [])
+        row = self.store.list(owner_id="owner-a", include_inactive=True)[0]
+        self.assertEqual(row["status"], "pending")
+        with self.store._connect() as db:
+            persisted = db.execute(
+                "SELECT attempts, exhausted_at FROM companion_reminders WHERE reminder_id=?",
+                (item["reminder_id"],),
+            ).fetchone()
+        self.assertEqual(persisted["attempts"], self.store.MAX_DELIVERY_ATTEMPTS)
+        self.assertIsNotNone(persisted["exhausted_at"])
+
     def test_concurrent_dispatchers_cannot_claim_same_reminder(self):
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
         self.store.create(owner_id="owner-a", text="Only one active lease", due_at=now)
