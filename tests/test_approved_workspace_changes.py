@@ -66,11 +66,8 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
     def test_unlisted_secret_and_parent_paths_rejected(self):
         with self.assertRaises(ToolAuthorizationError):
             self.service().apply(principal=self.principal, changes=[self.change(path=".env", content="x")])
-        with self.assertRaises(ToolInputError):
-            self.service(allowed=("../outside.py",)).apply(
-                principal=self.principal,
-                changes=[FileChange("../outside.py", "0" * 64, "x")],
-            )
+        with self.assertRaises(ValueError):
+            self.service(allowed=("../outside.py",))
 
     def test_constructor_rejects_nonportable_and_ambiguous_allowlists(self):
         for invalid in ("dir\\\\sample.py", "C:sample.py", "/sample.py", "dir//sample.py", "dir/../sample.py", "dir/./sample.py"):
