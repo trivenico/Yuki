@@ -36,6 +36,7 @@ class UpgradeProposal:
     content_digest: str
     changed_paths: tuple[str, ...]
     patch_bytes: int
+    snapshot_json: str = ""
     review_required: bool = True
     tests_required: bool = True
     promotion_allowed: bool = False
@@ -62,7 +63,7 @@ class SelfUpgradeProposalBuilder:
             raise ToolInputError("One to eight proposed changes are required.")
         seen: set[str] = set()
         total = 0
-        manifest = []
+        snapshot_items = []
         for change in changes:
             if not isinstance(change, FileChange):
                 raise ToolInputError("Every proposal item must be a FileChange.")
@@ -84,19 +85,25 @@ class SelfUpgradeProposalBuilder:
             if total > _MAX_TOTAL_BYTES:
                 raise ToolInputError("Total proposed patch exceeds the size limit.")
             seen.add(path)
-            manifest.append({
+            snapshot_items.append({
                 "path": path,
                 "expected_sha256": change.expected_sha256,
+                "content": change.content,
                 "proposed_sha256": hashlib.sha256(encoded).hexdigest(),
                 "bytes": len(encoded),
             })
-        canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        snapshot_items.sort(key=lambda item: item["path"])
+        snapshot_json = json.dumps(
+            snapshot_items, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        canonical = snapshot_json.encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
         return UpgradeProposal(
             proposal_id="upgrade_" + digest[:24],
             content_digest=digest,
             changed_paths=tuple(sorted(seen)),
             patch_bytes=total,
+            snapshot_json=snapshot_json,
         )
 
 
@@ -137,6 +144,25 @@ class SelfUpgradeReviewStore:
             connection.execute("""
                 CREATE INDEX IF NOT EXISTS idx_self_upgrade_reviews_status_created
                 ON self_upgrade_reviews(status, created_at)
+            """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS self_upgrade_snapshots (
+                    proposal_id TEXT PRIMARY KEY,
+                    content_digest TEXT NOT NULL CHECK(length(content_digest) = 64),
+                    snapshot_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(proposal_id) REFERENCES self_upgrade_reviews(proposal_id)
+                )
+            """)
+            connection.execute("""
+                CREATE TRIGGER IF NOT EXISTS self_upgrade_snapshots_no_update
+                BEFORE UPDATE ON self_upgrade_snapshots
+                BEGIN SELECT RAISE(ABORT, 'upgrade_snapshot_immutable'); END
+            """)
+            connection.execute("""
+                CREATE TRIGGER IF NOT EXISTS self_upgrade_snapshots_no_delete
+                BEFORE DELETE ON self_upgrade_snapshots
+                BEGIN SELECT RAISE(ABORT, 'upgrade_snapshot_immutable'); END
             """)
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS self_upgrade_test_evidence (
@@ -211,6 +237,43 @@ class SelfUpgradeReviewStore:
                 or not isinstance(proposal.patch_bytes, int)
                 or not 0 <= proposal.patch_bytes <= _MAX_TOTAL_BYTES):
             raise ValueError("proposal review invariants are invalid")
+        if not isinstance(proposal.snapshot_json, str) or not proposal.snapshot_json:
+            raise ValueError("proposal_snapshot_missing")
+        try:
+            snapshot = json.loads(proposal.snapshot_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("proposal_snapshot_invalid") from exc
+        if not isinstance(snapshot, list) or len(snapshot) != len(proposal.changed_paths):
+            raise ValueError("proposal_snapshot_invalid")
+        snapshot_paths = []
+        measured_bytes = 0
+        for item in snapshot:
+            if not isinstance(item, dict) or set(item) != {
+                "path", "expected_sha256", "content", "proposed_sha256", "bytes"
+            }:
+                raise ValueError("proposal_snapshot_invalid")
+            path = item["path"]
+            content = item["content"]
+            if not isinstance(path, str) or not self._valid_review_path(path):
+                raise ValueError("proposal_snapshot_path_invalid")
+            if not isinstance(content, str) or "\\x00" in content:
+                raise ValueError("proposal_snapshot_content_invalid")
+            encoded = content.encode("utf-8")
+            actual_hash = hashlib.sha256(encoded).hexdigest()
+            if (item["proposed_sha256"] != actual_hash
+                    or item["expected_sha256"] is None
+                    or not re.fullmatch(r"[0-9a-f]{64}", item["expected_sha256"])
+                    or item["bytes"] != len(encoded)):
+                raise ValueError("proposal_snapshot_digest_invalid")
+            measured_bytes += len(encoded)
+            snapshot_paths.append(path)
+        snapshot_bytes = json.dumps(
+            snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if (hashlib.sha256(snapshot_bytes).hexdigest() != proposal.content_digest
+                or tuple(sorted(snapshot_paths)) != tuple(sorted(proposal.changed_paths))
+                or measured_bytes != proposal.patch_bytes):
+            raise ValueError("proposal_snapshot_digest_mismatch")
         paths = json.dumps(list(proposal.changed_paths), separators=(",", ":"))
         created_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
@@ -232,11 +295,42 @@ class SelfUpgradeReviewStore:
                 proposal.proposal_id, proposal.content_digest, paths,
                 proposal.patch_bytes, created_at,
             ))
+            connection.execute("""
+                INSERT INTO self_upgrade_snapshots (
+                    proposal_id, content_digest, snapshot_json, created_at
+                ) VALUES (?, ?, ?, ?)
+            """, (proposal.proposal_id, proposal.content_digest, proposal.snapshot_json, created_at))
             row = connection.execute(
                 "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
                 (proposal.proposal_id,),
             ).fetchone()
             return dict(row)
+
+    def load_snapshot(self, proposal_id: str) -> dict:
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
+            raise ValueError("proposal_id_invalid")
+        with self._connect() as connection:
+            row = connection.execute("""
+                SELECT r.content_digest, s.snapshot_json
+                FROM self_upgrade_reviews AS r
+                JOIN self_upgrade_snapshots AS s USING (proposal_id)
+                WHERE r.proposal_id = ?
+            """, (proposal_id,)).fetchone()
+        if row is None:
+            raise ValueError("proposal_snapshot_not_found")
+        snapshot_json = row["snapshot_json"]
+        digest = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+        if digest != row["content_digest"]:
+            raise ValueError("proposal_snapshot_integrity_failure")
+        try:
+            items = json.loads(snapshot_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("proposal_snapshot_integrity_failure") from exc
+        return {
+            "proposal_id": proposal_id,
+            "content_digest": digest,
+            "files": items,
+        }
 
     def review(
         self, proposal_id: str, decision: str, *, reviewer: str, note: str = ""
