@@ -26,3 +26,25 @@ isolated environment with no production credentials or network privileges.
 
 ## Integration gate
 The proposal builder depends on the guarded workspace-change and read-tool contracts. CI must run against the current `main` baseline, including `core.guarded_tool_runtime`; a rerun of an old merge ref is not evidence that the current dependency chain is healthy.
+
+## Durable review tracking
+
+The proposal-only boundary now has a SQLite review store at
+`workspace/self-upgrade-reviews.sqlite3`. It records the proposal ID, immutable
+content digest, changed paths, patch size, reviewer, decision and timestamps.
+Identical proposal recording is idempotent; a proposal cannot be changed after
+a decision. Approval is explicitly named
+`approved_for_isolated_testing` and does not grant write, test, commit or
+deployment permissions.
+
+The terminal exposes:
+
+- `/upgrade status` — counts pending, approved-for-testing and rejected proposals.
+- `/upgrade list` — lists recorded proposal IDs and states.
+- `/upgrade review PROPOSAL_ID approve|reject` — asks for high-risk operator
+  confirmation and records a one-way decision.
+
+The review store is connected to startup, but automatic model-generated patch
+creation and handoff into a disposable isolated test environment are not yet
+connected. Therefore these commands are review infrastructure, not a claim
+that Yuki can currently rewrite or upgrade her own source code.
