@@ -166,8 +166,78 @@ fn stop_process(process: &mut ManagedProcess) {
     // this function's caller releases it.
 }
 
+
+const DEVICE_CREDENTIAL_SERVICE: &str = "ai.yuki.desktop";
+const DEVICE_CREDENTIAL_ACCOUNT: &str = "paired-device-token";
+
+#[cfg(windows)]
+#[tauri::command]
+fn store_device_token(token: String) -> Result<(), String> {
+    if !(20..=256).contains(&token.len())
+        || token.chars().any(char::is_control)
+    {
+        return Err("Invalid paired-device credential.".to_string());
+    }
+    let entry = keyring::Entry::new(
+        DEVICE_CREDENTIAL_SERVICE,
+        DEVICE_CREDENTIAL_ACCOUNT,
+    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    entry.set_password(&token)
+        .map_err(|_| "Could not save the paired-device credential.".to_string())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn get_device_token() -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(
+        DEVICE_CREDENTIAL_SERVICE,
+        DEVICE_CREDENTIAL_ACCOUNT,
+    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    match entry.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("Could not read the paired-device credential.".to_string()),
+    }
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn delete_device_token() -> Result<(), String> {
+    let entry = keyring::Entry::new(
+        DEVICE_CREDENTIAL_SERVICE,
+        DEVICE_CREDENTIAL_ACCOUNT,
+    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err("Could not delete the paired-device credential.".to_string()),
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn store_device_token(_token: String) -> Result<(), String> {
+    Err("Secure device credential storage is not yet supported on this platform.".to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn get_device_token() -> Result<Option<String>, String> {
+    Err("Secure device credential storage is not yet supported on this platform.".to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn delete_device_token() -> Result<(), String> {
+    Err("Secure device credential storage is not yet supported on this platform.".to_string())
+}
+
 fn main() {
     let result = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            store_device_token,
+            get_device_token,
+            delete_device_token
+        ])
         .setup(|app| {
             let url = server_url()?;
             let mut process = start_server()?;
