@@ -13,7 +13,9 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const SERVER_URL: &str = "http://127.0.0.1:8765";
-const SERVER_ADDR: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8765));
+fn server_addr() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], 8765))
+}
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_HEALTH_RESPONSE: u64 = 4096;
 
@@ -56,7 +58,7 @@ fn application_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
-    match TcpStream::connect_timeout(&SERVER_ADDR, Duration::from_millis(200)) {
+    match TcpStream::connect_timeout(&server_addr(), Duration::from_millis(200)) {
         Ok(_) => return Err("Port 8765 is already occupied; refusing to attach to an unknown local process.".into()),
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => return Err(format!("Could not verify local API port availability: {error}").into()),
@@ -78,7 +80,7 @@ fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
 }
 
 fn health_check() -> bool {
-    let Ok(mut stream) = TcpStream::connect_timeout(&SERVER_ADDR, Duration::from_millis(300)) else {
+    let Ok(mut stream) = TcpStream::connect_timeout(&server_addr(), Duration::from_millis(300)) else {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
