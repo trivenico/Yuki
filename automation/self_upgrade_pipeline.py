@@ -256,7 +256,7 @@ class SelfUpgradeReviewStore:
             content = item["content"]
             if not isinstance(path, str) or not self._valid_review_path(path):
                 raise ValueError("proposal_snapshot_path_invalid")
-            if not isinstance(content, str) or "\\x00" in content:
+            if not isinstance(content, str) or "\x00" in content:
                 raise ValueError("proposal_snapshot_content_invalid")
             encoded = content.encode("utf-8")
             actual_hash = hashlib.sha256(encoded).hexdigest()
@@ -271,6 +271,7 @@ class SelfUpgradeReviewStore:
             snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         if (hashlib.sha256(snapshot_bytes).hexdigest() != proposal.content_digest
+                or proposal.proposal_id != "upgrade_" + proposal.content_digest[:24]
                 or tuple(sorted(snapshot_paths)) != tuple(sorted(proposal.changed_paths))
                 or measured_bytes != proposal.patch_bytes):
             raise ValueError("proposal_snapshot_digest_mismatch")
@@ -283,8 +284,15 @@ class SelfUpgradeReviewStore:
                 (proposal.proposal_id,),
             ).fetchone()
             if existing is not None:
-                if existing["content_digest"] != proposal.content_digest:
-                    raise ValueError("proposal_id_digest_conflict")
+                stored = connection.execute(
+                    "SELECT content_digest, snapshot_json FROM self_upgrade_snapshots WHERE proposal_id = ?",
+                    (proposal.proposal_id,),
+                ).fetchone()
+                if (existing["content_digest"] != proposal.content_digest
+                        or stored is None
+                        or stored["content_digest"] != proposal.content_digest
+                        or stored["snapshot_json"] != proposal.snapshot_json):
+                    raise ValueError("proposal_id_snapshot_conflict")
                 return dict(existing)
             connection.execute("""
                 INSERT INTO self_upgrade_reviews (
@@ -311,7 +319,8 @@ class SelfUpgradeReviewStore:
             raise ValueError("proposal_id_invalid")
         with self._connect() as connection:
             row = connection.execute("""
-                SELECT r.content_digest, s.snapshot_json
+                SELECT r.content_digest, r.changed_paths, r.patch_bytes, s.content_digest AS snapshot_digest,
+                       s.snapshot_json
                 FROM self_upgrade_reviews AS r
                 JOIN self_upgrade_snapshots AS s USING (proposal_id)
                 WHERE r.proposal_id = ?
@@ -320,16 +329,44 @@ class SelfUpgradeReviewStore:
             raise ValueError("proposal_snapshot_not_found")
         snapshot_json = row["snapshot_json"]
         digest = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
-        if digest != row["content_digest"]:
+        if (digest != row["content_digest"] or digest != row["snapshot_digest"]
+                or proposal_id != "upgrade_" + digest[:24]):
             raise ValueError("proposal_snapshot_integrity_failure")
         try:
             items = json.loads(snapshot_json)
+            stored_paths = json.loads(row["changed_paths"])
         except json.JSONDecodeError as exc:
             raise ValueError("proposal_snapshot_integrity_failure") from exc
+        if not isinstance(items, list) or not isinstance(stored_paths, list):
+            raise ValueError("proposal_snapshot_integrity_failure")
+        measured = 0
+        paths = []
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {
+                "path", "expected_sha256", "content", "proposed_sha256", "bytes"
+            }:
+                raise ValueError("proposal_snapshot_integrity_failure")
+            content = item["content"]
+            encoded = content.encode("utf-8") if isinstance(content, str) else b""
+            if (not isinstance(content, str) or "\x00" in content
+                    or not self._valid_review_path(item["path"])
+                    or not isinstance(item["expected_sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", item["expected_sha256"])
+                    or item["proposed_sha256"] != hashlib.sha256(encoded).hexdigest()
+                    or item["bytes"] != len(encoded)):
+                raise ValueError("proposal_snapshot_integrity_failure")
+            measured += len(encoded)
+            paths.append(item["path"])
+        if (sorted(paths) != sorted(stored_paths) or measured != row["patch_bytes"]
+                or len(items) != len(stored_paths) or measured > _MAX_TOTAL_BYTES):
+            raise ValueError("proposal_snapshot_integrity_failure")
         return {
             "proposal_id": proposal_id,
             "content_digest": digest,
-            "files": items,
+            "files": [
+                FileChange(item["path"], item["expected_sha256"], item["content"])
+                for item in items
+            ],
         }
 
     def review(
