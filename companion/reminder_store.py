@@ -229,9 +229,11 @@ class CompanionReminderStore:
             return cursor.rowcount == 1
 
     def acknowledge_delivery(self, *, reminder_id: str, lease_token: str,
-                             delivered_at: datetime | None = None) -> bool:
-        """Acknowledge a successful send; stale or duplicate acknowledgements fail."""
+                             delivered_at: datetime | None = None,
+                             now: datetime | None = None) -> bool:
+        """Acknowledge a successful send; event time never controls lease validity."""
         stamp = self._utc(delivered_at or datetime.now(timezone.utc))
+        instant = self._utc(now or datetime.now(timezone.utc))
         if not isinstance(reminder_id, str) or len(reminder_id) != 32:
             raise ValueError("invalid_reminder_id")
         if not isinstance(lease_token, str) or len(lease_token) != 32:
@@ -242,15 +244,16 @@ class CompanionReminderStore:
                 "UPDATE companion_reminders SET status='delivered', delivered_at=?, "
                 "lease_token=NULL, lease_until=NULL, next_attempt_at=NULL "
                 "WHERE reminder_id=? AND status='pending' AND lease_token=? AND lease_until>?",
-                (stamp, reminder_id, lease_token, stamp),
+                (stamp, reminder_id, lease_token, instant),
             )
             return cursor.rowcount == 1
 
     def record_delivery_failure(self, *, reminder_id: str, lease_token: str,
-                                failed_at: datetime | None = None) -> dict | None:
-        """Release a lease and schedule bounded exponential retry."""
+                                failed_at: datetime | None = None,
+                                now: datetime | None = None) -> dict | None:
+        """Release a lease; reported event time never controls lease validity."""
         stamp = self._utc(failed_at or datetime.now(timezone.utc))
-        instant = datetime.fromisoformat(stamp)
+        instant = datetime.fromisoformat(self._utc(now or datetime.now(timezone.utc)))
         if not isinstance(reminder_id, str) or len(reminder_id) != 32:
             raise ValueError("invalid_reminder_id")
         if not isinstance(lease_token, str) or len(lease_token) != 32:
