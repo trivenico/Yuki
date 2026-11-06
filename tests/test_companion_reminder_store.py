@@ -179,6 +179,17 @@ class CompanionReminderStoreTests(unittest.TestCase):
         self.assertEqual(persisted["attempts"], self.store.MAX_DELIVERY_ATTEMPTS)
         self.assertIsNotNone(persisted["exhausted_at"])
 
+    def test_exhausted_reminders_do_not_consume_active_capacity(self):
+        self.store.MAX_PER_OWNER = 1
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        first = self.store.create(owner_id="owner-a", text="Will exhaust", due_at=now)
+        for _ in range(self.store.MAX_DELIVERY_ATTEMPTS):
+            claim = self.store.claim_due(now=now, lease_seconds=5)[0]
+            now += timedelta(seconds=6)
+        self.assertEqual(self.store.claim_due(now=now, lease_seconds=5), [])
+        second = self.store.create(owner_id="owner-a", text="New active reminder", due_at=now)
+        self.assertNotEqual(first["reminder_id"], second["reminder_id"])
+
     def test_concurrent_dispatchers_cannot_claim_same_reminder(self):
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
         self.store.create(owner_id="owner-a", text="Only one active lease", due_at=now)
