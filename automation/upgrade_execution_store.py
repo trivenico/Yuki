@@ -188,6 +188,8 @@ class UpgradeExecutionStore:
     ) -> UpgradeExecutionRecord:
         if to_state not in _STATES:
             raise UpgradeExecutionTransitionError("unknown_state")
+        if to_state in {"verifying", "verified_pass", "verified_fail"}:
+            raise UpgradeExecutionTransitionError("privileged_state_requires_verifier")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
             raise ValueError("actor_id_invalid")
         if not isinstance(reason_code, str) or not reason_code.strip() or len(reason_code) > 100:
@@ -325,10 +327,40 @@ class UpgradeExecutionStore:
         else:
             target_state = "verified_pass" if evidence.outcome == "passed" and evidence.exit_code == 0 else "verified_fail"
             reason = "signature_and_claims_verified"
-        return self.transition(
+        return self._finalize_verified_transition(
             execution_id, expected_version=next_version, to_state=target_state,
             actor_id=actor_id, reason_code=reason,
         )
+
+    def _finalize_verified_transition(
+        self, execution_id: str, *, expected_version: int, to_state: str,
+        actor_id: str, reason_code: str,
+    ) -> UpgradeExecutionRecord:
+        """CAS transition reachable only after verifier completion."""
+        if to_state not in {"verified_pass", "verified_fail", "rejected"}:
+            raise UpgradeExecutionTransitionError("verification_target_invalid")
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["version"] != expected_version:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            if row["state"] != "verifying":
+                raise UpgradeExecutionTransitionError("verification_not_in_progress")
+            now_recorded = _now()
+            changed = db.execute("""
+                UPDATE upgrade_executions SET state=?, version=version+1, updated_at=?
+                WHERE execution_id=? AND version=? AND state="verifying"
+            """, (to_state, now_recorded, execution_id, expected_version)).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, "verifying", ?, ?, ?, ?)
+            """, (execution_id, expected_version + 1, actor_id, reason_code, now_recorded))
+            updated = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            return self._record(updated)
 
     def list_events(self, execution_id: str) -> list[dict[str, object]]:
         with self._connect() as db:
