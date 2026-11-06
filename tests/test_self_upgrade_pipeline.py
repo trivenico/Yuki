@@ -79,7 +79,13 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
 
     def test_digest_bound_test_evidence_is_recorded_after_review(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            store = SelfUpgradeReviewStore(
+                Path(directory) / "reviews.sqlite3",
+                runner_attestation_verifier=lambda payload, token: (
+                    token == "signed-test-attestation"
+                    and payload["runner_kind"] == "github_actions"
+                ),
+            )
             proposal = self.builder.build([FileChange("src/example.py", self.digest, "VALUE = 7\n")])
             store.record(proposal)
             evidence = dict(
@@ -92,6 +98,7 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
                 runner_kind="github_actions",
                 runner_digest="a" * 64,
                 result_digest="b" * 64,
+                runner_attestation="signed-test-attestation",
             )
             with self.assertRaisesRegex(ValueError, "not_approved"):
                 store.record_test_evidence(**evidence)
