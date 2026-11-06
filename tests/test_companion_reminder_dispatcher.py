@@ -93,10 +93,9 @@ def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
     assert received == [first["reminder_id"], second["reminder_id"]]
     rows = store.list(owner_id="owner-a", include_inactive=True)
     assert {row["reminder_id"]: row["status"] for row in rows} == {
-        # The first callback exceeded its five-second lease. Its send may have
-        # happened, but the expired worker cannot acknowledge; stable channel
-        # idempotency must suppress any duplicate on a later retry.
-        first["reminder_id"]: "pending",
+        # The dispatcher renews the first reminder's lease while the slow
+        # callback is running, so it can acknowledge after it completes.
+        first["reminder_id"]: "delivered",
         second["reminder_id"]: "delivered",
     }
 
