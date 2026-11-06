@@ -309,9 +309,29 @@ mod windows_job {
         use super::Job;
 
         #[test]
-        fn creates_a_kill_on_close_job_object() {
+        fn closing_job_terminates_an_assigned_child() {
+            use std::{process::Command, thread, time::{Duration, Instant}};
+
             let job = Job::new().expect("Windows should create a job object");
+            let mut child = Command::new("ping")
+                .args(["-n", "30", "127.0.0.1"])
+                .spawn()
+                .expect("Windows runner should provide ping.exe");
+            job.assign(&child).expect("child should be assignable to the job");
+
+            // Allow the child to enter its wait loop before closing the job.
+            thread::sleep(Duration::from_millis(250));
             drop(job);
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if child.try_wait().expect("child status should be readable").is_some() {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "job close did not terminate its child");
+                thread::sleep(Duration::from_millis(50));
+            }
+            let _ = child.wait();
         }
     }
 }
