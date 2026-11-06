@@ -8,6 +8,7 @@ services in a later, separately authorized workflow.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import sqlite3
 from pathlib import Path
@@ -137,12 +138,17 @@ class SelfUpgradeReviewStore:
             return False
         return True
 
+    @contextmanager
     def _connect(self):
         connection = sqlite3.connect(self.database, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 10000")
         connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def record(self, proposal: UpgradeProposal) -> dict:
         if not isinstance(proposal, UpgradeProposal):
