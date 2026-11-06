@@ -14,6 +14,7 @@ from typing import Any, Mapping, Sequence
 _SCHEMA_VERSION = 1
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
+_CLAIM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,499}$")
 _TEST_MODULE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _ALLOWED_RUNNER_KINDS = frozenset({"container", "vm", "github_actions"})
 _ALLOWED_OUTCOMES = frozenset({"passed", "failed", "timed_out", "cancelled", "rejected"})
@@ -21,6 +22,12 @@ _ALLOWED_OUTCOMES = frozenset({"passed", "failed", "timed_out", "cancelled", "re
 
 def _identifier(value: str, field: str) -> str:
     if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+        raise ValueError(f"{field}_invalid")
+    return value
+
+
+def _claim(value: str, field: str) -> str:
+    if not isinstance(value, str) or not _CLAIM.fullmatch(value):
         raise ValueError(f"{field}_invalid")
     return value
 
@@ -164,9 +171,10 @@ class ExecutionEvidence:
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != _SCHEMA_VERSION:
             raise ValueError("schema_version_unsupported")
-        for field in ("execution_id", "proposal_id", "runner_identity",
-                      "issuer", "audience", "nonce", "key_id"):
+        for field in ("execution_id", "proposal_id", "nonce", "key_id"):
             _identifier(getattr(self, field), field)
+        for field in ("runner_identity", "issuer", "audience"):
+            _claim(getattr(self, field), field)
         for field in ("request_digest", "snapshot_digest", "test_plan_digest",
                       "runner_image_digest", "policy_digest", "result_digest"):
             _digest(getattr(self, field), field)
