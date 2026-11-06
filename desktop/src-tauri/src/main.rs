@@ -313,10 +313,12 @@ mod windows_job {
             use std::{process::Command, thread, time::{Duration, Instant}};
 
             let job = Job::new().expect("Windows should create a job object");
-            let mut child = Command::new("ping")
-                .args(["-n", "30", "127.0.0.1"])
+            // cmd.exe waits for ping.exe, exercising descendant membership:
+            // both processes should be terminated when the job handle closes.
+            let mut child = Command::new("cmd.exe")
+                .args(["/C", "ping", "-n", "30", "127.0.0.1"])
                 .spawn()
-                .expect("Windows runner should provide ping.exe");
+                .expect("Windows runner should provide cmd.exe and ping.exe");
             job.assign(&child).expect("child should be assignable to the job");
 
             // Allow the child to enter its wait loop before closing the job.
