@@ -7,7 +7,7 @@ Windows-first native desktop shell built with Tauri 2.
 - The Tauri shell starts the local Python ASGI server as a managed child process.
 - It uses a fixed loopback address, `127.0.0.1:8765`, and polls `/healthz` before opening the webview.
 - Startup has a 30-second deadline. If the child exits or readiness times out, desktop startup fails closed.
-- On application exit, the shell terminates and waits for the child process it started.
+- On Windows, the shell assigns the Python process to a Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; shutdown terminates and waits for the direct child, then closing the job also terminates remaining descendants. Other platforms currently stop only the direct child.
 - If the configured port is already occupied, startup refuses to attach to an unknown process.
 - The desktop reuses the authenticated Yuki web interface and API; it does not maintain a second chat frontend.
 
@@ -46,16 +46,16 @@ The MSI and NSIS bundles are produced by Tauri. A successful shell build does no
 - The server binds only to an IP loopback address; non-loopback bind addresses are rejected.
 - The Rust launcher uses a fixed HTTP loopback URL and does not accept remote URLs.
 - The process is launched without a shell, with stdin/stdout/stderr disconnected.
-- The shell terminates only the child process handle it created; it does not kill arbitrary processes by name or PID lookup.
+- The shell never kills arbitrary processes by name or PID lookup. Windows descendant cleanup is scoped to the Job Object containing the process it launched.
 - The health check verifies the local Yuki `/healthz` response, not user authentication or provider readiness.
 - The shell has no updater, deep-link handler, shell plugin, global IPC permissions, screen capture, or computer-control permissions.
 - No notification channel is enabled by this process manager. Companion reminders still require a separately configured, authenticated, owner-scoped delivery adapter.
-- A forced termination of the desktop may leave its child process running; OS-level process groups/job objects and crash recovery are future hardening work.
+- Windows Job Object assignment currently occurs immediately after `std::process::Command::spawn`; there is a small race before assignment in which a very early-spawning descendant could escape the job. A suspended native process launch is the follow-up hardening needed to remove that race. Other platforms still need process-group cleanup.
 - The current child process logs are suppressed. A privacy-safe rotating diagnostic log with secret redaction should be implemented before broad deployment.
 
 ## Next integration milestones
 
 1. Bundle or provision a reproducible Python runtime and dependencies with verifiable provenance.
-2. Add a supervised, privacy-safe diagnostic log and platform-specific process-group cleanup.
+2. Remove the Windows spawn-to-job-assignment race with a suspended native process launch, then add a supervised, privacy-safe diagnostic log and non-Windows process-group cleanup.
 3. Add explicit desktop notification permissions and an owner-scoped reminder channel.
 4. Add signed installer/update provenance and release verification.
