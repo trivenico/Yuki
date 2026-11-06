@@ -99,6 +99,44 @@ def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
         second["reminder_id"]: "delivered",
     }
 
+def test_stop_is_bounded_when_delivery_resists_cancellation(tmp_path):
+    store = _store(tmp_path)
+    store.create(
+        owner_id="owner-a", text="Cancellation resistant",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=30)
+        dispatcher._STOP_GRACE_SECONDS = 0.05
+        dispatcher._CANCEL_GRACE_SECONDS = 0.05
+        await dispatcher.start()
+        await started.wait()
+        await dispatcher.stop()
+        assert cancelled.is_set()
+        assert dispatcher._task is not None
+        assert not dispatcher._task.done()
+        release.set()
+        try:
+            await asyncio.wait_for(dispatcher._task, timeout=2)
+        except asyncio.CancelledError:
+            pass
+        assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "pending"
+
+    asyncio.run(scenario())
+
+
 def test_dispatcher_shutdown_awaits_async_delivery_cancellation(tmp_path):
     store = _store(tmp_path)
     reminder = store.create(
