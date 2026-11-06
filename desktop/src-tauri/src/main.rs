@@ -7,11 +7,11 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
 use tauri::plugin::PermissionState;
 use tauri_plugin_notification::NotificationExt;
 use url::Url;
@@ -171,6 +171,150 @@ fn stop_process(process: &mut ManagedProcess) {
 }
 
 
+const NOTIFICATION_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+struct NotificationWorker {
+    stop: Arc<AtomicBool>,
+    thread: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl Default for NotificationWorker {
+    fn default() -> Self {
+        Self { stop: Arc::new(AtomicBool::new(false)), thread: Mutex::new(None) }
+    }
+}
+
+fn wait_for_worker(stop: &AtomicBool, duration: Duration) -> bool {
+    let deadline = Instant::now() + duration;
+    while !stop.load(Ordering::Acquire) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())));
+    }
+    !stop.load(Ordering::Acquire)
+}
+
+fn run_notification_worker(app: AppHandle, stop: Arc<AtomicBool>, cursor_path: PathBuf, token: String) {
+    use notification_delivery::{
+        classify_notification_http_status, load_cursor, notification_retry_delay,
+        parse_notification_page, validate_acknowledgement_response,
+        validate_event, NotificationHttpClient, NotificationHttpStatus,
+    };
+
+    let client = match NotificationHttpClient::new() {
+        Ok(client) => client,
+        Err(_) => return,
+    };
+    let mut cursor = match load_cursor(&cursor_path) {
+        Ok(cursor) => cursor,
+        Err(_) => return,
+    };
+    let mut failures = 0_u32;
+
+    while !stop.load(Ordering::Acquire) {
+        let response = match client.fetch_page(SERVER_URL, cursor, &token) {
+            Ok(response) => response,
+            Err(_) => {
+                if !wait_for_worker(&stop, notification_retry_delay(failures)) { break; }
+                failures = failures.saturating_add(1);
+                continue;
+            }
+        };
+        match classify_notification_http_status(response.status) {
+            NotificationHttpStatus::AuthenticationRevoked | NotificationHttpStatus::Rejected => break,
+            NotificationHttpStatus::Retryable => {
+                if !wait_for_worker(&stop, notification_retry_delay(failures)) { break; }
+                failures = failures.saturating_add(1);
+                continue;
+            }
+            NotificationHttpStatus::Success => {}
+        }
+        let page = match parse_notification_page(&response, cursor) {
+            Ok(page) => page,
+            Err(_) => break,
+        };
+        failures = 0;
+        if page.events.is_empty() {
+            if !wait_for_worker(&stop, NOTIFICATION_POLL_INTERVAL) { break; }
+            continue;
+        }
+
+        let mut should_stop = false;
+        for event in page.events {
+            if stop.load(Ordering::Acquire) { should_stop = true; break; }
+            let display = match validate_event(&event, cursor) {
+                Ok(display) => display,
+                Err(_) => { should_stop = true; break; }
+            };
+            let permission = match app.notification().permission_state() {
+                Ok(state) => state == PermissionState::Granted,
+                Err(_) => false,
+            };
+            if !permission { should_stop = true; break; }
+            if app.notification().builder().title(display.title).body(display.body).show().is_err() {
+                should_stop = true;
+                break;
+            }
+            let acknowledgement = match client.acknowledge(SERVER_URL, &event.event_id, &token) {
+                Ok(response) => response,
+                Err(_) => { should_stop = true; break; }
+            };
+            if validate_acknowledgement_response(&acknowledgement).is_err() {
+                should_stop = true;
+                break;
+            }
+            if notification_delivery::persist_cursor(&cursor_path, event.sequence).is_err() {
+                should_stop = true;
+                break;
+            }
+            cursor = event.sequence;
+        }
+        if should_stop { break; }
+        if page.has_more { continue; }
+        if !wait_for_worker(&stop, NOTIFICATION_POLL_INTERVAL) { break; }
+    }
+}
+
+#[tauri::command]
+fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorker>) -> Result<(), String> {
+    if app.notification().permission_state()
+        .map_err(|_| "Could not read operating-system notification permission.".to_string())?
+        != PermissionState::Granted
+    {
+        return Err("Grant notification permission before enabling notification delivery.".to_string());
+    }
+    let token = notification_delivery::load_device_token()
+        .map_err(|_| "Pair this desktop with Yuki before enabling notifications.".to_string())?;
+    let cursor_path = app.path().app_local_data_dir()
+        .map_err(|_| "Could not locate Yuki's local application data directory.".to_string())?
+        .join("notifications").join("cursor");
+    let mut slot = worker.thread.lock().map_err(|_| "Notification worker state is unavailable.".to_string())?;
+    if slot.is_some() { return Ok(()); }
+    worker.stop.store(false, Ordering::Release);
+    let stop = Arc::clone(&worker.stop);
+    *slot = Some(thread::Builder::new().name("yuki-notifications".into())
+        .spawn(move || run_notification_worker(app, stop, cursor_path, token))
+        .map_err(|_| "Could not start the notification worker.".to_string())?);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_notification_worker(worker: State<'_, NotificationWorker>) -> Result<(), String> {
+    worker.stop.store(true, Ordering::Release);
+    let handle = worker.thread.lock()
+        .map_err(|_| "Notification worker state is unavailable.".to_string())?
+        .take();
+    if let Some(handle) = handle {
+        handle.join().map_err(|_| "Notification worker did not shut down cleanly.".to_string())?;
+    }
+    Ok(())
+}
+
+fn stop_notification_worker_on_exit(worker: &NotificationWorker) {
+    worker.stop.store(true, Ordering::Release);
+    if let Ok(mut slot) = worker.thread.lock() {
+        if let Some(handle) = slot.take() { let _ = handle.join(); }
+    }
+}
+
 const DEVICE_CREDENTIAL_SERVICE: &str = "ai.yuki.desktop";
 const DEVICE_CREDENTIAL_ACCOUNT: &str = "paired-device-token";
 
@@ -271,7 +415,9 @@ fn main() {
             store_device_token,
             delete_device_token,
             request_notification_permission,
-            show_native_notification
+            show_native_notification,
+            start_notification_worker,
+            stop_notification_worker
         ])
         .setup(|app| {
             let _url = server_url()?;
@@ -293,6 +439,7 @@ fn main() {
             }
 
             app.manage(ManagedServer(Mutex::new(Some(process))));
+            app.manage(NotificationWorker::default());
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -300,6 +447,9 @@ fn main() {
     match result {
         Ok(app) => app.run(|handle, event| {
             if matches!(event, RunEvent::Exit) {
+                if let Some(worker) = handle.try_state::<NotificationWorker>() {
+                    stop_notification_worker_on_exit(&worker);
+                }
                 if let Some(server) = handle.try_state::<ManagedServer>() {
                     if let Ok(mut guard) = server.0.lock() {
                         if let Some(mut process) = guard.take() {
