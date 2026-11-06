@@ -15,6 +15,7 @@ use url::Url;
 const SERVER_URL: &str = "http://127.0.0.1:8765";
 const SERVER_ADDR: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8765));
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_HEALTH_RESPONSE: u64 = 4096;
 
 struct ManagedServer(Mutex<Option<Child>>);
 
@@ -85,12 +86,22 @@ fn health_check() -> bool {
     if stream.write_all(request).is_err() {
         return false;
     }
-    let mut response = [0u8; 512];
-    let Ok(count) = stream.read(&mut response) else {
+
+    let mut response = Vec::with_capacity(512);
+    if stream
+        .take(MAX_HEALTH_RESPONSE)
+        .read_to_end(&mut response)
+        .is_err()
+    {
+        return false;
+    }
+    let response = String::from_utf8_lossy(&response);
+    let Some((headers, body)) = response.split_once("\r\n\r\n") else {
         return false;
     };
-    let text = String::from_utf8_lossy(&response[..count]);
-    text.starts_with("HTTP/1.1 200") && text.contains("\"status\": \"ok\"")
+    headers.lines().next() == Some("HTTP/1.1 200 OK")
+        && body.contains("\"status\"")
+        && body.contains("\"ok\"")
 }
 
 fn wait_until_ready(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> {
@@ -125,13 +136,19 @@ fn main() {
                 stop_child(&mut child);
                 return Err(error.into());
             }
-            app.manage(ManagedServer(Mutex::new(Some(child))));
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+
+            if let Err(error) = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Yuki")
                 .inner_size(1200.0, 820.0)
                 .min_inner_size(800.0, 600.0)
                 .resizable(true)
-                .build()?;
+                .build()
+            {
+                stop_child(&mut child);
+                return Err(error.into());
+            }
+
+            app.manage(ManagedServer(Mutex::new(Some(child))));
             Ok(())
         })
         .build(tauri::generate_context!());
