@@ -38,7 +38,7 @@ jobs:
         if: success()
         shell: pwsh
         run: |
-          $bundle = "desktop/src-tauri/target/release/bundle"
+          $bundle = "src-tauri/target/release/bundle"
           $files = Get-ChildItem $bundle -Recurse -File | Where-Object { $_.Extension -in @(".msi", ".exe") }
           if ($files.Count -eq 0) { throw "No Windows installer files were produced." }
           $lines = $files | ForEach-Object {
