@@ -57,6 +57,10 @@ class ApprovedUpgradeExecutor:
     def execute(
         self, proposal_id: str, *, reviewer: str, principal: ToolPrincipal
     ) -> UpgradeExecutionResult:
+        if not isinstance(principal, ToolPrincipal) or not isinstance(reviewer, str):
+            raise PermissionError("authenticated principal and reviewer identity are required")
+        if not reviewer.strip() or reviewer.strip() != principal.actor_id:
+            raise PermissionError("reviewer and execution principal must be the same identity")
         snapshot = self.review_store.get_approved_snapshot(proposal_id, reviewer=reviewer)
         files = snapshot["files"]
         if not files or any(change.path not in self.allowed_paths for change in files):
