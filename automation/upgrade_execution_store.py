@@ -101,6 +101,46 @@ class UpgradeExecutionStore:
                     FOREIGN KEY(execution_id) REFERENCES upgrade_executions(execution_id)
                 )
             """)
+            # Enforce audit and snapshot immutability in SQLite itself, not
+            # merely through the Python API. These triggers also protect
+            # against accidental maintenance scripts bypassing the store.
+            db.executescript("""
+                CREATE TRIGGER IF NOT EXISTS upgrade_events_no_update
+                BEFORE UPDATE ON upgrade_execution_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'upgrade_event_is_append_only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS upgrade_events_no_delete
+                BEFORE DELETE ON upgrade_execution_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'upgrade_event_is_append_only');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS upgrade_executions_no_delete
+                BEFORE DELETE ON upgrade_executions
+                BEGIN
+                    SELECT RAISE(ABORT, 'upgrade_execution_is_retained');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS upgrade_request_snapshot_immutable
+                BEFORE UPDATE OF execution_id, idempotency_key, request_digest,
+                                 request_json, created_at
+                ON upgrade_executions
+                BEGIN
+                    SELECT RAISE(ABORT, 'upgrade_request_snapshot_is_immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS upgrade_evidence_write_once
+                BEFORE UPDATE OF evidence_json, evidence_digest
+                ON upgrade_executions
+                WHEN OLD.evidence_json IS NOT NULL
+                     OR NEW.evidence_json IS NULL
+                     OR NEW.evidence_digest IS NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'upgrade_evidence_is_write_once');
+                END;
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
