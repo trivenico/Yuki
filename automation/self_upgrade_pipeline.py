@@ -8,6 +8,9 @@ services in a later, separately authorized workflow.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import sqlite3
+from pathlib import Path
 import hashlib
 import json
 import re
@@ -88,3 +91,140 @@ class SelfUpgradeProposalBuilder:
             changed_paths=tuple(sorted(seen)),
             patch_bytes=total,
         )
+
+
+
+class SelfUpgradeReviewStore:
+    """Durable review decisions for immutable upgrade proposal digests.
+
+    Approval only authorizes a later isolated-testing stage. This store never
+    applies files, runs tests, creates commits, or promotes a release.
+    """
+
+    def __init__(self, database: str | Path):
+        self.database = str(database)
+        Path(self.database).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS self_upgrade_reviews (
+                    proposal_id TEXT PRIMARY KEY,
+                    content_digest TEXT NOT NULL CHECK(length(content_digest) = 64),
+                    changed_paths TEXT NOT NULL,
+                    patch_bytes INTEGER NOT NULL CHECK(patch_bytes >= 0),
+                    status TEXT NOT NULL CHECK(status IN (
+                        'pending_review', 'approved_for_isolated_testing', 'rejected'
+                    )),
+                    created_at TEXT NOT NULL,
+                    reviewed_at TEXT,
+                    reviewed_by TEXT,
+                    review_note TEXT
+                )
+            """)
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_self_upgrade_reviews_status_created
+                ON self_upgrade_reviews(status, created_at)
+            """)
+
+    def _connect(self):
+        connection = sqlite3.connect(self.database, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    def record(self, proposal: UpgradeProposal) -> dict:
+        if not isinstance(proposal, UpgradeProposal):
+            raise TypeError("proposal must be an UpgradeProposal")
+        if (not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal.proposal_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", proposal.content_digest)
+                or proposal.promotion_allowed is not False
+                or proposal.review_required is not True
+                or proposal.tests_required is not True):
+            raise ValueError("proposal review invariants are invalid")
+        paths = json.dumps(list(proposal.changed_paths), separators=(",", ":"))
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal.proposal_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["content_digest"] != proposal.content_digest:
+                    raise ValueError("proposal_id_digest_conflict")
+                return dict(existing)
+            connection.execute("""
+                INSERT INTO self_upgrade_reviews (
+                    proposal_id, content_digest, changed_paths, patch_bytes,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, 'pending_review', ?)
+            """, (
+                proposal.proposal_id, proposal.content_digest, paths,
+                proposal.patch_bytes, created_at,
+            ))
+            row = connection.execute(
+                "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal.proposal_id,),
+            ).fetchone()
+            return dict(row)
+
+    def review(
+        self, proposal_id: str, decision: str, *, reviewer: str, note: str = ""
+    ) -> dict:
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
+            raise ValueError("proposal_id_invalid")
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision_must_be_approve_or_reject")
+        if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
+            raise ValueError("reviewer_invalid")
+        if not isinstance(note, str) or len(note) > 1000:
+            raise ValueError("review_note_invalid")
+        status = "approved_for_isolated_testing" if decision == "approve" else "rejected"
+        reviewed_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("proposal_not_found")
+            if row["status"] != "pending_review":
+                if row["status"] == status and row["reviewed_by"] == reviewer:
+                    return dict(row)
+                raise ValueError("proposal_already_reviewed")
+            connection.execute("""
+                UPDATE self_upgrade_reviews
+                SET status = ?, reviewed_at = ?, reviewed_by = ?, review_note = ?
+                WHERE proposal_id = ? AND status = 'pending_review'
+            """, (status, reviewed_at, reviewer.strip(), note.strip(), proposal_id))
+            updated = connection.execute(
+                "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            return dict(updated)
+
+    def list(self, *, limit: int = 50) -> list[dict]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("limit_must_be_between_1_and_200")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM self_upgrade_reviews ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def status(self) -> dict:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS total FROM self_upgrade_reviews GROUP BY status"
+            ).fetchall()
+        counts = {row["status"]: row["total"] for row in rows}
+        return {
+            "total": sum(counts.values()),
+            "pending_review": counts.get("pending_review", 0),
+            "approved_for_isolated_testing": counts.get("approved_for_isolated_testing", 0),
+            "rejected": counts.get("rejected", 0),
+            "automatic_application_enabled": False,
+            "automatic_promotion_enabled": False,
+        }
