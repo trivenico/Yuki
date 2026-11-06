@@ -260,7 +260,8 @@ class SelfUpgradeReviewStore:
                 raise ValueError("proposal_snapshot_content_invalid")
             encoded = content.encode("utf-8")
             actual_hash = hashlib.sha256(encoded).hexdigest()
-            if (item["proposed_sha256"] != actual_hash
+            if (len(encoded) > _MAX_FILE_BYTES
+                    or item["proposed_sha256"] != actual_hash
                     or item["expected_sha256"] is None
                     or not re.fullmatch(r"[0-9a-f]{64}", item["expected_sha256"])
                     or item["bytes"] != len(encoded)):
@@ -353,6 +354,9 @@ class SelfUpgradeReviewStore:
                     or not isinstance(item["expected_sha256"], str)
                     or not re.fullmatch(r"[0-9a-f]{64}", item["expected_sha256"])
                     or item["proposed_sha256"] != hashlib.sha256(encoded).hexdigest()
+                    or isinstance(item["bytes"], bool)
+                    or not isinstance(item["bytes"], int)
+                    or len(encoded) > _MAX_FILE_BYTES
                     or item["bytes"] != len(encoded)):
                 raise ValueError("proposal_snapshot_integrity_failure")
             measured += len(encoded)
