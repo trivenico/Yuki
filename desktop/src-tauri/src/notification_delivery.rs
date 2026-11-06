@@ -230,6 +230,32 @@ pub fn load_device_token() -> io::Result<String> {
     Ok(token)
 }
 
+/// Decode a successful feed response and enforce the complete page contract.
+pub fn parse_notification_page(response: &NotificationHttpResponse, after_sequence: u64) -> io::Result<NotificationPage> {
+    if classify_notification_http_status(response.status) != NotificationHttpStatus::Success {
+        return Err(io::Error::new(io::ErrorKind::Other, format!("notification feed returned HTTP {}", response.status)));
+    }
+    let page: NotificationPage = serde_json::from_slice(&response.body).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidData, "notification feed response is malformed")
+    })?;
+    validate_page(&page, after_sequence)?;
+    Ok(page)
+}
+
+/// Require both a successful HTTP status and an explicit server acknowledgement.
+pub fn validate_acknowledgement_response(response: &NotificationHttpResponse) -> io::Result<()> {
+    if classify_notification_http_status(response.status) != NotificationHttpStatus::Success {
+        return Err(io::Error::new(io::ErrorKind::Other, format!("notification acknowledgement returned HTTP {}", response.status)));
+    }
+    validate_acknowledgement(&response.body)
+}
+
+/// Exponential retry delay capped at one minute; callers reset attempts on success.
+pub fn notification_retry_delay(attempt: u32) -> std::time::Duration {
+    let exponent = attempt.min(6);
+    std::time::Duration::from_secs(1_u64 << exponent)
+}
+
 /// Accept only the exact success envelope returned by the device acknowledgement API.
 /// The worker must call this before persisting the corresponding cursor.
 pub fn validate_acknowledgement(response: &[u8]) -> io::Result<()> {
@@ -346,6 +372,37 @@ mod tests {
             expires_at: "2027-01-01T00:00:00+00:00".to_string(),
             acknowledged_at: None,
         }
+    }
+
+    #[test]
+    fn parses_only_valid_successful_notification_pages() {
+        let valid = NotificationHttpResponse {
+            status: 200,
+            body: br#"{"events":[],"next_cursor":0,"has_more":false}"#.to_vec(),
+        };
+        assert!(parse_notification_page(&valid, 0).is_ok());
+        let bad_status = NotificationHttpResponse { status: 503, body: valid.body.clone() };
+        assert!(parse_notification_page(&bad_status, 0).is_err());
+        let malformed = NotificationHttpResponse { status: 200, body: b"{}".to_vec() };
+        assert!(parse_notification_page(&malformed, 0).is_err());
+    }
+
+    #[test]
+    fn acknowledgement_requires_http_success_and_exact_body() {
+        let success = NotificationHttpResponse { status: 200, body: br#"{"acknowledged":true}"#.to_vec() };
+        assert!(validate_acknowledgement_response(&success).is_ok());
+        let false_body = NotificationHttpResponse { status: 200, body: br#"{"acknowledged":false}"#.to_vec() };
+        assert!(validate_acknowledgement_response(&false_body).is_err());
+        let failed_status = NotificationHttpResponse { status: 503, body: success.body.clone() };
+        assert!(validate_acknowledgement_response(&failed_status).is_err());
+    }
+
+    #[test]
+    fn retry_delay_is_exponential_and_capped() {
+        assert_eq!(notification_retry_delay(0).as_secs(), 1);
+        assert_eq!(notification_retry_delay(1).as_secs(), 2);
+        assert_eq!(notification_retry_delay(5).as_secs(), 32);
+        assert_eq!(notification_retry_delay(100).as_secs(), 64);
     }
 
     #[test]
