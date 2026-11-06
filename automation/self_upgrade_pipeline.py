@@ -373,6 +373,35 @@ class SelfUpgradeReviewStore:
             ],
         }
 
+    def get_approved_snapshot(
+        self, proposal_id: str, *, reviewer: str
+    ) -> dict:
+        """Return immutable file changes only to the reviewer of an approved proposal.
+
+        This is a hand-off boundary, not an executor. The caller must still use
+        ApprovedWorkspaceChanges with its own trusted-principal and digest-bound
+        approval controls before modifying any file.
+        """
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
+            raise ValueError("proposal_id_invalid")
+        if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
+            raise ValueError("reviewer_invalid")
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status, content_digest, reviewed_by FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("proposal_not_found")
+        if row["status"] != "approved_for_isolated_testing":
+            raise ToolAuthorizationError("proposal_not_approved_for_testing")
+        if row["reviewed_by"] != reviewer.strip():
+            raise ToolAuthorizationError("reviewer_identity_mismatch")
+        snapshot = self.load_snapshot(proposal_id)
+        if snapshot["content_digest"] != row["content_digest"]:
+            raise ValueError("proposal_snapshot_integrity_failure")
+        return snapshot
+
     def review(
         self, proposal_id: str, decision: str, *, reviewer: str, note: str = ""
     ) -> dict:
