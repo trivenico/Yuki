@@ -1,0 +1,177 @@
+import hashlib
+import tempfile
+import unittest
+from pathlib import Path
+
+from automation.upgrade_execution_contracts import ExecutionEvidence, ExecutionRequest
+from automation.upgrade_execution_store import (
+    UpgradeExecutionConflict,
+    UpgradeExecutionStore,
+    UpgradeExecutionTransitionError,
+)
+
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+class UpgradeExecutionStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.store = UpgradeExecutionStore(Path(self.temp.name) / "upgrade.sqlite3")
+        self.request = ExecutionRequest.create(
+            proposal_id="proposal-1",
+            snapshot_digest=digest("snapshot"),
+            snapshot_object_digest=digest("object"),
+            snapshot_version="object-version-1",
+            test_targets=("tests.test_upgrade",),
+            runner_kind="container",
+            runner_image_digest=digest("runner"),
+            architecture="linux-amd64",
+            runtime_version="python-3.11",
+            policy_digest=digest("policy"),
+            execution_id="execution-1",
+            idempotency_key="idem-1",
+            requesting_principal="requester-1",
+            reviewer="reviewer-1",
+            approval_id="approval-1",
+        )
+
+    def evidence(self, request=None, **overrides):
+        request = request or self.request
+        values = dict(
+            execution_id=request.execution_id,
+            request_digest=request.request_digest,
+            proposal_id=request.proposal_id,
+            snapshot_digest=request.snapshot_digest,
+            test_plan_digest=request.test_plan_digest,
+            runner_image_digest=request.runner_image_digest,
+            policy_digest=request.policy_digest,
+            outcome="passed",
+            exit_code=0,
+            started_at="2026-11-06T10:00:00Z",
+            finished_at="2026-11-06T10:01:00Z",
+            result_digest=digest("result"),
+            runner_identity="https://ci.example/workflow/upgrade",
+            issuer="https://ci.example",
+            audience="yuki-upgrade-verifier",
+            nonce="nonce-1",
+            key_id="key-1",
+            signature="unverified-signature",
+        )
+        values.update(overrides)
+        return ExecutionEvidence(**values)
+
+    def test_create_is_idempotent_and_persists_exact_request(self):
+        first = self.store.create(self.request)
+        second = self.store.create(self.request)
+        self.assertEqual(first.execution_id, second.execution_id)
+        self.assertEqual(first.request_digest, self.request.request_digest)
+        self.assertEqual(first.state, "queued")
+        self.assertEqual(first.version, 0)
+        self.assertEqual(len(self.store.list_events(first.execution_id)), 1)
+
+    def test_idempotency_key_cannot_be_reused_for_different_request(self):
+        self.store.create(self.request)
+        other = ExecutionRequest.create(
+            proposal_id="proposal-2",
+            snapshot_digest=digest("snapshot-2"),
+            snapshot_object_digest=digest("object-2"),
+            snapshot_version="object-version-2",
+            test_targets=("tests.test_upgrade",),
+            runner_kind="container",
+            runner_image_digest=digest("runner"),
+            architecture="linux-amd64",
+            runtime_version="python-3.11",
+            policy_digest=digest("policy"),
+            execution_id="execution-2",
+            idempotency_key="idem-1",
+            requesting_principal="requester-1",
+            reviewer="reviewer-1",
+            approval_id="approval-2",
+        )
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "idempotency_payload_mismatch"):
+            self.store.create(other)
+
+    def test_transitions_use_compare_and_swap_and_reject_invalid_edges(self):
+        row = self.store.create(self.request)
+        running = self.store.transition(
+            row.execution_id, expected_version=0, to_state="running",
+            actor_id="runner-admission", reason_code="worker_claimed",
+        )
+        self.assertEqual(running.version, 1)
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "stale_execution_version"):
+            self.store.transition(
+                row.execution_id, expected_version=0, to_state="cancelled",
+                actor_id="operator", reason_code="cancel",
+            )
+        pending = self.store.transition(
+            row.execution_id, expected_version=1, to_state="evidence_pending",
+            actor_id="runner", reason_code="execution_finished",
+        )
+        self.assertEqual(pending.state, "evidence_pending")
+        with self.assertRaises(UpgradeExecutionTransitionError):
+            self.store.transition(
+                row.execution_id, expected_version=2, to_state="queued",
+                actor_id="operator", reason_code="invalid_requeue",
+            )
+
+    def test_evidence_is_bound_and_persisted_as_unverified(self):
+        row = self.store.create(self.request)
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="running",
+            actor_id="runner", reason_code="started",
+        )
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="evidence_pending",
+            actor_id="runner", reason_code="finished",
+        )
+        stored = self.store.record_evidence(
+            row.execution_id, expected_version=row.version,
+            evidence=self.evidence(),
+        )
+        self.assertEqual(stored.state, "evidence_pending")
+        self.assertEqual(stored.version, row.version + 1)
+        self.assertIn("unverified-signature", stored.evidence_json)
+        self.assertEqual(self.store.list_events(row.execution_id)[-1]["reason_code"],
+                         "evidence_received_unverified")
+
+    def test_evidence_cannot_be_replayed_or_replaced(self):
+        row = self.store.create(self.request)
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="running",
+            actor_id="runner", reason_code="started",
+        )
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="evidence_pending",
+            actor_id="runner", reason_code="finished",
+        )
+        stored = self.store.record_evidence(
+            row.execution_id, expected_version=row.version, evidence=self.evidence(),
+        )
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "evidence_already_recorded"):
+            self.store.record_evidence(
+                stored.execution_id, expected_version=stored.version,
+                evidence=self.evidence(),
+            )
+
+    def test_evidence_for_another_snapshot_is_rejected(self):
+        row = self.store.create(self.request)
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="running",
+            actor_id="runner", reason_code="started",
+        )
+        row = self.store.transition(
+            row.execution_id, expected_version=row.version, to_state="evidence_pending",
+            actor_id="runner", reason_code="finished",
+        )
+        altered = self.evidence(snapshot_digest=digest("wrong snapshot"))
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "evidence_request_mismatch"):
+            self.store.record_evidence(
+                row.execution_id, expected_version=row.version, evidence=altered,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
