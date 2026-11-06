@@ -286,8 +286,8 @@ class SelfUpgradeReviewStore:
             if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
                 raise ValueError(f"{name}_invalid")
         if (not isinstance(test_target, str) or not test_target.strip()
-                or len(test_target) > 200 or "\\\\" in test_target
-                or "\\x00" in test_target):
+                or len(test_target) > 200 or "\\" in test_target
+                or "\x00" in test_target):
             raise ValueError("test_target_invalid")
         if outcome not in {"passed", "failed", "timed_out"}:
             raise ValueError("test_outcome_invalid")
