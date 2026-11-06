@@ -54,7 +54,7 @@ class DesktopBundleTests(unittest.TestCase):
         # notification handlers, so compare stable shared behavior rather than
         # requiring byte-for-byte equality with the browser script.
         for marker in ('const API_BASE = "http://127.0.0.1:8765"',
-                       'function request(', 'function renderMessages',
+                       'const makeMessage =', 'const setBusy =',
                        'fetch(apiUrl("/v1/conversations/"',
                        'invoke("notification_worker_status")',
                        'invoke("start_notification_worker")'):
