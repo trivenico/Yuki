@@ -235,6 +235,7 @@ fn delete_device_token() -> Result<(), String> {
 
 fn main() {
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             store_device_token,
             get_device_token,
