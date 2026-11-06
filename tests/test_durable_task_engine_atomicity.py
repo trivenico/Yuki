@@ -194,5 +194,24 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         )
 
 
+    def test_cancellation_and_cancelled_event_roll_back_together(self):
+        queued = self.engine.submit(
+            self.goal_id, "cancel-me", {}, idempotency_key="cancel-event-atomic",
+        )
+        self.reject_event("task.cancelled")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.cancel_task(queued["id"])
+
+        current = self.engine.get_task(queued["id"])
+        self.assertEqual(current["state"], "queued")
+        self.assertIsNone(current["lease_owner"])
+        self.assertIsNone(current["lease_until"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(self.goal_id)],
+            ["goal.created", "task.queued", "task.claimed", "task.queued"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
