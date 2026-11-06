@@ -93,6 +93,24 @@ pub fn validate_page(page: &NotificationPage, after_sequence: u64) -> io::Result
     Ok(())
 }
 
+/// Accept only the exact success envelope returned by the device acknowledgement API.
+/// The worker must call this before persisting the corresponding cursor.
+pub fn validate_acknowledgement(response: &[u8]) -> io::Result<()> {
+    let value: Value = serde_json::from_slice(response).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidData, "notification acknowledgement is malformed")
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "notification acknowledgement is not an object")
+    })?;
+    if object.len() != 1 || object.get("acknowledged").and_then(Value::as_bool) != Some(true) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "notification acknowledgement was not confirmed",
+        ));
+    }
+    Ok(())
+}
+
 pub fn load_cursor(path: &Path) -> io::Result<u64> {
     match fs::read_to_string(path) {
         Ok(raw) => {
@@ -191,6 +209,15 @@ mod tests {
             expires_at: "2027-01-01T00:00:00+00:00".to_string(),
             acknowledged_at: None,
         }
+    }
+
+    #[test]
+    fn accepts_only_explicit_acknowledgement_success() {
+        assert!(validate_acknowledgement(br#"{"acknowledged":true}"#).is_ok());
+        assert_eq!(validate_acknowledgement(br#"{"acknowledged":false}"#).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(validate_acknowledgement(br#"{"acknowledged":true,"extra":1}"#).is_err());
+        assert!(validate_acknowledgement(br#"{"acknowledged":"true"}"#).is_err());
+        assert!(validate_acknowledgement(b"not-json").is_err());
     }
 
     #[test]
