@@ -99,6 +99,41 @@ def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
         second["reminder_id"]: "delivered",
     }
 
+def test_dispatcher_stops_async_delivery_when_lease_renewal_is_rejected(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Stop if lease is lost",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due(lease_seconds=5)[0]
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=5)
+        async def reject_renewal(*, reminder_id, lease_token, lease_seconds):
+            await started.wait()
+            return False
+        dispatcher._store_call = lambda method, **kwargs: (
+            reject_renewal(**kwargs) if method == "renew_lease"
+            else asyncio.to_thread(getattr(store, method), **kwargs)
+        )
+        await dispatcher._deliver_one(claim)
+
+    asyncio.run(scenario())
+    assert cancelled.is_set()
+    row = store.list(owner_id="owner-a", include_inactive=True)[0]
+    assert row["status"] == "pending"
+
+
 def test_dispatcher_skips_delivery_when_reminder_was_cancelled_after_claim(tmp_path):
     store = _store(tmp_path)
     reminder = store.create(
