@@ -28,5 +28,7 @@ jobs:
           node-version: 22
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
+      - name: Test desktop runtime health response parser
+        run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: Build Windows desktop bundles
         run: npm run build
