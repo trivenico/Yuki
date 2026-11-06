@@ -46,7 +46,7 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         current = self.engine.get_task(self.task["id"])
         self.assertEqual(current["state"], "running")
         self.assertEqual(current["lease_owner"], "worker-a")
-        self.assertIsNone(current["result"])
+        self.assertNotIn("result", current)
         self.assertEqual(
             [event["event_type"] for event in self.engine.list_events(self.goal_id)],
             ["goal.created", "task.queued", "task.claimed"],
