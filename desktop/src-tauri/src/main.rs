@@ -174,7 +174,7 @@ fn valid_device_token(token: &str) -> bool {
     (20..=256).contains(&token.len()) && !token.chars().any(char::is_control)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 fn store_device_token(token: String) -> Result<(), String> {
     if !valid_device_token(&token) {
@@ -188,7 +188,7 @@ fn store_device_token(token: String) -> Result<(), String> {
         .map_err(|_| "Could not save the paired-device credential.".to_string())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 fn get_device_token() -> Result<Option<String>, String> {
     let entry = keyring::Entry::new(
@@ -202,7 +202,7 @@ fn get_device_token() -> Result<Option<String>, String> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 #[tauri::command]
 fn delete_device_token() -> Result<(), String> {
     let entry = keyring::Entry::new(
@@ -215,19 +215,19 @@ fn delete_device_token() -> Result<(), String> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
 fn store_device_token(_token: String) -> Result<(), String> {
     Err("Secure device credential storage is not yet supported on this platform.".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
 fn get_device_token() -> Result<Option<String>, String> {
     Err("Secure device credential storage is not yet supported on this platform.".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
 fn delete_device_token() -> Result<(), String> {
     Err("Secure device credential storage is not yet supported on this platform.".to_string())
