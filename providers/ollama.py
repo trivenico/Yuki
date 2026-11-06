@@ -231,6 +231,7 @@ class OllamaProvider:
         normalized_calls = []
         total_bytes = 0
         done = False
+        usage_counts = None
         try:
             opener = urllib.request.build_opener(RejectRedirects())
             with opener.open(request, timeout=self.timeout) as response:
@@ -279,6 +280,11 @@ class OllamaProvider:
                     if chunk["done"]:
                         done = True
                         finish_reason = chunk.get("done_reason", "stop")
+                        prompt_count = chunk.get("prompt_eval_count")
+                        output_count = chunk.get("eval_count")
+                        if (type(prompt_count) is int and 0 <= prompt_count <= 10_000_000
+                                and type(output_count) is int and 0 <= output_count <= 10_000_000):
+                            usage_counts = (prompt_count, output_count)
                         break
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama streaming request failed; redirects are not followed.") from exc
@@ -294,10 +300,16 @@ class OllamaProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Ollama returned tool calls outside Yuki's protocol limits.") from exc
-        yield {"type": "response", "response": {
+        final_response = {
             "text": "".join(text_parts), "tool_calls": envelope,
             "finish_reason": finish_reason,
-        }}
+        }
+        if usage_counts is not None:
+            final_response["usage"] = {
+                "input_tokens": usage_counts[0], "output_tokens": usage_counts[1],
+                "estimated": False,
+            }
+        yield {"type": "response", "response": final_response}
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
