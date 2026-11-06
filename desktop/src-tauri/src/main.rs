@@ -289,10 +289,14 @@ fn save_notification_opt_in(app: &AppHandle, enabled: bool) -> Result<(), String
         .map_err(|_| "Could not persist notification preference.".to_string())
 }
 
+fn parse_notification_opt_in(value: &str) -> bool {
+    value.trim() == "enabled"
+}
+
 fn notification_opted_in(app: &AppHandle) -> bool {
     notification_opt_in_path(app).ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .is_some_and(|value| value.trim() == "enabled")
+        .is_some_and(|value| parse_notification_opt_in(&value))
 }
 
 fn start_notification_worker_inner(app: AppHandle, worker: &NotificationWorker) -> Result<(), String> {
@@ -519,7 +523,17 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::health_response_is_ready;
+    use super::{health_response_is_ready, parse_notification_opt_in};
+
+    #[test]
+    fn notification_opt_in_requires_explicit_enabled_value() {
+        assert!(parse_notification_opt_in("enabled\\n"));
+        assert!(!parse_notification_opt_in("disabled\\n"));
+        assert!(!parse_notification_opt_in(""));
+        assert!(!parse_notification_opt_in("true"));
+        assert!(!parse_notification_opt_in("enabled by default"));
+    }
+
     use super::valid_device_token;
     use super::valid_notification_text;
 
