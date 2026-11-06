@@ -63,6 +63,24 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "reviewer_invalid"):
                 store.review("upgrade_" + "a" * 24, "approve", reviewer=" ")
 
+    def test_review_store_rejects_malformed_proposal_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            malformed = UpgradeProposal(
+                proposal_id="upgrade_" + "a" * 24,
+                content_digest="b" * 64,
+                changed_paths=([ "not-a-string-path" ],),
+                patch_bytes=0,
+            )
+            with self.assertRaisesRegex(ValueError, "invariants"):
+                store.record(malformed)
+
+    def test_review_store_bounds_list_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            with self.assertRaisesRegex(ValueError, "limit"):
+                store.list(limit=201)
+
     def test_builds_stable_digest_without_applying_changes(self):
         change = FileChange("src/example.py", self.digest, "VALUE = 2\n")
         proposal = self.builder.build([change])
