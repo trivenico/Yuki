@@ -2,8 +2,10 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from companion.reminder_dispatcher import ReminderDispatcher
+from companion.reminder_dispatcher import DeviceNotificationChannel, ReminderDispatcher
 from companion.reminder_store import CompanionReminderStore
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
 
 
 def _store(tmp_path):
@@ -239,3 +241,39 @@ def test_dispatcher_rejects_invalid_configuration(tmp_path):
             pass
         else:
             raise AssertionError("invalid dispatcher configuration was accepted")
+
+
+def test_dispatcher_delivers_companion_reminder_to_paired_device_outbox(tmp_path):
+    store = _store(tmp_path)
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+    challenge = pairing.create_pairing_challenge("owner-a")
+    credential = pairing.pair_device(challenge.code, "Yuki Desktop")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+    channel = DeviceNotificationChannel(pairing, outbox)
+    reminder = store.create(
+        owner_id="owner-a",
+        text="Review the deployment",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    dispatcher = ReminderDispatcher(store, channel, poll_interval_seconds=0.1)
+
+    async def scenario():
+        await dispatcher.start()
+        for _ in range(50):
+            page = outbox.poll(credential.token)
+            if page.events:
+                break
+            await asyncio.sleep(0.02)
+        await dispatcher.stop()
+        return page
+
+    page = asyncio.run(scenario())
+    assert len(page.events) == 1
+    event = page.events[0]
+    assert event.event_type == "companion.reminder_due"
+    assert event.payload["body"] == "Review the deployment"
+    assert event.payload["reminder_id"] == reminder["reminder_id"]
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "delivered"
+    # Delivery to the durable outbox is not the same as OS display; the
+    # paired desktop worker owns the subsequent acknowledgement.
+    assert event.acknowledged_at is None
