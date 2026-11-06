@@ -108,6 +108,31 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             self.assertEqual(store.record_test_evidence(**evidence)["run_id"], evidence["run_id"])
             self.assertEqual(len(store.list_test_evidence(proposal.proposal_id)), 1)
 
+    def test_test_evidence_rejects_unverified_runner_attestation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(
+                Path(directory) / "reviews.sqlite3",
+                runner_attestation_verifier=lambda payload, token: False,
+            )
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 8\n")
+            ])
+            store.record(proposal)
+            store.review(proposal.proposal_id, "approve", reviewer="operator")
+            with self.assertRaisesRegex(ValueError, "attestation_verification_failed"):
+                store.record_test_evidence(
+                    run_id="test_" + "3" * 24,
+                    proposal_id=proposal.proposal_id,
+                    content_digest=proposal.content_digest,
+                    test_target="tests.test_example",
+                    outcome="passed",
+                    exit_code=0,
+                    runner_kind="container",
+                    runner_digest="a" * 64,
+                    result_digest="b" * 64,
+                    runner_attestation="untrusted-token",
+                )
+
     def test_review_store_bounds_list_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
