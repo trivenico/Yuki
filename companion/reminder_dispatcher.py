@@ -54,18 +54,32 @@ class ReminderDispatcher:
         self._stop.clear()
         self._task = asyncio.create_task(self._run(), name="yuki-reminder-dispatcher")
 
+    _STOP_GRACE_SECONDS = 10.0
+    _CANCEL_GRACE_SECONDS = 2.0
+
     async def stop(self) -> None:
         self._stop.set()
-        task, self._task = self._task, None
-        if task is not None:
+        task = self._task
+        if task is None:
+            return
+        done, _ = await asyncio.wait({task}, timeout=self._STOP_GRACE_SECONDS)
+        if not done:
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=self._CANCEL_GRACE_SECONDS)
+        if done:
             try:
-                await asyncio.wait_for(task, timeout=10)
-            except asyncio.TimeoutError:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            finally:
+                if self._task is task:
+                    self._task = None
+        else:
+            # Keep the task reference: start() must not create a second
+            # dispatcher while a cancellation-resistant callback is alive.
+            logger.error(
+                "Reminder dispatcher did not stop within its cancellation grace period"
+            )
 
     async def _store_call(self, method: str, **kwargs):
         return await asyncio.to_thread(getattr(self.store, method), **kwargs)
