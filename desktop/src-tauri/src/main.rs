@@ -170,12 +170,14 @@ fn stop_process(process: &mut ManagedProcess) {
 const DEVICE_CREDENTIAL_SERVICE: &str = "ai.yuki.desktop";
 const DEVICE_CREDENTIAL_ACCOUNT: &str = "paired-device-token";
 
+fn valid_device_token(token: &str) -> bool {
+    (20..=256).contains(&token.len()) && !token.chars().any(char::is_control)
+}
+
 #[cfg(windows)]
 #[tauri::command]
 fn store_device_token(token: String) -> Result<(), String> {
-    if !(20..=256).contains(&token.len())
-        || token.chars().any(char::is_control)
-    {
+    if !valid_device_token(&token) {
         return Err("Invalid paired-device credential.".to_string());
     }
     let entry = keyring::Entry::new(
@@ -285,6 +287,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::health_response_is_ready;
+    use super::valid_device_token;
+
+
+    #[test]
+    fn device_token_validation_rejects_short_long_and_control_values() {
+        assert!(valid_device_token(&"a".repeat(32)));
+        assert!(!valid_device_token("short"));
+        assert!(!valid_device_token(&"a".repeat(257)));
+        assert!(!valid_device_token(&format!("{}\\n", "a".repeat(31))));
+    }
 
     #[test]
     fn accepts_only_successful_health_response() {
