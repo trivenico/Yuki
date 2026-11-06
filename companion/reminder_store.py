@@ -207,6 +207,27 @@ class CompanionReminderStore:
             ).fetchone()
             return row is not None
 
+    def renew_lease(self, *, reminder_id: str, lease_token: str,
+                    now: datetime | None = None, lease_seconds: int = 60) -> bool:
+        """Extend a still-live lease; expired or superseded workers cannot renew."""
+        instant = self._utc(now or datetime.now(timezone.utc))
+        if not isinstance(reminder_id, str) or len(reminder_id) != 32:
+            raise ValueError("invalid_reminder_id")
+        if not isinstance(lease_token, str) or len(lease_token) != 32:
+            raise ValueError("invalid_lease_token")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 5 <= lease_seconds <= 900:
+            raise ValueError("invalid_lease_duration")
+        next_expiry = (datetime.fromisoformat(instant) + timedelta(seconds=lease_seconds)).isoformat()
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE companion_reminders SET lease_until=CASE "
+                "WHEN lease_until>? THEN lease_until ELSE ? END "
+                "WHERE reminder_id=? AND status='pending' AND lease_token=? AND lease_until>?",
+                (next_expiry, next_expiry, reminder_id, lease_token, instant),
+            )
+            return cursor.rowcount == 1
+
     def acknowledge_delivery(self, *, reminder_id: str, lease_token: str,
                              delivered_at: datetime | None = None) -> bool:
         """Acknowledge a successful send; stale or duplicate acknowledgements fail."""
