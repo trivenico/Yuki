@@ -15,6 +15,9 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
             Path(self.temp.name) / "tasks.sqlite3",
             clock=lambda: self.now[0],
         )
+        # Close the engine before TemporaryDirectory cleanup; Windows cannot
+        # unlink an open SQLite database file.
+        self.addCleanup(self.engine.close)
         self.goal_id = self.engine.create_goal()
         self.task = self.engine.submit(
             self.goal_id, "work", {"input": "safe"},
