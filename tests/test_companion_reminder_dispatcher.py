@@ -58,6 +58,27 @@ def test_dispatcher_records_delivery_failure_and_releases_lease(tmp_path):
     assert store.claim_due() == []
 
 
+
+def test_dispatcher_skips_delivery_when_reminder_was_cancelled_after_claim(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Do not notify after cancellation",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due()[0]
+    received = []
+
+    def deliver(envelope):
+        received.append(envelope)
+
+    assert store.cancel(owner_id="owner-a", reminder_id=reminder["reminder_id"])
+    dispatcher = ReminderDispatcher(store, deliver)
+    asyncio.run(dispatcher._deliver_one(claim))
+
+    assert received == []
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "cancelled"
+
+
 def test_dispatcher_rejects_invalid_configuration(tmp_path):
     store = _store(tmp_path)
     for kwargs in (
