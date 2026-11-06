@@ -333,7 +333,13 @@ pub fn persist_cursor(path: &Path, cursor: u64) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let mut temporary = PathBuf::from(path);
-    let suffix = format!("{}.tmp", std::process::id());
+    // A process-specific but unique name prevents stale crash leftovers from
+    // blocking future atomic cursor checkpoints.
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "system clock is before Unix epoch"))?
+        .as_nanos();
+    let suffix = format!(".{}.{}.tmp", std::process::id(), nonce);
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cursor path has no filename"))?;
     let mut temporary_name = name.to_os_string();
     temporary_name.push(suffix);
@@ -518,6 +524,18 @@ mod tests {
         );
         assert_eq!(load_cursor(&path).unwrap(), 42);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn cursor_checkpoint_ignores_stale_temp_file_from_previous_crash() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("yuki-cursor-stale-{}-{nonce}", std::process::id()));
+        let stale = path.with_file_name(format!("{}.{}.tmp", path.file_name().unwrap().to_string_lossy(), std::process::id()));
+        fs::write(&stale, "stale").unwrap();
+        persist_cursor(&path, 7).expect("fresh checkpoint should not collide with stale temp files");
+        assert_eq!(load_cursor(&path).unwrap(), 7);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(stale);
     }
 
     #[test]
