@@ -71,12 +71,16 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "snapshot_missing"):
                 store.record(replace(proposal, snapshot_json=""))
             store.record(proposal)
-            with sqlite3.connect(database) as connection:
+            connection = sqlite3.connect(database)
+            try:
                 connection.execute("DROP TRIGGER self_upgrade_snapshots_no_update")
                 connection.execute(
                     "UPDATE self_upgrade_snapshots SET snapshot_json = ? WHERE proposal_id = ?",
                     (proposal.snapshot_json.replace("VALUE = 2", "VALUE = 9"), proposal.proposal_id),
                 )
+                connection.commit()
+            finally:
+                connection.close()
             with self.assertRaisesRegex(ValueError, "integrity_failure"):
                 store.load_snapshot(proposal.proposal_id)
 
