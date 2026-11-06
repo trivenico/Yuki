@@ -194,20 +194,6 @@ fn store_device_token(token: String) -> Result<(), String> {
 
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 #[tauri::command]
-fn get_device_token() -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(
-        DEVICE_CREDENTIAL_SERVICE,
-        DEVICE_CREDENTIAL_ACCOUNT,
-    ).map_err(|_| "The operating-system credential store is unavailable.".to_string())?;
-    match entry.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(_) => Err("Could not read the paired-device credential.".to_string()),
-    }
-}
-
-#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-#[tauri::command]
 fn delete_device_token() -> Result<(), String> {
     let entry = keyring::Entry::new(
         DEVICE_CREDENTIAL_SERVICE,
@@ -222,12 +208,6 @@ fn delete_device_token() -> Result<(), String> {
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 #[tauri::command]
 fn store_device_token(_token: String) -> Result<(), String> {
-    Err("Secure device credential storage is not yet supported on this platform.".to_string())
-}
-
-#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
-#[tauri::command]
-fn get_device_token() -> Result<Option<String>, String> {
     Err("Secure device credential storage is not yet supported on this platform.".to_string())
 }
 
@@ -289,7 +269,6 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             store_device_token,
-            get_device_token,
             delete_device_token,
             request_notification_permission,
             show_native_notification
