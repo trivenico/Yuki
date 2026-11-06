@@ -52,7 +52,7 @@ class ProviderAgentAdapter:
 
     @staticmethod
     def _validate_response(response, tools, tool_choice="auto"):
-        if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
+        if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage", "request_id"}:
             raise ProviderResponseError("provider_response_envelope_invalid")
         text = response.get("text", "")
         calls = response.get("tool_calls", {"tool_calls": []})
@@ -83,7 +83,25 @@ class ProviderAgentAdapter:
         for call in normalized:
             if call.name not in allowed_names:
                 raise ProviderResponseError("provider_tool_name_not_requested")
-        return {"text": text, "tool_calls": dict(calls), "finish_reason": finish_reason}
+        normalized = {"text": text, "tool_calls": dict(calls), "finish_reason": finish_reason}
+        if "usage" in response:
+            usage = response["usage"]
+            if (not isinstance(usage, Mapping)
+                    or set(usage) != {"input_tokens", "output_tokens", "estimated"}
+                    or type(usage["input_tokens"]) is not int
+                    or type(usage["output_tokens"]) is not int
+                    or not 0 <= usage["input_tokens"] <= 10_000_000
+                    or not 0 <= usage["output_tokens"] <= 10_000_000
+                    or type(usage["estimated"]) is not bool):
+                raise ProviderResponseError("provider_usage_metadata_invalid")
+            normalized["usage"] = dict(usage)
+        if "request_id" in response:
+            request_id = response["request_id"]
+            if (not isinstance(request_id, str) or not request_id.strip()
+                    or len(request_id) > 160):
+                raise ProviderResponseError("provider_request_id_invalid")
+            normalized["request_id"] = request_id
+        return normalized
 
     @classmethod
     def _validated_stream(cls, result, context, tools, tool_choice="auto"):
