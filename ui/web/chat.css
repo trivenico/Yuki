@@ -47,3 +47,6 @@
 .device-pair-form input,.memory-form input{background:#101216;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--text);width:100%;font-size:13px}
 #pair-device:disabled{opacity:.55;cursor:wait}
 #device-status{padding:12px 0;overflow-wrap:anywhere}
+
+.paired-devices{padding:18px 0;border-top:1px solid var(--line);margin-top:14px}
+.paired-devices h3{margin:0 0 8px;font-size:13px;font-weight:600;color:#e1ddec}
