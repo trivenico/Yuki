@@ -81,7 +81,7 @@ class ReminderDispatcher:
             )
             if not renewed:
                 logger.warning("Reminder lease renewal rejected (reminder_id=%s)", reminder_id)
-                return
+                raise RuntimeError("reminder_lease_lost")
 
     async def _deliver_one(self, claim: dict) -> None:
         reminder_id = claim["reminder_id"]
@@ -103,19 +103,43 @@ class ReminderDispatcher:
         if not current:
             logger.info("Skipping stale or cancelled reminder lease (reminder_id=%s)", reminder_id)
             return
-        renewal_task = asyncio.create_task(
-            self._renew_lease(reminder_id, token),
-            name=f"yuki-reminder-lease-{reminder_id}",
-        )
-        try:
+        async def invoke_delivery() -> None:
             if inspect.iscoroutinefunction(self.deliver):
                 await self.deliver(envelope)
             else:
                 result = await asyncio.to_thread(self.deliver, envelope)
                 if inspect.isawaitable(result):
                     await result
+
+        delivery_task = asyncio.create_task(
+            invoke_delivery(), name=f"yuki-reminder-send-{reminder_id}"
+        )
+        renewal_task = asyncio.create_task(
+            self._renew_lease(reminder_id, token),
+            name=f"yuki-reminder-lease-{reminder_id}",
+        )
+        try:
+            done, _ = await asyncio.wait(
+                {delivery_task, renewal_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if renewal_task in done:
+                # A rejected renewal means this worker no longer owns delivery.
+                # Cancel async channels before they can continue sending. A
+                # synchronous callback already running in a worker thread cannot
+                # be forcibly stopped; such channels must enforce idempotency.
+                try:
+                    renewal_task.result()
+                except Exception:
+                    logger.warning("Stopping delivery after lease loss (reminder_id=%s)", reminder_id)
+                delivery_task.cancel()
+                try:
+                    await delivery_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return
+            await delivery_task
         except asyncio.CancelledError:
-            # Do not acknowledge; lease expiry makes the reminder recoverable.
+            delivery_task.cancel()
             raise
         except Exception:
             logger.exception("Reminder delivery failed (reminder_id=%s)", reminder_id)
@@ -127,7 +151,7 @@ class ReminderDispatcher:
             renewal_task.cancel()
             try:
                 await renewal_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
         acknowledged = await self._store_call(
             "acknowledge_delivery", reminder_id=reminder_id, lease_token=token
