@@ -36,6 +36,7 @@ class YukiBootstrapTests(unittest.TestCase):
         self.assertFalse(_authorize_companion_memory(actor, "agent_memory:prune", "assistant"))
         self.assertFalse(_authorize_companion_memory(actor, "owner_profile:share", "owner_profile"))
         self.assertFalse(_authorize_companion_memory(actor, "owner_profile:write", "assistant"))
+        self.assertFalse(_authorize_companion_memory(actor, "agent_memory:write", "owner_profile"))
         self.assertFalse(_authorize_companion_memory(actor, "agent_memory:read", "research"))
         self.assertFalse(_authorize_companion_memory("owner-untrusted", "agent_memory:read", "assistant"))
 
