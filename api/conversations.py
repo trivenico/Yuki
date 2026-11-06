@@ -22,6 +22,7 @@ from core.memory_candidate_extractor import extract_memory_candidates
 from core.owner_profile import OwnerProfileStore
 from companion.reminder_store import CompanionReminderStore
 from core.device_notification_outbox import DeviceNotificationOutbox
+from core.device_pairing import DevicePairingService, DevicePairingError
 from companion.persona import DEFAULT_PERSONA
 from core.conversation_store import (
     ConversationConflict,
@@ -49,6 +50,7 @@ class YukiConversationAPI:
         owner_profile_store: OwnerProfileStore | None = None,
         reminder_store: CompanionReminderStore | None = None,
         notification_outbox: DeviceNotificationOutbox | None = None,
+        device_pairing: DevicePairingService | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -80,6 +82,13 @@ class YukiConversationAPI:
         if notification_outbox is not None and not isinstance(notification_outbox, DeviceNotificationOutbox):
             raise TypeError('notification_outbox must be a DeviceNotificationOutbox')
         self.notification_outbox = notification_outbox
+        if device_pairing is not None and not isinstance(device_pairing, DevicePairingService):
+            raise TypeError("device_pairing must be a DevicePairingService")
+        if notification_outbox is not None and device_pairing is not None and notification_outbox.pairing is not device_pairing:
+            raise ValueError("device_pairing must match notification_outbox pairing service")
+        self.device_pairing = device_pairing or (
+            notification_outbox.pairing if notification_outbox is not None else None
+        )
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -214,6 +223,54 @@ class YukiConversationAPI:
                 except PermissionError:
                     return await self._respond(send, 401, {"error": "device_authentication_required"})
                 return await self._respond(send, 200, {"acknowledged": acknowledged})
+
+
+            # Pairing challenge creation is owner-session authenticated.
+            if method == "POST" and path == "/v1/devices/pairing-challenges":
+                user, _ = await self._principal(scope)
+                if user is None:
+                    return await self._respond(send, 401, {"error": "authentication_required"})
+                if self.device_pairing is None:
+                    return await self._respond(send, 503, {"error": "device_pairing_unavailable"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                challenge = await asyncio.to_thread(
+                    self.device_pairing.create_pairing_challenge, user.user_id
+                )
+                return await self._respond(send, 201, {
+                    "code": challenge.code, "expires_at": challenge.expires_at
+                })
+
+            # Pairing returns a device bearer secret once; allow HTTPS or a
+            # loopback client for the local-first Desktop enrollment flow.
+            if method == "POST" and path == "/v1/devices/pair":
+                if self.device_pairing is None:
+                    return await self._respond(send, 503, {"error": "device_pairing_unavailable"})
+                client = scope.get("client")
+                client_host = client[0] if isinstance(client, (tuple, list)) and client else ""
+                is_loopback = client_host in {"127.0.0.1", "::1", "localhost"}
+                if scope.get("scheme") != "https" and not is_loopback:
+                    return await self._respond(send, 400, {"error": "secure_transport_required"})
+                payload = await self._body(receive)
+                if set(payload) != {"code", "name"}:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    credential = await asyncio.to_thread(
+                        self.device_pairing.pair_device, payload["code"], payload["name"]
+                    )
+                except DevicePairingError:
+                    return await self._respond(send, 401, {"error": "invalid_or_expired_pairing_code"})
+                except ValueError:
+                    return await self._respond(send, 400, {"error": "invalid_pairing_request"})
+                return await self._respond(send, 201, {
+                    "device_token": credential.token,
+                    "device": {
+                        "device_id": credential.device.device_id,
+                        "name": credential.device.name,
+                        "created_at": credential.device.created_at,
+                    },
+                })
 
             if method == "POST" and path == "/v1/auth/login":
                 payload = await self._body(receive)
