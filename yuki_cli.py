@@ -1,17 +1,22 @@
 """Thin CLI entry point for Yuki's shared provider and readiness services.
 
-The CLI exposes diagnostics, provider chat, and the authenticated local API.
-Tool execution remains disabled in this initial local runtime.
+The CLI exposes diagnostics, provider chat, authenticated companion reminders,
+and the authenticated local API. Tool execution remains disabled in this mode.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from core.config import load_config
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+
+_LOCAL_API = "http://127.0.0.1:8765"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +30,16 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start a simple interactive chat (no tools executed)")
+    reminders = sub.add_parser("reminders", help="Manage owner-scoped companion reminders")
+    reminder_commands = reminders.add_subparsers(dest="reminder_command", required=True)
+    reminder_list = reminder_commands.add_parser("list", help="List your reminders")
+    reminder_list.add_argument("--include-inactive", action="store_true")
+    reminder_add = reminder_commands.add_parser("add", help="Create a reminder")
+    reminder_add.add_argument("--text", required=True)
+    reminder_add.add_argument("--due-at", required=True, help="Timezone-aware ISO 8601 timestamp")
+    reminder_cancel = reminder_commands.add_parser("cancel", help="Cancel one of your reminders")
+    reminder_cancel.add_argument("reminder_id")
+
     serve = sub.add_parser(
         "serve",
         help="Start the authenticated loopback API for desktop and local clients",
@@ -36,6 +51,66 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
     output_fn(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _reminder_request(path: str, *, method: str = "GET", payload: dict | None = None,
+                      token: str | None = None) -> tuple[dict | None, int]:
+    """Call only Yuki's fixed loopback API; never accept a caller-controlled URL."""
+    session = token or os.environ.get("YUKI_ACCESS_TOKEN")
+    if not isinstance(session, str) or not 20 <= len(session) <= 256:
+        return {"error": "Set YUKI_ACCESS_TOKEN to a valid Yuki session token."}, 2
+    if not path.startswith("/v1/companion/reminders"):
+        return {"error": "Invalid reminder endpoint."}, 2
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = Request(
+        _LOCAL_API + path,
+        data=body,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + session,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            raw = response.read(24_001)
+            if len(raw) > 24_000:
+                return {"error": "Yuki API response exceeded the size limit."}, 4
+            decoded = json.loads(raw.decode("utf-8")) if raw else {}
+            return decoded, 0
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            return {"error": "Yuki session is invalid or expired. Sign in again."}, 3
+        if exc.code == 404:
+            return {"error": "Reminder was not found or is not accessible."}, 3
+        if exc.code == 503:
+            return {"error": "Yuki reminders are unavailable."}, 3
+        return {"error": f"Yuki API request failed (HTTP {exc.code})."}, 4
+    except (URLError, TimeoutError, OSError):
+        return {"error": "Could not reach Yuki at 127.0.0.1:8765."}, 3
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"error": "Yuki API returned an invalid response."}, 4
+
+
+def _run_reminders(args, output_fn: Callable[[str], object]) -> int:
+    if args.reminder_command == "list":
+        query = "?include_inactive=true" if args.include_inactive else ""
+        result, status = _reminder_request("/v1/companion/reminders" + query)
+    elif args.reminder_command == "add":
+        result, status = _reminder_request(
+            "/v1/companion/reminders", method="POST",
+            payload={"text": args.text, "due_at": args.due_at},
+        )
+    else:
+        if len(args.reminder_id) != 32 or any(c not in "0123456789abcdef" for c in args.reminder_id):
+            output_fn("Invalid reminder ID.")
+            return 2
+        result, status = _reminder_request(
+            "/v1/companion/reminders/" + args.reminder_id, method="DELETE",
+        )
+    _write_json(result, output_fn)
+    return status
 
 
 def _safe_ask(provider, prompt: str) -> tuple[str, int]:
@@ -72,6 +147,9 @@ def run_cli(
         report = readiness_builder().to_dict()
         _write_json(report, output_fn)
         return 0
+
+    if args.command == "reminders":
+        return _run_reminders(args, output_fn)
 
     try:
         config = config_loader()
