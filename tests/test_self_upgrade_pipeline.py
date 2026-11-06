@@ -24,6 +24,8 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             self.assertEqual(row["status"], "pending_review")
             self.assertEqual(store.record(proposal)["proposal_id"], proposal.proposal_id)
             self.assertEqual(store.status()["pending_review"], 1)
+            reopened = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            self.assertEqual(reopened.list()[0]["proposal_id"], proposal.proposal_id)
             self.assertFalse(store.status()["automatic_application_enabled"])
 
     def test_approval_only_authorizes_isolated_testing_and_is_idempotent(self):
