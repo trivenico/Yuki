@@ -306,7 +306,7 @@
     const invoke = nativeInvoke();
     if (!invoke) { setDeviceStatus("Secure native credential storage is unavailable in this browser."); return; }
     const name = $("device-name").value.trim();
-    if (!name || name.length > 80 || /[\\u0000-\\u001f\\u007f]/.test(name)) {
+    if (!name || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name)) {
       setDeviceStatus("Enter a device name containing 1–80 printable characters."); return;
     }
     const button = $("pair-device"); button.disabled = true;
