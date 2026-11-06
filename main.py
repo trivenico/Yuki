@@ -180,7 +180,6 @@ def main():
     else:
         active_provider = raw_provider
     ai = YukiAgent(active_provider)
-    api_handle = _start_local_api()
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
     memory_path = workspace / "yuki_memory.json"
@@ -228,6 +227,7 @@ def main():
             return "\n".join(f"{s['name']} [{s['risk']}] — {s['description']}" for s in agent.available_skills())
         return "Safe commands: /help, /status, /skills. Sensitive actions remain in the approval-gated terminal."
     
+    api_handle = _start_local_api()
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
     while True:
