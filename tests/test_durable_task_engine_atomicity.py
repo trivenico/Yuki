@@ -68,5 +68,54 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         )
 
 
+    def test_retry_scheduling_and_failure_event_roll_back_together(self):
+        self.reject_event("task.retry_queued")
+        original = self.engine.get_task(self.task["id"])
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.fail(
+                self.task["id"], "worker-a", "temporary secret-bearing failure",
+                retry_delay_seconds=45,
+            )
+
+        current = self.engine.get_task(self.task["id"])
+        self.assertEqual(current["state"], "running")
+        self.assertEqual(current["attempts"], original["attempts"])
+        self.assertEqual(current["available_at"], original["available_at"])
+        self.assertEqual(current["lease_owner"], "worker-a")
+        self.assertEqual(current["lease_until"], original["lease_until"])
+        self.assertIsNone(current["last_error"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(self.goal_id)],
+            ["goal.created", "task.queued", "task.claimed"],
+        )
+
+    def test_expired_lease_recovery_and_expiry_event_roll_back_together(self):
+        task = self.engine.submit(
+            self.goal_id, "expiring", {}, idempotency_key="expiry-atomic",
+            max_attempts=1,
+        )
+        # Claim the newly queued task; this task has exhausted its only attempt
+        # when the lease expires.
+        claimed = self.engine.claim("worker-b", lease_seconds=5)
+        self.assertEqual(claimed["id"], task["id"])
+        self.now[0] += 6
+        original = self.engine.get_task(task["id"])
+        self.reject_event("task.lease_expired")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.recover_expired_leases()
+
+        current = self.engine.get_task(task["id"])
+        self.assertEqual(current["state"], "running")
+        self.assertEqual(current["lease_owner"], "worker-b")
+        self.assertEqual(current["lease_until"], original["lease_until"])
+        self.assertIsNone(current["last_error"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(self.goal_id)],
+            ["goal.created", "task.queued", "task.claimed", "task.queued", "task.claimed"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
