@@ -299,6 +299,7 @@ def main():
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
             print(f"Provider: {config['provider']} (configured adapter; availability depends on runtime/model credentials)")
+            print("Local API: " + ("running" if api_handle is not None else "not running"))
             print(f"Voice: {config['voice_enabled']}; language behavior: {config['language_behavior']}; voice style preference: {config['voice_style']}")
             print(f"Spoken reply policy: {config['spoken_reply_policy']} (end-to-end reply loop not connected)")
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
