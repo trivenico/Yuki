@@ -168,5 +168,31 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         )
 
 
+    def test_cancellation_and_blocked_dependency_propagation_roll_back_together(self):
+        goal_id = self.engine.create_goal()
+        parent = self.engine.submit(
+            goal_id, "parent", {}, idempotency_key="cancel-parent-atomic",
+        )
+        child = self.engine.submit(
+            goal_id, "child", {}, idempotency_key="cancel-child-atomic",
+            dependencies=[parent["id"]],
+        )
+        self.reject_event("task.blocked_dependency")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.cancel_task(parent["id"])
+
+        current_parent = self.engine.get_task(parent["id"])
+        current_child = self.engine.get_task(child["id"])
+        self.assertEqual(current_parent["state"], "queued")
+        self.assertEqual(current_child["state"], "queued")
+        self.assertIsNone(current_parent["lease_owner"])
+        self.assertIsNone(current_child["last_error"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(goal_id)],
+            ["goal.created", "task.queued", "task.queued"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
