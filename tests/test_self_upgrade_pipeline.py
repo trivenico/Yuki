@@ -1,5 +1,7 @@
 import hashlib
+import sqlite3
 import unittest
+from dataclasses import replace
 
 from automation.approved_workspace_changes import FileChange
 from automation.authorized_read_tools import ToolInputError
@@ -27,6 +29,69 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             reopened = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
             self.assertEqual(reopened.list()[0]["proposal_id"], proposal.proposal_id)
             self.assertFalse(store.status()["automatic_application_enabled"])
+
+    def test_snapshot_survives_database_reopen_and_is_loadable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reviews.sqlite3"
+            store = SelfUpgradeReviewStore(database)
+            proposal = self.builder.build([
+                FileChange("tests/test_example.py", self.digest, "VALUE = 3\n"),
+                FileChange("src/example.py", self.digest, "VALUE = 2\n"),
+            ])
+            store.record(proposal)
+            reopened = SelfUpgradeReviewStore(database)
+            loaded = reopened.load_snapshot(proposal.proposal_id)
+            self.assertEqual(loaded["content_digest"], proposal.content_digest)
+            self.assertEqual(
+                [(item.path, item.content) for item in loaded["files"]],
+                [("src/example.py", "VALUE = 2\n"),
+                 ("tests/test_example.py", "VALUE = 3\n")],
+            )
+
+    def test_snapshot_digest_is_independent_of_input_order(self):
+        first = self.builder.build([
+            FileChange("src/example.py", self.digest, "A = 1\n"),
+            FileChange("tests/test_example.py", self.digest, "B = 2\n"),
+        ])
+        second = self.builder.build([
+            FileChange("tests/test_example.py", self.digest, "B = 2\n"),
+            FileChange("src/example.py", self.digest, "A = 1\n"),
+        ])
+        self.assertEqual(first.content_digest, second.content_digest)
+        self.assertEqual(first.snapshot_json, second.snapshot_json)
+
+    def test_snapshot_is_required_and_tampering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reviews.sqlite3"
+            store = SelfUpgradeReviewStore(database)
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 2\n")
+            ])
+            with self.assertRaisesRegex(ValueError, "snapshot_missing"):
+                store.record(replace(proposal, snapshot_json=""))
+            store.record(proposal)
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TRIGGER self_upgrade_snapshots_no_update")
+                connection.execute(
+                    "UPDATE self_upgrade_snapshots SET snapshot_json = ? WHERE proposal_id = ?",
+                    (proposal.snapshot_json.replace("VALUE = 2", "VALUE = 9"), proposal.proposal_id),
+                )
+            with self.assertRaisesRegex(ValueError, "integrity_failure"):
+                store.load_snapshot(proposal.proposal_id)
+
+    def test_existing_proposal_id_rejects_conflicting_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 2\n")
+            ])
+            store.record(proposal)
+            altered = replace(
+                proposal,
+                snapshot_json=proposal.snapshot_json.replace("VALUE = 2", "VALUE = 3"),
+            )
+            with self.assertRaisesRegex(ValueError, "digest_mismatch|snapshot_digest_invalid"):
+                store.record(altered)
 
     def test_approval_only_authorizes_isolated_testing_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
