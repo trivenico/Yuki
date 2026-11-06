@@ -273,8 +273,29 @@ fn run_notification_worker(app: AppHandle, stop: Arc<AtomicBool>, cursor_path: P
     }
 }
 
-#[tauri::command]
-fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorker>) -> Result<(), String> {
+fn notification_opt_in_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_local_data_dir()
+        .map_err(|_| "Could not locate Yuki's local application data directory.".to_string())?
+        .join("notifications").join("enabled"))
+}
+
+fn save_notification_opt_in(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let path = notification_opt_in_path(app)?;
+    let parent = path.parent().ok_or_else(|| "Notification preference path is invalid.".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|_| "Could not create notification preference directory.".to_string())?;
+    let value = if enabled { "enabled\\n" } else { "disabled\\n" };
+    let mut file = std::fs::File::create(path).map_err(|_| "Could not save notification preference.".to_string())?;
+    file.write_all(value.as_bytes()).and_then(|_| file.sync_all())
+        .map_err(|_| "Could not persist notification preference.".to_string())
+}
+
+fn notification_opted_in(app: &AppHandle) -> bool {
+    notification_opt_in_path(app).ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_some_and(|value| value.trim() == "enabled")
+}
+
+fn start_notification_worker_inner(app: AppHandle, worker: &NotificationWorker) -> Result<(), String> {
     if app.notification().permission_state()
         .map_err(|_| "Could not read operating-system notification permission.".to_string())?
         != PermissionState::Granted
@@ -287,11 +308,7 @@ fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorke
         .map_err(|_| "Could not locate Yuki's local application data directory.".to_string())?
         .join("notifications").join("cursor");
     let mut slot = worker.thread.lock().map_err(|_| "Notification worker state is unavailable.".to_string())?;
-    if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
-        return Ok(());
-    }
-    // A worker can stop itself after revoked credentials, malformed API data,
-    // or a delivery failure. Reap that finished thread before allowing restart.
+    if slot.as_ref().is_some_and(|handle| !handle.is_finished()) { return Ok(()); }
     if let Some(finished) = slot.take() {
         finished.join().map_err(|_| "Previous notification worker did not shut down cleanly.".to_string())?;
     }
@@ -304,6 +321,16 @@ fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorke
 }
 
 #[tauri::command]
+fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorker>) -> Result<(), String> {
+    save_notification_opt_in(&app, true)?;
+    if let Err(error) = start_notification_worker_inner(app.clone(), &worker) {
+        let _ = save_notification_opt_in(&app, false);
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn notification_worker_status(worker: State<'_, NotificationWorker>) -> Result<bool, String> {
     let slot = worker.thread.lock()
         .map_err(|_| "Notification worker state is unavailable.".to_string())?;
@@ -311,7 +338,8 @@ fn notification_worker_status(worker: State<'_, NotificationWorker>) -> Result<b
 }
 
 #[tauri::command]
-fn stop_notification_worker(worker: State<'_, NotificationWorker>) -> Result<(), String> {
+fn stop_notification_worker(app: AppHandle, worker: State<'_, NotificationWorker>) -> Result<(), String> {
+    save_notification_opt_in(&app, false)?;
     worker.stop.store(true, Ordering::Release);
     let handle = worker.thread.lock()
         .map_err(|_| "Notification worker state is unavailable.".to_string())?
@@ -455,6 +483,13 @@ fn main() {
 
             app.manage(ManagedServer(Mutex::new(Some(process))));
             app.manage(NotificationWorker::default());
+            // Restore only a prior explicit opt-in. Permission and credentials
+            // are checked again; missing prerequisites leave delivery stopped.
+            if notification_opted_in(&app.handle()) {
+                if let Some(worker) = app.try_state::<NotificationWorker>() {
+                    let _ = start_notification_worker_inner(app.handle().clone(), &worker);
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!());
