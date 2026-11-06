@@ -263,7 +263,7 @@ class CompanionReminderStore:
             row = db.execute(
                 "SELECT attempts FROM companion_reminders WHERE reminder_id=? "
                 "AND status='pending' AND lease_token=? AND lease_until>?",
-                (reminder_id, lease_token, stamp),
+                (reminder_id, lease_token, instant.isoformat()),
             ).fetchone()
             if row is None:
                 return None
