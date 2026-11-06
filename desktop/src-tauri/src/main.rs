@@ -1,6 +1,6 @@
-mod notification_delivery;
-
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod notification_delivery;
 
 use std::{
     io::{Read, Write},
