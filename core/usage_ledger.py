@@ -68,7 +68,10 @@ class UsageLedger:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
         try:
-            yield connection
+            # The caller's context is a transaction boundary. Without this,
+            # closing SQLite rolls back writes performed by record().
+            with connection:
+                yield connection
         finally:
             connection.close()
 
