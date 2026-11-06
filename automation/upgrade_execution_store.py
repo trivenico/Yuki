@@ -14,6 +14,7 @@ import sqlite3
 from typing import Iterator
 
 from automation.upgrade_execution_contracts import ExecutionEvidence, ExecutionRequest
+from automation.upgrade_evidence_verifier import Ed25519EvidenceVerifier, EvidenceVerificationError
 
 
 class UpgradeExecutionStoreError(RuntimeError):
@@ -29,12 +30,15 @@ class UpgradeExecutionTransitionError(UpgradeExecutionStoreError):
 
 
 _STATES = frozenset({
-    "queued", "running", "evidence_pending", "timed_out", "cancelled", "rejected",
+    "queued", "running", "evidence_pending", "verifying", "verified_pass", "verified_fail", "timed_out", "cancelled", "rejected",
 })
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled", "rejected"}),
     "running": frozenset({"evidence_pending", "timed_out", "cancelled", "rejected"}),
-    "evidence_pending": frozenset({"timed_out", "cancelled", "rejected"}),
+    "evidence_pending": frozenset({"verifying", "timed_out", "cancelled", "rejected"}),
+    "verifying": frozenset({"verified_pass", "verified_fail", "rejected"}),
+    "verified_pass": frozenset(),
+    "verified_fail": frozenset(),
     "timed_out": frozenset(),
     "cancelled": frozenset(),
     "rejected": frozenset(),
@@ -270,6 +274,59 @@ class UpgradeExecutionStore:
                 (execution_id,),
             ).fetchone()
             return self._record(updated)
+
+
+    def verify_and_finalize_evidence(
+        self, execution_id: str, *, expected_version: int,
+        verifier: Ed25519EvidenceVerifier, actor_id: str = "evidence-verifier",
+    ) -> UpgradeExecutionRecord:
+        """Authenticate stored evidence before entering a verified terminal state."""
+        if not isinstance(verifier, Ed25519EvidenceVerifier):
+            raise TypeError("verifier_must_be_Ed25519EvidenceVerifier")
+        with self._transaction() as db:
+            row = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["version"] != expected_version:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            if row["state"] != "evidence_pending" or row["evidence_json"] is None:
+                raise UpgradeExecutionTransitionError("verified_evidence_required")
+            evidence = ExecutionEvidence(**json.loads(row["evidence_json"]))
+            request_data = json.loads(row["request_json"])
+            request_data["test_targets"] = tuple(request_data["test_targets"])
+            request = ExecutionRequest(**request_data)
+            try:
+                evidence.verify_binding(request)
+            except ValueError as exc:
+                raise UpgradeExecutionConflict("evidence_request_mismatch") from exc
+            now = _now()
+            next_version = expected_version + 1
+            changed = db.execute("""
+                UPDATE upgrade_executions SET state='verifying', version=?, updated_at=?
+                WHERE execution_id=? AND version=? AND state='evidence_pending'
+            """, (next_version, now, execution_id, expected_version)).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, 'evidence_pending', 'verifying', ?, 'signature_verification_started', ?)
+            """, (execution_id, next_version, actor_id, now))
+        try:
+            verifier.verify(evidence)
+        except EvidenceVerificationError as exc:
+            target_state = "rejected"
+            reason = str(exc)[:100]
+        else:
+            target_state = "verified_pass" if evidence.outcome == "passed" and evidence.exit_code == 0 else "verified_fail"
+            reason = "signature_and_claims_verified"
+        return self.transition(
+            execution_id, expected_version=next_version, to_state=target_state,
+            actor_id=actor_id, reason_code=reason,
+        )
 
     def list_events(self, execution_id: str) -> list[dict[str, object]]:
         with self._connect() as db:
