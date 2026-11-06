@@ -356,7 +356,7 @@ mod tests {
         assert!(valid_notification_text("Reminder", 120));
         assert!(valid_notification_text("Your task is due", 1_000));
         assert!(!valid_notification_text("   ", 120));
-        assert!(!valid_notification_text("bad\\ntext", 120));
+        assert!(!valid_notification_text("bad\ntext", 120));
         assert!(!valid_notification_text(&"x".repeat(121), 120));
         assert!(!valid_notification_text(&"x".repeat(1_001), 1_000));
     }
