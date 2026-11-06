@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -137,11 +138,12 @@ def _device_request(
     if not isinstance(credential, str) or not 20 <= len(credential) <= 256:
         return {"error": "Set YUKI_DEVICE_TOKEN to a valid paired-device token."}, 2
     if not (
-        path == "/v1/devices/notifications"
-        or (
-            path.startswith("/v1/devices/notifications/evt_")
-            and path.endswith("/ack")
-            and len(path) == len("/v1/devices/notifications/") + 36 + len("/ack")
+        re.fullmatch(
+            r"/v1/devices/notifications(?:\\?after_sequence=\\d+&limit=\\d+)?",
+            path,
+        )
+        or re.fullmatch(
+            r"/v1/devices/notifications/evt_[0-9a-f]{32}/ack", path
         )
     ):
         return {"error": "Invalid device notification endpoint."}, 2
