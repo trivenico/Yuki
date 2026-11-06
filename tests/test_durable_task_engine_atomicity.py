@@ -24,14 +24,15 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
 
     def reject_event(self, event_type):
         with self.engine._connect() as db:
+            # SQLite trigger definitions do not accept bound parameters.
+            # event_type is a fixed test constant, not user-controlled input.
             db.execute(
-                """
+                f"""
                 CREATE TRIGGER reject_task_event
                 BEFORE INSERT ON run_events
-                WHEN NEW.event_type = ?
+                WHEN NEW.event_type = '{event_type}'
                 BEGIN SELECT RAISE(ABORT, 'simulated event journal failure'); END
-                """,
-                (event_type,),
+                """
             )
 
     def test_completion_and_success_event_roll_back_together(self):
