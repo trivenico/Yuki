@@ -277,3 +277,39 @@ def test_dispatcher_delivers_companion_reminder_to_paired_device_outbox(tmp_path
     # Delivery to the durable outbox is not the same as OS display; the
     # paired desktop worker owns the subsequent acknowledgement.
     assert event.acknowledged_at is None
+
+
+def test_notification_channel_fans_out_idempotently_without_cross_owner_leakage(tmp_path):
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+
+    def pair(owner_id, name):
+        challenge = pairing.create_pairing_challenge(owner_id)
+        return pairing.pair_device(challenge.code, name)
+
+    owner_a_first = pair("owner-a", "Yuki Desktop A")
+    owner_a_second = pair("owner-a", "Yuki Desktop B")
+    owner_b = pair("owner-b", "Yuki Desktop C")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+    channel = DeviceNotificationChannel(pairing, outbox)
+    envelope = {
+        "owner_id": "owner-a",
+        "reminder_id": "a" * 32,
+        "text": "Private deployment reminder",
+        "due_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": "a" * 32,
+    }
+
+    assert channel(envelope) == 2
+    # A retry of the same reminder must reuse the existing per-device events.
+    assert channel(envelope) == 2
+
+    first_page = outbox.poll(owner_a_first.token)
+    second_page = outbox.poll(owner_a_second.token)
+    other_owner_page = outbox.poll(owner_b.token)
+
+    assert len(first_page.events) == 1
+    assert len(second_page.events) == 1
+    assert first_page.events[0].event_id != second_page.events[0].event_id
+    assert first_page.events[0].payload["body"] == "Private deployment reminder"
+    assert second_page.events[0].payload["body"] == "Private deployment reminder"
+    assert other_owner_page.events == []
