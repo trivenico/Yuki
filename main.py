@@ -1,5 +1,8 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
+import os
+import threading
+import time
 from pathlib import Path
 import shlex
 
@@ -24,6 +27,8 @@ from voice.tts import LocalTTS, TTSError
 from voice.wakeword import WakeWordDetector, WakeWordError
 from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
+from core.usage_ledger import UsageLedger
+from providers.usage_meter import UsageMeteredProvider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
@@ -105,6 +110,53 @@ def print_help():
 
 No model-directed tool execution or autonomous project editing is enabled. AI answers do not execute tools.
 """)
+
+
+
+def _start_local_api():
+    """Start Yuki's authenticated loopback API alongside the terminal."""
+    if os.environ.get("YUKI_START_LOCAL_API", "true").strip().lower() in {"0", "false", "no", "off"}:
+        print("Yuki local API: disabled by YUKI_START_LOCAL_API.")
+        return None
+    try:
+        import uvicorn
+        from api.bootstrap import build_yuki_runtime
+        port = int(os.environ.get("YUKI_PORT", "8765"))
+        if not 1 <= port <= 65535:
+            raise ValueError("port_out_of_range")
+        runtime = build_yuki_runtime()
+        server = uvicorn.Server(uvicorn.Config(
+            runtime, host="127.0.0.1", port=port,
+            log_level="warning", access_log=False,
+        ))
+        thread = threading.Thread(target=server.run, name="yuki-local-api", daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and thread.is_alive() and not server.started:
+            time.sleep(0.05)
+        if not server.started:
+            server.should_exit = True
+            thread.join(timeout=5)
+            runtime.close()
+            print(f"Yuki local API did not become ready on 127.0.0.1:{port}; terminal mode remains available.")
+            return None
+        print(f"Yuki local API: http://127.0.0.1:{port}")
+        return server, thread, runtime
+    except Exception as exc:
+        print(f"Yuki local API failed to start safely ({type(exc).__name__}); terminal mode remains available.")
+        return None
+
+
+def _stop_local_api(handle):
+    if handle is None:
+        return
+    server, thread, runtime = handle
+    server.should_exit = True
+    thread.join(timeout=10)
+    if thread.is_alive():
+        print("Yuki local API is still shutting down; runtime cleanup deferred.")
+        return
+    runtime.close()
 
 
 def main():
