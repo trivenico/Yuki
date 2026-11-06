@@ -27,6 +27,12 @@ _MAX_FILE_BYTES = 256 * 1024
 _MAX_PATCH_BYTES = 1024 * 1024
 _MAX_OUTPUT_BYTES = 64 * 1024
 _MAX_TEST_TIMEOUT = 120
+_MAX_MANIFEST_FILES = 10000
+_MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+_EXECUTION_MANIFESTS = frozenset({
+    "requirements.txt", "requirements-dev.txt", "pyproject.toml", "poetry.lock",
+    "uv.lock", "Pipfile", "Pipfile.lock", "setup.cfg", "tox.ini",
+})
 _SAFE_MODULE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _BLOCKED_PARTS = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh", ".aws", ".azure", ".config"})
 _SECRET_PART = re.compile(r"(^\.env($|\.)|secret|credential|password|token|private.?key|id_rsa|id_ed25519)", re.I)
@@ -108,6 +114,66 @@ def _safe_existing_file(root: Path, relative: str) -> Path:
     if resolved.stat().st_size > _MAX_FILE_BYTES:
         raise ToolInputError("existing file exceeds the edit size limit.")
     return resolved
+
+
+def _workspace_execution_digest(root: Path) -> str:
+    """Fingerprint project Python sources and dependency manifests for test approval.
+
+    This is a source-tree binding, not a lock on the installed interpreter environment.
+    """
+    entries = []
+    total_bytes = 0
+    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        current = Path(directory)
+        kept_dirs = []
+        for name in sorted(dirnames):
+            child = current / name
+            if name in _BLOCKED_PARTS or _SECRET_PART.search(name):
+                continue
+            if child.is_symlink():
+                raise ToolInputError("symlink directories are not allowed in test source trees.")
+            kept_dirs.append(name)
+        dirnames[:] = kept_dirs
+        for name in sorted(filenames):
+            if not (name.endswith(".py") or name in _EXECUTION_MANIFESTS):
+                continue
+            if _SECRET_PART.search(name):
+                continue
+            candidate = current / name
+            if candidate.is_symlink():
+                raise ToolInputError("symlink source files are not allowed in test source trees.")
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+                if not resolved.is_file():
+                    raise ToolInputError("test source entries must be regular files.")
+                size = resolved.stat().st_size
+                if size > _MAX_FILE_BYTES:
+                    raise ToolInputError("a test source file exceeds the manifest size limit.")
+                total_bytes += size
+                if total_bytes > _MAX_MANIFEST_BYTES:
+                    raise ToolInputError("test source tree exceeds the manifest size limit.")
+                content = resolved.read_bytes()
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ToolInputError("test source tree could not be safely fingerprinted.") from exc
+            relative = candidate.relative_to(root).as_posix()
+            entries.append({
+                "path": relative,
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            })
+            if len(entries) > _MAX_MANIFEST_FILES:
+                raise ToolInputError("test source tree contains too many files.")
+    if not entries:
+        raise ToolInputError("test source tree contains no fingerprintable Python files.")
+    payload = {
+        "python": sys.implementation.name,
+        "cache_tag": sys.implementation.cache_tag,
+        "version": [sys.version_info.major, sys.version_info.minor, sys.version_info.micro],
+        "files": entries,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 class ApprovedWorkspaceChanges:
@@ -282,8 +348,10 @@ class ApprovedTestRunner:
             raise ToolInputError("test target must resolve inside the workspace.") from exc
         if not source_file.is_file():
             raise ToolInputError("allow-listed test module is missing from the workspace.")
-        source_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
-        run_digest = hashlib.sha256(f"{test_module}:{source_digest}:{sys.version_info.major}.{sys.version_info.minor}".encode()).hexdigest()
+        source_digest = _workspace_execution_digest(self.root)
+        run_digest = hashlib.sha256(
+            f"{test_module}:{source_digest}".encode("utf-8")
+        ).hexdigest()
         run_id = "test_" + run_digest[:24]
         try:
             approved = self.approve_run(principal.actor_id, run_id, run_digest) is True
@@ -292,6 +360,9 @@ class ApprovedTestRunner:
         if not approved:
             self._record(principal.actor_id, "tests.run", "denied", run_digest, test_module)
             raise ToolAuthorizationError("explicit approval for this test target and source digest is required.")
+        if _workspace_execution_digest(self.root) != source_digest:
+            self._record(principal.actor_id, "tests.run", "denied", run_digest, test_module)
+            raise WorkspaceChangeError("test source tree changed after approval; review and approve again.")
         self._record(principal.actor_id, "tests.run", "started", run_digest, test_module)
         env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root),
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
