@@ -75,8 +75,9 @@ class UsageMeterTests(unittest.TestCase):
         meter = UsageMeteredProvider(
             self.provider, ledger=ledger, provider_id="openai", model_id="model-a"
         )
-        with self.assertRaisesRegex(UsageMeteringError, "persistence_failed"):
-            meter.generate_chat(messages=[], tools=[])
+        result = meter.generate_chat(messages=[], tools=[])
+        self.assertEqual(result, self.response)
+        self.assertEqual(meter.last_metering_error, "usage_persistence_failed")
         self.assertEqual(len(self.provider.calls), 1)
 
     def test_rejects_malformed_usage(self):
@@ -86,8 +87,9 @@ class UsageMeterTests(unittest.TestCase):
         })
         meter = UsageMeteredProvider(provider, ledger=self.ledger,
                                      provider_id="openai", model_id="model-a")
-        with self.assertRaises(UsageMeteringError):
-            meter.generate_chat(messages=[], tools=[])
+        result = meter.generate_chat(messages=[], tools=[])
+        self.assertEqual(result, provider.response)
+        self.assertEqual(meter.last_metering_error, "provider_usage_metadata_out_of_range")
 
     def test_estimated_usage_is_not_misrepresented_as_exact(self):
         provider = ChatProvider({
@@ -96,8 +98,9 @@ class UsageMeterTests(unittest.TestCase):
         })
         meter = UsageMeteredProvider(provider, ledger=self.ledger,
                                      provider_id="openai", model_id="model-a")
-        with self.assertRaisesRegex(UsageMeteringError, "estimated_provider_usage"):
-            meter.generate_chat(messages=[], tools=[])
+        result = meter.generate_chat(messages=[], tools=[])
+        self.assertEqual(result, provider.response)
+        self.assertEqual(meter.last_metering_error, "estimated_provider_usage_not_supported")
 
 
 if __name__ == "__main__":
