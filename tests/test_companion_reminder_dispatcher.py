@@ -313,3 +313,35 @@ def test_notification_channel_fans_out_idempotently_without_cross_owner_leakage(
     assert first_page.events[0].payload["body"] == "Private deployment reminder"
     assert second_page.events[0].payload["body"] == "Private deployment reminder"
     assert other_owner_page.events == []
+
+
+def test_notification_channel_fails_closed_if_device_is_revoked_after_listing(tmp_path):
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+    challenge = pairing.create_pairing_challenge("owner-a")
+    credential = pairing.pair_device(challenge.code, "Yuki Desktop")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+
+    class RevokeAfterListing:
+        def list_devices(self, owner_id):
+            devices = pairing.list_devices(owner_id)
+            assert pairing.revoke_device(owner_id, credential.device.device_id)
+            return devices
+
+    channel = DeviceNotificationChannel(RevokeAfterListing(), outbox)
+    envelope = {
+        "owner_id": "owner-a",
+        "reminder_id": "b" * 32,
+        "text": "Sensitive reminder",
+        "due_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": "b" * 32,
+    }
+
+    try:
+        channel(envelope)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("revoked device unexpectedly received a reminder")
+
+    # Authentication is now revoked and no event was inserted for that device.
+    assert pairing.authenticate_device(credential.token) is None
