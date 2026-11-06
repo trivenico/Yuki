@@ -44,7 +44,8 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
             allowed_runner_identities={"https://ci.example/workflow/upgrade"},
             max_age_seconds=3600,
         )
-        self.now = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)\n        self.request = ExecutionRequest.create(
+        self.now = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)
+        self.request = ExecutionRequest.create(
             proposal_id="proposal-verified",
             snapshot_digest=digest("snapshot"),
             snapshot_object_digest=digest("snapshot-object"),
