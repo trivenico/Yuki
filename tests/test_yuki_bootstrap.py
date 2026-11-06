@@ -30,6 +30,7 @@ class YukiBootstrapTests(unittest.TestCase):
         actor = "owner-" + "a" * 64
         self.assertTrue(_authorize_companion_memory(actor, "agent_memory:read", "assistant"))
         self.assertTrue(_authorize_companion_memory(actor, "agent_memory:write", "assistant"))
+        self.assertFalse(_authorize_companion_memory(actor, "agent_memory:read", "agent_memory"))
         self.assertTrue(_authorize_companion_memory(actor, "owner_profile:read", "owner_profile"))
         self.assertTrue(_authorize_companion_memory(actor, "owner_profile:write", "owner_profile"))
         self.assertFalse(_authorize_companion_memory(actor, "agent_memory:share", "assistant"))
