@@ -595,7 +595,28 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{health_response_is_ready, parse_notification_opt_in};
+    use super::{health_response_is_ready, parse_notification_opt_in, set_notification_health, NotificationWorkerHealth};
+    use std::sync::{Arc, Mutex};
+
+
+    #[test]
+    fn notification_worker_health_records_actionable_failure_state() {
+        let health = Arc::new(Mutex::new(NotificationWorkerHealth {
+            state: "starting".into(),
+            detail: "Starting.".into(),
+            running: true,
+        }));
+        set_notification_health(
+            &health,
+            "authentication_required",
+            "This device needs to be paired with Yuki again.",
+            false,
+        );
+        let actual = health.lock().unwrap().clone();
+        assert_eq!(actual.state, "authentication_required");
+        assert_eq!(actual.detail, "This device needs to be paired with Yuki again.");
+        assert!(!actual.running);
+    }
 
     #[test]
     fn notification_opt_in_requires_explicit_enabled_value() {
