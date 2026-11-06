@@ -132,6 +132,25 @@ class SelfUpgradeReviewStore:
                 CREATE INDEX IF NOT EXISTS idx_self_upgrade_reviews_status_created
                 ON self_upgrade_reviews(status, created_at)
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS self_upgrade_test_evidence (
+                    run_id TEXT PRIMARY KEY,
+                    proposal_id TEXT NOT NULL,
+                    content_digest TEXT NOT NULL CHECK(length(content_digest) = 64),
+                    test_target TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('passed', 'failed', 'timed_out')),
+                    exit_code INTEGER NOT NULL,
+                    runner_kind TEXT NOT NULL CHECK(runner_kind IN ('github_actions', 'container', 'vm')),
+                    runner_digest TEXT NOT NULL CHECK(length(runner_digest) = 64),
+                    result_digest TEXT NOT NULL CHECK(length(result_digest) = 64),
+                    recorded_at TEXT NOT NULL,
+                    FOREIGN KEY(proposal_id) REFERENCES self_upgrade_reviews(proposal_id)
+                )
+            """)
+            connection.execute("""
+                CREATE INDEX IF NOT EXISTS idx_self_upgrade_test_evidence_proposal
+                ON self_upgrade_test_evidence(proposal_id, recorded_at)
+            """)
 
     @staticmethod
     def _valid_review_path(path: str) -> bool:
@@ -244,6 +263,85 @@ class SelfUpgradeReviewStore:
             rows = connection.execute(
                 "SELECT * FROM self_upgrade_reviews ORDER BY created_at DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def record_test_evidence(
+        self, *, run_id: str, proposal_id: str, content_digest: str,
+        test_target: str, outcome: str, exit_code: int, runner_kind: str,
+        runner_digest: str, result_digest: str,
+    ) -> dict:
+        """Persist immutable test evidence reported by a separately isolated runner.
+
+        This method records evidence; it does not execute tests or attest that a
+        runner is trustworthy. Callers must supply a verified runner identity.
+        """
+        if not isinstance(run_id, str) or not re.fullmatch(r"test_[0-9a-f]{24}", run_id):
+            raise ValueError("test_run_id_invalid")
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
+            raise ValueError("proposal_id_invalid")
+        for name, value in (("content_digest", content_digest),
+                            ("runner_digest", runner_digest),
+                            ("result_digest", result_digest)):
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError(f"{name}_invalid")
+        if (not isinstance(test_target, str) or not test_target.strip()
+                or len(test_target) > 200 or "\\\\" in test_target
+                or "\\x00" in test_target):
+            raise ValueError("test_target_invalid")
+        if outcome not in {"passed", "failed", "timed_out"}:
+            raise ValueError("test_outcome_invalid")
+        if isinstance(exit_code, bool) or not isinstance(exit_code, int) or not -255 <= exit_code <= 255:
+            raise ValueError("test_exit_code_invalid")
+        if runner_kind not in {"github_actions", "container", "vm"}:
+            raise ValueError("runner_kind_must_be_isolated")
+        if (outcome == "passed" and exit_code != 0) or (outcome != "passed" and exit_code == 0):
+            raise ValueError("test_outcome_exit_code_mismatch")
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            proposal = connection.execute(
+                "SELECT content_digest, status FROM self_upgrade_reviews WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if proposal is None:
+                raise ValueError("proposal_not_found")
+            if proposal["content_digest"] != content_digest:
+                raise ValueError("proposal_digest_mismatch")
+            if proposal["status"] != "approved_for_isolated_testing":
+                raise ValueError("proposal_not_approved_for_testing")
+            existing = connection.execute(
+                "SELECT * FROM self_upgrade_test_evidence WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if existing is not None:
+                expected = (proposal_id, content_digest, test_target, outcome, exit_code,
+                            runner_kind, runner_digest, result_digest)
+                actual = tuple(existing[key] for key in (
+                    "proposal_id", "content_digest", "test_target", "outcome", "exit_code",
+                    "runner_kind", "runner_digest", "result_digest"
+                ))
+                if actual != expected:
+                    raise ValueError("test_run_id_evidence_conflict")
+                return dict(existing)
+            connection.execute("""
+                INSERT INTO self_upgrade_test_evidence (
+                    run_id, proposal_id, content_digest, test_target, outcome,
+                    exit_code, runner_kind, runner_digest, result_digest, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (run_id, proposal_id, content_digest, test_target, outcome,
+                  exit_code, runner_kind, runner_digest, result_digest, recorded_at))
+            row = connection.execute(
+                "SELECT * FROM self_upgrade_test_evidence WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            return dict(row)
+
+    def list_test_evidence(self, proposal_id: str) -> list[dict]:
+        if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
+            raise ValueError("proposal_id_invalid")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM self_upgrade_test_evidence WHERE proposal_id = ? ORDER BY recorded_at",
+                (proposal_id,),
             ).fetchall()
             return [dict(row) for row in rows]
 
