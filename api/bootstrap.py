@@ -29,6 +29,7 @@ class _DenyAllTools:
 
 
 _MEMORY_OWNER = re.compile(r"^owner-[a-f0-9]{64}$")
+_MEMORY_AGENT_NAMESPACES = {"assistant": "agent_memory", "owner_profile": "owner_profile"}
 _MEMORY_ACTIONS = frozenset({
     "agent_memory:read", "agent_memory:write", "agent_memory:correct",
     "agent_memory:review", "agent_memory:retire", "agent_memory:delete",
@@ -42,7 +43,7 @@ def _authorize_companion_memory(actor_id: str, action: str, agent_id: str) -> bo
         isinstance(actor_id, str)
         and _MEMORY_OWNER.fullmatch(actor_id) is not None
         and action in _MEMORY_ACTIONS
-        and action.split(":", 1)[0] == agent_id
+        and _MEMORY_AGENT_NAMESPACES.get(agent_id) == action.split(":", 1)[0]
     )
 
 
