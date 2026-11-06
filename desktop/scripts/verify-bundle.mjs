@@ -41,9 +41,9 @@ const missing = [
 ];
 
 if (missing.length) {
-  process.stderr.write("Desktop bundle verification failed. Missing required native UI integration:\\n");
-  for (const item of missing) process.stderr.write(`- ${item}\\n`);
+  process.stderr.write("Desktop bundle verification failed. Missing required native UI integration:\n");
+  for (const item of missing) process.stderr.write(`- ${item}\n`);
   process.exitCode = 1;
 } else {
-  process.stdout.write("Desktop bundle verified: local assets and native notification controls/handlers are present.\\n");
+  process.stdout.write("Desktop bundle verified: local assets and native notification controls/handlers are present.\n");
 }
