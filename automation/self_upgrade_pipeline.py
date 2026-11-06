@@ -149,6 +149,7 @@ class SelfUpgradeReviewStore:
                     runner_kind TEXT NOT NULL CHECK(runner_kind IN ('github_actions', 'container', 'vm')),
                     runner_digest TEXT NOT NULL CHECK(length(runner_digest) = 64),
                     result_digest TEXT NOT NULL CHECK(length(result_digest) = 64),
+                    runner_attestation_digest TEXT NOT NULL CHECK(length(runner_attestation_digest) = 64),
                     recorded_at TEXT NOT NULL,
                     FOREIGN KEY(proposal_id) REFERENCES self_upgrade_reviews(proposal_id)
                 )
@@ -157,6 +158,17 @@ class SelfUpgradeReviewStore:
                 CREATE INDEX IF NOT EXISTS idx_self_upgrade_test_evidence_proposal
                 ON self_upgrade_test_evidence(proposal_id, recorded_at)
             """)
+            evidence_columns = {
+                row["name"] for row in connection.execute(
+                    "PRAGMA table_info(self_upgrade_test_evidence)"
+                ).fetchall()
+            }
+            if "runner_attestation_digest" not in evidence_columns:
+                connection.execute("""
+                    ALTER TABLE self_upgrade_test_evidence
+                    ADD COLUMN runner_attestation_digest TEXT NOT NULL DEFAULT
+                    '0000000000000000000000000000000000000000000000000000000000000000'
+                """)
 
     @staticmethod
     def _valid_review_path(path: str) -> bool:
@@ -321,6 +333,7 @@ class SelfUpgradeReviewStore:
             raise ValueError("runner_attestation_verification_failed")
         if (outcome == "passed" and exit_code != 0) or (outcome != "passed" and exit_code == 0):
             raise ValueError("test_outcome_exit_code_mismatch")
+        attestation_digest = hashlib.sha256(runner_attestation.encode("utf-8")).hexdigest()
         recorded_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -339,10 +352,10 @@ class SelfUpgradeReviewStore:
             ).fetchone()
             if existing is not None:
                 expected = (proposal_id, content_digest, test_target, outcome, exit_code,
-                            runner_kind, runner_digest, result_digest)
+                            runner_kind, runner_digest, result_digest, attestation_digest)
                 actual = tuple(existing[key] for key in (
                     "proposal_id", "content_digest", "test_target", "outcome", "exit_code",
-                    "runner_kind", "runner_digest", "result_digest"
+                    "runner_kind", "runner_digest", "result_digest", "runner_attestation_digest"
                 ))
                 if actual != expected:
                     raise ValueError("test_run_id_evidence_conflict")
@@ -350,10 +363,12 @@ class SelfUpgradeReviewStore:
             connection.execute("""
                 INSERT INTO self_upgrade_test_evidence (
                     run_id, proposal_id, content_digest, test_target, outcome,
-                    exit_code, runner_kind, runner_digest, result_digest, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    exit_code, runner_kind, runner_digest, result_digest,
+                    runner_attestation_digest, recorded_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (run_id, proposal_id, content_digest, test_target, outcome,
-                  exit_code, runner_kind, runner_digest, result_digest, recorded_at))
+                  exit_code, runner_kind, runner_digest, result_digest,
+                  attestation_digest, recorded_at))
             row = connection.execute(
                 "SELECT * FROM self_upgrade_test_evidence WHERE run_id = ?", (run_id,)
             ).fetchone()
