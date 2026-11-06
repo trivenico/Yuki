@@ -77,6 +77,30 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invariants"):
                 store.record(malformed)
 
+    def test_digest_bound_test_evidence_is_recorded_after_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            proposal = self.builder.build([FileChange("src/example.py", self.digest, "VALUE = 7\n")])
+            store.record(proposal)
+            evidence = dict(
+                run_id="test_" + "1" * 24,
+                proposal_id=proposal.proposal_id,
+                content_digest=proposal.content_digest,
+                test_target="tests.test_example",
+                outcome="passed",
+                exit_code=0,
+                runner_kind="github_actions",
+                runner_digest="a" * 64,
+                result_digest="b" * 64,
+            )
+            with self.assertRaisesRegex(ValueError, "not_approved"):
+                store.record_test_evidence(**evidence)
+            store.review(proposal.proposal_id, "approve", reviewer="operator")
+            row = store.record_test_evidence(**evidence)
+            self.assertEqual(row["content_digest"], proposal.content_digest)
+            self.assertEqual(store.record_test_evidence(**evidence)["run_id"], evidence["run_id"])
+            self.assertEqual(len(store.list_test_evidence(proposal.proposal_id)), 1)
+
     def test_review_store_bounds_list_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
