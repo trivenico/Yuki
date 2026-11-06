@@ -1,16 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allow the main Yuki Desktop window to invoke registered native commands; notification delivery is exposed only through validated Rust commands.",
+  "description": "Local application capability only. The loopback-served UI is treated as untrusted remote content and receives no native command permissions.",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default"
-  ],
-  "remote": {
-    "urls": [
-      "http://127.0.0.1:8765/**"
-    ]
-  }
+  ]
 }
