@@ -5,6 +5,7 @@ Reminders are inert data: this store never executes commands or arbitrary action
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -39,11 +40,19 @@ class CompanionReminderStore:
                 "ON companion_reminders(owner_id, status, due_at)"
             )
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=10000")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _check(self, owner_id: str, action: str) -> None:
         if not isinstance(owner_id, str) or not owner_id or not self.authorize(owner_id, action):
