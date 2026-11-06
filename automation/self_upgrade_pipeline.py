@@ -305,7 +305,7 @@ class SelfUpgradeReviewStore:
                 raise ValueError(f"{name}_invalid")
         if (not isinstance(test_target, str) or len(test_target) > 200
                 or not re.fullmatch(
-                    r"tests(?:\\.[A-Za-z_][A-Za-z0-9_]*)+", test_target
+                    r"tests(?:\.[A-Za-z_][A-Za-z0-9_]*)+", test_target
                 )):
             raise ValueError("test_target_invalid")
         if not isinstance(outcome, str) or outcome not in {"passed", "failed", "timed_out"}:
