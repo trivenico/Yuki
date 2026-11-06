@@ -279,6 +279,7 @@ class UpgradeExecutionStore:
     def verify_and_finalize_evidence(
         self, execution_id: str, *, expected_version: int,
         verifier: Ed25519EvidenceVerifier, actor_id: str = "evidence-verifier",
+        now: datetime | None = None,
     ) -> UpgradeExecutionRecord:
         """Authenticate stored evidence before entering a verified terminal state."""
         if not isinstance(verifier, Ed25519EvidenceVerifier):
@@ -316,7 +317,7 @@ class UpgradeExecutionStore:
                 VALUES (?, ?, 'evidence_pending', 'verifying', ?, 'signature_verification_started', ?)
             """, (execution_id, next_version, actor_id, now))
         try:
-            verifier.verify(evidence)
+            verifier.verify(evidence, now=now)
         except EvidenceVerificationError as exc:
             target_state = "rejected"
             reason = str(exc)[:100]
