@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from yuki_cli import run_cli
+from yuki_cli import build_parser, run_cli, _device_request
 
 
 class FakeProvider:
@@ -99,6 +99,37 @@ class YukiCliTests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertNotIn("secret payload", output[0])
+
+
+    def test_notifications_parser_accepts_bounded_cursor_options(self):
+        args = build_parser().parse_args([
+            "notifications", "list", "--after-sequence", "12", "--limit", "25"
+        ])
+        self.assertEqual(args.notification_command, "list")
+        self.assertEqual(args.after_sequence, 12)
+        self.assertEqual(args.limit, 25)
+
+    def test_notifications_ack_rejects_malformed_event_id_without_network(self):
+        args = build_parser().parse_args(["notifications", "ack", "not-an-event"])
+        output = []
+        from yuki_cli import _run_notifications
+        self.assertEqual(_run_notifications(args, output.append), 2)
+        self.assertEqual(output, ["Invalid notification event ID."])
+
+    def test_device_request_rejects_unrecognized_paths(self):
+        result, status = _device_request(
+            "/v1/devices/notifications/../../auth/me", token="x" * 32
+        )
+        self.assertEqual(status, 2)
+        self.assertEqual(result["error"], "Invalid device notification endpoint.")
+
+    def test_notifications_list_requires_separate_device_credential(self):
+        args = build_parser().parse_args(["notifications", "list"])
+        output = []
+        from yuki_cli import _run_notifications
+        self.assertEqual(_run_notifications(args, output.append), 2)
+        self.assertIn("YUKI_DEVICE_TOKEN", output[0])
+
 
 
 if __name__ == "__main__":
