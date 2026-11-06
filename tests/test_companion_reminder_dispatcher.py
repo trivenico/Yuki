@@ -38,12 +38,12 @@ def test_dispatcher_delivers_and_acknowledges_with_stable_idempotency_key(tmp_pa
     assert received[0]["reminder_id"] == reminder["reminder_id"]
     assert received[0]["idempotency_key"] == reminder["reminder_id"]
     assert received[0]["owner_id"] == "owner-a"
-    assert store.list(owner_id="owner-a")[0]["status"] == "delivered"
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "delivered"
 
 
 def test_dispatcher_records_delivery_failure_and_releases_lease(tmp_path):
     store = _store(tmp_path)
-    reminder = store.create(
+    store.create(
         owner_id="owner-a", text="Check the build",
         due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
