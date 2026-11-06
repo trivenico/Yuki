@@ -9,7 +9,7 @@ Windows-first native desktop shell built with Tauri 2.
 - Startup has a 30-second deadline. If the child exits or readiness times out, desktop startup fails closed.
 - On Windows, the shell assigns the Python process to a Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; shutdown terminates and waits for the direct child, then closing the job also terminates remaining descendants. Other platforms currently stop only the direct child.
 - If the configured port is already occupied, startup refuses to attach to an unknown process.
-- The desktop reuses the authenticated Yuki web interface and API; it does not maintain a second chat frontend.
+- The desktop loads a bundled copy of the authenticated Yuki web interface from `desktop/dist`; it does not load the UI from the loopback API server. The bundled frontend sends API requests only to the fixed `http://127.0.0.1:8765` origin, and native credential storage remains behind the Tauri command boundary.
 
 ## Runtime prerequisites
 
@@ -48,7 +48,7 @@ The MSI and NSIS bundles are produced by Tauri. A successful shell build does no
 - The process is launched without a shell, with stdin/stdout/stderr disconnected.
 - The shell never kills arbitrary processes by name or PID lookup. Windows descendant cleanup is scoped to the Job Object containing the process it launched.
 - The health check verifies the local Yuki `/healthz` response, not user authentication or provider readiness.
-- The shell has no updater, deep-link handler, shell plugin, global IPC permissions, screen capture, or computer-control permissions.
+- The shell has no updater, deep-link handler, shell plugin, screen capture, or computer-control permissions. The bundled frontend is the trusted local webview; the loopback origin is not listed as a remote Tauri capability.
 - No notification channel is enabled by this process manager. Companion reminders still require a separately configured, authenticated, owner-scoped delivery adapter.
 - Windows Job Object assignment currently occurs immediately after `std::process::Command::spawn`; there is a small race before assignment in which a very early-spawning descendant could escape the job. A suspended native process launch is the follow-up hardening needed to remove that race. Other platforms still need process-group cleanup.
 - The current child process logs are suppressed. A privacy-safe rotating diagnostic log with secret redaction should be implemented before broad deployment.
