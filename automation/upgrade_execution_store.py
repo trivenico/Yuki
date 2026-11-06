@@ -238,9 +238,15 @@ class UpgradeExecutionStore:
                 raise UpgradeExecutionConflict("stale_execution_version")
             if row["state"] != "evidence_pending":
                 raise UpgradeExecutionTransitionError("evidence_requires_pending_state")
-            request = json.loads(row["request_json"])
-            if evidence.execution_id != execution_id or evidence.request_digest != row["request_digest"]:
-                raise UpgradeExecutionConflict("evidence_request_mismatch")
+            request_data = json.loads(row["request_json"])
+            request_data["test_targets"] = tuple(request_data["test_targets"])
+            request = ExecutionRequest(**request_data)
+            try:
+                evidence.verify_binding(request)
+            except ValueError as exc:
+                raise UpgradeExecutionConflict("evidence_request_mismatch") from exc
+            if row["evidence_json"] is not None:
+                raise UpgradeExecutionConflict("evidence_already_recorded")
             evidence_json = json.dumps(evidence.signed_payload() | {"signature": evidence.signature},
                                        ensure_ascii=False, sort_keys=True,
                                        separators=(",", ":"), allow_nan=False)
