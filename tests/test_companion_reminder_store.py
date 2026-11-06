@@ -47,6 +47,8 @@ class CompanionReminderStoreTests(unittest.TestCase):
             )
 
     def test_authorization_fails_closed(self):
+        # Revoke the fixture's normal owner permissions before testing denial.
+        self.allowed["owner-a"] = set()
         with self.assertRaises(PermissionError):
             self.store.list(owner_id="owner-a")
         with self.assertRaises(PermissionError):
