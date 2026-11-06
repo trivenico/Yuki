@@ -139,7 +139,7 @@ def _device_request(
         return {"error": "Set YUKI_DEVICE_TOKEN to a valid paired-device token."}, 2
     if not (
         re.fullmatch(
-            r"/v1/devices/notifications(?:[?]after_sequence=\\d+&limit=\\d+)?",
+            r"/v1/devices/notifications(?:[?]after_sequence=[0-9]+&limit=[0-9]+)?",
             path,
         )
         or re.fullmatch(
