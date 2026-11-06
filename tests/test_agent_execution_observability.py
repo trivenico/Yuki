@@ -34,6 +34,15 @@ class AgentExecutionTraceStoreTests(unittest.TestCase):
             "duration_ms": 800, "cost_microunits": 17,
         })
 
+    def test_database_file_can_be_renamed_after_store_operations(self):
+        root = self.store.start_execution(agent_id="coordinator")
+        self.assertIsNotNone(self.store.get_execution(root["execution_id"]))
+        source = Path(self.tmp.name) / "traces.sqlite3"
+        destination = Path(self.tmp.name) / "traces-renamed.sqlite3"
+        source.replace(destination)
+        self.assertTrue(destination.exists())
+        self.assertFalse(source.exists())
+
     def test_task_binding_rejects_conflicts(self):
         root = self.store.start_execution(agent_id="coordinator")
         child = self.store.start_execution(agent_id="research", parent_execution_id=root["execution_id"])
