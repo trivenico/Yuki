@@ -19,7 +19,13 @@ fn server_addr() -> SocketAddr {
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_HEALTH_RESPONSE: u64 = 4096;
 
-struct ManagedServer(Mutex<Option<Child>>);
+struct ManagedProcess {
+    child: Child,
+    #[cfg(windows)]
+    _job: windows_job::Job,
+}
+
+struct ManagedServer(Mutex<Option<ManagedProcess>>);
 
 fn server_url() -> Result<Url, Box<dyn std::error::Error>> {
     let url = Url::parse(SERVER_URL)?;
@@ -68,7 +74,12 @@ fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
     let python = std::env::var_os("YUKI_PYTHON").unwrap_or_else(|| {
         if cfg!(windows) { "python".into() } else { "python3".into() }
     });
-    let child = Command::new(python)
+    // Create the job before launching Python so its lifetime is already
+    // managed if assignment succeeds immediately after process creation.
+    #[cfg(windows)]
+    let job = windows_job::Job::new()?;
+
+    let mut child = Command::new(python)
         .args(["-m", "api.server", "--host", "127.0.0.1", "--port", "8765"])
         .current_dir(root)
         .stdin(Stdio::null())
@@ -76,7 +87,18 @@ fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
         .stderr(Stdio::null())
         .env("PYTHONUNBUFFERED", "1")
         .spawn()?;
-    Ok(child)
+
+    #[cfg(windows)]
+    if let Err(error) = job.assign(&child) {
+        stop_child(&mut child);
+        return Err(error.into());
+    }
+
+    Ok(ManagedProcess {
+        child,
+        #[cfg(windows)]
+        _job: job,
+    })
 }
 
 fn health_response_is_ready(response: &[u8]) -> bool {
@@ -137,13 +159,20 @@ fn stop_child(child: &mut Child) {
     }
 }
 
+fn stop_process(process: &mut ManagedProcess) {
+    stop_child(&mut process.child);
+    // On Windows, dropping the job handle applies KILL_ON_JOB_CLOSE to any
+    // remaining descendants. The ManagedProcess is dropped immediately after
+    // this function's caller releases it.
+}
+
 fn main() {
     let result = tauri::Builder::default()
         .setup(|app| {
             let url = server_url()?;
-            let mut child = start_server()?;
-            if let Err(error) = wait_until_ready(&mut child) {
-                stop_child(&mut child);
+            let mut process = start_server()?;
+            if let Err(error) = wait_until_ready(&mut process.child) {
+                stop_process(&mut process);
                 return Err(error.into());
             }
 
@@ -154,11 +183,11 @@ fn main() {
                 .resizable(true)
                 .build()
             {
-                stop_child(&mut child);
+                stop_process(&mut process);
                 return Err(error.into());
             }
 
-            app.manage(ManagedServer(Mutex::new(Some(child))));
+            app.manage(ManagedServer(Mutex::new(Some(process))));
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -168,8 +197,8 @@ fn main() {
             if matches!(event, RunEvent::Exit) {
                 if let Some(server) = handle.try_state::<ManagedServer>() {
                     if let Ok(mut guard) = server.0.lock() {
-                        if let Some(mut child) = guard.take() {
-                            stop_child(&mut child);
+                        if let Some(mut process) = guard.take() {
+                            stop_process(&mut process);
                         }
                     }
                 }
@@ -204,5 +233,85 @@ mod tests {
         assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{"));
         assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{\"status\":\"starting\"}"));
         assert!(!health_response_is_ready(b"HTTP/1.1 200 OK\r\n\r\n{\"message\":\"ok\"}"));
+    }
+}
+
+
+#[cfg(windows)]
+mod windows_job {
+    use std::{io, mem, os::windows::io::AsRawHandle};
+
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::JobObjects::{
+            CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        },
+        System::Threading::AssignProcessToJobObject,
+    };
+
+    pub struct Job(HANDLE);
+
+    // A Windows kernel handle is owned by this value and may safely move
+    // between threads; it is never concurrently accessed through this wrapper.
+    unsafe impl Send for Job {}
+
+    impl Job {
+        pub fn new() -> io::Result<Self> {
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                unsafe { mem::zeroed() };
+            limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+            let configured = unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    &limits as *const _ as *const _,
+                    mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+            if configured == 0 {
+                let error = io::Error::last_os_error();
+                unsafe { CloseHandle(handle) };
+                return Err(error);
+            }
+
+            Ok(Self(handle))
+        }
+
+        pub fn assign(&self, child: &std::process::Child) -> io::Result<()> {
+            let process = child.as_raw_handle() as HANDLE;
+            let assigned = unsafe { AssignProcessToJobObject(self.0, process) };
+            if assigned == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CloseHandle(self.0) };
+                self.0 = std::ptr::null_mut();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Job;
+
+        #[test]
+        fn creates_a_kill_on_close_job_object() {
+            let job = Job::new().expect("Windows should create a job object");
+            drop(job);
+        }
     }
 }
