@@ -328,6 +328,7 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
             approve_execution=approve,
             audit=events.append,
             allowed_paths=["src/example.py"],
+            staging_workspace_validator=lambda candidate: True,
         )
         principal = ToolPrincipal("operator", frozenset({"workspace:write"}))
         return executor, proposal, principal, target, events, calls
