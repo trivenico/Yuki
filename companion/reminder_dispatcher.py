@@ -15,6 +15,67 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class NoActiveReminderDevices(RuntimeError):
+    """The reminder owner has no active paired device to receive delivery."""
+
+
+class DeviceNotificationChannel:
+    """Enqueue reminders into the durable outbox for each active owner device.
+
+    Returning from this channel means the reminder is durably queued, not that
+    an operating system displayed it. The native worker acknowledges display.
+    """
+
+    def __init__(self, pairing: Any, outbox: Any) -> None:
+        if not callable(getattr(pairing, "list_devices", None)):
+            raise TypeError("pairing_service_must_list_devices")
+        if not callable(getattr(outbox, "enqueue", None)):
+            raise TypeError("notification_outbox_must_enqueue")
+        self.pairing = pairing
+        self.outbox = outbox
+
+    def __call__(self, envelope: dict[str, str]) -> int:
+        import re
+        if not isinstance(envelope, dict):
+            raise ValueError("invalid_reminder_envelope")
+        owner_id = envelope.get("owner_id")
+        reminder_id = envelope.get("reminder_id")
+        text = envelope.get("text")
+        due_at = envelope.get("due_at")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_reminder_owner")
+        if not isinstance(reminder_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reminder_id):
+            raise ValueError("invalid_reminder_id")
+        if not isinstance(text, str) or not text.strip() or len(text) > 1000:
+            raise ValueError("invalid_reminder_text")
+        if not isinstance(due_at, str) or not due_at or len(due_at) > 64:
+            raise ValueError("invalid_reminder_due_at")
+
+        devices = self.pairing.list_devices(owner_id)
+        if not devices:
+            raise NoActiveReminderDevices("no_active_paired_devices")
+        queued = 0
+        for device in devices:
+            if device.owner_id != owner_id:
+                continue
+            self.outbox.enqueue(
+                owner_id=owner_id,
+                device_id=device.device_id,
+                event_type="companion.reminder_due",
+                payload={
+                    "title": "Yuki reminder",
+                    "body": text.strip(),
+                    "reminder_id": reminder_id,
+                    "due_at": due_at,
+                },
+                dedupe_key=f"reminder:{reminder_id}:due",
+            )
+            queued += 1
+        if queued == 0:
+            raise NoActiveReminderDevices("no_active_paired_devices")
+        return queued
+
+
 class ReminderDispatcher:
     """Poll and deliver leased reminders until stopped.
 
