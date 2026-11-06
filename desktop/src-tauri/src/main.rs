@@ -287,7 +287,14 @@ fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorke
         .map_err(|_| "Could not locate Yuki's local application data directory.".to_string())?
         .join("notifications").join("cursor");
     let mut slot = worker.thread.lock().map_err(|_| "Notification worker state is unavailable.".to_string())?;
-    if slot.is_some() { return Ok(()); }
+    if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
+        return Ok(());
+    }
+    // A worker can stop itself after revoked credentials, malformed API data,
+    // or a delivery failure. Reap that finished thread before allowing restart.
+    if let Some(finished) = slot.take() {
+        finished.join().map_err(|_| "Previous notification worker did not shut down cleanly.".to_string())?;
+    }
     worker.stop.store(false, Ordering::Release);
     let stop = Arc::clone(&worker.stop);
     *slot = Some(thread::Builder::new().name("yuki-notifications".into())
