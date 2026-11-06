@@ -117,14 +117,28 @@ class CompanionReminderStoreTests(unittest.TestCase):
         expired = now + timedelta(seconds=6)
         self.assertFalse(self.store.acknowledge_delivery(
             reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
-            delivered_at=expired,
+            delivered_at=now, now=expired,
         ))
         self.assertIsNone(self.store.record_delivery_failure(
             reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
-            failed_at=expired,
+            failed_at=now, now=expired,
         ))
         replacement = self.store.claim_due(now=expired, lease_seconds=5)[0]
         self.assertNotEqual(replacement["lease_token"], claim["lease_token"])
+
+    def test_historical_delivery_timestamp_cannot_bypass_expired_lease(self):
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        item = self.store.create(owner_id="owner-a", text="Reject stale worker", due_at=now)
+        claim = self.store.claim_due(now=now, lease_seconds=5)[0]
+        expired = now + timedelta(seconds=6)
+        self.assertFalse(self.store.acknowledge_delivery(
+            reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+            delivered_at=now, now=expired,
+        ))
+        self.assertIsNone(self.store.record_delivery_failure(
+            reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+            failed_at=now, now=expired,
+        ))
 
     def test_retry_backoff_and_attempt_limit(self):
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
