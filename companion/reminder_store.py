@@ -83,9 +83,16 @@ class CompanionReminderStore:
 
     @staticmethod
     def _serialize(row) -> dict:
-        return {key: row[key] for key in (
-            "reminder_id", "text", "due_at", "status", "created_at"
-        )}
+        # Exhausted delivery is terminal even though the persisted lifecycle
+        # status remains "pending" for backwards-compatible SQLite schemas.
+        status = "failed" if row["exhausted_at"] is not None else row["status"]
+        return {
+            "reminder_id": row["reminder_id"],
+            "text": row["text"],
+            "due_at": row["due_at"],
+            "status": status,
+            "created_at": row["created_at"],
+        }
 
     @staticmethod
     def _utc(value: datetime) -> str:
@@ -125,7 +132,7 @@ class CompanionReminderStore:
         sql = "SELECT * FROM companion_reminders WHERE owner_id=?"
         params: list[object] = [owner_id]
         if not include_inactive:
-            sql += " AND status='pending'"
+            sql += " AND status='pending' AND exhausted_at IS NULL"
         sql += " ORDER BY due_at, reminder_id LIMIT ?"
         params.append(limit)
         with self._lock, self._connect() as db:
@@ -139,7 +146,7 @@ class CompanionReminderStore:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute(
                 "UPDATE companion_reminders SET status='cancelled', lease_token=NULL, lease_until=NULL "
-                "WHERE reminder_id=? AND owner_id=? AND status='pending'",
+                "WHERE reminder_id=? AND owner_id=? AND status='pending' AND exhausted_at IS NULL",
                 (reminder_id, owner_id),
             )
             return cursor.rowcount == 1
