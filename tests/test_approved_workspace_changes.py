@@ -190,7 +190,7 @@ class ApprovedTestRunnerTests(unittest.TestCase):
             "import pathlib, unittest\n"
             "class T(unittest.TestCase):\n"
             " def test_mutates_tree(self): "
-            "pathlib.Path('late_import.py').write_text('VALUE = 1\\\\n')\n",
+            "pathlib.Path('late_import.py').write_text('VALUE = 1')\n",
             encoding="utf-8",
         )
         result = self.runner().run(principal=self.principal, test_module="test_sample")
