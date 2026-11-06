@@ -375,6 +375,13 @@
     } finally { await refreshNotificationWorkerStatus(); }
   });
   $("refresh-notification-status").addEventListener("click", refreshNotificationWorkerStatus);
+  // Reconcile native worker state when the user returns to the desktop window.
+  window.addEventListener("focus", () => {
+    if (!$("device-panel").hidden) refreshNotificationWorkerStatus();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !$("device-panel").hidden) refreshNotificationWorkerStatus();
+  });
   $("device-pair-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const invoke = nativeInvoke();
