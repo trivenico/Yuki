@@ -95,9 +95,18 @@ pub fn validate_page(page: &NotificationPage, after_sequence: u64) -> io::Result
 
 pub fn load_cursor(path: &Path) -> io::Result<u64> {
     match fs::read_to_string(path) {
-        Ok(raw) => raw.trim().parse::<u64>().map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "notification cursor is corrupt")
-        }),
+        Ok(raw) => {
+            let cursor = raw.trim().parse::<u64>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "notification cursor is corrupt")
+            })?;
+            if cursor > MAX_NOTIFICATION_CURSOR {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "notification cursor exceeds supported range",
+                ));
+            }
+            Ok(cursor)
+        },
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(0),
         Err(error) => Err(error),
     }
@@ -237,6 +246,15 @@ mod tests {
             io::ErrorKind::InvalidInput
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn load_cursor_rejects_values_outside_supported_range() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("yuki-cursor-corrupt-{}-{nonce}", std::process::id()));
+        fs::write(&path, format!("{}\\n", MAX_NOTIFICATION_CURSOR + 1)).unwrap();
+        assert_eq!(load_cursor(&path).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
