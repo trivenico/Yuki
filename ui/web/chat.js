@@ -295,10 +295,42 @@
   const nativeInvoke = () => window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === "function"
     ? window.__TAURI__.core.invoke : null;
   const setDeviceStatus = (message) => { $("device-status").textContent = message; };
-  $("open-devices").addEventListener("click", () => {
+  const loadPairedDevices = async () => {
+    const list = $("paired-device-list"); list.replaceChildren();
+    try {
+      const data = await api("/v1/devices");
+      const devices = data.devices || [];
+      if (!devices.length) {
+        const empty = document.createElement("p"); empty.className = "muted";
+        empty.textContent = "No active devices are paired with this account.";
+        list.append(empty); return;
+      }
+      devices.forEach((device) => {
+        const card = document.createElement("article"); card.className = "memory-card";
+        const name = document.createElement("p"); name.className = "memory-content";
+        name.textContent = device.name || "Unnamed device";
+        const meta = document.createElement("p"); meta.className = "memory-meta";
+        meta.textContent = "Paired " + (device.created_at ? new Date(device.created_at).toLocaleString() : "date unavailable") +
+          (device.last_seen_at ? " · Last seen " + new Date(device.last_seen_at).toLocaleString() : " · Not yet seen");
+        const revoke = document.createElement("button"); revoke.type = "button";
+        revoke.className = "memory-action"; revoke.textContent = "Revoke device";
+        revoke.addEventListener("click", async () => {
+          if (!window.confirm("Revoke " + (device.name || "this device") + "? It will immediately lose access to Yuki notifications.")) return;
+          revoke.disabled = true;
+          try {
+            await api("/v1/devices/" + encodeURIComponent(device.device_id), { method: "DELETE" });
+            await loadPairedDevices(); toast("Device access revoked.");
+          } catch (error) { revoke.disabled = false; setDeviceStatus(error.message); }
+        });
+        card.append(name, meta, revoke); list.append(card);
+      });
+    } catch (error) { setDeviceStatus(error.message); }
+  };
+  $("open-devices").addEventListener("click", async () => {
     $("device-panel").hidden = false;
     if (!nativeInvoke()) setDeviceStatus("Open this page inside Yuki Desktop to use operating-system credential storage. Browser pairing is disabled.");
     else setDeviceStatus("Ready to pair this native desktop.");
+    await loadPairedDevices();
   });
   $("close-devices").addEventListener("click", () => { $("device-panel").hidden = true; });
   $("device-pair-form").addEventListener("submit", async (event) => {
