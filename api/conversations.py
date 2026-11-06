@@ -348,24 +348,38 @@ class YukiConversationAPI:
                 return await self._respond(send, 200 if cancelled else 404, {"cancelled": cancelled})
 
             if method == "GET" and path == "/v1/devices":
-                if self.device_agent is None:
-                    return await self._respond(send, 503, {"error": "device_agent_unavailable"})
-                devices = await asyncio.to_thread(self.device_agent.list_devices, user.user_id)
-                from core.device_agent import heartbeat_to_dict
-                return await self._respond(send, 200, {
-                    "devices": [heartbeat_to_dict(device) for device in devices]
-                })
+                if self.device_agent is not None:
+                    devices = await asyncio.to_thread(self.device_agent.list_devices, user.user_id)
+                    from core.device_agent import heartbeat_to_dict
+                    serialized = [heartbeat_to_dict(device) for device in devices]
+                elif self.device_pairing is not None:
+                    devices = await asyncio.to_thread(self.device_pairing.list_devices, user.user_id)
+                    serialized = [{
+                        "device_id": device.device_id,
+                        "owner_id": device.owner_id,
+                        "name": device.name,
+                        "created_at": device.created_at,
+                        "last_seen_at": device.last_seen_at,
+                    } for device in devices]
+                else:
+                    return await self._respond(send, 503, {"error": "device_pairing_unavailable"})
+                return await self._respond(send, 200, {"devices": serialized})
 
             revoke_match = re.fullmatch(r"/v1/devices/([^/]+)", path)
             if revoke_match and method == "DELETE":
-                if self.device_agent is None:
-                    return await self._respond(send, 503, {"error": "device_agent_unavailable"})
                 device_id = revoke_match.group(1)
                 if not 1 <= len(device_id) <= 128:
                     return await self._respond(send, 404, {"error": "not_found"})
-                revoked = await asyncio.to_thread(
-                    self.device_agent.revoke_device, user.user_id, device_id
-                )
+                if self.device_agent is not None:
+                    revoked = await asyncio.to_thread(
+                        self.device_agent.revoke_device, user.user_id, device_id
+                    )
+                elif self.device_pairing is not None:
+                    revoked = await asyncio.to_thread(
+                        self.device_pairing.revoke_device, user.user_id, device_id
+                    )
+                else:
+                    return await self._respond(send, 503, {"error": "device_pairing_unavailable"})
                 return await self._respond(send, 200 if revoked else 404, {"revoked": revoked})
 
             if method == "GET" and path == "/v1/auth/me":
