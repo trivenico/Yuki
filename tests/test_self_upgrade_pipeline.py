@@ -3,7 +3,9 @@ import unittest
 
 from automation.approved_workspace_changes import FileChange
 from automation.authorized_read_tools import ToolInputError
-from automation.self_upgrade_pipeline import SelfUpgradeProposalBuilder
+from automation.self_upgrade_pipeline import SelfUpgradeProposalBuilder, SelfUpgradeReviewStore, UpgradeProposal
+import tempfile
+from pathlib import Path
 
 
 class SelfUpgradeProposalBuilderTests(unittest.TestCase):
@@ -11,6 +13,55 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
         self.source = "VALUE = 1\n"
         self.digest = hashlib.sha256(self.source.encode()).hexdigest()
         self.builder = SelfUpgradeProposalBuilder(["src/example.py", "tests/test_example.py"])
+
+    def test_review_store_persists_and_lists_pending_proposals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 2\\n")
+            ])
+            row = store.record(proposal)
+            self.assertEqual(row["status"], "pending_review")
+            self.assertEqual(store.record(proposal)["proposal_id"], proposal.proposal_id)
+            self.assertEqual(store.status()["pending_review"], 1)
+            self.assertFalse(store.status()["automatic_application_enabled"])
+
+    def test_approval_only_authorizes_isolated_testing_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 3\\n")
+            ])
+            store.record(proposal)
+            approved = store.review(
+                proposal.proposal_id, "approve", reviewer="local-operator",
+                note="Review the isolated test result next.",
+            )
+            self.assertEqual(approved["status"], "approved_for_isolated_testing")
+            self.assertEqual(
+                store.review(proposal.proposal_id, "approve", reviewer="local-operator")["status"],
+                "approved_for_isolated_testing",
+            )
+            self.assertFalse(store.status()["automatic_promotion_enabled"])
+
+    def test_rejected_proposal_cannot_be_reopened(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 4\\n")
+            ])
+            store.record(proposal)
+            store.review(proposal.proposal_id, "reject", reviewer="local-operator")
+            with self.assertRaisesRegex(ValueError, "already_reviewed"):
+                store.review(proposal.proposal_id, "approve", reviewer="local-operator")
+
+    def test_review_requires_existing_proposal_and_valid_reviewer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
+            with self.assertRaisesRegex(ValueError, "not_found"):
+                store.review("upgrade_" + "a" * 24, "approve", reviewer="operator")
+            with self.assertRaisesRegex(ValueError, "reviewer_invalid"):
+                store.review("upgrade_" + "a" * 24, "approve", reviewer=" ")
 
     def test_builds_stable_digest_without_applying_changes(self):
         change = FileChange("src/example.py", self.digest, "VALUE = 2\n")
