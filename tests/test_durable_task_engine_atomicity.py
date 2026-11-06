@@ -117,5 +117,56 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         )
 
 
+    def test_terminal_rejection_and_rejection_event_roll_back_together(self):
+        self.reject_event("task.rejected")
+        original = self.engine.get_task(self.task["id"])
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.reject(
+                self.task["id"], "worker-a", "unsupported_task_type"
+            )
+
+        current = self.engine.get_task(self.task["id"])
+        self.assertEqual(current["state"], "running")
+        self.assertEqual(current["attempts"], original["attempts"])
+        self.assertEqual(current["lease_owner"], "worker-a")
+        self.assertEqual(current["lease_until"], original["lease_until"])
+        self.assertIsNone(current["last_error"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(self.goal_id)],
+            ["goal.created", "task.queued", "task.claimed"],
+        )
+
+    def test_dependency_failure_propagation_and_events_roll_back_together(self):
+        goal_id = self.engine.create_goal()
+        parent = self.engine.submit(
+            goal_id, "parent", {}, idempotency_key="parent-atomic",
+            max_attempts=1,
+        )
+        child = self.engine.submit(
+            goal_id, "child", {}, idempotency_key="child-atomic",
+            dependencies=[parent["id"]],
+        )
+        claimed = self.engine.claim("dependency-worker", lease_seconds=30)
+        self.assertEqual(claimed["id"], parent["id"])
+        self.reject_event("task.blocked_dependency")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.engine.fail(parent["id"], "dependency-worker", "permanent failure")
+
+        current_parent = self.engine.get_task(parent["id"])
+        current_child = self.engine.get_task(child["id"])
+        self.assertEqual(current_parent["state"], "running")
+        self.assertEqual(current_parent["lease_owner"], "dependency-worker")
+        self.assertEqual(current_parent["attempts"], 1)
+        self.assertIsNone(current_parent["last_error"])
+        self.assertEqual(current_child["state"], "queued")
+        self.assertIsNone(current_child["last_error"])
+        self.assertEqual(
+            [event["event_type"] for event in self.engine.list_events(goal_id)],
+            ["goal.created", "task.queued", "task.queued", "task.claimed"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
