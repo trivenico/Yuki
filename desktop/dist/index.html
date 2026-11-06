@@ -118,6 +118,16 @@
           <button id="pair-device" class="primary" type="submit">Pair this desktop</button>
         </form>
         <p id="device-status" class="muted" role="status">Device pairing is available in the native Yuki Desktop app.</p>
+        <section class="notification-preferences" aria-labelledby="notification-preferences-title">
+          <h3 id="notification-preferences-title">Desktop notifications</h3>
+          <p class="muted">Choose whether this paired desktop may receive Yuki notifications. Permission and delivery are controlled separately.</p>
+          <div class="notification-actions">
+            <button id="enable-notifications" class="memory-action" type="button">Enable notifications</button>
+            <button id="disable-notifications" class="memory-action" type="button">Stop notifications</button>
+            <button id="refresh-notification-status" class="memory-action" type="button">Refresh status</button>
+          </div>
+          <p id="notification-worker-status" class="muted" role="status">Notification delivery is not enabled.</p>
+        </section>
         <section class="paired-devices" aria-labelledby="paired-devices-title">
           <h3 id="paired-devices-title">Paired devices</h3>
           <div id="paired-device-list" class="memory-list"></div>

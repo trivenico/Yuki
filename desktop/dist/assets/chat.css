@@ -50,3 +50,10 @@
 
 .paired-devices{padding:18px 0;border-top:1px solid var(--line);margin-top:14px}
 .paired-devices h3{margin:0 0 8px;font-size:13px;font-weight:600;color:#e1ddec}
+
+.notification-preferences{padding:18px 0;border-top:1px solid var(--line);margin-top:14px}
+.notification-preferences h3{margin:0 0 7px;font-size:13px;font-weight:600;color:#e1ddec}
+.notification-preferences>.muted{font-size:11px;line-height:1.5;margin:0 0 12px}
+.notification-actions{display:flex;flex-wrap:wrap;gap:7px}
+.notification-actions button:disabled{opacity:.45;cursor:not-allowed}
+#notification-worker-status{margin:10px 0 0;overflow-wrap:anywhere}
