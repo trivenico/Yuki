@@ -89,8 +89,8 @@ class ExecutionRequest:
             _digest(getattr(self, field), field)
         if self.runner_kind not in _ALLOWED_RUNNER_KINDS:
             raise ValueError("runner_kind_unsupported")
-        if self.requesting_principal != self.reviewer:
-            raise ValueError("reviewer_identity_mismatch")
+        if self.requesting_principal == self.reviewer:
+            raise ValueError("reviewer_must_be_independent")
         normalized = _targets(self.test_targets)
         if normalized != self.test_targets:
             raise ValueError("test_targets_must_be_canonical")
