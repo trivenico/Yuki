@@ -47,8 +47,14 @@ class SelfUpgradeProposalBuilder:
     def __init__(self, allowed_paths: Sequence[str]) -> None:
         if not isinstance(allowed_paths, (tuple, list)) or not allowed_paths:
             raise ValueError("An explicit path allow-list is required.")
-        if any(not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/") for path in allowed_paths):
-            raise ValueError("Allowed paths must be bounded relative paths.")
+        if any(
+            not isinstance(path, str) or not path or "\\" in path or "\x00" in path
+            or path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or _BLOCKED_PATH.search(path)
+            for path in allowed_paths
+        ):
+            raise ValueError("Allowed paths must be safe, normalized relative POSIX paths.")
         self._allowed_paths = frozenset(allowed_paths)
 
     def build(self, changes: Sequence[FileChange]) -> UpgradeProposal:
@@ -131,8 +137,9 @@ class SelfUpgradeReviewStore:
     def _valid_review_path(path: str) -> bool:
         # The review store records already-built proposals; this is a second,
         # defense-in-depth check against malformed serialized path values.
-        normalized = path.replace("\\\\", "/")
-        if (not normalized or normalized.startswith("/")
+        normalized = path
+        if (not normalized or "\\" in normalized or "\x00" in normalized
+                or normalized.startswith("/")
                 or any(part in {"", ".", ".."} for part in normalized.split("/"))
                 or _BLOCKED_PATH.search(normalized)):
             return False
