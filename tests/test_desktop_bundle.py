@@ -28,8 +28,8 @@ class DesktopBundleTests(unittest.TestCase):
         source = (WEB / "chat.js").read_text(encoding="utf-8")
         expected = source.replace(
             '  const $ = (id) => document.getElementById(id);',
-            '  const API_BASE = "http://127.0.0.1:8765";\\n'
-            '  const apiUrl = (path) => new URL(path, API_BASE).toString();\\n'
+            '  const API_BASE = "http://127.0.0.1:8765";\n'
+            '  const apiUrl = (path) => new URL(path, API_BASE).toString();\n'
             '  const $ = (id) => document.getElementById(id);',
         ).replace(
             'fetch(path, { ...options, headers })',
