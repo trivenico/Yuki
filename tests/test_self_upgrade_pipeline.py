@@ -307,12 +307,12 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
         root = Path(directory)
         target = root / "src" / "example.py"
         target.parent.mkdir(parents=True)
-        original = "VALUE = 1\\n"
+        original = "VALUE = 1\n"
         target.write_text(original, encoding="utf-8")
         expected = hashlib.sha256(original.encode("utf-8")).hexdigest()
         store = SelfUpgradeReviewStore(root / "reviews.sqlite3")
         proposal = SelfUpgradeProposalBuilder(["src/example.py"]).build([
-            FileChange("src/example.py", expected, "VALUE = 2\\n")
+            FileChange("src/example.py", expected, "VALUE = 2\n")
         ])
         store.record(proposal)
         store.review(proposal.proposal_id, "approve", reviewer="operator")
@@ -335,7 +335,7 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             executor, proposal, principal, target, events, calls = self._prepared(directory)
             result = executor.execute(proposal.proposal_id, reviewer="operator", principal=principal)
-            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 2\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 2\n")
             self.assertEqual(result.proposal_digest, proposal.content_digest)
             self.assertEqual(calls[0][0:2], (proposal.proposal_id, proposal.content_digest))
             self.assertTrue(any(e["outcome"] == "succeeded" for e in events))
@@ -345,7 +345,7 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
             executor, proposal, principal, target, _, calls = self._prepared(directory)
             with self.assertRaisesRegex(PermissionError, "same identity"):
                 executor.execute(proposal.proposal_id, reviewer="other", principal=principal)
-            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 1\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 1\n")
             self.assertEqual(calls, [])
 
     def test_denied_execution_approval_leaves_workspace_unchanged(self):
@@ -353,15 +353,15 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
             executor, proposal, principal, target, _, _ = self._prepared(directory, False)
             with self.assertRaises(ToolAuthorizationError):
                 executor.execute(proposal.proposal_id, reviewer="operator", principal=principal)
-            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 1\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 1\n")
 
     def test_source_drift_blocks_execution_before_second_approval(self):
         with tempfile.TemporaryDirectory() as directory:
             executor, proposal, principal, target, _, calls = self._prepared(directory)
-            target.write_text("VALUE = 99\\n", encoding="utf-8")
+            target.write_text("VALUE = 99\n", encoding="utf-8")
             with self.assertRaises(Exception):
                 executor.execute(proposal.proposal_id, reviewer="operator", principal=principal)
-            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 99\\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 99\n")
             self.assertEqual(calls, [])
 
 
