@@ -527,8 +527,8 @@ mod tests {
 
     #[test]
     fn notification_opt_in_requires_explicit_enabled_value() {
-        assert!(parse_notification_opt_in("enabled\\n"));
-        assert!(!parse_notification_opt_in("disabled\\n"));
+        assert!(parse_notification_opt_in("enabled\n"));
+        assert!(!parse_notification_opt_in("disabled\n"));
         assert!(!parse_notification_opt_in(""));
         assert!(!parse_notification_opt_in("true"));
         assert!(!parse_notification_opt_in("enabled by default"));
