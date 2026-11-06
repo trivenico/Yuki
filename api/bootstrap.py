@@ -16,6 +16,7 @@ from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
+from companion.reminder_store import CompanionReminderStore
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.factory import create_provider
 
@@ -44,6 +45,14 @@ def _authorize_companion_memory(actor_id: str, action: str, agent_id: str) -> bo
         and _MEMORY_OWNER.fullmatch(actor_id) is not None
         and action in _MEMORY_ACTIONS
         and _MEMORY_AGENT_NAMESPACES.get(agent_id) == action.split(":", 1)[0]
+    )
+
+
+def _authorize_companion_reminders(owner_id: str, action: str) -> bool:
+    return (
+        isinstance(owner_id, str)
+        and _MEMORY_OWNER.fullmatch(owner_id) is not None
+        and action in {"create", "read", "cancel"}
     )
 
 
@@ -116,6 +125,10 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         str(workspace / "owner-profile.sqlite3"),
         authorize=_authorize_companion_memory,
     )
+    reminder_store = CompanionReminderStore(
+        str(workspace / "companion-reminders.sqlite3"),
+        authorize=_authorize_companion_reminders,
+    )
     return build_conversation_runtime(
         config,
         auth_service=auth,
@@ -123,6 +136,7 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         tools_for_user=lambda _user: [],
         memory_store=memory_store,
         owner_profile_store=owner_profile_store,
+        reminder_store=reminder_store,
         provider_catalog=lambda: [{
             "name": str(config.get("provider", "unknown")),
             "status": "configured",
