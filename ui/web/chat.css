@@ -43,3 +43,7 @@
 #save-profile{cursor:pointer}
 #save-profile:disabled{opacity:.5}
 @media(max-width:520px){.profile-fields{grid-template-columns:1fr}}
+
+.device-pair-form input,.memory-form input{background:#101216;border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--text);width:100%;font-size:13px}
+#pair-device:disabled{opacity:.55;cursor:wait}
+#device-status{padding:12px 0;overflow-wrap:anywhere}
