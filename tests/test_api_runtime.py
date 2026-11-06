@@ -9,6 +9,8 @@ from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.owner_profile import OwnerProfileStore
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
 
 
 class _NoApprovals:
@@ -140,6 +142,39 @@ class ConversationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=auth, agent_loop=_loop(), agent_loop_factory=object(),
                 )
+
+
+    def test_runtime_injects_pairing_and_notification_outbox_into_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(root / "devices.sqlite")
+            outbox = DeviceNotificationOutbox(root / "outbox.sqlite", pairing)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, notification_outbox=outbox,
+            )
+            self.assertIs(runtime.app.device_pairing, pairing)
+            self.assertIs(runtime.app.notification_outbox, outbox)
+            self.assertIs(runtime.device_pairing, pairing)
+            self.assertIs(runtime.notification_outbox, outbox)
+            runtime.close()
+
+    def test_runtime_rejects_outbox_without_matching_pairing_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(root / "devices.sqlite")
+            other_pairing = DevicePairingService(root / "other-devices.sqlite")
+            outbox = DeviceNotificationOutbox(root / "outbox.sqlite", other_pairing)
+            with self.assertRaisesRegex(ValueError, "share the configured"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, notification_outbox=outbox,
+                )
+
 
 
 if __name__ == "__main__":
