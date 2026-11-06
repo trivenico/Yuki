@@ -11,6 +11,7 @@ from core.conversation_store_factory import create_conversation_store
 from api.web import YukiWebApplication
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
+from companion.reminder_store import CompanionReminderStore
 
 
 class ConversationRuntime:
@@ -59,6 +60,7 @@ def build_conversation_runtime(
     device_agent: Any | None = None,
     memory_store: AgentMemoryStore | None = None,
     owner_profile_store: OwnerProfileStore | None = None,
+    reminder_store: CompanionReminderStore | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -82,6 +84,7 @@ def build_conversation_runtime(
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             device_agent=device_agent, memory_store=memory_store,
             owner_profile_store=owner_profile_store,
+            reminder_store=reminder_store,
         )
         return ConversationRuntime(app, store)
     except Exception:
