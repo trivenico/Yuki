@@ -159,6 +159,44 @@ class YukiWebApplicationTests(unittest.TestCase):
         ))
         self.assertEqual(sent[0]["status"], 403)
 
+    def test_allows_only_explicit_tauri_origins_with_cors_preflight(self):
+        import asyncio
+
+        async def invoke(method, origin, path="/v1/auth/login"):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": method, "path": path,
+                 "headers": [(b"host", b"127.0.0.1:8765"),
+                             (b"origin", origin.encode("ascii")),
+                             (b"sec-fetch-site", b"cross-site")]},
+                receive, send,
+            )
+            return sent, api.calls
+
+        preflight, calls = asyncio.run(invoke("OPTIONS", "tauri://localhost"))
+        self.assertEqual(preflight[0]["status"], 204)
+        headers = dict(preflight[0]["headers"])
+        self.assertEqual(headers[b"access-control-allow-origin"], b"tauri://localhost")
+        self.assertIn(b"Authorization", headers[b"access-control-allow-headers"])
+        self.assertEqual(calls, 0)
+
+        response, calls = asyncio.run(invoke("POST", "http://tauri.localhost"))
+        self.assertEqual(response[0]["status"], 404)
+        self.assertEqual(
+            dict(response[0]["headers"])[b"access-control-allow-origin"],
+            b"http://tauri.localhost",
+        )
+        self.assertEqual(calls, 1)
+
+        rejected, calls = asyncio.run(invoke("OPTIONS", "https://evil.example"))
+        self.assertEqual(rejected[0]["status"], 403)
+        self.assertEqual(calls, 0)
+
     def test_allows_same_origin_and_non_browser_bearer_clients(self):
         import asyncio
         async def invoke(headers):
