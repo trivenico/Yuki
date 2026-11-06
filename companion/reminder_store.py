@@ -168,7 +168,7 @@ class CompanionReminderStore:
             # lease expires, make the exhausted state visible instead of leaving
             # an indefinitely pending reminder that can never be claimed again.
             db.execute(
-                "UPDATE companion_reminders SET exhausted_at=? "
+                "UPDATE companion_reminders SET exhausted_at=?, lease_token=NULL, lease_until=NULL "
                 "WHERE status='pending' AND attempts>=? AND lease_until IS NOT NULL "
                 "AND lease_until<=? AND exhausted_at IS NULL",
                 (instant, self.MAX_DELIVERY_ATTEMPTS, instant),
