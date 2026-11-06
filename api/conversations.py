@@ -7,6 +7,7 @@ No request-supplied owner IDs or tool schemas are trusted.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import json
 import re
 import queue
@@ -19,6 +20,7 @@ from core.agent_memory import AgentMemoryStore
 from core.owner_identity import memory_actor_id_for_owner
 from core.memory_candidate_extractor import extract_memory_candidates
 from core.owner_profile import OwnerProfileStore
+from companion.reminder_store import CompanionReminderStore
 from companion.persona import DEFAULT_PERSONA
 from core.conversation_store import (
     ConversationConflict,
@@ -44,6 +46,7 @@ class YukiConversationAPI:
         device_agent: Any | None = None,
         memory_store: AgentMemoryStore | None = None,
         owner_profile_store: OwnerProfileStore | None = None,
+        reminder_store: CompanionReminderStore | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -69,6 +72,9 @@ class YukiConversationAPI:
         if owner_profile_store is not None and not isinstance(owner_profile_store, OwnerProfileStore):
             raise TypeError("owner_profile_store must be an OwnerProfileStore")
         self.owner_profile_store = owner_profile_store
+        if reminder_store is not None and not isinstance(reminder_store, CompanionReminderStore):
+            raise TypeError("reminder_store must be a CompanionReminderStore")
+        self.reminder_store = reminder_store
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -177,6 +183,49 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+
+            if path == "/v1/companion/reminders":
+                if self.reminder_store is None:
+                    return await self._respond(send, 503, {"error": "reminders_unavailable"})
+                actor_id = memory_actor_id_for_owner(user.user_id)
+                if method == "GET":
+                    query = self._query(scope)
+                    if set(query) - {"include_inactive"} or query.get("include_inactive", "false") not in {"true", "false"}:
+                        return await self._respond(send, 400, {"error": "invalid_query"})
+                    reminders = await asyncio.to_thread(
+                        self.reminder_store.list, owner_id=actor_id,
+                        include_inactive=query.get("include_inactive") == "true",
+                    )
+                    return await self._respond(send, 200, {"reminders": reminders})
+                if method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"text", "due_at"} or not isinstance(payload.get("text"), str) or not isinstance(payload.get("due_at"), str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        due_at = datetime.fromisoformat(payload["due_at"].replace("Z", "+00:00"))
+                        reminder = await asyncio.to_thread(
+                            self.reminder_store.create, owner_id=actor_id,
+                            text=payload["text"], due_at=due_at,
+                        )
+                    except ValueError as exc:
+                        code = str(exc)
+                        if code not in {"invalid_reminder_text", "reminder_due_at_must_be_timezone_aware", "reminder_limit_reached"}:
+                            code = "invalid_reminder_due_at"
+                        return await self._respond(send, 400, {"error": code})
+                    return await self._respond(send, 201, {"reminder": reminder})
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
+            reminder_cancel = re.fullmatch(r"/v1/companion/reminders/([a-f0-9]{32})", path)
+            if reminder_cancel and method == "DELETE":
+                if self.reminder_store is None:
+                    return await self._respond(send, 503, {"error": "reminders_unavailable"})
+                cancelled = await asyncio.to_thread(
+                    self.reminder_store.cancel,
+                    owner_id=memory_actor_id_for_owner(user.user_id),
+                    reminder_id=reminder_cancel.group(1),
+                )
+                return await self._respond(send, 200 if cancelled else 404, {"cancelled": cancelled})
 
             if method == "GET" and path == "/v1/devices":
                 if self.device_agent is None:
