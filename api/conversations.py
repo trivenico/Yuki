@@ -21,6 +21,7 @@ from core.owner_identity import memory_actor_id_for_owner
 from core.memory_candidate_extractor import extract_memory_candidates
 from core.owner_profile import OwnerProfileStore
 from companion.reminder_store import CompanionReminderStore
+from core.device_notification_outbox import DeviceNotificationOutbox
 from companion.persona import DEFAULT_PERSONA
 from core.conversation_store import (
     ConversationConflict,
@@ -47,6 +48,7 @@ class YukiConversationAPI:
         memory_store: AgentMemoryStore | None = None,
         owner_profile_store: OwnerProfileStore | None = None,
         reminder_store: CompanionReminderStore | None = None,
+        notification_outbox: DeviceNotificationOutbox | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -75,6 +77,9 @@ class YukiConversationAPI:
         if reminder_store is not None and not isinstance(reminder_store, CompanionReminderStore):
             raise TypeError("reminder_store must be a CompanionReminderStore")
         self.reminder_store = reminder_store
+        if notification_outbox is not None and not isinstance(notification_outbox, DeviceNotificationOutbox):
+            raise TypeError('notification_outbox must be a DeviceNotificationOutbox')
+        self.notification_outbox = notification_outbox
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -151,6 +156,64 @@ class YukiConversationAPI:
                     if code not in {"invalid_sequence", "invalid_status", "invalid_capabilities", "stale_heartbeat"}:
                         code = "invalid_device_heartbeat"
                     return await self._respond(send, 400, {"error": code})
+
+
+            # Device feed uses paired-device credentials, not browser sessions.
+            if path == "/v1/devices/notifications":
+                if self.notification_outbox is None:
+                    return await self._respond(send, 503, {"error": "notifications_unavailable"})
+                _, device_token = await self._bearer_token(scope)
+                if device_token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                if method == "GET":
+                    query = self._query(scope)
+                    if set(query) - {"after_sequence", "limit"}:
+                        return await self._respond(send, 400, {"error": "invalid_query"})
+                    try:
+                        after = int(query.get("after_sequence", "0"))
+                        limit = int(query.get("limit", "50"))
+                        page = await asyncio.to_thread(
+                            self.notification_outbox.poll, device_token,
+                            after_sequence=after, limit=limit,
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 401, {"error": "device_authentication_required"})
+                    except (ValueError, TypeError):
+                        return await self._respond(send, 400, {"error": "invalid_pagination"})
+                    return await self._respond(send, 200, {
+                        "events": [{
+                            "event_id": event.event_id,
+                            "sequence": event.sequence,
+                            "event_type": event.event_type,
+                            "payload": event.payload,
+                            "created_at": event.created_at,
+                            "expires_at": event.expires_at,
+                            "acknowledged_at": event.acknowledged_at,
+                        } for event in page.events],
+                        "next_cursor": page.next_cursor,
+                        "has_more": page.has_more,
+                    })
+                return await self._respond(send, 405, {"error": "method_not_allowed"})
+
+            notification_ack = re.fullmatch(
+                r"/v1/devices/notifications/(evt_[0-9a-f]{32})/ack", path
+            )
+            if notification_ack:
+                if self.notification_outbox is None:
+                    return await self._respond(send, 503, {"error": "notifications_unavailable"})
+                if method != "POST":
+                    return await self._respond(send, 405, {"error": "method_not_allowed"})
+                _, device_token = await self._bearer_token(scope)
+                if device_token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                try:
+                    acknowledged = await asyncio.to_thread(
+                        self.notification_outbox.acknowledge,
+                        device_token, notification_ack.group(1),
+                    )
+                except PermissionError:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                return await self._respond(send, 200, {"acknowledged": acknowledged})
 
             if method == "POST" and path == "/v1/auth/login":
                 payload = await self._body(receive)
