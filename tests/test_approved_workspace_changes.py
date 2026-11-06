@@ -165,12 +165,15 @@ class ApprovedTestRunnerTests(unittest.TestCase):
             self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertFalse(any(event["outcome"] == "started" for event in self.audit_events))
 
-    def test_test_source_digest_is_part_of_approval(self):
+    def test_test_source_and_dependency_manifest_are_bound_to_approval(self):
         self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertEqual(len(self.calls[0][2]), 64)
         (self.root / "test_sample.py").write_text("import unittest\n", encoding="utf-8")
         self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertNotEqual(self.calls[0][2], self.calls[1][2])
+        (self.root / "requirements.txt").write_text("example-dependency==1.0\n", encoding="utf-8")
+        self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertNotEqual(self.calls[1][2], self.calls[2][2])
 
     def test_timeout_is_bounded(self):
         (self.root / "test_sample.py").write_text(
