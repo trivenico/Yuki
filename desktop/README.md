@@ -49,7 +49,7 @@ The MSI and NSIS bundles are produced by Tauri. A successful shell build does no
 - The shell never kills arbitrary processes by name or PID lookup. Windows descendant cleanup is scoped to the Job Object containing the process it launched.
 - The health check verifies the local Yuki `/healthz` response, not user authentication or provider readiness.
 - The shell has no updater, deep-link handler, shell plugin, screen capture, or computer-control permissions. The bundled frontend is the trusted local webview; the loopback origin is not listed as a remote Tauri capability.
-- No notification channel is enabled by this process manager. Companion reminders still require a separately configured, authenticated, owner-scoped delivery adapter.
+- The desktop includes an explicit opt-in native notification worker. It uses the OS credential vault through Rust commands and the authenticated owner-scoped notification API; permission is requested separately from starting delivery. The desktop UI bundle is intentionally distinct from the web UI bundle.
 - Windows Job Object assignment currently occurs immediately after `std::process::Command::spawn`; there is a small race before assignment in which a very early-spawning descendant could escape the job. A suspended native process launch is the follow-up hardening needed to remove that race. Other platforms still need process-group cleanup.
 - The current child process logs are suppressed. A privacy-safe rotating diagnostic log with secret redaction should be implemented before broad deployment.
 
@@ -57,5 +57,5 @@ The MSI and NSIS bundles are produced by Tauri. A successful shell build does no
 
 1. Bundle or provision a reproducible Python runtime and dependencies with verifiable provenance.
 2. Remove the Windows spawn-to-job-assignment race with a suspended native process launch, then add a supervised, privacy-safe diagnostic log and non-Windows process-group cleanup.
-3. Add explicit desktop notification permissions and an owner-scoped reminder channel.
+3. Validate notification delivery end-to-end on supported Windows versions, including permission denial, token revocation, acknowledgement failure, and restart recovery.
 4. Add signed installer/update provenance and release verification.

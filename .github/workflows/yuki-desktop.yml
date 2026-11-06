@@ -28,6 +28,8 @@ jobs:
           node-version: 22
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
+      - name: Verify bundled desktop UI and native notification integration
+        run: npm run verify:bundle
       - name: Generate deterministic Windows application icon
         run: node scripts/create-icon.mjs
       - name: Test desktop runtime health response parser
