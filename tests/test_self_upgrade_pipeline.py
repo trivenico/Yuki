@@ -18,7 +18,7 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
             proposal = self.builder.build([
-                FileChange("src/example.py", self.digest, "VALUE = 2\\n")
+                FileChange("src/example.py", self.digest, "VALUE = 2\n")
             ])
             row = store.record(proposal)
             self.assertEqual(row["status"], "pending_review")
@@ -32,7 +32,7 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
             proposal = self.builder.build([
-                FileChange("src/example.py", self.digest, "VALUE = 3\\n")
+                FileChange("src/example.py", self.digest, "VALUE = 3\n")
             ])
             store.record(proposal)
             approved = store.review(
@@ -50,7 +50,7 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
             proposal = self.builder.build([
-                FileChange("src/example.py", self.digest, "VALUE = 4\\n")
+                FileChange("src/example.py", self.digest, "VALUE = 4\n")
             ])
             store.record(proposal)
             store.review(proposal.proposal_id, "reject", reviewer="local-operator")
@@ -151,7 +151,7 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
             store.review(proposal.proposal_id, "approve", reviewer="operator")
             for invalid_target in (
                 "../tests.test_example", "tests/evil.py", "tests;echo", "tests.",
-                "tests.test_example\\nimport os", "", None,
+                "tests.test_example\nimport os", "", None,
             ):
                 with self.subTest(target=invalid_target):
                     with self.assertRaisesRegex(ValueError, "test_target_invalid"):
