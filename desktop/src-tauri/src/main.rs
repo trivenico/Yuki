@@ -340,6 +340,7 @@ fn main() {
 mod tests {
     use super::health_response_is_ready;
     use super::valid_device_token;
+    use super::valid_notification_text;
 
 
     #[test]
@@ -348,6 +349,16 @@ mod tests {
         assert!(!valid_device_token("short"));
         assert!(!valid_device_token(&"a".repeat(257)));
         assert!(!valid_device_token(&format!("{}\n", "a".repeat(31))));
+    }
+
+    #[test]
+    fn notification_text_validation_rejects_empty_control_and_oversized_values() {
+        assert!(valid_notification_text("Reminder", 120));
+        assert!(valid_notification_text("Your task is due", 1_000));
+        assert!(!valid_notification_text("   ", 120));
+        assert!(!valid_notification_text("bad\\ntext", 120));
+        assert!(!valid_notification_text(&"x".repeat(121), 120));
+        assert!(!valid_notification_text(&"x".repeat(1_001), 1_000));
     }
 
     #[test]
