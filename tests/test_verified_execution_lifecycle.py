@@ -10,7 +10,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from automation.upgrade_execution_contracts import ExecutionEvidence, ExecutionRequest
-from automation.upgrade_execution_store import (\n    UpgradeExecutionConflict, UpgradeExecutionStore, UpgradeExecutionTransitionError,\n)
+from automation.upgrade_execution_store import (
+    UpgradeExecutionConflict, UpgradeExecutionStore, UpgradeExecutionTransitionError,
+)
 from automation.upgrade_evidence_verifier import Ed25519EvidenceVerifier
 
 
@@ -103,7 +105,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
     def test_valid_passed_evidence_is_required_for_verified_pass(self):
         row = self.prepare(self.signed_evidence())
         final = self.store.verify_and_finalize_evidence(
-            row.execution_id, expected_version=row.version, verifier=self.verifier,
+            row.execution_id, expected_version=row.version, verifier=self.verifier, now=self.now,
         )
         self.assertEqual(final.state, "verified_pass")
         self.assertEqual(final.version, row.version + 2)
@@ -115,7 +117,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
     def test_valid_signature_with_failed_test_result_is_verified_fail(self):
         row = self.prepare(self.signed_evidence(outcome="failed", exit_code=1))
         final = self.store.verify_and_finalize_evidence(
-            row.execution_id, expected_version=row.version, verifier=self.verifier,
+            row.execution_id, expected_version=row.version, verifier=self.verifier, now=self.now,
         )
         self.assertEqual(final.state, "verified_fail")
 
@@ -124,7 +126,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
         invalid = ExecutionEvidence(**{**evidence.__dict__, "signature": base64.b64encode(b"x" * 64).decode()})
         row = self.prepare(invalid)
         final = self.store.verify_and_finalize_evidence(
-            row.execution_id, expected_version=row.version, verifier=self.verifier,
+            row.execution_id, expected_version=row.version, verifier=self.verifier, now=self.now,
         )
         self.assertEqual(final.state, "rejected")
         self.assertNotIn(final.state, {"verified_pass", "verified_fail"})
@@ -133,7 +135,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
         row = self.store.create(self.request)
         with self.assertRaises(UpgradeExecutionTransitionError):
             self.store.verify_and_finalize_evidence(
-                row.execution_id, expected_version=row.version, verifier=self.verifier,
+                row.execution_id, expected_version=row.version, verifier=self.verifier, now=self.now,
             )
         row = self.store.transition(
             row.execution_id, expected_version=row.version, to_state="running",
@@ -149,7 +151,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(UpgradeExecutionConflict, "stale_execution_version"):
             self.store.verify_and_finalize_evidence(
-                row.execution_id, expected_version=row.version - 1, verifier=self.verifier,
+                row.execution_id, expected_version=row.version - 1, verifier=self.verifier, now=self.now,
             )
 
 
