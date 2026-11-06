@@ -246,8 +246,8 @@ mod windows_job {
         System::JobObjects::{
             CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            AssignProcessToJobObject,
         },
-        System::Threading::AssignProcessToJobObject,
     };
 
     pub struct Job(HANDLE);
