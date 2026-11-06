@@ -70,6 +70,19 @@ class ReminderDispatcher:
     async def _store_call(self, method: str, **kwargs):
         return await asyncio.to_thread(getattr(self.store, method), **kwargs)
 
+    async def _renew_lease(self, reminder_id: str, token: str) -> None:
+        """Keep a slow in-flight delivery leased until it finishes or loses ownership."""
+        interval = max(1.0, self.lease_seconds / 3)
+        while True:
+            await asyncio.sleep(interval)
+            renewed = await self._store_call(
+                "renew_lease", reminder_id=reminder_id, lease_token=token,
+                lease_seconds=self.lease_seconds,
+            )
+            if not renewed:
+                logger.warning("Reminder lease renewal rejected (reminder_id=%s)", reminder_id)
+                return
+
     async def _deliver_one(self, claim: dict) -> None:
         reminder_id = claim["reminder_id"]
         token = claim["lease_token"]
@@ -90,6 +103,10 @@ class ReminderDispatcher:
         if not current:
             logger.info("Skipping stale or cancelled reminder lease (reminder_id=%s)", reminder_id)
             return
+        renewal_task = asyncio.create_task(
+            self._renew_lease(reminder_id, token),
+            name=f"yuki-reminder-lease-{reminder_id}",
+        )
         try:
             if inspect.iscoroutinefunction(self.deliver):
                 await self.deliver(envelope)
@@ -106,6 +123,12 @@ class ReminderDispatcher:
                 "record_delivery_failure", reminder_id=reminder_id, lease_token=token
             )
             return
+        finally:
+            renewal_task.cancel()
+            try:
+                await renewal_task
+            except asyncio.CancelledError:
+                pass
         acknowledged = await self._store_call(
             "acknowledge_delivery", reminder_id=reminder_id, lease_token=token
         )
