@@ -430,8 +430,23 @@ class ApprovedTestRunner:
             raise
         stdout = bytes(captured[0]).decode("utf-8", errors="replace")
         stderr = bytes(captured[1]).decode("utf-8", errors="replace")
+        source_changed = False
+        try:
+            source_changed = _workspace_execution_digest(self.root) != source_digest
+        except Exception:
+            source_changed = True
+        if source_changed and not timed_out:
+            # A test may have modified imported source while running. Never report
+            # that execution as a valid pass against the approved digest.
+            exit_code = 125
+            stderr = (stderr + "\\nYuki: source tree changed during execution; evidence invalidated.\\n")
         duration = round(time.monotonic() - start, 3)
-        self._record(principal.actor_id, "tests.run", "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed"), run_digest, test_module)
+        outcome = (
+            "timed_out" if timed_out else
+            "source_changed" if source_changed else
+            ("succeeded" if exit_code == 0 else "failed")
+        )
+        self._record(principal.actor_id, "tests.run", outcome, run_digest, test_module)
         return TestRunResult(test_module, exit_code, timed_out, duration, stdout, stderr)
 
     def _record(self, actor: str, action: str, outcome: str, digest: str, target: str) -> None:
