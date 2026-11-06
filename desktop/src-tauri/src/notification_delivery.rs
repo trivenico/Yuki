@@ -14,6 +14,9 @@ use std::{
 
 const MAX_EVENT_ID_LEN: usize = 36;
 const MAX_EVENT_TYPE_LEN: usize = 64;
+// Keep the native parser aligned with the outbox's hard page-size ceiling.
+const MAX_NOTIFICATION_PAGE_EVENTS: usize = 100;
+const MAX_NOTIFICATION_CURSOR: u64 = i64::MAX as u64;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct NotificationEvent {
@@ -67,6 +70,12 @@ pub fn validate_event(event: &NotificationEvent, after_sequence: u64) -> io::Res
 }
 
 pub fn validate_page(page: &NotificationPage, after_sequence: u64) -> io::Result<()> {
+    if page.events.len() > MAX_NOTIFICATION_PAGE_EVENTS
+        || after_sequence > MAX_NOTIFICATION_CURSOR
+        || page.next_cursor > MAX_NOTIFICATION_CURSOR
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "notification page exceeds supported bounds"));
+    }
     let mut previous = after_sequence;
     for event in &page.events {
         if event.sequence <= previous || event.sequence > page.next_cursor {
@@ -174,6 +183,27 @@ mod tests {
         validate_page(&page, 1).expect("page should be valid");
         let display = validate_event(&page.events[0], 1).expect("event should be valid");
         assert_eq!(display.title, "Reminder");
+    }
+
+    #[test]
+    fn rejects_pages_larger_than_the_server_contract() {
+        let events = (1..=MAX_NOTIFICATION_PAGE_EVENTS + 1)
+            .map(|sequence| event(sequence as u64))
+            .collect();
+        let page = NotificationPage {
+            events,
+            next_cursor: (MAX_NOTIFICATION_PAGE_EVENTS + 1) as u64,
+            has_more: true,
+        };
+        assert_eq!(validate_page(&page, 0).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_cursors_outside_the_sqlite_sequence_range() {
+        let page = NotificationPage { events: Vec::new(), next_cursor: 0, has_more: false };
+        assert!(validate_page(&page, MAX_NOTIFICATION_CURSOR + 1).is_err());
+        let page = NotificationPage { events: Vec::new(), next_cursor: MAX_NOTIFICATION_CURSOR + 1, has_more: false };
+        assert!(validate_page(&page, 0).is_err());
     }
 
     #[test]
