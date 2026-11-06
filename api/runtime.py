@@ -12,15 +12,20 @@ from api.web import YukiWebApplication
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
 from companion.reminder_store import CompanionReminderStore
+from companion.reminder_dispatcher import ReminderDispatcher
 
 
 class ConversationRuntime:
     """Own the API and its persistence resource for one application process."""
 
-    def __init__(self, app: YukiConversationAPI, store: Any):
+    def __init__(
+        self, app: YukiConversationAPI, store: Any,
+        reminder_dispatcher: ReminderDispatcher | None = None,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.store = store
+        self.reminder_dispatcher = reminder_dispatcher
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -32,8 +37,12 @@ class ConversationRuntime:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
+                if self.reminder_dispatcher is not None:
+                    await self.reminder_dispatcher.start()
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
+                if self.reminder_dispatcher is not None:
+                    await self.reminder_dispatcher.stop()
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
@@ -61,12 +70,13 @@ def build_conversation_runtime(
     memory_store: AgentMemoryStore | None = None,
     owner_profile_store: OwnerProfileStore | None = None,
     reminder_store: CompanionReminderStore | None = None,
+    reminder_dispatcher: ReminderDispatcher | None = None,
 ) -> ConversationRuntime:
-    """Build an authenticated ASGI API with the configured persistence backend.
+    """Build an authenticated ASGI API with configured persistence.
 
-    The caller owns provider and auth construction. This function owns the
-    conversation store and guarantees the selected backend is injected into the
-    same service used by every API route.
+    The caller owns provider, auth, and notification-channel construction.
+    The optional dispatcher starts only when a real delivery channel has been
+    explicitly supplied by the composition root.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -74,6 +84,8 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     if agent_loop_factory is not None and not callable(agent_loop_factory):
         raise TypeError("agent_loop_factory must be callable when provided.")
+    if reminder_dispatcher is not None and not isinstance(reminder_dispatcher, ReminderDispatcher):
+        raise TypeError("reminder_dispatcher must be a ReminderDispatcher.")
     store = create_conversation_store(config)
     try:
         service = ConversationService(
@@ -86,7 +98,7 @@ def build_conversation_runtime(
             owner_profile_store=owner_profile_store,
             reminder_store=reminder_store,
         )
-        return ConversationRuntime(app, store)
+        return ConversationRuntime(app, store, reminder_dispatcher)
     except Exception:
         close = getattr(store, "close", None)
         if callable(close):
