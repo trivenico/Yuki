@@ -13,6 +13,8 @@ from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
 from companion.reminder_store import CompanionReminderStore
 from companion.reminder_dispatcher import ReminderDispatcher
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
 
 
 class ConversationRuntime:
@@ -21,11 +23,15 @@ class ConversationRuntime:
     def __init__(
         self, app: YukiConversationAPI, store: Any,
         reminder_dispatcher: ReminderDispatcher | None = None,
+        device_pairing: DevicePairingService | None = None,
+        notification_outbox: DeviceNotificationOutbox | None = None,
     ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.store = store
         self.reminder_dispatcher = reminder_dispatcher
+        self.device_pairing = device_pairing
+        self.notification_outbox = notification_outbox
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -71,6 +77,8 @@ def build_conversation_runtime(
     owner_profile_store: OwnerProfileStore | None = None,
     reminder_store: CompanionReminderStore | None = None,
     reminder_dispatcher: ReminderDispatcher | None = None,
+    device_pairing: DevicePairingService | None = None,
+    notification_outbox: DeviceNotificationOutbox | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with configured persistence.
 
@@ -86,6 +94,12 @@ def build_conversation_runtime(
         raise TypeError("agent_loop_factory must be callable when provided.")
     if reminder_dispatcher is not None and not isinstance(reminder_dispatcher, ReminderDispatcher):
         raise TypeError("reminder_dispatcher must be a ReminderDispatcher.")
+    if device_pairing is not None and not isinstance(device_pairing, DevicePairingService):
+        raise TypeError("device_pairing must be a DevicePairingService.")
+    if notification_outbox is not None and not isinstance(notification_outbox, DeviceNotificationOutbox):
+        raise TypeError("notification_outbox must be a DeviceNotificationOutbox.")
+    if notification_outbox is not None and notification_outbox.pairing is not device_pairing:
+        raise ValueError("notification_outbox must share the configured device_pairing service.")
     store = create_conversation_store(config)
     try:
         service = ConversationService(
@@ -96,9 +110,12 @@ def build_conversation_runtime(
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             device_agent=device_agent, memory_store=memory_store,
             owner_profile_store=owner_profile_store,
-            reminder_store=reminder_store,
+            reminder_store=reminder_store, device_pairing=device_pairing,
+            notification_outbox=notification_outbox,
         )
-        return ConversationRuntime(app, store, reminder_dispatcher)
+        return ConversationRuntime(
+            app, store, reminder_dispatcher, device_pairing, notification_outbox
+        )
     except Exception:
         close = getattr(store, "close", None)
         if callable(close):
