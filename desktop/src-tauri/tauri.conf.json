@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [],
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:8765; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
