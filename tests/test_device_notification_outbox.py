@@ -157,5 +157,77 @@ class DeviceNotificationOutboxTests(unittest.TestCase):
             self.outbox.poll("not-a-valid-device-token")
 
 
+
+class CompanionReminderDeviceChannelTests(unittest.TestCase):
+    def test_reminder_channel_enqueues_once_per_active_owner_device(self):
+        from companion.reminder_dispatcher import DeviceNotificationChannel
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        pairing = DevicePairingService(root / "pairing.sqlite")
+        outbox = DeviceNotificationOutbox(root / "outbox.sqlite", pairing)
+        first = self._pair(pairing, "owner-a", "Desktop A")
+        second = self._pair(pairing, "owner-a", "Desktop B")
+        self._pair(pairing, "owner-b", "Other owner")
+        channel = DeviceNotificationChannel(pairing, outbox)
+
+        count = channel({
+            "owner_id": "owner-a",
+            "reminder_id": "a" * 32,
+            "text": "Meeting starts soon",
+            "due_at": "2026-11-06T15:00:00+00:00",
+            "idempotency_key": "a" * 32,
+        })
+
+        self.assertEqual(count, 2)
+        self.assertEqual(len(outbox.poll(first.token).events), 1)
+        self.assertEqual(len(outbox.poll(second.token).events), 1)
+        self.assertEqual(len(outbox.poll(self._token_for_owner(pairing, "owner-b")).events), 0)
+
+        # A dispatcher retry must return the same outbox events, not duplicate them.
+        self.assertEqual(channel({
+            "owner_id": "owner-a",
+            "reminder_id": "a" * 32,
+            "text": "Meeting starts soon",
+            "due_at": "2026-11-06T15:00:00+00:00",
+            "idempotency_key": "a" * 32,
+        }), 2)
+        self.assertEqual(len(outbox.poll(first.token).events), 1)
+
+    def test_reminder_channel_rejects_invalid_envelopes(self):
+        from companion.reminder_dispatcher import DeviceNotificationChannel
+
+        class EmptyPairing:
+            def list_devices(self, owner_id):
+                return []
+
+        class EmptyOutbox:
+            def enqueue(self, **kwargs):
+                raise AssertionError("must not enqueue invalid envelope")
+
+        channel = DeviceNotificationChannel(EmptyPairing(), EmptyOutbox())
+        with self.assertRaisesRegex(ValueError, "invalid_reminder_id"):
+            channel({
+                "owner_id": "owner-a", "reminder_id": "not-an-id",
+                "text": "Reminder", "due_at": "2026-11-06T15:00:00+00:00",
+            })
+        with self.assertRaisesRegex(Exception, "no_active_paired_devices"):
+            channel({
+                "owner_id": "owner-a", "reminder_id": "b" * 32,
+                "text": "Reminder", "due_at": "2026-11-06T15:00:00+00:00",
+            })
+
+    @staticmethod
+    def _pair(pairing, owner, name):
+        challenge = pairing.create_pairing_challenge(owner)
+        return pairing.pair_device(challenge.code, name)
+
+    @staticmethod
+    def _token_for_owner(pairing, owner):
+        challenge = pairing.create_pairing_challenge(owner)
+        return pairing.pair_device(challenge.code, "Other desktop").token
+
+
 if __name__ == "__main__":
     unittest.main()
