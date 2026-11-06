@@ -155,6 +155,19 @@ class CompanionReminderStoreTests(unittest.TestCase):
                 self.assertEqual(self.store.claim_due(now=now), [])
                 now += timedelta(seconds=2 ** attempt * 5)
         self.assertEqual(self.store.claim_due(now=now + timedelta(days=1)), [])
+        failed = self.store.list(owner_id="owner-a", include_inactive=True)[0]
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(self.store.list(owner_id="owner-a"), [])
+        with self.store._connect() as db:
+            persisted = db.execute(
+                "SELECT attempts, exhausted_at, lease_token, lease_until "
+                "FROM companion_reminders WHERE reminder_id=?",
+                (item["reminder_id"],),
+            ).fetchone()
+        self.assertEqual(persisted["attempts"], self.store.MAX_DELIVERY_ATTEMPTS)
+        self.assertIsNotNone(persisted["exhausted_at"])
+        self.assertIsNone(persisted["lease_token"])
+        self.assertIsNone(persisted["lease_until"])
 
     def test_crashed_leases_consume_attempt_budget_and_eventually_exhaust(self):
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
