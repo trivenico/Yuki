@@ -9,7 +9,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::plugin::PermissionState;
+use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 const SERVER_URL: &str = "http://127.0.0.1:8765";
@@ -233,13 +235,62 @@ fn delete_device_token() -> Result<(), String> {
     Err("Secure device credential storage is not yet supported on this platform.".to_string())
 }
 
+fn valid_notification_text(value: &str, max_chars: usize) -> bool {
+    !value.trim().is_empty()
+        && value.chars().count() <= max_chars
+        && !value.chars().any(char::is_control)
+}
+
+#[tauri::command]
+fn request_notification_permission(app: AppHandle) -> Result<bool, String> {
+    let notification = app.notification();
+    let state = notification
+        .permission_state()
+        .map_err(|_| "Could not read operating-system notification permission.".to_string())?;
+    let state = if state == PermissionState::Granted {
+        state
+    } else {
+        notification
+            .request_permission()
+            .map_err(|_| "Could not request operating-system notification permission.".to_string())?
+    };
+    Ok(state == PermissionState::Granted)
+}
+
+#[tauri::command]
+fn show_native_notification(
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    if !valid_notification_text(&title, 120)
+        || !valid_notification_text(&body, 1_000)
+    {
+        return Err("Notification title or body is invalid.".to_string());
+    }
+    if app.notification().permission_state()
+        .map_err(|_| "Could not read operating-system notification permission.".to_string())?
+        != PermissionState::Granted
+    {
+        return Err("Notification permission has not been granted.".to_string());
+    }
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|_| "The operating system did not accept the notification.".to_string())
+}
+
 fn main() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             store_device_token,
             get_device_token,
-            delete_device_token
+            delete_device_token,
+            request_notification_permission,
+            show_native_notification
         ])
         .setup(|app| {
             let url = server_url()?;
