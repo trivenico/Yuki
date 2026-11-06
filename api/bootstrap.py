@@ -124,14 +124,7 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
             answer = provider.generate(_prompt_from_messages(list(messages)))
         if not isinstance(answer, str) or not answer.strip():
             raise RuntimeError("Configured provider returned an invalid response.")
-        result = {"text": answer.strip(), "tool_calls": {"tool_calls": []}}
-        usage = response.get("usage") if isinstance(response, dict) else None
-        request_id = response.get("request_id") if isinstance(response, dict) else None
-        if usage is not None:
-            result["usage"] = usage
-        if request_id is not None:
-            result["request_id"] = request_id
-        return result
+        return {"text": answer.strip(), "tool_calls": {"tool_calls": []}}
 
     tool_runtime = GuardedToolRuntime({}, _DenyAllTools())
     agent_loop = AgentExecutionLoop(
