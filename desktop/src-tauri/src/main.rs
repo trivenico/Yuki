@@ -1,10 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use std::{
+    io::{Read, Write},
+    net::{SocketAddr, TcpStream},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::Mutex,
+    thread,
+    time::{Duration, Instant},
+};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
 const SERVER_URL: &str = "http://127.0.0.1:8765";
+const SERVER_ADDR: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 8765));
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct ManagedServer(Mutex<Option<Child>>);
 
 fn server_url() -> Result<Url, Box<dyn std::error::Error>> {
     let url = Url::parse(SERVER_URL)?;
@@ -19,18 +31,95 @@ fn server_url() -> Result<Url, Box<dyn std::error::Error>> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Yuki Desktop only accepts its configured HTTP loopback server.",
-        )));
+        return Err("Yuki Desktop only accepts its configured HTTP loopback server.".into());
     }
     Ok(url)
 }
 
+fn application_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Some(path) = std::env::var_os("YUKI_HOME") {
+        let root = PathBuf::from(path);
+        if root.is_dir() {
+            return Ok(root);
+        }
+        return Err("YUKI_HOME must point to the Yuki application directory.".into());
+    }
+
+    if cfg!(debug_assertions) {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        if root.join("api").join("server.py").is_file() {
+            return Ok(root);
+        }
+    }
+    Err("Set YUKI_HOME to the installed Yuki application directory.".into())
+}
+
+fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
+    let root = application_root()?;
+    let python = std::env::var_os("YUKI_PYTHON").unwrap_or_else(|| {
+        if cfg!(windows) { "python".into() } else { "python3".into() }
+    });
+    let child = Command::new(python)
+        .args(["-m", "api.server", "--host", "127.0.0.1", "--port", "8765"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("PYTHONUNBUFFERED", "1")
+        .spawn()?;
+    Ok(child)
+}
+
+fn health_check() -> bool {
+    let Ok(mut stream) = TcpStream::connect_timeout(&SERVER_ADDR, Duration::from_millis(300)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let request = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nConnection: close\r\n\r\n";
+    if stream.write_all(request).is_err() {
+        return false;
+    }
+    let mut response = [0u8; 512];
+    let Ok(count) = stream.read(&mut response) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&response[..count]);
+    text.starts_with("HTTP/1.1 200") && text.contains("\"status\": \"ok\"")
+}
+
+fn wait_until_ready(child: &mut Child) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait()? {
+            return Err(format!("Yuki API process exited during startup ({status}).").into());
+        }
+        if health_check() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    Err("Yuki API did not become ready within 30 seconds.".into())
+}
+
+fn stop_child(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 fn main() {
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .setup(|app| {
             let url = server_url()?;
+            let mut child = start_server()?;
+            if let Err(error) = wait_until_ready(&mut child) {
+                stop_child(&mut child);
+                return Err(error.into());
+            }
+            app.manage(ManagedServer(Mutex::new(Some(child))));
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("Yuki")
                 .inner_size(1200.0, 820.0)
@@ -39,6 +128,23 @@ fn main() {
                 .build()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run Yuki Desktop");
+        .build(tauri::generate_context!());
+
+    match result {
+        Ok(app) => app.run(|handle, event| {
+            if matches!(event, RunEvent::Exit) {
+                if let Some(server) = handle.try_state::<ManagedServer>() {
+                    if let Ok(mut guard) = server.0.lock() {
+                        if let Some(mut child) = guard.take() {
+                            stop_child(&mut child);
+                        }
+                    }
+                }
+            }
+        }),
+        Err(error) => {
+            eprintln!("Yuki Desktop startup failed: {error}");
+            std::process::exit(1);
+        }
+    }
 }
