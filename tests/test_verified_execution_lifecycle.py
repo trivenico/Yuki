@@ -132,6 +132,19 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
         self.assertEqual(final.state, "rejected")
         self.assertNotIn(final.state, {"verified_pass", "verified_fail"})
 
+
+    def test_public_transition_cannot_bypass_verifier(self):
+        row = self.store.create(self.request)
+        for privileged in ("verifying", "verified_pass", "verified_fail"):
+            with self.subTest(state=privileged), self.assertRaisesRegex(
+                UpgradeExecutionTransitionError, "privileged_state_requires_verifier"
+            ):
+                self.store.transition(
+                    row.execution_id, expected_version=row.version,
+                    to_state=privileged, actor_id="attacker",
+                    reason_code="attempted_bypass",
+                )
+
     def test_cannot_finalize_without_recorded_evidence_or_from_wrong_version(self):
         row = self.store.create(self.request)
         with self.assertRaises(UpgradeExecutionTransitionError):
