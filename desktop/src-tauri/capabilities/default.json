@@ -1,7 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Yuki desktop web content receives no Tauri IPC permissions by default.",
-  "windows": ["main"],
+  "description": "Allow the main Yuki Desktop window to invoke registered native commands; no plugin permissions are granted.",
+  "windows": [
+    "main"
+  ],
   "permissions": []
 }
