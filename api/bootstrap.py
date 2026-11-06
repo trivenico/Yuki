@@ -6,6 +6,7 @@ added later through an explicit owner-scoped authorization and approval policy.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from api.runtime import ConversationRuntime, build_conversation_runtime
@@ -13,6 +14,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.agent_memory import AgentMemoryStore
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.factory import create_provider
 
@@ -23,6 +25,23 @@ class _DenyAllTools:
     @staticmethod
     def authorize_tool(name: str) -> bool:
         return False
+
+
+_MEMORY_OWNER = re.compile(r"^owner-[a-f0-9]{64}$")
+_MEMORY_ACTIONS = frozenset({
+    "agent_memory:read", "agent_memory:write", "agent_memory:correct",
+    "agent_memory:review", "agent_memory:retire", "agent_memory:delete",
+})
+
+
+def _authorize_companion_memory(actor_id: str, action: str, agent_id: str) -> bool:
+    """Allow only authenticated-owner API operations on companion memory."""
+    return (
+        isinstance(actor_id, str)
+        and _MEMORY_OWNER.fullmatch(actor_id) is not None
+        and agent_id == "assistant"
+        and action in _MEMORY_ACTIONS
+    )
 
 
 def _prompt_from_messages(messages: list[dict[str, str]]) -> str:
@@ -86,11 +105,16 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         max_duration_seconds=120,
     )
     auth = BuiltInAuthService(str(workspace / "auth.sqlite3"))
+    memory_store = AgentMemoryStore(
+        str(workspace / "companion-memory.sqlite3"),
+        authorize=_authorize_companion_memory,
+    )
     return build_conversation_runtime(
         config,
         auth_service=auth,
         agent_loop=agent_loop,
         tools_for_user=lambda _user: [],
+        memory_store=memory_store,
         provider_catalog=lambda: [{
             "name": str(config.get("provider", "unknown")),
             "status": "configured",
