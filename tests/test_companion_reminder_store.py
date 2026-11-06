@@ -173,11 +173,14 @@ class CompanionReminderStoreTests(unittest.TestCase):
         self.assertFalse(self.store.cancel(owner_id="owner-a", reminder_id=item["reminder_id"]))
         with self.store._connect() as db:
             persisted = db.execute(
-                "SELECT attempts, exhausted_at FROM companion_reminders WHERE reminder_id=?",
+                "SELECT attempts, exhausted_at, lease_token, lease_until "
+                "FROM companion_reminders WHERE reminder_id=?",
                 (item["reminder_id"],),
             ).fetchone()
         self.assertEqual(persisted["attempts"], self.store.MAX_DELIVERY_ATTEMPTS)
         self.assertIsNotNone(persisted["exhausted_at"])
+        self.assertIsNone(persisted["lease_token"])
+        self.assertIsNone(persisted["lease_until"])
 
     def test_exhausted_reminders_do_not_consume_active_capacity(self):
         self.store.MAX_PER_OWNER = 1
