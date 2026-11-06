@@ -1,0 +1,274 @@
+"""Durable admission journal for isolated upgrade execution requests.
+
+This is a control-plane persistence layer only. It never launches a runner,
+claims isolation, or treats an uploaded evidence envelope as verified.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sqlite3
+from typing import Iterator
+
+from automation.upgrade_execution_contracts import ExecutionEvidence, ExecutionRequest
+
+
+class UpgradeExecutionStoreError(RuntimeError):
+    """Base error for upgrade execution persistence."""
+
+
+class UpgradeExecutionConflict(UpgradeExecutionStoreError):
+    """Raised when an idempotency key or compare-and-swap version conflicts."""
+
+
+class UpgradeExecutionTransitionError(UpgradeExecutionStoreError):
+    """Raised when a lifecycle transition is not permitted."""
+
+
+_STATES = frozenset({
+    "queued", "running", "evidence_pending", "timed_out", "cancelled", "rejected",
+})
+_TRANSITIONS = {
+    "queued": frozenset({"running", "cancelled", "rejected"}),
+    "running": frozenset({"evidence_pending", "timed_out", "cancelled", "rejected"}),
+    "evidence_pending": frozenset({"timed_out", "cancelled", "rejected"}),
+    "timed_out": frozenset(),
+    "cancelled": frozenset(),
+    "rejected": frozenset(),
+}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class UpgradeExecutionRecord:
+    execution_id: str
+    idempotency_key: str
+    request_digest: str
+    request_json: str
+    state: str
+    version: int
+    created_at: str
+    updated_at: str
+    evidence_json: str | None
+
+
+class UpgradeExecutionStore:
+    """SQLite journal with immutable request snapshots and CAS lifecycle updates."""
+
+    def __init__(self, database_path: str | Path) -> None:
+        if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
+            raise ValueError("database_path_required")
+        self.database_path = str(Path(database_path).expanduser())
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS upgrade_executions (
+                    execution_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    request_digest TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    evidence_json TEXT,
+                    evidence_digest TEXT
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS upgrade_execution_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    from_state TEXT,
+                    to_state TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    reason_code TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(execution_id, sequence),
+                    FOREIGN KEY(execution_id) REFERENCES upgrade_executions(execution_id)
+                )
+            """)
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
+        return db
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            yield db
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        finally:
+            db.close()
+
+    @staticmethod
+    def _record(row: sqlite3.Row) -> UpgradeExecutionRecord:
+        return UpgradeExecutionRecord(
+            execution_id=row["execution_id"],
+            idempotency_key=row["idempotency_key"],
+            request_digest=row["request_digest"],
+            request_json=row["request_json"],
+            state=row["state"],
+            version=row["version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            evidence_json=row["evidence_json"],
+        )
+
+    def create(self, request: ExecutionRequest) -> UpgradeExecutionRecord:
+        if not isinstance(request, ExecutionRequest):
+            raise TypeError("request_must_be_ExecutionRequest")
+        payload = json.dumps(request.to_dict(), ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"), allow_nan=False)
+        now = _now()
+        with self._transaction() as db:
+            existing = db.execute(
+                "SELECT * FROM upgrade_executions WHERE idempotency_key=?",
+                (request.idempotency_key,),
+            ).fetchone()
+            if existing is not None:
+                if existing["request_digest"] != request.request_digest:
+                    raise UpgradeExecutionConflict("idempotency_payload_mismatch")
+                return self._record(existing)
+            collision = db.execute(
+                "SELECT 1 FROM upgrade_executions WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()
+            if collision is not None:
+                raise UpgradeExecutionConflict("execution_id_already_exists")
+            db.execute("""
+                INSERT INTO upgrade_executions
+                (execution_id, idempotency_key, request_digest, request_json,
+                 state, version, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'queued', 0, ?, ?)
+            """, (request.execution_id, request.idempotency_key,
+                  request.request_digest, payload, now, now))
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, 0, NULL, 'queued', ?, 'admitted', ?)
+            """, (request.execution_id, request.requesting_principal, now))
+            row = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()
+            return self._record(row)
+
+    def get(self, execution_id: str) -> UpgradeExecutionRecord | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+        return self._record(row) if row is not None else None
+
+    def transition(
+        self, execution_id: str, *, expected_version: int,
+        to_state: str, actor_id: str, reason_code: str,
+    ) -> UpgradeExecutionRecord:
+        if to_state not in _STATES:
+            raise UpgradeExecutionTransitionError("unknown_state")
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
+            raise ValueError("actor_id_invalid")
+        if not isinstance(reason_code, str) or not reason_code.strip() or len(reason_code) > 100:
+            raise ValueError("reason_code_invalid")
+        with self._transaction() as db:
+            row = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["version"] != expected_version:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            if to_state not in _TRANSITIONS[row["state"]]:
+                raise UpgradeExecutionTransitionError("invalid_execution_transition")
+            now = _now()
+            next_version = expected_version + 1
+            changed = db.execute("""
+                UPDATE upgrade_executions
+                SET state=?, version=?, updated_at=?
+                WHERE execution_id=? AND version=?
+            """, (to_state, next_version, now, execution_id, expected_version)).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (execution_id, next_version, row["state"], to_state,
+                  actor_id, reason_code, now))
+            updated = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            return self._record(updated)
+
+    def record_evidence(
+        self, execution_id: str, *, expected_version: int,
+        evidence: ExecutionEvidence,
+    ) -> UpgradeExecutionRecord:
+        """Persist an untrusted envelope after checking its request binding."""
+        if not isinstance(evidence, ExecutionEvidence):
+            raise TypeError("evidence_must_be_ExecutionEvidence")
+        with self._transaction() as db:
+            row = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["version"] != expected_version:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            if row["state"] != "evidence_pending":
+                raise UpgradeExecutionTransitionError("evidence_requires_pending_state")
+            request = json.loads(row["request_json"])
+            if evidence.execution_id != execution_id or evidence.request_digest != row["request_digest"]:
+                raise UpgradeExecutionConflict("evidence_request_mismatch")
+            evidence_json = json.dumps(evidence.signed_payload() | {"signature": evidence.signature},
+                                       ensure_ascii=False, sort_keys=True,
+                                       separators=(",", ":"), allow_nan=False)
+            evidence_digest = evidence.payload_digest
+            now = _now()
+            changed = db.execute("""
+                UPDATE upgrade_executions
+                SET evidence_json=?, evidence_digest=?, version=version+1, updated_at=?
+                WHERE execution_id=? AND version=? AND state='evidence_pending'
+            """, (evidence_json, evidence_digest, now, execution_id, expected_version)).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            next_version = expected_version + 1
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, 'evidence_pending', 'evidence_pending', 'runner', 'evidence_received_unverified', ?)
+            """, (execution_id, next_version, now))
+            updated = db.execute(
+                "SELECT * FROM upgrade_executions WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            return self._record(updated)
+
+    def list_events(self, execution_id: str) -> list[dict[str, object]]:
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT sequence, from_state, to_state, actor_id, reason_code, created_at
+                FROM upgrade_execution_events WHERE execution_id=? ORDER BY sequence
+            """, (execution_id,)).fetchall()
+        return [dict(row) for row in rows]
