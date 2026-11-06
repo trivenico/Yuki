@@ -58,6 +58,16 @@ class UsageMeterTests(unittest.TestCase):
         self.assertEqual(record["price_version"], "catalog-v1")
         self.assertEqual(record["agent_id"], "planner")
 
+    def test_legacy_generate_records_chat_usage_without_changing_return_type(self):
+        result = self.meter.generate("hello")
+        self.assertEqual(result, "hello")
+        self.assertEqual(len(self.ledger.calls), 1)
+        self.assertEqual(self.ledger.calls[0]["input_tokens"], 12)
+
+    def test_availability_delegates_to_wrapped_provider(self):
+        self.provider.is_available = lambda: True
+        self.assertTrue(self.meter.is_available())
+
     def test_missing_usage_is_not_guessed(self):
         provider = ChatProvider({"text": "hello"})
         meter = UsageMeteredProvider(provider, ledger=self.ledger,
