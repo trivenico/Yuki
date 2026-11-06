@@ -157,6 +157,15 @@ class CompanionReminderStore:
         claimed = []
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            # A worker may crash during its final leased attempt. Once that
+            # lease expires, make the exhausted state visible instead of leaving
+            # an indefinitely pending reminder that can never be claimed again.
+            db.execute(
+                "UPDATE companion_reminders SET exhausted_at=? "
+                "WHERE status='pending' AND attempts>=? AND lease_until IS NOT NULL "
+                "AND lease_until<=? AND exhausted_at IS NULL",
+                (instant, self.MAX_DELIVERY_ATTEMPTS, instant),
+            )
             rows = db.execute(
                 "SELECT reminder_id FROM companion_reminders "
                 "WHERE status='pending' AND due_at<=? AND attempts<? "
@@ -168,7 +177,7 @@ class CompanionReminderStore:
             for row in rows:
                 token = uuid4().hex
                 updated = db.execute(
-                    "UPDATE companion_reminders SET lease_token=?, lease_until=? "
+                    "UPDATE companion_reminders SET lease_token=?, lease_until=?, attempts=attempts+1 "
                     "WHERE reminder_id=? AND status='pending' "
                     "AND (lease_until IS NULL OR lease_until<=?)",
                     (token, lease_until, row["reminder_id"], instant),
@@ -218,7 +227,9 @@ class CompanionReminderStore:
             ).fetchone()
             if row is None:
                 return None
-            attempts = row["attempts"] + 1
+            # Attempts are counted when a lease is issued, not only when a
+            # delivery callback reports failure. This also bounds crash loops.
+            attempts = row["attempts"]
             exhausted = attempts >= self.MAX_DELIVERY_ATTEMPTS
             delay = min(2 ** attempts * 5, self.MAX_RETRY_DELAY_SECONDS)
             next_attempt = None if exhausted else (instant + timedelta(seconds=delay)).isoformat()
