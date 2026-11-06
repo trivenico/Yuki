@@ -19,6 +19,7 @@ from core.agent_memory import AgentMemoryStore
 from core.owner_identity import memory_actor_id_for_owner
 from core.memory_candidate_extractor import extract_memory_candidates
 from core.owner_profile import OwnerProfileStore
+from companion.persona import DEFAULT_PERSONA
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -560,6 +561,7 @@ class YukiConversationAPI:
                     request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
+                    system_text=DEFAULT_PERSONA.system_guidance(),
                 )
                 return await self._respond(send, 200, result)
 
@@ -611,6 +613,7 @@ class YukiConversationAPI:
                     request_id=payload["request_id"],
                     expected_version=payload["expected_version"],
                     tools=tools,
+                    system_text=DEFAULT_PERSONA.system_guidance(),
                     on_text_delta=lambda text: publish({"type": "delta", "text": text}),
                     cancellation_requested=cancellation.is_set,
                 )
