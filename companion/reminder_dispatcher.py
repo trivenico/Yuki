@@ -115,13 +115,19 @@ class ReminderDispatcher:
     async def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                claims = await self._store_call(
-                    "claim_due", limit=self.batch_size, lease_seconds=self.lease_seconds
-                )
-                for claim in claims:
+                # Claim just in time: pre-leasing a whole batch lets later
+                # reminders' leases expire while an earlier slow channel send
+                # is still running. Keep the configured batch as a throughput
+                # bound, but issue each lease immediately before delivery.
+                for _ in range(self.batch_size):
                     if self._stop.is_set():
                         break
-                    await self._deliver_one(claim)
+                    claims = await self._store_call(
+                        "claim_due", limit=1, lease_seconds=self.lease_seconds
+                    )
+                    if not claims:
+                        break
+                    await self._deliver_one(claims[0])
             except asyncio.CancelledError:
                 raise
             except Exception:
