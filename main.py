@@ -37,6 +37,7 @@ from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
 from automation.local_worker_runtime import build_local_worker_runtime
+from automation.self_upgrade_pipeline import SelfUpgradeReviewStore
 
 
 def _ask_approval(request):
@@ -90,6 +91,7 @@ def print_help():
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
+  /upgrade status | /upgrade list | /upgrade review PROPOSAL_ID approve|reject
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -202,6 +204,7 @@ def main():
     )
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     evolution = DailyEvolutionCycle(workspace)
+    upgrade_reviews = SelfUpgradeReviewStore(workspace / 'self-upgrade-reviews.sqlite3')
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
@@ -468,6 +471,34 @@ def main():
                 print("Yuki > " + str(evolution.review(proposal_id, decision)))
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Proposal was not changed: {exc}")
+        elif command == "/upgrade status":
+            print(upgrade_reviews.status())
+        elif command == "/upgrade list":
+            reviews = upgrade_reviews.list()
+            if not reviews:
+                print("Yuki > No self-upgrade proposals have been recorded.")
+            for item in reviews:
+                print(f"{item['proposal_id']} [{item['status']}] {item['changed_paths']}")
+        elif command.startswith("/upgrade review "):
+            parts = command.split(maxsplit=4)
+            if len(parts) != 4 or parts[3] not in {"approve", "reject"}:
+                print("Yuki > Use /upgrade review PROPOSAL_ID approve|reject")
+                continue
+            proposal_id, decision = parts[2], parts[3]
+            if not _confirm(
+                "self-upgrade:review",
+                f"Record {decision} for proposal {proposal_id}. Approval only permits a later isolated-testing stage; it does not apply code or deploy.",
+                "high",
+            ):
+                print("Yuki > Self-upgrade review cancelled.")
+                continue
+            try:
+                item = upgrade_reviews.review(
+                    proposal_id, decision, reviewer="local-terminal-operator"
+                )
+                print(f"Yuki > {item['proposal_id']} is now {item['status']}.")
+            except (ValueError, RuntimeError) as exc:
+                print(f"Yuki > Review was not recorded: {exc}")
         elif command == "/voice status":
             print(f"Voice opt-in: {config['voice_enabled']}; recording starts only on explicit request.")
             print(f"Language behavior: {config['language_behavior']}; STT uses automatic detection by default.")
