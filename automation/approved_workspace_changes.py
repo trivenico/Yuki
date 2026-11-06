@@ -72,14 +72,23 @@ def _validate_principal(principal: ToolPrincipal, trusted: Callable[[ToolPrincip
         raise ToolAuthorizationError("required workspace permission is missing.")
 
 
-def _safe_existing_file(root: Path, relative: str) -> Path:
-    if not isinstance(relative, str) or not relative.strip() or len(relative) > 1000 or "\x00" in relative:
-        raise ToolInputError("path must be bounded relative text.")
-    candidate = Path(relative)
-    if candidate.is_absolute() or any(part in {"", ".."} for part in candidate.parts):
-        raise ToolInputError("absolute paths and parent traversal are not allowed.")
-    if any(part in _BLOCKED_PARTS or _SECRET_PART.search(part) for part in candidate.parts):
+def _validate_relative_posix_path(relative: str) -> tuple[str, ...]:
+    """Accept one canonical relative POSIX path on every host platform."""
+    if (not isinstance(relative, str) or not relative or len(relative) > 1000
+            or relative != relative.strip() or "\x00" in relative
+            or "\\" in relative or ":" in relative or relative.startswith("/")):
+        raise ToolInputError("path must be normalized relative POSIX text.")
+    parts = tuple(relative.split("/"))
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ToolInputError("absolute paths and traversal components are not allowed.")
+    if any(part in _BLOCKED_PARTS or _SECRET_PART.search(part) for part in parts):
         raise ToolInputError("path is excluded by workspace policy.")
+    return parts
+
+
+def _safe_existing_file(root: Path, relative: str) -> Path:
+    parts = _validate_relative_posix_path(relative)
+    candidate = Path(*parts)
     target = root / candidate
     # Reject symlinks at every existing path component; resolution alone would follow them.
     cursor = root
@@ -118,11 +127,17 @@ class ApprovedWorkspaceChanges:
             raise TypeError("trusted principal, approval, and audit callbacks are required.")
         if not isinstance(allowed_paths, (tuple, list)) or not allowed_paths:
             raise ValueError("explicit allowed_paths are required.")
+        try:
+            validated_paths = tuple("/".join(_validate_relative_posix_path(path)) for path in allowed_paths)
+        except ToolInputError as exc:
+            raise ValueError("allowed_paths must contain safe normalized relative POSIX paths.") from exc
+        if len(set(validated_paths)) != len(validated_paths):
+            raise ValueError("allowed_paths must not contain duplicates.")
         self.root = root
         self.trusted_principal = trusted_principal
         self.approve_change = approve_change
         self.audit = audit
-        self.allowed_paths = frozenset(allowed_paths)
+        self.allowed_paths = frozenset(validated_paths)
 
     def _audit(self, actor: str, action: str, outcome: str, digest: str, paths: Sequence[str]) -> None:
         try:
