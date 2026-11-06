@@ -333,8 +333,48 @@
     if (!nativeInvoke()) setDeviceStatus("Open this page inside Yuki Desktop to use operating-system credential storage. Browser pairing is disabled.");
     else setDeviceStatus("Ready to pair this native desktop.");
     await loadPairedDevices();
+    await refreshNotificationWorkerStatus();
   });
   $("close-devices").addEventListener("click", () => { $("device-panel").hidden = true; });
+  const refreshNotificationWorkerStatus = async () => {
+    const invoke = nativeInvoke();
+    const status = $("notification-worker-status");
+    if (!invoke) { status.textContent = "Notification delivery requires the native Yuki Desktop app."; return; }
+    try {
+      const running = await invoke("notification_worker_status");
+      status.textContent = running ? "Yuki notifications are enabled and the worker is running." : "Yuki notification delivery is stopped.";
+      $("enable-notifications").disabled = running;
+      $("disable-notifications").disabled = !running;
+    } catch (error) {
+      status.textContent = "Unable to read notification worker status: " + (error.message || "native command failed");
+    }
+  };
+  $("enable-notifications").addEventListener("click", async () => {
+    const invoke = nativeInvoke();
+    if (!invoke) { $("notification-worker-status").textContent = "Open Yuki Desktop to enable native notifications."; return; }
+    const button = $("enable-notifications"); button.disabled = true;
+    $("notification-worker-status").textContent = "Requesting operating-system notification permission…";
+    try {
+      const granted = await invoke("request_notification_permission");
+      if (!granted) throw new Error("Notification permission was not granted.");
+      await invoke("start_notification_worker");
+      $("notification-worker-status").textContent = "Yuki notification delivery has been enabled.";
+    } catch (error) {
+      $("notification-worker-status").textContent = error.message || "Could not enable Yuki notifications.";
+    } finally { await refreshNotificationWorkerStatus(); }
+  });
+  $("disable-notifications").addEventListener("click", async () => {
+    const invoke = nativeInvoke();
+    if (!invoke) { $("notification-worker-status").textContent = "Open Yuki Desktop to manage native notifications."; return; }
+    const button = $("disable-notifications"); button.disabled = true;
+    try {
+      await invoke("stop_notification_worker");
+      $("notification-worker-status").textContent = "Yuki notification delivery has been stopped.";
+    } catch (error) {
+      $("notification-worker-status").textContent = error.message || "Could not stop Yuki notifications.";
+    } finally { await refreshNotificationWorkerStatus(); }
+  });
+  $("refresh-notification-status").addEventListener("click", refreshNotificationWorkerStatus);
   $("device-pair-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const invoke = nativeInvoke();
