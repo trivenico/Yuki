@@ -15,7 +15,7 @@ from pathlib import Path
 import hashlib
 import json
 import re
-from typing import Sequence
+from typing import Callable, Sequence
 
 from automation.approved_workspace_changes import FileChange
 from automation.authorized_read_tools import ToolInputError
@@ -108,10 +108,16 @@ class SelfUpgradeReviewStore:
     applies files, runs tests, creates commits, or promotes a release.
     """
 
-    def __init__(self, database: str | Path):
+    def __init__(
+        self, database: str | Path, *,
+        runner_attestation_verifier: Callable[[dict, str], bool] | None = None,
+    ):
         database_path = Path(database).expanduser()
         database_path.parent.mkdir(parents=True, exist_ok=True)
         self.database = str(database_path)
+        if runner_attestation_verifier is not None and not callable(runner_attestation_verifier):
+            raise TypeError("runner_attestation_verifier must be callable.")
+        self.runner_attestation_verifier = runner_attestation_verifier
         with self._connect() as connection:
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS self_upgrade_reviews (
@@ -269,7 +275,7 @@ class SelfUpgradeReviewStore:
     def record_test_evidence(
         self, *, run_id: str, proposal_id: str, content_digest: str,
         test_target: str, outcome: str, exit_code: int, runner_kind: str,
-        runner_digest: str, result_digest: str,
+        runner_digest: str, result_digest: str, runner_attestation: str,
     ) -> dict:
         """Persist immutable test evidence reported by a separately isolated runner.
 
@@ -295,6 +301,24 @@ class SelfUpgradeReviewStore:
             raise ValueError("test_exit_code_invalid")
         if runner_kind not in {"github_actions", "container", "vm"}:
             raise ValueError("runner_kind_must_be_isolated")
+        if (not isinstance(runner_attestation, str) or not runner_attestation.strip()
+                or len(runner_attestation) > 16384):
+            raise ValueError("runner_attestation_invalid")
+        if self.runner_attestation_verifier is None:
+            raise ValueError("runner_attestation_verifier_unconfigured")
+        attested_payload = {
+            "run_id": run_id, "proposal_id": proposal_id,
+            "content_digest": content_digest, "test_target": test_target,
+            "outcome": outcome, "exit_code": exit_code,
+            "runner_kind": runner_kind, "runner_digest": runner_digest,
+            "result_digest": result_digest,
+        }
+        try:
+            verified = self.runner_attestation_verifier(attested_payload, runner_attestation) is True
+        except Exception:
+            verified = False
+        if not verified:
+            raise ValueError("runner_attestation_verification_failed")
         if (outcome == "passed" and exit_code != 0) or (outcome != "passed" and exit_code == 0):
             raise ValueError("test_outcome_exit_code_mismatch")
         recorded_at = datetime.now(timezone.utc).isoformat()
