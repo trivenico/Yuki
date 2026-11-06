@@ -183,7 +183,7 @@ fn store_device_token(token: String) -> Result<(), String> {
     let entry = keyring::Entry::new(
         DEVICE_CREDENTIAL_SERVICE,
         DEVICE_CREDENTIAL_ACCOUNT,
-    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    ).map_err(|_| "The operating-system credential store is unavailable.".to_string())?;
     entry.set_password(&token)
         .map_err(|_| "Could not save the paired-device credential.".to_string())
 }
@@ -194,7 +194,7 @@ fn get_device_token() -> Result<Option<String>, String> {
     let entry = keyring::Entry::new(
         DEVICE_CREDENTIAL_SERVICE,
         DEVICE_CREDENTIAL_ACCOUNT,
-    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    ).map_err(|_| "The operating-system credential store is unavailable.".to_string())?;
     match entry.get_password() {
         Ok(token) => Ok(Some(token)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -208,7 +208,7 @@ fn delete_device_token() -> Result<(), String> {
     let entry = keyring::Entry::new(
         DEVICE_CREDENTIAL_SERVICE,
         DEVICE_CREDENTIAL_ACCOUNT,
-    ).map_err(|_| "Windows credential vault is unavailable.".to_string())?;
+    ).map_err(|_| "The operating-system credential store is unavailable.".to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(_) => Err("Could not delete the paired-device credential.".to_string()),
