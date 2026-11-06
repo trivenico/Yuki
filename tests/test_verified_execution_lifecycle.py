@@ -131,7 +131,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
 
     def test_cannot_finalize_without_recorded_evidence_or_from_wrong_version(self):
         row = self.store.create(self.request)
-        with self.assertRaises(Exception):
+        with self.assertRaises(UpgradeExecutionTransitionError):
             self.store.verify_and_finalize_evidence(
                 row.execution_id, expected_version=row.version, verifier=self.verifier,
             )
