@@ -333,72 +333,8 @@
     if (!nativeInvoke()) setDeviceStatus("Open this page inside Yuki Desktop to use operating-system credential storage. Browser pairing is disabled.");
     else setDeviceStatus("Ready to pair this native desktop.");
     await loadPairedDevices();
-    await refreshNotificationWorkerStatus();
   });
   $("close-devices").addEventListener("click", () => { $("device-panel").hidden = true; });
-  const refreshNotificationWorkerStatus = async () => {
-    const invoke = nativeInvoke();
-    const status = $("notification-worker-status");
-    if (!invoke) { status.textContent = "Notification delivery requires the native Yuki Desktop app."; return; }
-    try {
-      const health = await invoke("notification_worker_status");
-      const labels = {
-        starting: "Starting notification delivery…",
-        running: "Yuki is connected and waiting for notifications.",
-        retrying: "Yuki is temporarily disconnected and will retry.",
-        authentication_required: "This device needs to be paired with Yuki again.",
-        permission_required: "Enable notification permission in your operating-system settings.",
-        delivery_failed: "The operating system could not display a notification.",
-        acknowledgement_failed: "Yuki could not confirm notification delivery. Review the connection before retrying.",
-        invalid_response: "Yuki received an invalid notification response and stopped delivery safely.",
-        invalid_event: "A notification failed validation. Delivery stopped safely.",
-        storage_error: "Yuki could not access its saved notification progress.",
-        configuration_error: "Yuki could not initialize notification delivery.",
-        server_rejected: "The notification service rejected this device request.",
-        stopped: "Yuki notification delivery is stopped."
-      };
-      status.textContent = health.detail || labels[health.state] || "Notification status: " + health.state;
-      status.dataset.state = health.state;
-      const running = Boolean(health.running);
-      $("enable-notifications").disabled = running;
-      $("disable-notifications").disabled = !running;
-    } catch (error) {
-      status.textContent = "Unable to read notification worker status: " + (error.message || "native command failed");
-    }
-  };
-  $("enable-notifications").addEventListener("click", async () => {
-    const invoke = nativeInvoke();
-    if (!invoke) { $("notification-worker-status").textContent = "Open Yuki Desktop to enable native notifications."; return; }
-    const button = $("enable-notifications"); button.disabled = true;
-    $("notification-worker-status").textContent = "Requesting operating-system notification permission…";
-    try {
-      const granted = await invoke("request_notification_permission");
-      if (!granted) throw new Error("Notification permission was not granted.");
-      await invoke("start_notification_worker");
-      $("notification-worker-status").textContent = "Yuki notification delivery has been enabled.";
-    } catch (error) {
-      $("notification-worker-status").textContent = error.message || "Could not enable Yuki notifications.";
-    } finally { await refreshNotificationWorkerStatus(); }
-  });
-  $("disable-notifications").addEventListener("click", async () => {
-    const invoke = nativeInvoke();
-    if (!invoke) { $("notification-worker-status").textContent = "Open Yuki Desktop to manage native notifications."; return; }
-    const button = $("disable-notifications"); button.disabled = true;
-    try {
-      await invoke("stop_notification_worker");
-      $("notification-worker-status").textContent = "Yuki notification delivery has been stopped.";
-    } catch (error) {
-      $("notification-worker-status").textContent = error.message || "Could not stop Yuki notifications.";
-    } finally { await refreshNotificationWorkerStatus(); }
-  });
-  $("refresh-notification-status").addEventListener("click", refreshNotificationWorkerStatus);
-  // Reconcile native worker state when the user returns to the desktop window.
-  window.addEventListener("focus", () => {
-    if (!$("device-panel").hidden) refreshNotificationWorkerStatus();
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && !$("device-panel").hidden) refreshNotificationWorkerStatus();
-  });
   $("device-pair-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const invoke = nativeInvoke();
