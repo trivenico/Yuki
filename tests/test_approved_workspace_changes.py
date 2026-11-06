@@ -187,10 +187,10 @@ class ApprovedTestRunnerTests(unittest.TestCase):
 
     def test_source_mutation_during_execution_invalidates_result(self):
         generated_test = (
-            "import pathlib, unittest\\n"
-            "class T(unittest.TestCase):\\n"
-            "    def test_mutates_tree(self):\\n"
-            "        pathlib.Path('late_import.py').write_text('VALUE = 1')\\n"
+            "import pathlib, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_mutates_tree(self):\n"
+            "        pathlib.Path('late_import.py').write_text('VALUE = 1')\n"
         )
         (self.root / "test_sample.py").write_text(generated_test, encoding="utf-8")
         result = self.runner().run(principal=self.principal, test_module="test_sample")
