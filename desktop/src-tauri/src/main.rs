@@ -304,6 +304,13 @@ fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorke
 }
 
 #[tauri::command]
+fn notification_worker_status(worker: State<'_, NotificationWorker>) -> Result<bool, String> {
+    let slot = worker.thread.lock()
+        .map_err(|_| "Notification worker state is unavailable.".to_string())?;
+    Ok(slot.as_ref().is_some_and(|handle| !handle.is_finished()))
+}
+
+#[tauri::command]
 fn stop_notification_worker(worker: State<'_, NotificationWorker>) -> Result<(), String> {
     worker.stop.store(true, Ordering::Release);
     let handle = worker.thread.lock()
@@ -424,7 +431,8 @@ fn main() {
             request_notification_permission,
             show_native_notification,
             start_notification_worker,
-            stop_notification_worker
+            stop_notification_worker,
+            notification_worker_status
         ])
         .setup(|app| {
             let _url = server_url()?;
