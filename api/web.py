@@ -23,7 +23,7 @@ _SECURITY_HEADERS = [
 class YukiWebApplication:
     """Serve the allowlisted static chat shell and delegate API traffic."""
 
-    def __init__(self, api, *, allowed_hosts=None):
+    def __init__(self, api, *, allowed_hosts=None, allowed_origins=None):
         self.api = api
         configured = allowed_hosts
         if configured is None:
@@ -39,6 +39,14 @@ class YukiWebApplication:
         if not normalized or "*" in normalized:
             raise ValueError("allowed_hosts must contain explicit hostnames; wildcards are forbidden.")
         self.allowed_hosts = frozenset(normalized)
+        origins = allowed_origins
+        if origins is None:
+            origins = ("tauri://localhost", "http://tauri.localhost")
+        self.allowed_origins = frozenset(
+            str(origin).strip() for origin in origins if str(origin).strip()
+        )
+        if any(origin not in {"tauri://localhost", "http://tauri.localhost"} for origin in self.allowed_origins):
+            raise ValueError("Only the explicit Tauri desktop origins may receive cross-origin access.")
 
     @staticmethod
     def _header_values(scope, name):
@@ -77,15 +85,18 @@ class YukiWebApplication:
         if host is None or host not in self.allowed_hosts:
             return 421, "untrusted_host"
 
-        if method not in {"GET", "HEAD", "OPTIONS"}:
+        origins = self._header_values(scope, "origin")
+        if len(origins) > 1:
+            return 403, "invalid_origin"
+        desktop_origin = bool(origins and origins[0] in self.allowed_origins)
+        if method == "OPTIONS" and origins and not desktop_origin:
+            return 403, "origin_not_allowed"
+        if method not in {"GET", "HEAD", "OPTIONS"} and not desktop_origin:
             if any(
                 value.strip().lower() == "cross-site"
                 for value in self._header_values(scope, "sec-fetch-site")
             ):
                 return 403, "cross_site_request_denied"
-            origins = self._header_values(scope, "origin")
-            if len(origins) > 1:
-                return 403, "invalid_origin"
             if origins:
                 try:
                     origin = urlsplit(origins[0])
@@ -114,7 +125,33 @@ class YukiWebApplication:
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
-            await self.api(scope, receive, send)
+            if method == "OPTIONS" and desktop_origin:
+            await send({
+                "type": "http.response.start", "status": 204,
+                "headers": [
+                    (b"access-control-allow-origin", origins[0].encode("ascii")),
+                    (b"access-control-allow-methods", b"GET, POST, PATCH, DELETE, OPTIONS"),
+                    (b"access-control-allow-headers", b"Authorization, Content-Type"),
+                    (b"access-control-max-age", b"300"),
+                    (b"vary", b"Origin"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        if desktop_origin:
+            async def cors_send(message):
+                if message.get("type") == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.extend([
+                        (b"access-control-allow-origin", origins[0].encode("ascii")),
+                        (b"vary", b"Origin"),
+                    ])
+                    message = {**message, "headers": headers}
+                await send(message)
+            await self.api(scope, receive, cors_send)
+            return
+        await self.api(scope, receive, send)
             return
         method = scope.get("method", "GET").upper()
         path = scope.get("path", "/")
