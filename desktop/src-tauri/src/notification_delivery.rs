@@ -94,6 +94,34 @@ pub fn load_cursor(path: &Path) -> io::Result<u64> {
     }
 }
 
+#[cfg(not(windows))]
+fn replace_cursor_file(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_cursor_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::{os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn persist_cursor(path: &Path, cursor: u64) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -109,7 +137,7 @@ pub fn persist_cursor(path: &Path, cursor: u64) -> io::Result<()> {
         let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
         writeln!(file, "{cursor}")?;
         file.sync_all()?;
-        fs::rename(&temporary, path)?;
+        replace_cursor_file(&temporary, path)?;
         if let Some(parent) = path.parent() {
             if let Ok(directory) = OpenOptions::new().read(true).open(parent) {
                 let _ = directory.sync_all();
@@ -171,6 +199,9 @@ mod tests {
         assert_eq!(load_cursor(&path).unwrap(), 0);
         persist_cursor(&path, 42).unwrap();
         assert_eq!(load_cursor(&path).unwrap(), 42);
+        // Replacing an existing cursor must work on Windows as well as Unix.
+        persist_cursor(&path, 43).unwrap();
+        assert_eq!(load_cursor(&path).unwrap(), 43);
         fs::remove_dir_all(directory).unwrap();
     }
 }
