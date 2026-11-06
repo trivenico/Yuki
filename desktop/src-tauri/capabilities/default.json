@@ -1,12 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allow the main Yuki Desktop window to invoke registered native commands; no plugin permissions are granted.",
+  "description": "Allow the main Yuki Desktop window to invoke registered native commands and request OS notifications.",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "notification:default"
   ],
   "remote": {
     "urls": [
