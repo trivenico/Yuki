@@ -180,7 +180,7 @@ class OllamaAgentChatTests(unittest.TestCase):
         self.assertEqual(self.requests[0][0].get_header("Accept"), "application/x-ndjson")
 
     def test_native_ndjson_stream_preserves_final_usage_counts(self):
-        lines = [json.dumps(chunk) + "\\n" for chunk in [{"message":{"content":"Metered"},"done":True,"done_reason":"stop","prompt_eval_count":13,"eval_count":7}]]
+        lines = [json.dumps(chunk) + "\n" for chunk in [{"message":{"content":"Metered"},"done":True,"done_reason":"stop","prompt_eval_count":13,"eval_count":7}]]
         opener = FakeNDJSONOpener(lines, self.requests)
         with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
             events = list(self.provider.generate_chat_stream(messages=self.messages, tools=[]))
