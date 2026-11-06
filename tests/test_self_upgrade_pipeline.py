@@ -4,8 +4,9 @@ import unittest
 from dataclasses import replace
 
 from automation.approved_workspace_changes import FileChange
-from automation.authorized_read_tools import ToolInputError
+from automation.authorized_read_tools import ToolInputError, ToolPrincipal, ToolAuthorizationError
 from automation.self_upgrade_pipeline import SelfUpgradeProposalBuilder, SelfUpgradeReviewStore, UpgradeProposal
+from automation.approved_upgrade_executor import ApprovedUpgradeExecutor
 import tempfile
 from pathlib import Path
 
