@@ -138,6 +138,36 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
                     runner_attestation="untrusted-token",
                 )
 
+    def test_test_evidence_accepts_only_dotted_unittest_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SelfUpgradeReviewStore(
+                Path(directory) / "reviews.sqlite3",
+                runner_attestation_verifier=lambda payload, token: token == "ok",
+            )
+            proposal = self.builder.build([
+                FileChange("src/example.py", self.digest, "VALUE = 9\n")
+            ])
+            store.record(proposal)
+            store.review(proposal.proposal_id, "approve", reviewer="operator")
+            for invalid_target in (
+                "../tests.test_example", "tests/evil.py", "tests;echo", "tests.",
+                "tests.test_example\\nimport os", "", None,
+            ):
+                with self.subTest(target=invalid_target):
+                    with self.assertRaisesRegex(ValueError, "test_target_invalid"):
+                        store.record_test_evidence(
+                            run_id="test_" + "4" * 24,
+                            proposal_id=proposal.proposal_id,
+                            content_digest=proposal.content_digest,
+                            test_target=invalid_target,
+                            outcome="passed",
+                            exit_code=0,
+                            runner_kind="github_actions",
+                            runner_digest="a" * 64,
+                            result_digest="b" * 64,
+                            runner_attestation="ok",
+                        )
+
     def test_review_store_bounds_list_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SelfUpgradeReviewStore(Path(directory) / "reviews.sqlite3")
