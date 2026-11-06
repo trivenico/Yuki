@@ -6,6 +6,7 @@
 
 use serde::Deserialize;
 use serde_json::Value;
+use url::Url;
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -91,6 +92,60 @@ pub fn validate_page(page: &NotificationPage, after_sequence: u64) -> io::Result
         return Err(io::Error::new(io::ErrorKind::InvalidData, "notification page cursor is inconsistent"));
     }
     Ok(())
+}
+
+/// Build a feed URL only for Yuki's fixed local API origin.
+pub fn notification_feed_url(base: &str, cursor: u64) -> io::Result<Url> {
+    let mut url = Url::parse(base).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "notification API URL is invalid")
+    })?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port_or_known_default() != Some(8765)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "notification API must use the fixed loopback origin",
+        ));
+    }
+    if cursor > MAX_NOTIFICATION_CURSOR {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "notification cursor exceeds supported range"));
+    }
+    url.set_path("/v1/devices/notifications");
+    url.query_pairs_mut().append_pair("after_sequence", &cursor.to_string());
+    url.query_pairs_mut().append_pair("limit", "50");
+    Ok(url)
+}
+
+/// Build an acknowledgement URL after validating the server-issued event ID.
+pub fn notification_ack_url(base: &str, event_id: &str) -> io::Result<Url> {
+    let mut url = Url::parse(base).map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidInput, "notification API URL is invalid")
+    })?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port_or_known_default() != Some(8765)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "notification API must use the fixed loopback origin"));
+    }
+    let valid_id = event_id.len() == MAX_EVENT_ID_LEN
+        && event_id.starts_with("evt_")
+        && event_id[4..].bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid_id {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "notification event ID is invalid"));
+    }
+    url.set_path(&format!("/v1/devices/notifications/{event_id}/ack"));
+    Ok(url)
 }
 
 /// Accept only the exact success envelope returned by the device acknowledgement API.
@@ -209,6 +264,19 @@ mod tests {
             expires_at: "2027-01-01T00:00:00+00:00".to_string(),
             acknowledged_at: None,
         }
+    }
+
+    #[test]
+    fn notification_urls_are_pinned_to_the_local_api() {
+        let feed = notification_feed_url("http://127.0.0.1:8765/", 12).unwrap();
+        assert_eq!(feed.as_str(), "http://127.0.0.1:8765/v1/devices/notifications?after_sequence=12&limit=50");
+        let ack = notification_ack_url("http://127.0.0.1:8765/", &format!("evt_{:032x}", 7)).unwrap();
+        assert!(ack.path().ends_with("/evt_00000000000000000000000000000007/ack"));
+        assert!(notification_feed_url("https://example.com/", 0).is_err());
+        assert!(notification_feed_url("http://127.0.0.1:8765/override", 0).is_err());
+        assert!(notification_feed_url("http://user@127.0.0.1:8765/", 0).is_err());
+        assert!(notification_ack_url("http://127.0.0.1:8765/", "evt_bad").is_err());
+        assert!(notification_feed_url("http://127.0.0.1:8765/", MAX_NOTIFICATION_CURSOR + 1).is_err());
     }
 
     #[test]
