@@ -182,6 +182,17 @@ class ApprovedTestRunnerTests(unittest.TestCase):
         self.assertTrue(result.timed_out)
         self.assertEqual(result.exit_code, 124)
 
+    def test_captured_output_is_bounded(self):
+        (self.root / "test_sample.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n"
+            " def test_noisy(self): print('x' * 100000)\n",
+            encoding="utf-8",
+        )
+        result = self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertEqual(result.exit_code, 0)
+        self.assertLessEqual(len(result.stdout.encode("utf-8")), 64 * 1024)
+        self.assertLessEqual(len(result.stderr.encode("utf-8")), 64 * 1024)
+
     def test_invalid_allowlist_and_timeout_rejected(self):
         with self.assertRaises(ValueError):
             self.runner(modules=("test_sample; rm -rf /",))
