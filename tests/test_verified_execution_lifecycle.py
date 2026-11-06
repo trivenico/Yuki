@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from automation.upgrade_execution_contracts import ExecutionEvidence, ExecutionRequest
-from automation.upgrade_execution_store import UpgradeExecutionStore
+from automation.upgrade_execution_store import (\n    UpgradeExecutionConflict, UpgradeExecutionStore, UpgradeExecutionTransitionError,\n)
 from automation.upgrade_evidence_verifier import Ed25519EvidenceVerifier
 
 
@@ -42,7 +42,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
             allowed_runner_identities={"https://ci.example/workflow/upgrade"},
             max_age_seconds=3600,
         )
-        self.request = ExecutionRequest.create(
+        self.now = datetime(2026, 11, 6, 12, 0, tzinfo=timezone.utc)\n        self.request = ExecutionRequest.create(
             proposal_id="proposal-verified",
             snapshot_digest=digest("snapshot"),
             snapshot_object_digest=digest("snapshot-object"),
@@ -147,7 +147,7 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
             row.execution_id, expected_version=row.version,
             evidence=self.signed_evidence(),
         )
-        with self.assertRaisesRegex(Exception, "stale_execution_version"):
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "stale_execution_version"):
             self.store.verify_and_finalize_evidence(
                 row.execution_id, expected_version=row.version - 1, verifier=self.verifier,
             )
