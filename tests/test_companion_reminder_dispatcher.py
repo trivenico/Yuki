@@ -99,6 +99,40 @@ def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
         second["reminder_id"]: "delivered",
     }
 
+def test_dispatcher_shutdown_awaits_async_delivery_cancellation(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Stop cleanly",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due(lease_seconds=30)[0]
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=30)
+        task = asyncio.create_task(dispatcher._deliver_one(claim))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    assert cancelled.is_set()
+    row = store.list(owner_id="owner-a", include_inactive=True)[0]
+    assert row["status"] == "pending"
+
+
 def test_dispatcher_stops_async_delivery_when_lease_renewal_is_rejected(tmp_path):
     store = _store(tmp_path)
     reminder = store.create(
