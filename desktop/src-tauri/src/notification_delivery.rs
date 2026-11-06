@@ -132,6 +132,13 @@ fn replace_cursor_file(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 pub fn persist_cursor(path: &Path, cursor: u64) -> io::Result<()> {
+    if cursor > MAX_NOTIFICATION_CURSOR {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "notification cursor exceeds supported range"));
+    }
+    let current = load_cursor(path)?;
+    if cursor < current {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "notification cursor cannot move backwards"));
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -219,6 +226,31 @@ mod tests {
         assert!(validate_event(&item, 0).is_err());
         item.payload = serde_json::json!({"title": "Reminder", "body": " "});
         assert!(validate_event(&item, 0).is_err());
+    }
+
+    #[test]
+    fn cursor_rejects_values_outside_supported_range() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("yuki-cursor-range-{}-{nonce}", std::process::id()));
+        assert_eq!(
+            persist_cursor(&path, MAX_NOTIFICATION_CURSOR + 1).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn cursor_cannot_move_backwards() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("yuki-cursor-monotonic-{}-{nonce}", std::process::id()));
+        let path = directory.join("notification.cursor");
+        persist_cursor(&path, 42).unwrap();
+        assert_eq!(
+            persist_cursor(&path, 41).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(load_cursor(&path).unwrap(), 42);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
