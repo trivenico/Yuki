@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn rejects_untrusted_notification_text() {
         let mut item = event(1);
-        item.payload = serde_json::json!({"title": "bad\\ntext", "body": "body"});
+        item.payload = serde_json::json!({"title": "bad\ntext", "body": "body"});
         assert!(validate_event(&item, 0).is_err());
         item.payload = serde_json::json!({"title": "Reminder", "body": " "});
         assert!(validate_event(&item, 0).is_err());
