@@ -279,10 +279,8 @@ class SelfUpgradeProposalBuilderTests(unittest.TestCase):
                 store.record(malformed)
 
     def test_sensitive_path_rejected_even_if_allowlisted(self):
-        builder = SelfUpgradeProposalBuilder([".env"])
-        change = FileChange(".env", self.digest, "TOKEN=example\n")
-        with self.assertRaises(ToolInputError):
-            builder.build([change])
+        with self.assertRaises(ValueError):
+            SelfUpgradeProposalBuilder([".env"])
 
     def test_duplicate_paths_rejected(self):
         change = FileChange("src/example.py", self.digest, "VALUE = 2\n")
