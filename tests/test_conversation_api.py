@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from api.conversations import YukiConversationAPI
+from companion.persona import DEFAULT_PERSONA
 from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
@@ -29,7 +30,9 @@ class ConversationAPITests(unittest.TestCase):
         self.user = self.auth.bootstrap_admin("admin-user", "a-secure-test-password")
         self.issued = self.auth.authenticate("admin-user", "a-secure-test-password")
 
+        self.model_messages = []
         def model(**kwargs):
+            self.model_messages.append(kwargs["messages"])
             return {"text": "Hello from Yuki", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
@@ -193,6 +196,8 @@ class ConversationAPITests(unittest.TestCase):
         status, history, _ = self.request("GET", f"/v1/conversations/{cid}/messages", token=token)
         self.assertEqual(status, 200)
         self.assertEqual([item["role"] for item in history["messages"]], ["user", "assistant"])
+        self.assertEqual(self.model_messages[0][0]["role"], "system")
+        self.assertEqual(self.model_messages[0][0]["content"], DEFAULT_PERSONA.system_guidance())
 
         status, _, _ = self.request("POST", "/v1/auth/logout", token=token)
         self.assertEqual(status, 200)
