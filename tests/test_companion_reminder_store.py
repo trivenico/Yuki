@@ -166,7 +166,11 @@ class CompanionReminderStoreTests(unittest.TestCase):
             now += timedelta(seconds=6)
         self.assertEqual(self.store.claim_due(now=now, lease_seconds=5), [])
         row = self.store.list(owner_id="owner-a", include_inactive=True)[0]
-        self.assertEqual(row["status"], "pending")
+        self.assertEqual(row["status"], "failed")
+        # Exhausted reminders are terminal: hide them from the active queue
+        # and do not allow cancellation to imply that delivery is still pending.
+        self.assertEqual(self.store.list(owner_id="owner-a"), [])
+        self.assertFalse(self.store.cancel(owner_id="owner-a", reminder_id=item["reminder_id"]))
         with self.store._connect() as db:
             persisted = db.execute(
                 "SELECT attempts, exhausted_at FROM companion_reminders WHERE reminder_id=?",
