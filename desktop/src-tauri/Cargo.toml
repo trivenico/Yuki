@@ -21,7 +21,9 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
-keyring = { version = "3", default-features = false, features = ["linux-native", "async-secret-service", "crypto-rust", "async-io"] }
+# Entry's API is synchronous. Use keyutils plus the synchronous Secret
+# Service backend; async-secret-service is not appropriate for this API.
+keyring = { version = "3", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
