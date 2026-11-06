@@ -158,6 +158,23 @@ pub struct NotificationHttpResponse {
     pub body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationHttpStatus {
+    Success,
+    AuthenticationRevoked,
+    Retryable,
+    Rejected,
+}
+
+pub fn classify_notification_http_status(status: u16) -> NotificationHttpStatus {
+    match status {
+        200..=299 => NotificationHttpStatus::Success,
+        401 | 403 => NotificationHttpStatus::AuthenticationRevoked,
+        408 | 425 | 429 | 500..=599 => NotificationHttpStatus::Retryable,
+        _ => NotificationHttpStatus::Rejected,
+    }
+}
+
 impl NotificationHttpClient {
     pub fn new() -> io::Result<Self> {
         let client = reqwest::blocking::Client::builder()
@@ -329,6 +346,16 @@ mod tests {
             expires_at: "2027-01-01T00:00:00+00:00".to_string(),
             acknowledged_at: None,
         }
+    }
+
+    #[test]
+    fn notification_http_statuses_have_safe_retry_classification() {
+        assert_eq!(classify_notification_http_status(200), NotificationHttpStatus::Success);
+        assert_eq!(classify_notification_http_status(401), NotificationHttpStatus::AuthenticationRevoked);
+        assert_eq!(classify_notification_http_status(403), NotificationHttpStatus::AuthenticationRevoked);
+        assert_eq!(classify_notification_http_status(429), NotificationHttpStatus::Retryable);
+        assert_eq!(classify_notification_http_status(503), NotificationHttpStatus::Retryable);
+        assert_eq!(classify_notification_http_status(404), NotificationHttpStatus::Rejected);
     }
 
     #[test]
