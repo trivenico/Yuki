@@ -91,6 +91,25 @@ class CompanionReminderStoreTests(unittest.TestCase):
         ))
 
 
+    def test_live_lease_can_be_renewed_but_expired_lease_cannot(self):
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        item = self.store.create(owner_id="owner-a", text="Renew while sending", due_at=now)
+        claim = self.store.claim_due(now=now, lease_seconds=5)[0]
+        renewed_at = now + timedelta(seconds=2)
+        self.assertTrue(self.store.renew_lease(
+            reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+            now=renewed_at, lease_seconds=10,
+        ))
+        self.assertTrue(self.store.is_lease_current(
+            reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+            now=now + timedelta(seconds=8),
+        ))
+        expired = now + timedelta(seconds=13)
+        self.assertFalse(self.store.renew_lease(
+            reminder_id=item["reminder_id"], lease_token=claim["lease_token"],
+            now=expired, lease_seconds=10,
+        ))
+
     def test_expired_lease_cannot_acknowledge_or_record_failure(self):
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
         item = self.store.create(owner_id="owner-a", text="Lease must be live", due_at=now)
