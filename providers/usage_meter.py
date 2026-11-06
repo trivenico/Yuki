@@ -21,6 +21,7 @@ class UsageMeteredProvider:
         session_id: str = "default", agent_id: str | None = None,
         pricing_resolver: Callable[[str, str], Mapping[str, Any] | None] | None = None,
         request_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+        on_metering_error: Callable[[str], None] | None = None,
     ):
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("usage_meter_provider_must_support_generate_chat")
@@ -40,6 +41,8 @@ class UsageMeteredProvider:
             raise TypeError("pricing_resolver_must_be_callable")
         if not callable(request_id_factory):
             raise TypeError("request_id_factory_must_be_callable")
+        if on_metering_error is not None and not callable(on_metering_error):
+            raise TypeError("on_metering_error_must_be_callable")
         self.provider = provider
         self.ledger = ledger
         self.provider_id = provider_id.strip()
@@ -48,6 +51,8 @@ class UsageMeteredProvider:
         self.agent_id = agent_id.strip() if agent_id else None
         self.pricing_resolver = pricing_resolver
         self.request_id_factory = request_id_factory
+        self.on_metering_error = on_metering_error
+        self.last_metering_error: str | None = None
 
     def _record_usage(self, response: Mapping[str, Any]) -> None:
         usage = response.get("usage")
@@ -96,9 +101,16 @@ class UsageMeteredProvider:
             )
         except Exception as exc:
             # Do not silently lose billing telemetry after a successful inference.
-            raise UsageMeteringError(
-                "provider_succeeded_but_usage_persistence_failed"
-            ) from exc
+            # A metering outage must never turn a completed inference into a
+            # retryable provider failure: that could double-charge the request.
+            self.last_metering_error = "usage_persistence_failed"
+            if self.on_metering_error is not None:
+                try:
+                    self.on_metering_error(self.last_metering_error)
+                except Exception:
+                    pass
+        else:
+            self.last_metering_error = None
 
     def generate_chat(self, **kwargs):
         response = self.provider.generate_chat(**kwargs)
