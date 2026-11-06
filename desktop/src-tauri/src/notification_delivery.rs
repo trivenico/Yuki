@@ -252,7 +252,7 @@ mod tests {
     fn load_cursor_rejects_values_outside_supported_range() {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let path = std::env::temp_dir().join(format!("yuki-cursor-corrupt-{}-{nonce}", std::process::id()));
-        fs::write(&path, format!("{}\\n", MAX_NOTIFICATION_CURSOR + 1)).unwrap();
+        fs::write(&path, format!("{}\n", MAX_NOTIFICATION_CURSOR + 1)).unwrap();
         assert_eq!(load_cursor(&path).unwrap_err().kind(), io::ErrorKind::InvalidData);
         fs::remove_file(path).unwrap();
     }
