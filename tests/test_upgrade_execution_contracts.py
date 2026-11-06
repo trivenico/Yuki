@@ -24,7 +24,7 @@ class ExecutionRequestTests(unittest.TestCase):
             policy_digest=digest("policy"),
             execution_id="exec-123",
             idempotency_key="idem-123",
-            requesting_principal="reviewer-1",
+            requesting_principal="requester-1",
             reviewer="reviewer-1",
             approval_id="approval-1",
         )
@@ -57,8 +57,8 @@ class ExecutionRequestTests(unittest.TestCase):
     def test_rejects_unpinned_runner_and_mismatched_reviewer(self):
         with self.assertRaisesRegex(ValueError, "runner_image_digest_invalid"):
             self.make_request(runner_image_digest="latest")
-        with self.assertRaisesRegex(ValueError, "reviewer_identity_mismatch"):
-            self.make_request(reviewer="other-reviewer")
+        with self.assertRaisesRegex(ValueError, "reviewer_must_be_independent"):
+            self.make_request(requesting_principal="reviewer-1")
 
     def test_rejects_unsupported_runner_and_schema(self):
         with self.assertRaisesRegex(ValueError, "runner_kind_unsupported"):
@@ -83,7 +83,7 @@ class ExecutionEvidenceTests(unittest.TestCase):
             policy_digest=digest("policy"),
             execution_id="exec-123",
             idempotency_key="idem-123",
-            requesting_principal="reviewer-1",
+            requesting_principal="requester-1",
             reviewer="reviewer-1",
             approval_id="approval-1",
         )
