@@ -220,8 +220,8 @@ class CompanionReminderStore:
             cursor = db.execute(
                 "UPDATE companion_reminders SET status='delivered', delivered_at=?, "
                 "lease_token=NULL, lease_until=NULL, next_attempt_at=NULL "
-                "WHERE reminder_id=? AND status='pending' AND lease_token=?",
-                (stamp, reminder_id, lease_token),
+                "WHERE reminder_id=? AND status='pending' AND lease_token=? AND lease_until>?",
+                (stamp, reminder_id, lease_token, stamp),
             )
             return cursor.rowcount == 1
 
@@ -238,8 +238,8 @@ class CompanionReminderStore:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT attempts FROM companion_reminders WHERE reminder_id=? "
-                "AND status='pending' AND lease_token=?",
-                (reminder_id, lease_token),
+                "AND status='pending' AND lease_token=? AND lease_until>?",
+                (reminder_id, lease_token, stamp),
             ).fetchone()
             if row is None:
                 return None
