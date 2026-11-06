@@ -1,12 +1,14 @@
 """Owner-scoped durable reminders for the Yuki companion.
 
 Reminders are inert data: this store never executes commands or arbitrary actions.
+The internal dispatcher methods implement leased, at-least-once delivery claims;
+they are not exposed through the user-facing API.
 """
 from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
@@ -16,6 +18,8 @@ from typing import Callable
 class CompanionReminderStore:
     MAX_TEXT = 1000
     MAX_PER_OWNER = 1000
+    MAX_DELIVERY_ATTEMPTS = 5
+    MAX_RETRY_DELAY_SECONDS = 3600
 
     def __init__(self, database_path: str | Path, *, authorize: Callable[[str, str], bool]):
         if not callable(authorize):
@@ -32,12 +36,31 @@ class CompanionReminderStore:
                     text TEXT NOT NULL,
                     due_at TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('pending','cancelled','delivered')),
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    lease_token TEXT,
+                    lease_until TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT,
+                    delivered_at TEXT,
+                    exhausted_at TEXT
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(companion_reminders)")}
+            migrations = {
+                "lease_token": "TEXT", "lease_until": "TEXT",
+                "attempts": "INTEGER NOT NULL DEFAULT 0", "next_attempt_at": "TEXT",
+                "delivered_at": "TEXT", "exhausted_at": "TEXT",
+            }
+            for name, declaration in migrations.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE companion_reminders ADD COLUMN {name} {declaration}")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_companion_reminders_owner_due "
                 "ON companion_reminders(owner_id, status, due_at)"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_companion_reminders_dispatch "
+                "ON companion_reminders(status, due_at, next_attempt_at, lease_until)"
             )
 
     @contextmanager
@@ -64,16 +87,21 @@ class CompanionReminderStore:
             "reminder_id", "text", "due_at", "status", "created_at"
         )}
 
+    @staticmethod
+    def _utc(value: datetime) -> str:
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("timestamp_must_be_timezone_aware")
+        return value.astimezone(timezone.utc).isoformat()
+
     def create(self, *, owner_id: str, text: str, due_at: datetime) -> dict:
         self._check(owner_id, "create")
         if not isinstance(text, str) or not text.strip() or len(text.strip()) > self.MAX_TEXT:
             raise ValueError("invalid_reminder_text")
-        if not isinstance(due_at, datetime) or due_at.tzinfo is None or due_at.utcoffset() is None:
-            raise ValueError("reminder_due_at_must_be_timezone_aware")
-        due = due_at.astimezone(timezone.utc).isoformat()
+        due = self._utc(due_at)
         now = datetime.now(timezone.utc).isoformat()
         reminder_id = uuid4().hex
         with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             count = db.execute(
                 "SELECT COUNT(*) FROM companion_reminders WHERE owner_id=? AND status='pending'",
                 (owner_id,),
@@ -81,7 +109,8 @@ class CompanionReminderStore:
             if count >= self.MAX_PER_OWNER:
                 raise ValueError("reminder_limit_reached")
             db.execute(
-                "INSERT INTO companion_reminders VALUES (?,?,?,?,?,?)",
+                "INSERT INTO companion_reminders "
+                "(reminder_id,owner_id,text,due_at,status,created_at) VALUES (?,?,?,?,?,?)",
                 (reminder_id, owner_id, text.strip(), due, "pending", now),
             )
             row = db.execute(
@@ -107,9 +136,95 @@ class CompanionReminderStore:
         if not isinstance(reminder_id, str) or len(reminder_id) != 32:
             raise ValueError("invalid_reminder_id")
         with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             cursor = db.execute(
-                "UPDATE companion_reminders SET status='cancelled' "
+                "UPDATE companion_reminders SET status='cancelled', lease_token=NULL, lease_until=NULL "
                 "WHERE reminder_id=? AND owner_id=? AND status='pending'",
                 (reminder_id, owner_id),
             )
             return cursor.rowcount == 1
+
+    def claim_due(self, *, now: datetime | None = None, limit: int = 25,
+                  lease_seconds: int = 60) -> list[dict]:
+        """Lease due reminders for an internal dispatcher; never expose via HTTP."""
+        instant = self._utc(now or datetime.now(timezone.utc))
+        parsed_now = datetime.fromisoformat(instant)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("invalid_dispatch_limit")
+        if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or not 5 <= lease_seconds <= 900:
+            raise ValueError("invalid_lease_duration")
+        lease_until = (parsed_now + timedelta(seconds=lease_seconds)).isoformat()
+        claimed = []
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT reminder_id FROM companion_reminders "
+                "WHERE status='pending' AND due_at<=? AND attempts<? "
+                "AND (next_attempt_at IS NULL OR next_attempt_at<=?) "
+                "AND (lease_until IS NULL OR lease_until<=?) AND exhausted_at IS NULL "
+                "ORDER BY due_at, reminder_id LIMIT ?",
+                (instant, self.MAX_DELIVERY_ATTEMPTS, instant, instant, limit),
+            ).fetchall()
+            for row in rows:
+                token = uuid4().hex
+                updated = db.execute(
+                    "UPDATE companion_reminders SET lease_token=?, lease_until=? "
+                    "WHERE reminder_id=? AND status='pending' "
+                    "AND (lease_until IS NULL OR lease_until<=?)",
+                    (token, lease_until, row["reminder_id"], instant),
+                )
+                if updated.rowcount != 1:
+                    continue
+                item = db.execute(
+                    "SELECT reminder_id, owner_id, text, due_at, attempts, lease_token, lease_until "
+                    "FROM companion_reminders WHERE reminder_id=?", (row["reminder_id"],)
+                ).fetchone()
+                claimed.append(dict(item))
+        return claimed
+
+    def acknowledge_delivery(self, *, reminder_id: str, lease_token: str,
+                             delivered_at: datetime | None = None) -> bool:
+        """Acknowledge a successful send; stale or duplicate acknowledgements fail."""
+        stamp = self._utc(delivered_at or datetime.now(timezone.utc))
+        if not isinstance(reminder_id, str) or len(reminder_id) != 32:
+            raise ValueError("invalid_reminder_id")
+        if not isinstance(lease_token, str) or len(lease_token) != 32:
+            raise ValueError("invalid_lease_token")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "UPDATE companion_reminders SET status='delivered', delivered_at=?, "
+                "lease_token=NULL, lease_until=NULL, next_attempt_at=NULL "
+                "WHERE reminder_id=? AND status='pending' AND lease_token=?",
+                (stamp, reminder_id, lease_token),
+            )
+            return cursor.rowcount == 1
+
+    def record_delivery_failure(self, *, reminder_id: str, lease_token: str,
+                                failed_at: datetime | None = None) -> dict | None:
+        """Release a lease and schedule bounded exponential retry."""
+        stamp = self._utc(failed_at or datetime.now(timezone.utc))
+        instant = datetime.fromisoformat(stamp)
+        if not isinstance(reminder_id, str) or len(reminder_id) != 32:
+            raise ValueError("invalid_reminder_id")
+        if not isinstance(lease_token, str) or len(lease_token) != 32:
+            raise ValueError("invalid_lease_token")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT attempts FROM companion_reminders WHERE reminder_id=? "
+                "AND status='pending' AND lease_token=?",
+                (reminder_id, lease_token),
+            ).fetchone()
+            if row is None:
+                return None
+            attempts = row["attempts"] + 1
+            exhausted = attempts >= self.MAX_DELIVERY_ATTEMPTS
+            delay = min(2 ** attempts * 5, self.MAX_RETRY_DELAY_SECONDS)
+            next_attempt = None if exhausted else (instant + timedelta(seconds=delay)).isoformat()
+            db.execute(
+                "UPDATE companion_reminders SET attempts=?, next_attempt_at=?, exhausted_at=?, "
+                "lease_token=NULL, lease_until=NULL WHERE reminder_id=? AND lease_token=?",
+                (attempts, next_attempt, stamp if exhausted else None, reminder_id, lease_token),
+            )
+            return {"attempts": attempts, "next_attempt_at": next_attempt, "exhausted": exhausted}
