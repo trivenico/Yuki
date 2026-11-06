@@ -7,6 +7,7 @@ prices remain NULL and are never guessed.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
@@ -61,11 +62,15 @@ class UsageLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         connection = sqlite3.connect(self.path, timeout=self.timeout_seconds)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        try:
+            yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -211,6 +216,8 @@ class UsageLedger:
         return UsageRecord(**data)
 
     def summary(self, *, session_id: str | None = None) -> dict[str, Any]:
+        if session_id is not None:
+            session_id = self._text(session_id, "session_id")
         where = " WHERE session_id = ?" if session_id is not None else ""
         params = (session_id,) if session_id is not None else ()
         with self._connect() as connection:
