@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -294,22 +295,35 @@ class ApprovedTestRunner:
         env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root),
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         start = time.monotonic()
+        process = None
         try:
-            result = subprocess.run(
+            creationflags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            )
+            process = subprocess.Popen(
                 [sys.executable, "-m", "unittest", test_module, "-v"],
                 cwd=str(self.root), env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=self.timeout_seconds,
-                check=False, shell=False,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                shell=False, start_new_session=(os.name != "nt"),
+                creationflags=creationflags,
             )
+            out, err = process.communicate(timeout=self.timeout_seconds)
             timed_out = False
-            exit_code = result.returncode
-            stdout = result.stdout[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = result.stderr[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-        except subprocess.TimeoutExpired as exc:
+            exit_code = process.returncode
+        except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
-            stdout = (exc.stdout or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = (exc.stderr or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            if process is not None and process.poll() is None:
+                try:
+                    if os.name == "nt":
+                        process.kill()
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            out, err = process.communicate() if process is not None else (b"", b"")
+        stdout = out[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+        stderr = err[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
         duration = round(time.monotonic() - start, 3)
         self._record(principal.actor_id, "tests.run", "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed"), run_digest, test_module)
         return TestRunResult(test_module, exit_code, timed_out, duration, stdout, stderr)
