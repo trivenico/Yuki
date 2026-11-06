@@ -112,10 +112,21 @@ class UsageMeteredProvider:
         else:
             self.last_metering_error = None
 
+    def _safe_record_usage(self, response: Mapping[str, Any]) -> None:
+        try:
+            self._record_usage(response)
+        except UsageMeteringError as exc:
+            self.last_metering_error = str(exc)
+            if self.on_metering_error is not None:
+                try:
+                    self.on_metering_error(self.last_metering_error)
+                except Exception:
+                    pass
+
     def generate_chat(self, **kwargs):
         response = self.provider.generate_chat(**kwargs)
         if isinstance(response, Mapping):
-            self._record_usage(response)
+            self._safe_record_usage(response)
         return response
 
     def generate_chat_stream(self, **kwargs):
@@ -126,7 +137,7 @@ class UsageMeteredProvider:
             if isinstance(event, Mapping) and event.get("type") == "response":
                 response = event.get("response")
                 if isinstance(response, Mapping):
-                    self._record_usage(response)
+                    self._safe_record_usage(response)
             yield event
 
 
