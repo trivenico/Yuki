@@ -140,6 +140,10 @@ class ReminderDispatcher:
             await delivery_task
         except asyncio.CancelledError:
             delivery_task.cancel()
+            try:
+                await delivery_task
+            except (asyncio.CancelledError, Exception):
+                pass
             raise
         except Exception:
             logger.exception("Reminder delivery failed (reminder_id=%s)", reminder_id)
