@@ -13,6 +13,7 @@ from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
 from core.agent_memory import AgentMemoryStore
 from core.owner_profile import OwnerProfileStore
+from core.owner_identity import memory_actor_id_for_owner
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -250,6 +251,43 @@ class ConversationAPITests(unittest.TestCase):
 
 
 
+    def test_companion_context_uses_only_approved_private_owner_memory(self):
+        actor_id = memory_actor_id_for_owner(self.user.user_id)
+        grants = {
+            "agent_memory:read", "agent_memory:write", "agent_memory:review",
+            "owner_profile:read", "owner_profile:write",
+        }
+        authorize = lambda actor, action, agent: actor == actor_id and action in grants and (
+            (agent == "assistant" and action.startswith("agent_memory:"))
+            or (agent == "owner_profile" and action.startswith("owner_profile:"))
+        )
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "context-memory.sqlite"), authorize=authorize,
+        )
+        self.app.owner_profile_store = OwnerProfileStore(
+            str(Path(self.tempdir.name) / "context-profile.sqlite"), authorize=authorize,
+        )
+        approved = self.app.memory_store.remember(
+            actor_id=actor_id, agent_id="assistant",
+            content="The project uses Python for its backend", source="owner_review",
+        )
+        self.app.memory_store.transition_lifecycle(
+            actor_id=actor_id, agent_id="assistant", memory_id=approved["memory_id"],
+            status="approved", reason="Owner reviewed this memory",
+        )
+        self.app.memory_store.remember(
+            actor_id=actor_id, agent_id="assistant",
+            content="Unreviewed claim about Python backend", source="agent_candidate",
+        )
+        self.app.owner_profile_store.set(
+            actor_id=actor_id, key="response_style", value="concise", source="owner",
+        )
+        context = self.app._companion_system_context(self.user.user_id, "Python backend project")
+        self.assertIn("The project uses Python for its backend", context)
+        self.assertIn("untrusted reference data", context)
+        self.assertIn('"response_style": "concise"', context)
+        self.assertNotIn("Unreviewed claim about Python backend", context)
+        self.assertNotIn("other-owner", context)
     def test_authenticated_memory_api_is_private_and_never_self_verifies(self):
         memory_store = AgentMemoryStore(
             str(Path(self.tempdir.name) / "agent-memory.sqlite"),
