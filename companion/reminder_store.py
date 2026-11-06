@@ -191,6 +191,22 @@ class CompanionReminderStore:
                 claimed.append(dict(item))
         return claimed
 
+    def is_lease_current(self, *, reminder_id: str, lease_token: str,
+                         now: datetime | None = None) -> bool:
+        """Return whether a pending reminder is still owned by this live lease."""
+        instant = self._utc(now or datetime.now(timezone.utc))
+        if not isinstance(reminder_id, str) or len(reminder_id) != 32:
+            raise ValueError("invalid_reminder_id")
+        if not isinstance(lease_token, str) or len(lease_token) != 32:
+            raise ValueError("invalid_lease_token")
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM companion_reminders WHERE reminder_id=? AND status='pending' "
+                "AND lease_token=? AND lease_until>?",
+                (reminder_id, lease_token, instant),
+            ).fetchone()
+            return row is not None
+
     def acknowledge_delivery(self, *, reminder_id: str, lease_token: str,
                              delivered_at: datetime | None = None) -> bool:
         """Acknowledge a successful send; stale or duplicate acknowledgements fail."""
