@@ -22,6 +22,8 @@ from core.device_pairing import DevicePairingService
 from core.device_notification_outbox import DeviceNotificationOutbox
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.factory import create_provider
+from core.usage_ledger import UsageLedger
+from providers.usage_meter import UsageMeteredProvider
 
 
 class _DenyAllTools:
@@ -91,6 +93,18 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
     workspace.mkdir(parents=True, exist_ok=True)
 
     provider = create_provider(config)
+    if callable(getattr(provider, "generate_chat", None)):
+        provider = UsageMeteredProvider(
+            provider,
+            ledger=UsageLedger(workspace / "provider-usage.sqlite3"),
+            provider_id=str(config.get("provider", "unknown")),
+            model_id=str(
+                getattr(provider, "model", None)
+                or getattr(getattr(provider, "local_provider", None), "model", None)
+                or config.get("openai_model", "configured-model")
+            ),
+            session_id="local-api",
+        )
 
     def model(*, messages, tools, tool_choice="auto") -> dict[str, Any]:
         if tools:
@@ -109,7 +123,14 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
             answer = provider.generate(_prompt_from_messages(list(messages)))
         if not isinstance(answer, str) or not answer.strip():
             raise RuntimeError("Configured provider returned an invalid response.")
-        return {"text": answer.strip(), "tool_calls": {"tool_calls": []}}
+        result = {"text": answer.strip(), "tool_calls": {"tool_calls": []}}
+        usage = response.get("usage") if isinstance(response, dict) else None
+        request_id = response.get("request_id") if isinstance(response, dict) else None
+        if usage is not None:
+            result["usage"] = usage
+        if request_id is not None:
+            result["request_id"] = request_id
+        return result
 
     tool_runtime = GuardedToolRuntime({}, _DenyAllTools())
     agent_loop = AgentExecutionLoop(
