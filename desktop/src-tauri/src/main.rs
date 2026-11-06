@@ -295,7 +295,7 @@ mod tests {
         assert!(valid_device_token(&"a".repeat(32)));
         assert!(!valid_device_token("short"));
         assert!(!valid_device_token(&"a".repeat(257)));
-        assert!(!valid_device_token(&format!("{}\\n", "a".repeat(31))));
+        assert!(!valid_device_token(&format!("{}\n", "a".repeat(31))));
     }
 
     #[test]
