@@ -6,7 +6,7 @@ persisting an execution request. It does not execute tests or provide isolation.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
+import json
 from typing import Sequence
 
 from automation.authorized_read_tools import ToolAuthorizationError
@@ -49,10 +49,24 @@ def admit_approved_upgrade(
     snapshot = review_store.get_approved_snapshot(
         proposal_id, reviewer=reviewer.strip(),
     )
-    snapshot_json = snapshot.get("snapshot_json")
     content_digest = snapshot.get("content_digest")
-    if not isinstance(snapshot_json, str) or not isinstance(content_digest, str):
+    files = snapshot.get("files")
+    if not isinstance(content_digest, str) or not isinstance(files, list) or not files:
         raise ValueError("approved_snapshot_metadata_missing")
+    snapshot_items = []
+    for change in files:
+        if not hasattr(change, "path") or not hasattr(change, "expected_sha256") or not hasattr(change, "content"):
+            raise ValueError("approved_snapshot_file_invalid")
+        encoded = change.content.encode("utf-8")
+        snapshot_items.append({
+            "path": change.path,
+            "expected_sha256": change.expected_sha256,
+            "content": change.content,
+            "proposed_sha256": hashlib.sha256(encoded).hexdigest(),
+            "bytes": len(encoded),
+        })
+    snapshot_items.sort(key=lambda item: item["path"])
+    snapshot_json = json.dumps(snapshot_items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     object_digest = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
     if object_digest != content_digest:
         raise ValueError("approved_snapshot_digest_mismatch")
