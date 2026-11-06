@@ -107,6 +107,7 @@ def build_yuki_runtime(config_path: str | Path | None = None) -> ConversationRun
         )
 
     def model(*, messages, tools, tool_choice="auto") -> dict[str, Any]:
+        response = None
         if tools:
             raise ValueError("This runtime has no enabled tools.")
         if callable(getattr(provider, "generate_chat", None)):
