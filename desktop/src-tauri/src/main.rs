@@ -63,7 +63,7 @@ fn application_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Err("Set YUKI_HOME to the installed Yuki application directory.".into())
 }
 
-fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
+fn start_server() -> Result<ManagedProcess, Box<dyn std::error::Error>> {
     match TcpStream::connect_timeout(&server_addr(), Duration::from_millis(200)) {
         Ok(_) => return Err("Port 8765 is already occupied; refusing to attach to an unknown local process.".into()),
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
