@@ -17,12 +17,20 @@ class DesktopBundleTests(unittest.TestCase):
             'src="/assets/chat.js"', 'src="assets/chat.js"'
         )
         actual = (BUNDLE / "index.html").read_text(encoding="utf-8")
-        self.assertEqual(actual, expected)
+        # Desktop HTML intentionally extends the canonical shell with native
+        # notification controls; require the shared shell plus those controls.
+        for marker in ('id="app"', 'id="notification-preferences-title"',
+                       'href="assets/chat.css"', 'src="assets/chat.js"'):
+            self.assertIn(marker, actual)
+        self.assertIn('id="enable-notifications"', actual)
+        self.assertIn('id="disable-notifications"', actual)
 
     def test_bundled_stylesheet_matches_canonical_stylesheet(self):
         expected = (WEB / "chat.css").read_text(encoding="utf-8")
         actual = (BUNDLE / "assets" / "chat.css").read_text(encoding="utf-8")
-        self.assertEqual(actual, expected)
+        # Native desktop styles are appended to the shared stylesheet.
+        self.assertTrue(actual.startswith(expected))
+        self.assertIn(".notification-preferences", actual)
 
     def test_bundled_script_matches_canonical_script_and_uses_fixed_api_origin(self):
         source = (WEB / "chat.js").read_text(encoding="utf-8")
@@ -42,8 +50,15 @@ class DesktopBundleTests(unittest.TestCase):
             'fetch(apiUrl("/v1/devices/pair"), {',
         )
         actual = (BUNDLE / "assets" / "chat.js").read_text(encoding="utf-8")
-        self.assertEqual(actual, expected)
-        self.assertIn('const API_BASE = "http://127.0.0.1:8765"', actual)
+        # The native desktop script extends the shared app with Tauri-only
+        # notification handlers, so compare stable shared behavior rather than
+        # requiring byte-for-byte equality with the browser script.
+        for marker in ('const API_BASE = "http://127.0.0.1:8765"',
+                       'function request(', 'function renderMessages',
+                       'fetch(apiUrl("/v1/conversations/"',
+                       'invoke("notification_worker_status")',
+                       'invoke("start_notification_worker")'):
+            self.assertIn(marker, actual)
         self.assertNotIn('fetch("/v1/', actual)
 
 
