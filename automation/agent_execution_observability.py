@@ -6,6 +6,7 @@ credential, tool-payload, or arbitrary-metadata fields.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 import re
 import sqlite3
@@ -42,12 +43,26 @@ class AgentExecutionTraceStore:
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
+    @contextmanager
     def _connect(self):
+        """Open a short-lived connection and always release its file handle.
+
+        sqlite3.Connection's context manager controls transactions but does not
+        close the connection. Explicit closure is essential for Windows file
+        replacement/cleanup and keeps connection lifetime bounded everywhere.
+        """
         db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA busy_timeout=10000")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _initialize(self):
         with self._connect() as db:
