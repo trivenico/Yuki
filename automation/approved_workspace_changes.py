@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Callable, Mapping, Sequence
 
@@ -296,6 +297,17 @@ class ApprovedTestRunner:
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         start = time.monotonic()
         process = None
+        captured = [bytearray(), bytearray()]
+        def drain(stream, buffer):
+            while True:
+                chunk = stream.read(8192)
+                if not chunk:
+                    return
+                remaining = _MAX_OUTPUT_BYTES - len(buffer)
+                if remaining > 0:
+                    buffer.extend(chunk[:remaining])
+
+        readers = []
         try:
             creationflags = (
                 subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -307,23 +319,46 @@ class ApprovedTestRunner:
                 shell=False, start_new_session=(os.name != "nt"),
                 creationflags=creationflags,
             )
-            out, err = process.communicate(timeout=self.timeout_seconds)
-            timed_out = False
-            exit_code = process.returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            exit_code = 124
-            if process is not None and process.poll() is None:
-                try:
-                    if os.name == "nt":
+            readers = [
+                threading.Thread(target=drain, args=(process.stdout, captured[0]), daemon=True),
+                threading.Thread(target=drain, args=(process.stderr, captured[1]), daemon=True),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                process.wait(timeout=self.timeout_seconds)
+                timed_out = False
+                exit_code = process.returncode
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = 124
+                if process.poll() is None:
+                    try:
+                        if os.name == "nt":
+                            subprocess.run(
+                                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
+                            )
+                        else:
+                            os.killpg(process.pid, signal.SIGKILL)
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                    if process.poll() is None:
                         process.kill()
-                    else:
-                        os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            out, err = process.communicate() if process is not None else (b"", b"")
-        stdout = out[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-        stderr = err[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+                process.wait()
+            for reader in readers:
+                reader.join(timeout=5)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        except Exception:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            raise
+        stdout = bytes(captured[0]).decode("utf-8", errors="replace")
+        stderr = bytes(captured[1]).decode("utf-8", errors="replace")
         duration = round(time.monotonic() - start, 3)
         self._record(principal.actor_id, "tests.run", "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed"), run_digest, test_module)
         return TestRunResult(test_module, exit_code, timed_out, duration, stdout, stderr)
