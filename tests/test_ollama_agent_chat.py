@@ -80,6 +80,17 @@ class OllamaAgentChatTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "value"})
         self.assertEqual(timeout, self.provider.timeout)
 
+    def test_generate_chat_preserves_exact_ollama_usage_metadata(self):
+        fake = FakeOpener({
+            "message": {"content": "Metered", "tool_calls": []},
+            "prompt_eval_count": 13, "eval_count": 7,
+        }, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            result = self.provider.generate_chat(messages=self.messages, tools=[])
+        self.assertEqual(result["usage"], {
+            "input_tokens": 13, "output_tokens": 7, "estimated": False,
+        })
+
     def test_local_runtime_failure_is_propagated_without_provider_fallback(self):
         class OfflineOpener:
             def __init__(self):
@@ -167,6 +178,15 @@ class OllamaAgentChatTests(unittest.TestCase):
         self.assertEqual(events[-1]["response"]["text"], "Hello from Yuki")
         self.assertTrue(json.loads(self.requests[0][0].data)["stream"])
         self.assertEqual(self.requests[0][0].get_header("Accept"), "application/x-ndjson")
+
+    def test_native_ndjson_stream_preserves_final_usage_counts(self):
+        lines = [json.dumps(chunk) + "\\n" for chunk in [{"message":{"content":"Metered"},"done":True,"done_reason":"stop","prompt_eval_count":13,"eval_count":7}]]
+        opener = FakeNDJSONOpener(lines, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
+            events = list(self.provider.generate_chat_stream(messages=self.messages, tools=[]))
+        self.assertEqual(events[-1]["response"]["usage"], {
+            "input_tokens": 13, "output_tokens": 7, "estimated": False,
+        })
 
     def test_native_ndjson_stream_normalizes_guarded_tool_proposals(self):
         chunks = [
