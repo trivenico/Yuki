@@ -110,7 +110,7 @@ class CompanionReminderStore:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             count = db.execute(
-                "SELECT COUNT(*) FROM companion_reminders WHERE owner_id=? AND status='pending'",
+                "SELECT COUNT(*) FROM companion_reminders WHERE owner_id=? AND status='pending' AND exhausted_at IS NULL",
                 (owner_id,),
             ).fetchone()[0]
             if count >= self.MAX_PER_OWNER:
