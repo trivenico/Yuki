@@ -292,6 +292,57 @@
       card.append(content, meta, actions); list.append(card);
     });
   };
+  const nativeInvoke = () => window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === "function"
+    ? window.__TAURI__.core.invoke : null;
+  const setDeviceStatus = (message) => { $("device-status").textContent = message; };
+  $("open-devices").addEventListener("click", () => {
+    $("device-panel").hidden = false;
+    if (!nativeInvoke()) setDeviceStatus("Open this page inside Yuki Desktop to use operating-system credential storage. Browser pairing is disabled.");
+    else setDeviceStatus("Ready to pair this native desktop.");
+  });
+  $("close-devices").addEventListener("click", () => { $("device-panel").hidden = true; });
+  $("device-pair-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const invoke = nativeInvoke();
+    if (!invoke) { setDeviceStatus("Secure native credential storage is unavailable in this browser."); return; }
+    const name = $("device-name").value.trim();
+    if (!name || name.length > 80 || /[\\u0000-\\u001f\\u007f]/.test(name)) {
+      setDeviceStatus("Enter a device name containing 1–80 printable characters."); return;
+    }
+    const button = $("pair-device"); button.disabled = true;
+    setDeviceStatus("Creating a short-lived pairing challenge…");
+    let deviceId = null;
+    try {
+      const challenge = await api("/v1/devices/pairing-challenges", {
+        method: "POST", body: "{}"
+      });
+      const response = await fetch("/v1/devices/pair", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: challenge.code, name })
+      });
+      const paired = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(paired.error || "Device pairing failed.");
+      deviceId = paired.device && paired.device.device_id;
+      if (!deviceId || typeof paired.device_token !== "string") throw new Error("Pairing returned an invalid device credential.");
+      let token = paired.device_token;
+      try {
+        await invoke("store_device_token", { token });
+      } catch (error) {
+        token = null;
+        try {
+          await api("/v1/devices/" + encodeURIComponent(deviceId), { method: "DELETE" });
+        } catch (_) {}
+        throw new Error("The operating-system credential vault rejected this device. The new pairing was revoked.");
+      }
+      token = null;
+      setDeviceStatus("This desktop is paired. Its device credential was saved to the operating-system credential vault.");
+      toast("Yuki Desktop paired successfully.");
+    } catch (error) {
+      setDeviceStatus(error.message || "Unable to pair this desktop.");
+    } finally {
+      button.disabled = false;
+    }
+  });
   $("open-memory").addEventListener("click", async () => {
     $("memory-panel").hidden = false;
     try { await loadMemory(); await loadMemoryCandidates(); await loadProfilePreferences(); } catch (error) { memoryStatus(error.message); profileStatus(error.message); }
