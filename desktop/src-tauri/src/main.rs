@@ -39,10 +39,10 @@ fn server_url() -> Result<Url, Box<dyn std::error::Error>> {
 fn application_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(path) = std::env::var_os("YUKI_HOME") {
         let root = PathBuf::from(path);
-        if root.is_dir() {
+        if root.join("api").join("server.py").is_file() {
             return Ok(root);
         }
-        return Err("YUKI_HOME must point to the Yuki application directory.".into());
+        return Err("YUKI_HOME must contain api/server.py.".into());
     }
 
     if cfg!(debug_assertions) {
@@ -55,6 +55,12 @@ fn application_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn start_server() -> Result<Child, Box<dyn std::error::Error>> {
+    match TcpStream::connect_timeout(&SERVER_ADDR, Duration::from_millis(200)) {
+        Ok(_) => return Err("Port 8765 is already occupied; refusing to attach to an unknown local process.".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
+        Err(error) => return Err(format!("Could not verify local API port availability: {error}").into()),
+    }
+
     let root = application_root()?;
     let python = std::env::var_os("YUKI_PYTHON").unwrap_or_else(|| {
         if cfg!(windows) { "python".into() } else { "python3".into() }
