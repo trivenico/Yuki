@@ -45,6 +45,23 @@ class UsageLedgerTests(unittest.TestCase):
         self.assertEqual(first["event"]["event_id"], second["event"]["event_id"])
         self.assertEqual(self.ledger.summary()["events"], 1)
 
+    def test_idempotency_canonicalizes_equivalent_decimal_prices(self):
+        common = dict(
+            provider="openai", model="model-a", input_tokens=100,
+            output_tokens=50, request_id="decimal-equivalent",
+            currency="USD", price_version="v1",
+        )
+        first = self.ledger.record(
+            **common, input_price_per_million="0.10",
+            output_price_per_million="0.40",
+        )
+        second = self.ledger.record(
+            **common, input_price_per_million="0.100",
+            output_price_per_million="0.4000",
+        )
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(first["event"]["event_id"], second["event"]["event_id"])
+
     def test_request_id_conflict_is_rejected(self):
         self.ledger.record(
             provider="openai", model="model-a", input_tokens=10,
