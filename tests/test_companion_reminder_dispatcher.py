@@ -91,7 +91,11 @@ def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
 
     asyncio.run(scenario())
     assert received == [first["reminder_id"], second["reminder_id"]]
-    assert store.list(owner_id="owner-a", include_inactive=True) == []
+    rows = store.list(owner_id="owner-a", include_inactive=True)
+    assert {row["reminder_id"]: row["status"] for row in rows} == {
+        first["reminder_id"]: "delivered",
+        second["reminder_id"]: "delivered",
+    }
 
 def test_dispatcher_skips_delivery_when_reminder_was_cancelled_after_claim(tmp_path):
     store = _store(tmp_path)
