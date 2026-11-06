@@ -7,7 +7,7 @@ from automation.approved_workspace_changes import FileChange
 from automation.authorized_read_tools import ToolAuthorizationError
 from automation.self_upgrade_pipeline import SelfUpgradeProposalBuilder, SelfUpgradeReviewStore
 from automation.upgrade_admission import admit_approved_upgrade
-from automation.upgrade_execution_store import UpgradeExecutionStore
+from automation.upgrade_execution_store import UpgradeExecutionConflict, UpgradeExecutionStore
 
 
 def digest(value):
@@ -49,7 +49,7 @@ class UpgradeAdmissionTests(unittest.TestCase):
         return admit_approved_upgrade(**args)
 
     def test_pending_proposal_cannot_be_admitted(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(ToolAuthorizationError):
             self.admit()
 
     def test_requester_cannot_self_approve(self):
@@ -82,7 +82,7 @@ class UpgradeAdmissionTests(unittest.TestCase):
             self.proposal.proposal_id, "approve", reviewer="reviewer-1",
         )
         self.admit()
-        with self.assertRaises(Exception):
+        with self.assertRaises(UpgradeExecutionConflict):
             self.admit(execution_id="execution-2", runner_image_digest=digest("other-runner"))
 
 
