@@ -32,6 +32,7 @@
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
         <button id="open-memory" class="memory-nav-button" type="button">◇ <span>My memory</span></button>
+        <button id="open-devices" class="memory-nav-button" type="button">⌘ <span>Desktop devices</span></button>
         <p class="section-label">RECENT</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
         <div class="sidebar-bottom">
@@ -105,6 +106,19 @@
         </section>
         <h3 class="memory-section-title">Saved memories</h3>
         <div id="memory-list" class="memory-list"></div>
+      </section>
+      <section id="device-panel" class="memory-panel" aria-labelledby="device-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YUKI COMPANION</p><h2 id="device-title">Desktop devices</h2><p class="muted">Pair this desktop with your account. Its credential is stored in the operating-system credential vault.</p></div>
+          <button id="close-devices" class="quiet-button" type="button" aria-label="Close devices">Close</button>
+        </header>
+        <form id="device-pair-form" class="memory-form">
+          <label for="device-name">This device's name</label>
+          <input id="device-name" name="device-name" maxlength="80" required value="Yuki Desktop" autocomplete="off">
+          <button id="pair-device" class="primary" type="submit">Pair this desktop</button>
+        </form>
+        <p id="device-status" class="muted" role="status">Device pairing is available in the native Yuki Desktop app.</p>
+        <p class="hint">Pairing codes expire quickly and can be used once. If secure credential storage fails, Yuki will revoke the newly created device.</p>
       </section>
     </section>
     <div id="toast" class="toast" role="status"></div>
