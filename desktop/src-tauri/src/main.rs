@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
+use serde::Serialize;
 use tauri::plugin::PermissionState;
 use tauri_plugin_notification::NotificationExt;
 use url::Url;
@@ -173,14 +174,36 @@ fn stop_process(process: &mut ManagedProcess) {
 
 const NOTIFICATION_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
+#[derive(Debug, Clone, Serialize)]
+struct NotificationWorkerHealth {
+    state: String,
+    detail: String,
+    running: bool,
+}
+
 struct NotificationWorker {
     stop: Arc<AtomicBool>,
     thread: Mutex<Option<thread::JoinHandle<()>>>,
+    health: Arc<Mutex<NotificationWorkerHealth>>,
 }
 
 impl Default for NotificationWorker {
     fn default() -> Self {
-        Self { stop: Arc::new(AtomicBool::new(false)), thread: Mutex::new(None) }
+        Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: Mutex::new(None),
+            health: Arc::new(Mutex::new(NotificationWorkerHealth {
+                state: "stopped".into(),
+                detail: "Notification delivery is stopped.".into(),
+                running: false,
+            })),
+        }
+    }
+}
+
+fn set_notification_health(health: &Arc<Mutex<NotificationWorkerHealth>>, state: &str, detail: &str, running: bool) {
+    if let Ok(mut current) = health.lock() {
+        *current = NotificationWorkerHealth { state: state.into(), detail: detail.into(), running };
     }
 }
 
@@ -192,7 +215,13 @@ fn wait_for_worker(stop: &AtomicBool, duration: Duration) -> bool {
     !stop.load(Ordering::Acquire)
 }
 
-fn run_notification_worker(app: AppHandle, stop: Arc<AtomicBool>, cursor_path: PathBuf, token: String) {
+fn run_notification_worker(
+    app: AppHandle,
+    stop: Arc<AtomicBool>,
+    health: Arc<Mutex<NotificationWorkerHealth>>,
+    cursor_path: PathBuf,
+    token: String,
+) {
     use notification_delivery::{
         classify_notification_http_status, load_cursor, notification_retry_delay,
         parse_notification_page, validate_acknowledgement_response,
@@ -201,26 +230,42 @@ fn run_notification_worker(app: AppHandle, stop: Arc<AtomicBool>, cursor_path: P
 
     let client = match NotificationHttpClient::new() {
         Ok(client) => client,
-        Err(_) => return,
+        Err(_) => {
+            set_notification_health(&health, "configuration_error", "Could not initialize the notification transport.", false);
+            return;
+        }
     };
     let mut cursor = match load_cursor(&cursor_path) {
         Ok(cursor) => cursor,
-        Err(_) => return,
+        Err(_) => {
+            set_notification_health(&health, "storage_error", "Could not read the saved notification cursor.", false);
+            return;
+        }
     };
     let mut failures = 0_u32;
+    set_notification_health(&health, "running", "Yuki is checking for notifications.", true);
 
     while !stop.load(Ordering::Acquire) {
         let response = match client.fetch_page(SERVER_URL, cursor, &token) {
             Ok(response) => response,
             Err(_) => {
+                set_notification_health(&health, "retrying", "Yuki cannot reach its local notification service. Retrying.", true);
                 if !wait_for_worker(&stop, notification_retry_delay(failures)) { break; }
                 failures = failures.saturating_add(1);
                 continue;
             }
         };
         match classify_notification_http_status(response.status) {
-            NotificationHttpStatus::AuthenticationRevoked | NotificationHttpStatus::Rejected => break,
+            NotificationHttpStatus::AuthenticationRevoked => {
+                set_notification_health(&health, "authentication_required", "This device needs to be paired with Yuki again.", false);
+                return;
+            }
+            NotificationHttpStatus::Rejected => {
+                set_notification_health(&health, "server_rejected", "The notification service rejected this device request.", false);
+                return;
+            }
             NotificationHttpStatus::Retryable => {
+                set_notification_health(&health, "retrying", "The notification service is temporarily unavailable. Retrying.", true);
                 if !wait_for_worker(&stop, notification_retry_delay(failures)) { break; }
                 failures = failures.saturating_add(1);
                 continue;
@@ -229,48 +274,62 @@ fn run_notification_worker(app: AppHandle, stop: Arc<AtomicBool>, cursor_path: P
         }
         let page = match parse_notification_page(&response, cursor) {
             Ok(page) => page,
-            Err(_) => break,
+            Err(_) => {
+                set_notification_health(&health, "invalid_response", "Yuki received an invalid notification response and stopped delivery safely.", false);
+                return;
+            }
         };
         failures = 0;
         if page.events.is_empty() {
+            set_notification_health(&health, "running", "Yuki is connected and waiting for notifications.", true);
             if !wait_for_worker(&stop, NOTIFICATION_POLL_INTERVAL) { break; }
             continue;
         }
 
-        let mut should_stop = false;
         for event in page.events {
-            if stop.load(Ordering::Acquire) { should_stop = true; break; }
+            if stop.load(Ordering::Acquire) { break; }
             let display = match validate_event(&event, cursor) {
                 Ok(display) => display,
-                Err(_) => { should_stop = true; break; }
+                Err(_) => {
+                    set_notification_health(&health, "invalid_event", "A notification failed validation. Delivery stopped safely.", false);
+                    return;
+                }
             };
             let permission = match app.notification().permission_state() {
                 Ok(state) => state == PermissionState::Granted,
                 Err(_) => false,
             };
-            if !permission { should_stop = true; break; }
+            if !permission {
+                set_notification_health(&health, "permission_required", "Enable notification permission in your operating-system settings.", false);
+                return;
+            }
             if app.notification().builder().title(display.title).body(display.body).show().is_err() {
-                should_stop = true;
-                break;
+                set_notification_health(&health, "delivery_failed", "The operating system could not display a notification.", false);
+                return;
             }
             let acknowledgement = match client.acknowledge(SERVER_URL, &event.event_id, &token) {
                 Ok(response) => response,
-                Err(_) => { should_stop = true; break; }
+                Err(_) => {
+                    set_notification_health(&health, "acknowledgement_failed", "The notification was displayed, but Yuki could not confirm delivery. It will retry safely.", false);
+                    return;
+                }
             };
             if validate_acknowledgement_response(&acknowledgement).is_err() {
-                should_stop = true;
-                break;
+                set_notification_health(&health, "acknowledgement_failed", "The notification service did not confirm delivery.", false);
+                return;
             }
             if notification_delivery::persist_cursor(&cursor_path, event.sequence).is_err() {
-                should_stop = true;
-                break;
+                set_notification_health(&health, "storage_error", "Yuki could not save notification delivery progress.", false);
+                return;
             }
             cursor = event.sequence;
         }
-        if should_stop { break; }
+        if stop.load(Ordering::Acquire) { break; }
         if page.has_more { continue; }
+        set_notification_health(&health, "running", "Yuki is connected and waiting for notifications.", true);
         if !wait_for_worker(&stop, NOTIFICATION_POLL_INTERVAL) { break; }
     }
+    set_notification_health(&health, "stopped", "Notification delivery was stopped.", false);
 }
 
 fn notification_opt_in_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -317,9 +376,11 @@ fn start_notification_worker_inner(app: AppHandle, worker: &NotificationWorker) 
         finished.join().map_err(|_| "Previous notification worker did not shut down cleanly.".to_string())?;
     }
     worker.stop.store(false, Ordering::Release);
+    set_notification_health(&worker.health, "starting", "Starting Yuki notification delivery.", true);
     let stop = Arc::clone(&worker.stop);
+    let health = Arc::clone(&worker.health);
     *slot = Some(thread::Builder::new().name("yuki-notifications".into())
-        .spawn(move || run_notification_worker(app, stop, cursor_path, token))
+        .spawn(move || run_notification_worker(app, stop, health, cursor_path, token))
         .map_err(|_| "Could not start the notification worker.".to_string())?);
     Ok(())
 }
@@ -335,10 +396,19 @@ fn start_notification_worker(app: AppHandle, worker: State<'_, NotificationWorke
 }
 
 #[tauri::command]
-fn notification_worker_status(worker: State<'_, NotificationWorker>) -> Result<bool, String> {
-    let slot = worker.thread.lock()
-        .map_err(|_| "Notification worker state is unavailable.".to_string())?;
-    Ok(slot.as_ref().is_some_and(|handle| !handle.is_finished()))
+fn notification_worker_status(worker: State<'_, NotificationWorker>) -> Result<NotificationWorkerHealth, String> {
+    let running = worker.thread.lock()
+        .map_err(|_| "Notification worker state is unavailable.".to_string())?
+        .as_ref().is_some_and(|handle| !handle.is_finished());
+    let mut health = worker.health.lock()
+        .map_err(|_| "Notification worker health is unavailable.".to_string())?
+        .clone();
+    if !running && health.running {
+        health.running = false;
+        health.state = "stopped".into();
+        health.detail = "Notification delivery is stopped.".into();
+    }
+    Ok(health)
 }
 
 #[tauri::command]
@@ -351,6 +421,7 @@ fn stop_notification_worker(app: AppHandle, worker: State<'_, NotificationWorker
     if let Some(handle) = handle {
         handle.join().map_err(|_| "Notification worker did not shut down cleanly.".to_string())?;
     }
+    set_notification_health(&worker.health, "stopped", "Notification delivery was stopped.", false);
     Ok(())
 }
 
@@ -359,6 +430,7 @@ fn stop_notification_worker_on_exit(worker: &NotificationWorker) {
     if let Ok(mut slot) = worker.thread.lock() {
         if let Some(handle) = slot.take() { let _ = handle.join(); }
     }
+    set_notification_health(&worker.health, "stopped", "Yuki Desktop is shutting down.", false);
 }
 
 const DEVICE_CREDENTIAL_SERVICE: &str = "ai.yuki.desktop";
