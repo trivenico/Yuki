@@ -303,21 +303,22 @@ class UpgradeExecutionStore:
                 evidence.verify_binding(request)
             except ValueError as exc:
                 raise UpgradeExecutionConflict("evidence_request_mismatch") from exc
-            now = _now()
+            recorded_at = _now()
+            verification_time = now or datetime.now(timezone.utc)
             next_version = expected_version + 1
             changed = db.execute("""
                 UPDATE upgrade_executions SET state='verifying', version=?, updated_at=?
                 WHERE execution_id=? AND version=? AND state='evidence_pending'
-            """, (next_version, now, execution_id, expected_version)).rowcount
+            """, (next_version, recorded_at, execution_id, expected_version)).rowcount
             if changed != 1:
                 raise UpgradeExecutionConflict("stale_execution_version")
             db.execute("""
                 INSERT INTO upgrade_execution_events
                 (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
                 VALUES (?, ?, 'evidence_pending', 'verifying', ?, 'signature_verification_started', ?)
-            """, (execution_id, next_version, actor_id, now))
+            """, (execution_id, next_version, actor_id, recorded_at))
         try:
-            verifier.verify(evidence, now=now)
+            verifier.verify(evidence, now=verification_time)
         except EvidenceVerificationError as exc:
             target_state = "rejected"
             reason = str(exc)[:100]
