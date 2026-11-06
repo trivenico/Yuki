@@ -127,15 +127,15 @@ class SelfUpgradeReviewStore:
             """)
 
     @staticmethod
-    def _allowed_path_shape(path: str) -> set[str]:
+    def _valid_review_path(path: str) -> bool:
         # The review store records already-built proposals; this is a second,
         # defense-in-depth check against malformed serialized path values.
         normalized = path.replace("\\\\", "/")
         if (not normalized or normalized.startswith("/")
                 or any(part in {"", ".", ".."} for part in normalized.split("/"))
                 or _BLOCKED_PATH.search(normalized)):
-            return set()
-        return {path}
+            return False
+        return True
 
     def _connect(self):
         connection = sqlite3.connect(self.database, timeout=10)
@@ -154,9 +154,9 @@ class SelfUpgradeReviewStore:
                 or proposal.tests_required is not True
                 or not isinstance(proposal.changed_paths, tuple)
                 or not 1 <= len(proposal.changed_paths) <= _MAX_CHANGES
+                or any(not isinstance(path, str) for path in proposal.changed_paths)
                 or len(set(proposal.changed_paths)) != len(proposal.changed_paths)
-                or any(not isinstance(path, str) or path not in self._allowed_path_shape(path)
-                       for path in proposal.changed_paths)
+                or any(not self._valid_review_path(path) for path in proposal.changed_paths)
                 or isinstance(proposal.patch_bytes, bool)
                 or not isinstance(proposal.patch_bytes, int)
                 or not 0 <= proposal.patch_bytes <= _MAX_TOTAL_BYTES):
