@@ -9,7 +9,7 @@ use serde_json::Value;
 use url::Url;
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -148,6 +148,71 @@ pub fn notification_ack_url(base: &str, event_id: &str) -> io::Result<Url> {
     Ok(url)
 }
 
+const MAX_FEED_RESPONSE_BYTES: u64 = 256 * 1024;
+const MAX_ACK_RESPONSE_BYTES: u64 = 4 * 1024;
+
+pub struct NotificationHttpClient(reqwest::blocking::Client);
+
+pub struct NotificationHttpResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+impl NotificationHttpClient {
+    pub fn new() -> io::Result<Self> {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "could not initialize notification HTTP client"))?;
+        Ok(Self(client))
+    }
+
+    fn send(&self, method: reqwest::Method, url: Url, token: &str, max_response_bytes: u64) -> io::Result<NotificationHttpResponse> {
+        if !(20..=256).contains(&token.len()) || token.chars().any(char::is_control) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "paired-device token is invalid"));
+        }
+        let mut response = self.0.request(method, url).bearer_auth(token)
+            .header(reqwest::header::ACCEPT, "application/json").send()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "notification API request failed"))?;
+        if response.url().host_str() != Some("127.0.0.1") || response.url().port_or_known_default() != Some(8765) {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "notification API redirected outside the local origin"));
+        }
+        if response.content_length().is_some_and(|length| length > max_response_bytes) {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "notification API response exceeds size limit"));
+        }
+        let status = response.status().as_u16();
+        let mut body = Vec::with_capacity(1024);
+        response.take(max_response_bytes + 1).read_to_end(&mut body)
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "could not read notification API response"))?;
+        if body.len() as u64 > max_response_bytes {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "notification API response exceeds size limit"));
+        }
+        Ok(NotificationHttpResponse { status, body })
+    }
+
+    pub fn fetch_page(&self, base: &str, cursor: u64, token: &str) -> io::Result<NotificationHttpResponse> {
+        self.send(reqwest::Method::GET, notification_feed_url(base, cursor)?, token, MAX_FEED_RESPONSE_BYTES)
+    }
+
+    pub fn acknowledge(&self, base: &str, event_id: &str, token: &str) -> io::Result<NotificationHttpResponse> {
+        self.send(reqwest::Method::POST, notification_ack_url(base, event_id)?, token, MAX_ACK_RESPONSE_BYTES)
+    }
+}
+
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+pub fn load_device_token() -> io::Result<String> {
+    let entry = keyring::Entry::new("ai.yuki.desktop", "paired-device-token")
+        .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "OS credential store unavailable"))?;
+    let token = entry.get_password()
+        .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "paired-device credential unavailable"))?;
+    if !(20..=256).contains(&token.len()) || token.chars().any(char::is_control) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "paired-device credential is invalid"));
+    }
+    Ok(token)
+}
+
 /// Accept only the exact success envelope returned by the device acknowledgement API.
 /// The worker must call this before persisting the corresponding cursor.
 pub fn validate_acknowledgement(response: &[u8]) -> io::Result<()> {
@@ -264,6 +329,11 @@ mod tests {
             expires_at: "2027-01-01T00:00:00+00:00".to_string(),
             acknowledged_at: None,
         }
+    }
+
+    #[test]
+    fn notification_http_client_builds_with_bounded_transport_policy() {
+        assert!(NotificationHttpClient::new().is_ok());
     }
 
     #[test]
