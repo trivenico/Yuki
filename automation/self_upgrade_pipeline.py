@@ -102,8 +102,9 @@ class SelfUpgradeReviewStore:
     """
 
     def __init__(self, database: str | Path):
-        self.database = str(database)
-        Path(self.database).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        database_path = Path(database).expanduser()
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.database = str(database_path)
         with self._connect() as connection:
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS self_upgrade_reviews (
@@ -125,6 +126,17 @@ class SelfUpgradeReviewStore:
                 ON self_upgrade_reviews(status, created_at)
             """)
 
+    @staticmethod
+    def _allowed_path_shape(path: str) -> set[str]:
+        # The review store records already-built proposals; this is a second,
+        # defense-in-depth check against malformed serialized path values.
+        normalized = path.replace("\\\\", "/")
+        if (not normalized or normalized.startswith("/")
+                or any(part in {"", ".", ".."} for part in normalized.split("/"))
+                or _BLOCKED_PATH.search(normalized)):
+            return set()
+        return {path}
+
     def _connect(self):
         connection = sqlite3.connect(self.database, timeout=10)
         connection.row_factory = sqlite3.Row
@@ -139,7 +151,15 @@ class SelfUpgradeReviewStore:
                 or not re.fullmatch(r"[0-9a-f]{64}", proposal.content_digest)
                 or proposal.promotion_allowed is not False
                 or proposal.review_required is not True
-                or proposal.tests_required is not True):
+                or proposal.tests_required is not True
+                or not isinstance(proposal.changed_paths, tuple)
+                or not 1 <= len(proposal.changed_paths) <= _MAX_CHANGES
+                or len(set(proposal.changed_paths)) != len(proposal.changed_paths)
+                or any(not isinstance(path, str) or path not in self._allowed_path_shape(path)
+                       for path in proposal.changed_paths)
+                or isinstance(proposal.patch_bytes, bool)
+                or not isinstance(proposal.patch_bytes, int)
+                or not 0 <= proposal.patch_bytes <= _MAX_TOTAL_BYTES):
             raise ValueError("proposal review invariants are invalid")
         paths = json.dumps(list(proposal.changed_paths), separators=(",", ":"))
         created_at = datetime.now(timezone.utc).isoformat()
