@@ -341,8 +341,25 @@
     const status = $("notification-worker-status");
     if (!invoke) { status.textContent = "Notification delivery requires the native Yuki Desktop app."; return; }
     try {
-      const running = await invoke("notification_worker_status");
-      status.textContent = running ? "Yuki notifications are enabled and the worker is running." : "Yuki notification delivery is stopped.";
+      const health = await invoke("notification_worker_status");
+      const labels = {
+        starting: "Starting notification delivery…",
+        running: "Yuki is connected and waiting for notifications.",
+        retrying: "Yuki is temporarily disconnected and will retry.",
+        authentication_required: "This device needs to be paired with Yuki again.",
+        permission_required: "Enable notification permission in your operating-system settings.",
+        delivery_failed: "The operating system could not display a notification.",
+        acknowledgement_failed: "Yuki could not confirm notification delivery. Review the connection before retrying.",
+        invalid_response: "Yuki received an invalid notification response and stopped delivery safely.",
+        invalid_event: "A notification failed validation. Delivery stopped safely.",
+        storage_error: "Yuki could not access its saved notification progress.",
+        configuration_error: "Yuki could not initialize notification delivery.",
+        server_rejected: "The notification service rejected this device request.",
+        stopped: "Yuki notification delivery is stopped."
+      };
+      status.textContent = health.detail || labels[health.state] || "Notification status: " + health.state;
+      status.dataset.state = health.state;
+      const running = Boolean(health.running);
       $("enable-notifications").disabled = running;
       $("disable-notifications").disabled = !running;
     } catch (error) {
