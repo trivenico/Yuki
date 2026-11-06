@@ -185,6 +185,19 @@ class ApprovedTestRunnerTests(unittest.TestCase):
         self.assertTrue(result.timed_out)
         self.assertEqual(result.exit_code, 124)
 
+    def test_source_mutation_during_execution_invalidates_result(self):
+        (self.root / "test_sample.py").write_text(
+            "import pathlib, unittest\\n"
+            "class T(unittest.TestCase):\\n"
+            " def test_mutates_tree(self): "
+            "pathlib.Path('late_import.py').write_text('VALUE = 1\\\\n')\\n",
+            encoding="utf-8",
+        )
+        result = self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertEqual(result.exit_code, 125)
+        self.assertIn("source tree changed", result.stderr)
+        self.assertEqual(self.audit_events[-1]["outcome"], "source_changed")
+
     def test_captured_output_is_bounded(self):
         (self.root / "test_sample.py").write_text(
             "import unittest\nclass T(unittest.TestCase):\n"
