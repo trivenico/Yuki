@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 from secrets import token_urlsafe
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
@@ -23,6 +24,7 @@ from core.reasoning.execution_budget_store import ExecutionBudgetStore
 from automation.verification_evidence_store import VerificationEvidenceStore
 from automation.verification_workflow import VerificationWorkflow
 from automation.engineering_acceptance import EngineeringAcceptanceStore
+from automation.local_verification_executor import LocalVerificationExecutor, VerificationCommand
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -42,6 +44,7 @@ class LocalWorkerRuntime:
     verification_evidence_store: VerificationEvidenceStore
     verification_workflow: VerificationWorkflow
     acceptance_store: EngineeringAcceptanceStore
+    verification_executor: LocalVerificationExecutor | None
 
 
 def build_local_worker_runtime(
@@ -53,6 +56,7 @@ def build_local_worker_runtime(
     allow_cloud: bool = False,
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
+    verification_commands: Mapping[str, VerificationCommand] | None = None,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -87,7 +91,19 @@ def build_local_worker_runtime(
         authorize=authorize,
     )
     budget_store = ExecutionBudgetStore(database_path)
-    verification_evidence_store = VerificationEvidenceStore(root / "yuki_verification.sqlite3")
+    verification_executor = None
+    if verification_commands is not None:
+        verification_executor = LocalVerificationExecutor(
+            root, root / "yuki_verification_executions.sqlite3",
+            verification_commands,
+        )
+    verification_evidence_store = VerificationEvidenceStore(
+        root / "yuki_verification.sqlite3",
+        execution_evidence_validator=(
+            verification_executor.validate_evidence_reference
+            if verification_executor is not None else None
+        ),
+    )
     verification_workflow = VerificationWorkflow(
         root / "yuki_artifacts.sqlite3",
         verification_evidence_store,
@@ -174,4 +190,5 @@ def build_local_worker_runtime(
         verification_evidence_store=verification_evidence_store,
         verification_workflow=verification_workflow,
         acceptance_store=acceptance_store,
+        verification_executor=verification_executor,
     )
