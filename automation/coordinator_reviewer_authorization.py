@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def coordinator_reviewer_authorizer(coordinator: Any):
+def coordinator_reviewer_authorizer(coordinator: Any, *, resolve_principal):
     """Build a fail-closed VerificationEvidenceStore authorization callback.
 
     The coordinator's trusted authorization policy is consulted on every call;
@@ -16,6 +16,8 @@ def coordinator_reviewer_authorizer(coordinator: Any):
     """
     if coordinator is None or not isinstance(getattr(coordinator, "agents", None), dict):
         raise TypeError("a configured specialist coordinator is required")
+    if not callable(resolve_principal):
+        raise TypeError("a trusted agent principal resolver is required")
     allowed_actions = {
         "verification:submit": "verification:submit",
         "verification:review": "verification:review",
@@ -36,7 +38,10 @@ def coordinator_reviewer_authorizer(coordinator: Any):
         if permission not in permissions:
             return False
         try:
-            return coordinator._allowed(agent_id, action, artifact_sha256) is True
+            principal = resolve_principal(agent_id)
+            if not isinstance(principal, str) or not principal.strip():
+                return False
+            return coordinator._allowed(principal, action, artifact_sha256) is True
         except Exception:
             return False
 
