@@ -1,3 +1,4 @@
+from contextlib import closing
 import tempfile
 import sqlite3
 import unittest
@@ -136,7 +137,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
                            expected_version=1, result=result, session_token=self.session_token,
                            operation_id="submit-task-signature")
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("UPDATE reviewer_tasks SET signature_json=? WHERE task_id=?",
                        ('{"key_id":"review-key-v1","algorithm":"hmac-sha256","signature_hex":"' + "0" * 64 + '"}', self.task.task_id))
         from automation.reviewer_ledger import ReviewerLedgerError
@@ -154,7 +155,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
 
     def test_read_detects_tampered_task_payload(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("UPDATE reviewer_tasks SET task_json=? WHERE task_id=?",
                        ('{"task_id":"forged"}', self.task.task_id))
         from automation.reviewer_ledger import ReviewerLedgerError
@@ -163,7 +164,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
 
     def test_read_detects_tampered_event_history(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("UPDATE reviewer_task_events SET payload_json=? WHERE task_id=?",
                        ('{}', self.task.task_id))
         from automation.reviewer_ledger import ReviewerLedgerError
