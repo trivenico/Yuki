@@ -510,8 +510,9 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 "SELECT definition_json FROM workflow_runs WHERE run_id=?", (task_id,),
             ).fetchone()
         definition = json.loads(row["definition_json"])
-        self.assertEqual(definition[0]["budget_id"], budget_store.get_snapshot(
-            definition[0]["budget_id"]
+        execution = definition[0]["execution"]
+        self.assertEqual(execution["budget_id"], budget_store.get_snapshot(
+            execution["budget_id"]
         ).budget_id)
         second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(second.subtasks[0].task_id, task_id)
