@@ -238,6 +238,8 @@ class ReviewerTaskLedger:
         """Claim bounded ready outbox records with expiring, opaque claim tokens."""
         actor=self._actor(actor_id)
         worker=self._actor(worker_id)
+        if actor != worker:
+            raise PermissionError("dispatch_worker_cannot_impersonate_another_actor")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("invalid_dispatch_claim_limit")
         if type(claim_seconds) is not int or not 10 <= claim_seconds <= 900:
@@ -259,8 +261,8 @@ class ReviewerTaskLedger:
                     available_at=?,last_error=?,updated_at=? WHERE dispatch_id=?""",
                     (state,now,"dispatch_claim_expired",now,item["dispatch_id"]))
             rows=db.execute("""SELECT * FROM reviewer_dispatch_outbox
-                WHERE state='pending' AND available_at<=?
-                ORDER BY available_at,created_at,dispatch_id LIMIT ?""",(now,limit)).fetchall()
+                WHERE state='pending' AND available_at<=? AND reviewer_agent_id=?
+                ORDER BY available_at,created_at,dispatch_id LIMIT ?""",(now,worker,limit)).fetchall()
             for row in rows:
                 if not self._allowed(actor,"review:dispatch:claim",row["artifact_sha256"]):
                     continue
@@ -277,6 +279,9 @@ class ReviewerTaskLedger:
                     "dispatch_id":row["dispatch_id"],"task_id":row["task_id"],
                     "artifact_sha256":row["artifact_sha256"],
                     "reviewer_agent_id":row["reviewer_agent_id"],
+                    "task":json.loads(db.execute(
+                        "SELECT task_json FROM reviewer_tasks WHERE task_id=?",
+                        (row["task_id"],)).fetchone()["task_json"]),
                     "attempts":attempts,"claim_token":raw,"claim_expires_at":expiry,
                 })
         return tuple(claimed)
@@ -408,7 +413,10 @@ class ReviewerTaskLedger:
                         raise ReviewerLedgerConflict("existing_review_task_lease_mismatch")
                     created.append({"task_id":task.task_id,"state":row["state"],
                                     "version":row["version"],"reused":True,
-                                    "lease_generation":lease_row[2],"lease_expires_at":lease_row[3]})
+                                    "lease_generation":lease_row[2],"lease_expires_at":lease_row[3],
+                                    "dispatch_id":db.execute(
+                                        "SELECT dispatch_id FROM reviewer_dispatch_outbox WHERE task_id=?",
+                                        (task.task_id,)).fetchone()["dispatch_id"]})
                     continue
                 now=_now()
                 db.execute("""INSERT INTO reviewer_tasks
@@ -434,7 +442,8 @@ class ReviewerTaskLedger:
                 created.append({"task_id":task.task_id,"state":"assigned","version":0,
                                 "reused":False,"lease_token":lease.token,
                                 "lease_generation":lease.generation,
-                                "lease_expires_at":lease.expires_at})
+                                "lease_expires_at":lease.expires_at,
+                                "dispatch_id":dispatch_id})
         return tuple(created)
 
     def abandon(self, *, actor_id: str, task_id: str, expected_version: int,
