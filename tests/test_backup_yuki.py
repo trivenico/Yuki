@@ -31,6 +31,18 @@ class BackupYukiTests(unittest.TestCase):
                 self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(db.execute("SELECT value FROM memories").fetchone()[0], "persistent memory")
 
+    def test_backup_refuses_workspace_with_incomplete_restore_marker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            with sqlite3.connect(workspace / "app.db") as db:
+                db.execute("CREATE TABLE sample (id INTEGER)")
+            (workspace / ".yuki-restore-incomplete").write_text("inspect", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "incomplete restore"):
+                create_backup(workspace, root / "backup")
+            self.assertFalse((root / "backup").exists())
+
     def test_backup_refuses_to_write_inside_workspace(self):
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary) / "workspace"
