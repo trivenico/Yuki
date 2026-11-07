@@ -212,6 +212,48 @@ class ReviewerTaskLedger:
                                 "version": 0, "reused": False})
         return tuple(created)
 
+    def reassign(self, *, actor_id: str, task_id: str, expected_version: int,
+                 replacement_reviewer_agent_id: str) -> dict:
+        """Atomically reassign an unclaimed task and rotate its expired lease.
+
+        In-progress work is deliberately not reassigned yet: doing so requires
+        a richer event-chain migration to preserve the old claim history.
+        """
+        actor = self._actor(actor_id)
+        replacement = self._actor(replacement_reviewer_agent_id)
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("invalid_expected_version")
+        if self.lease_authority is None:
+            raise ReviewerLedgerError("reviewer_lease_authority_required")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError("review task not found")
+            if not self._allowed(actor, "review:reassign", row["artifact_sha256"]):
+                raise PermissionError("review task reassignment is not authorized")
+            if row["state"] != "assigned" or row["version"] != expected_version:
+                raise ReviewerLedgerConflict("only_current_unclaimed_tasks_can_be_reassigned")
+            if replacement == row["reviewer_agent_id"]:
+                raise ValueError("replacement_reviewer_must_be_different")
+            lease = self.lease_authority.recover_in_transaction(
+                db, actor_id=actor, task_id=task_id,
+                artifact_sha256=row["artifact_sha256"],
+                replacement_reviewer_agent_id=replacement,
+            )
+            now = _now()
+            version = expected_version + 1
+            previous = row["reviewer_agent_id"]
+            db.execute("UPDATE reviewer_tasks SET reviewer_agent_id=?,updated_at=?,version=? WHERE task_id=?",
+                       (replacement, now, version, task_id))
+            self._event(db, task_id, version, "reassigned", actor,
+                        {"previous_reviewer_agent_id": previous,
+                         "replacement_reviewer_agent_id": replacement,
+                         "lease_generation": lease.generation}, now)
+        return {"task_id": task_id, "state": "assigned", "version": version,
+                "reviewer_agent_id": replacement, "lease_generation": lease.generation,
+                "lease_token": lease.token}
+
     def claim(self, *, actor_id: str, task_id: str, expected_version: int,
               session_token: str, operation_id: str,
               lease_token: str | None = None, lease_generation: int | None = None) -> dict:
@@ -276,7 +318,7 @@ class ReviewerTaskLedger:
                 task_id=task_data["task_id"],
                 artifact_sha256=task_data["artifact_sha256"],
                 author_agent_id=task_data["author_agent_id"],
-                reviewer_agent_id=task_data["reviewer_agent_id"],
+                reviewer_agent_id=row["reviewer_agent_id"],
                 check_name=task_data["check_name"],
                 requirements=tuple(task_data["requirements"]),
                 evidence_references=tuple(task_data["evidence_references"]),
@@ -323,7 +365,7 @@ class ReviewerTaskLedger:
                 task_id=task_data["task_id"],
                 artifact_sha256=task_data["artifact_sha256"],
                 author_agent_id=task_data["author_agent_id"],
-                reviewer_agent_id=task_data["reviewer_agent_id"],
+                reviewer_agent_id=row["reviewer_agent_id"],
                 check_name=task_data["check_name"],
                 requirements=tuple(task_data["requirements"]),
                 evidence_references=tuple(task_data["evidence_references"]),
@@ -331,18 +373,22 @@ class ReviewerTaskLedger:
             task.validate()
         except Exception as exc:
             raise ReviewerLedgerError("review_task_payload_invalid") from exc
-        if (task.task_id != row["task_id"] or task.artifact_sha256 != row["artifact_sha256"]
-                or task.reviewer_agent_id != row["reviewer_agent_id"]):
+        if (task.task_id != row["task_id"] or task.artifact_sha256 != row["artifact_sha256"]):
             raise ReviewerLedgerError("review_task_row_binding_mismatch")
 
-        expected = [("assigned", None)]
-        if row["state"] in {"in_progress", "submitted"}:
-            expected.append(("claimed", task.reviewer_agent_id))
-        if row["state"] == "submitted":
-            expected.append(("submitted", task.reviewer_agent_id))
-        if row["state"] not in _STATES or row["version"] != len(expected) - 1:
+        if row["state"] not in _STATES:
             raise ReviewerLedgerError("review_task_state_version_mismatch")
-        if len(events) != len(expected):
+        reassigned = [event for event in events if event["event_type"] == "reassigned"]
+        if len(reassigned) > 1:
+            raise ReviewerLedgerError("review_task_multiple_reassignments_not_supported")
+        expected_types = ["assigned"] + (["reassigned"] if reassigned else [])
+        if row["state"] in {"in_progress", "submitted"}:
+            expected_types.append("claimed")
+        if row["state"] == "submitted":
+            expected_types.append("submitted")
+        if row["version"] != len(events) - 1 or len(events) != len(expected_types):
+            raise ReviewerLedgerError("review_task_state_version_mismatch")
+        if [event["event_type"] for event in events] != expected_types:
             raise ReviewerLedgerError("review_task_event_history_incomplete")
 
         result_digest = None
@@ -390,9 +436,15 @@ class ReviewerTaskLedger:
                 raise ReviewerLedgerError("review_event_payload_invalid") from exc
             if index == 0 and payload != {"task_digest": task_digest}:
                 raise ReviewerLedgerError("review_assignment_event_mismatch")
-            if index == 1 and payload != {}:
+            if event["event_type"] == "reassigned":
+                if (set(payload) != {"previous_reviewer_agent_id", "replacement_reviewer_agent_id", "lease_generation"}
+                        or payload["replacement_reviewer_agent_id"] != row["reviewer_agent_id"]
+                        or payload["previous_reviewer_agent_id"] == row["reviewer_agent_id"]
+                        or type(payload["lease_generation"]) is not int or payload["lease_generation"] < 2):
+                    raise ReviewerLedgerError("review_reassignment_event_mismatch")
+            if event["event_type"] == "claimed" and payload != {}:
                 raise ReviewerLedgerError("review_claim_event_mismatch")
-            if index == 2 and payload != {
+            if event["event_type"] == "submitted" and payload != {
                 "result_digest": result_digest,
                 "result_status": json.loads(row["result_json"])["status"],
             }:
