@@ -111,7 +111,15 @@ class ReviewerWorker:
                 task.validate()
                 if task.task_id != task_id or task.artifact_sha256 != claim.get("artifact_sha256"):
                     raise ReviewerWorkerError("dispatch_task_binding_mismatch")
-                provisioned = self.credential_resolver(claim)
+                # Never pass the outbox claim bearer token to credential
+                # resolution. The resolver receives only task/assignment metadata.
+                credential_context = {
+                    key: claim[key]
+                    for key in ("dispatch_id", "task_id", "artifact_sha256",
+                                "reviewer_agent_id", "task", "attempts")
+                    if key in claim
+                }
+                provisioned = self.credential_resolver(credential_context)
                 if not isinstance(provisioned, ProvisionedReviewerTask):
                     raise ReviewerWorkerError("credential_resolver_contract_invalid")
                 if (
