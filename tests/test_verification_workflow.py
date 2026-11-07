@@ -41,6 +41,14 @@ class VerificationWorkflowTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_url_safe_generated_task_ids_are_accepted(self):
+        artifact = self.workflow.record_artifact(
+            plan_id="_plan-token", subtask_id="-subtask-token", task_id="_task-token",
+            author_agent_id="builder", content=b"url-safe task id",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.assertEqual(artifact.task_id, "_task-token")
+
     def test_matching_independent_report_links_and_verifies_artifact(self):
         report = make_report()
         saved = self.evidence.record(report)
