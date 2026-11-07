@@ -30,11 +30,11 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def report(self, tests_reference, *, digest=None):
+    def report(self, tests_reference, security_reference, *, digest=None):
         names = ("acceptance_criteria", "tests", "security", "architecture", "claims_and_provenance")
         checks = []
         for name in names:
-            ref = tests_reference if name == "tests" else "review://independent/" + name
+            ref = tests_reference if name == "tests" else security_reference if name == "security" else "review://independent/" + name
             checks.append(VerificationCheck(
                 name=name, reviewer_agent_id="reviewer-" + name, status="passed",
                 evidence_reference=ref, summary="Reviewed " + name,
@@ -46,18 +46,30 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
 
     def test_valid_artifact_bound_success_receipt_can_be_stored(self):
         receipt = self.executor.run("unit-tests", artifact_sha256=self.digest)
-        report = self.report(self.executor.evidence_reference(receipt))
+        security = self.executor.run("security-scan", artifact_sha256=self.digest)
+        report = self.report(
+            self.executor.evidence_reference(receipt),
+            self.executor.evidence_reference(security),
+        )
         stored = self.store.record(report)
         self.assertTrue(stored["decision"]["accepted"])
 
     def test_fabricated_receipt_reference_is_rejected(self):
         with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
-            self.store.record(self.report("yuki-verification-execution://" + "a" * 32))
+            security = self.executor.run("security-scan", artifact_sha256=self.digest)
+            self.store.record(self.report(
+                "yuki-verification-execution://" + "a" * 32,
+                self.executor.evidence_reference(security),
+            ))
 
     def test_receipt_for_different_artifact_is_rejected(self):
         receipt = self.executor.run("unit-tests", artifact_sha256="0" * 64)
+        security = self.executor.run("security-scan", artifact_sha256=self.digest)
         with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
-            self.store.record(self.report(self.executor.evidence_reference(receipt)))
+            self.store.record(self.report(
+                self.executor.evidence_reference(receipt),
+                self.executor.evidence_reference(security),
+            ))
 
     def test_failed_execution_cannot_support_passed_test_check(self):
         failing = LocalVerificationExecutor(
@@ -67,12 +79,32 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
             )},
         )
         receipt = failing.run("unit-tests", artifact_sha256=self.digest)
+        security = self.executor.run("security-scan", artifact_sha256=self.digest)
         failing_store = VerificationEvidenceStore(
             self.root / "failed-reports.sqlite3",
             execution_evidence_validator=failing.validate_evidence_reference,
         )
         with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
-            failing_store.record(self.report(failing.evidence_reference(receipt)))
+            failing_store.record(self.report(
+                failing.evidence_reference(receipt),
+                self.executor.evidence_reference(security),
+            ))
+
+    def test_configured_test_and_security_checks_require_receipts(self):
+        with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_required"):
+            self.store.record(self.report(
+                "review://claimed-tests-passed",
+                "review://claimed-security-passed",
+            ))
+
+    def test_receipt_from_wrong_command_cannot_substitute_for_security_scan(self):
+        tests = self.executor.run("unit-tests", artifact_sha256=self.digest)
+        second_tests = self.executor.run("unit-tests", artifact_sha256=self.digest)
+        with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
+            self.store.record(self.report(
+                self.executor.evidence_reference(tests),
+                self.executor.evidence_reference(second_tests),
+            ))
 
 
 if __name__ == "__main__":
