@@ -41,6 +41,25 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
 
 
+    def test_reviewer_authorizer_is_explicitly_injected_and_fails_closed_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            self.assertIsNone(built.verification_evidence_store.reviewer_authorizer)
+            with self.assertRaisesRegex(Exception, "trusted_reviewer_authorizer_not_configured"):
+                built.verification_evidence_store.record(None)
+
+        calls = []
+        def authorizer(actor_id, action, artifact_digest):
+            calls.append((actor_id, action, artifact_digest))
+            return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(
+                directory, FakeProvider(),
+                verification_reviewer_authorizer=authorizer,
+            )
+            self.assertIs(built.verification_evidence_store.reviewer_authorizer, authorizer)
+
     def test_verification_executor_can_target_separate_materialized_workspace(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
