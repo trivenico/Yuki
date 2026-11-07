@@ -1,3 +1,4 @@
+from contextlib import closing
 """Tests for durable recovery incident attempt limits and audit events."""
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ class ReviewerRecoveryIncidentStoreTests(unittest.TestCase):
         self.assertEqual(first.state, "cooldown")
         # Expire cooldown directly to make this deterministic without sleeping.
         import sqlite3
-        with sqlite3.connect(self.store.database) as db:
+        with closing(sqlite3.connect(self.store.database)) as db, db:
             db.execute("UPDATE reviewer_recovery_incidents SET next_attempt_at='2000-01-01T00:00:00+00:00' WHERE task_id='task-a'")
         self.assertTrue(self.store.begin_attempt(
             actor_id="recovery-controller", task_id="task-a", worker_id="reviewer-a",
