@@ -48,6 +48,34 @@ class ReviewerWorkerRegistryTests(unittest.TestCase):
                                      instance_id=second.instance_id, lease_token=second.lease_token,
                                      max_concurrency=1)
 
+    def test_slot_renewal_is_bound_to_live_instance(self):
+        reg = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
+                                     instance_id="instance-a")
+        slot = self.registry.claim_slot(
+            actor_id="reviewer-a", worker_id="reviewer-a",
+            instance_id=reg.instance_id, lease_token=reg.lease_token,
+            max_concurrency=1, slot_seconds=30,
+        )
+        expiry = self.registry.renew_slot(
+            actor_id="reviewer-a", worker_id="reviewer-a",
+            instance_id=reg.instance_id, lease_token=reg.lease_token,
+            slot_id=slot, slot_seconds=60,
+        )
+        self.assertLessEqual(expiry, reg.lease_expires_at)
+
+    def test_instance_id_cannot_be_reassigned_to_another_worker(self):
+        reg = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
+                                     instance_id="instance-a", lease_seconds=10)
+        # Expiry is simulated by making the lease timestamp stale in SQLite.
+        import sqlite3
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE reviewer_worker_instances SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE instance_id=?",
+                       (reg.instance_id,))
+        with self.assertRaisesRegex(ReviewerWorkerRegistryConflict,
+                                    "worker_instance_identity_conflict"):
+            self.registry.register(actor_id="reviewer-b", worker_id="reviewer-b",
+                                   instance_id="instance-a")
+
     def test_expired_or_wrong_worker_token_cannot_claim_slot(self):
         reg = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
                                      instance_id="instance-a")
