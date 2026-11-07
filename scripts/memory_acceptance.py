@@ -63,7 +63,7 @@ def run_acceptance(*, store_factory=None):
         deleted = reopened.delete(
             actor_id=ACTOR, agent_id=AGENT, memory_id=memory_id,
         )
-        if deleted or reopened.search(
+        if not deleted or reopened.search(
             actor_id=ACTOR, agent_id=AGENT,
             query="preferred project name", limit=5, include_shared=False,
         ):
