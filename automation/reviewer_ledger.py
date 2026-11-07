@@ -18,6 +18,7 @@ from typing import Callable, Iterable
 from automation.reviewer_contracts import ReviewResult, ReviewTask
 from automation.reviewer_signing import HMACReviewerSigner, ReviewerSignature
 from automation.reviewer_sessions import ReviewerSessionAuthority
+from automation.reviewer_leases import ReviewerLeaseAuthority
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA = re.compile(r"^[a-f0-9]{64}$")
@@ -76,7 +77,8 @@ class ReviewerTaskLedger:
     def __init__(self, database_path: str | Path, *,
                  authorize: Callable[[str, str, str], bool],
                  signer_resolver: Callable[[str, str | None], HMACReviewerSigner | None],
-                 session_authority: ReviewerSessionAuthority):
+                 session_authority: ReviewerSessionAuthority,
+                 lease_authority: ReviewerLeaseAuthority | None = None):
         if not callable(authorize):
             raise TypeError("trusted_reviewer_authorizer_required")
         if not callable(signer_resolver):
@@ -89,6 +91,14 @@ class ReviewerTaskLedger:
         self.authorize = authorize
         self.signer_resolver = signer_resolver
         self.session_authority = session_authority
+        if lease_authority is not None:
+            if not isinstance(lease_authority, ReviewerLeaseAuthority):
+                raise TypeError("trusted_reviewer_lease_authority_required")
+            # Sharing one SQLite file lets BEGIN IMMEDIATE serialize ledger
+            # transitions against lease renewals and recovery writes.
+            if Path(lease_authority.database_path).resolve() != Path(self.database_path).resolve():
+                raise ValueError("reviewer_lease_and_ledger_must_share_database")
+        self.lease_authority = lease_authority
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -203,7 +213,8 @@ class ReviewerTaskLedger:
         return tuple(created)
 
     def claim(self, *, actor_id: str, task_id: str, expected_version: int,
-              session_token: str, operation_id: str) -> dict:
+              session_token: str, operation_id: str,
+              lease_token: str | None = None, lease_generation: int | None = None) -> dict:
         actor = self._actor(actor_id)
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_review_task_id")
@@ -218,6 +229,12 @@ class ReviewerTaskLedger:
                 raise PermissionError("review task execution is not authorized")
             if not self.session_authority.validate(session_token, reviewer_agent_id=actor, artifact_sha256=row["artifact_sha256"], action="review:execute", operation_id=operation_id):
                 raise PermissionError("review execution session is invalid or replayed")
+            if self.lease_authority is not None:
+                if not self.lease_authority.validate(
+                    lease_token, task_id=task_id, artifact_sha256=row["artifact_sha256"],
+                    reviewer_agent_id=actor, generation=lease_generation,
+                ):
+                    raise PermissionError("review execution lease is invalid or superseded")
             if row["version"] != expected_version or row["state"] != "assigned":
                 raise ReviewerLedgerConflict("review_task_state_or_version_conflict")
             now = _now()
@@ -230,7 +247,8 @@ class ReviewerTaskLedger:
         return {"task_id": task_id, "state": "in_progress", "version": version}
 
     def submit(self, *, actor_id: str, task_id: str, expected_version: int,
-               result: ReviewResult, session_token: str, operation_id: str) -> dict:
+               result: ReviewResult, session_token: str, operation_id: str,
+               lease_token: str | None = None, lease_generation: int | None = None) -> dict:
         actor = self._actor(actor_id)
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_review_task_id")
@@ -247,6 +265,12 @@ class ReviewerTaskLedger:
                 raise PermissionError("review result submission is not authorized")
             if not self.session_authority.validate(session_token, reviewer_agent_id=actor, artifact_sha256=row["artifact_sha256"], action="review:submit", operation_id=operation_id):
                 raise PermissionError("review submission session is invalid or replayed")
+            if self.lease_authority is not None:
+                if not self.lease_authority.validate(
+                    lease_token, task_id=task_id, artifact_sha256=row["artifact_sha256"],
+                    reviewer_agent_id=actor, generation=lease_generation,
+                ):
+                    raise PermissionError("review submission lease is invalid or superseded")
             task_data = json.loads(row["task_json"])
             task = ReviewTask(
                 task_id=task_data["task_id"],
