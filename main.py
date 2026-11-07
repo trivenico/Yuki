@@ -389,6 +389,44 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering sandbox-receipts "):
+            artifact_id = command[len("/engineering sandbox-receipts "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            image = os.environ.get("YUKI_VERIFICATION_IMAGE", "").strip()
+            if not image:
+                print("Yuki > Set YUKI_VERIFICATION_IMAGE to a locally available digest-pinned image.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                sandbox = DockerVerificationExecutor(
+                    provenance.workspace_path,
+                    workspace / "yuki_sandbox_verification.sqlite3",
+                    image=image,
+                    expected_snapshot_sha256=provenance.snapshot_sha256,
+                    expected_artifact_sha256=provenance.artifact_sha256,
+                    commands={
+                        "unit-tests": SandboxCommand(
+                            "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=300
+                        )
+                    },
+                )
+                receipts = sandbox.list_for_artifact(provenance.artifact_sha256, limit=20)
+                if not receipts:
+                    print("Yuki > No sandbox receipts recorded for this artifact.")
+                for receipt in receipts:
+                    print(
+                        f"- {receipt['execution_id']} | {receipt['command_id']} | "
+                        f"{receipt['status']} | exit={receipt['exit_code']} | "
+                        f"image={receipt['image']} | output_sha256={receipt['output_sha256']}"
+                    )
+                print("Receipts establish command execution only; they do not constitute independent review or acceptance.")
+            except Exception as exc:
+                print(f"Yuki > Receipt inspection failed safely ({type(exc).__name__}).")
         elif command.startswith("/engineering sandbox-verify "):
             artifact_id = command[len("/engineering sandbox-verify "):].strip()
             if not artifact_id:
