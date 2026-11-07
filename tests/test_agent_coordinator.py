@@ -2,6 +2,8 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+
 from pathlib import Path
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
@@ -430,6 +432,26 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         with self.assertRaises(PermissionError):
             self.coordinator.recover_plan(actor_id="mallory", plan_id=plan.plan_id)
+
+    def test_agent_capacity_limit_is_shared_across_coordinator_instances(self):
+        second_coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        first_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="cross-process-capacity-one",
+            subtasks=[SubtaskSpec("first", "First independent task", ("research",), requires_approval=False)],
+        )
+        second_plan = second_coordinator.submit(
+            actor_id="alice", idempotency_key="cross-process-capacity-two",
+            subtasks=[SubtaskSpec("second", "Second independent task", ("research",), requires_approval=False)],
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.coordinator.advance, actor_id="alice", plan_id=first_plan.plan_id)
+            second = pool.submit(second_coordinator.advance, actor_id="alice", plan_id=second_plan.plan_id)
+            results = (first.result(timeout=10), second.result(timeout=10))
+        dispatched = sum(item.task_id is not None for plan in results for item in plan.subtasks)
+        self.assertEqual(dispatched, 1)
+        self.assertEqual(sum(item.status == "pending" for plan in results for item in plan.subtasks), 1)
 
     def test_specialist_max_concurrency_defers_excess_dispatch_until_capacity_frees(self):
         specialist = SpecialistAgent(
