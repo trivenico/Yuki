@@ -95,14 +95,19 @@ class ReviewerExecutionAdapter:
         if not callable(executor):
             raise TypeError("reviewer_executor_required")
 
+        effective_lease_token = lease_token if lease_token is not None else provisioned_task.lease_token
+        effective_lease_generation = (
+            lease_generation if lease_generation is not None
+            else provisioned_task.lease_generation
+        )
         claimed = self.ledger.claim(
             actor_id=actor_id,
             task_id=task.task_id,
             expected_version=expected_version,
             session_token=provisioned_task.session_token,
             operation_id="claim-" + uuid4().hex,
-            lease_token=lease_token,
-            lease_generation=lease_generation,
+            lease_token=effective_lease_token,
+            lease_generation=effective_lease_generation,
         )
         if claimed.get("state") != "in_progress":
             raise ReviewerExecutionError("review_task_claim_failed")
