@@ -72,6 +72,39 @@ class AgentBudgetLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(first, second)
 
+    def test_delegated_plan_budget_is_a_child_of_parent_subtask(self):
+        root = self.lifecycle.ensure_plan_budget(
+            plan_id="root-plan", limits=LIMITS, policy_version="v1",
+        )
+        source = self.lifecycle.ensure_subtask_budget(
+            plan_id="root-plan", subtask_id="lead", parent_budget_id=root.budget_id,
+            limits={
+                "max_model_turns": 5, "max_tool_calls": 4,
+                "max_duration_ms": 20_000, "max_transcript_chars": 3_000,
+            }, policy_version="v1",
+        )
+        delegated = self.lifecycle.ensure_child_plan_budget(
+            parent_plan_id="root-plan", parent_subtask_id="lead",
+            child_plan_id="child-plan", parent_budget_id=source.budget_id,
+            limits={
+                "max_model_turns": 4, "max_tool_calls": 3,
+                "max_duration_ms": 10_000, "max_transcript_chars": 2_000,
+            }, policy_version="v1",
+        )
+        self.assertEqual(delegated.parent_budget_id, source.budget_id)
+        again = self.lifecycle.ensure_child_plan_budget(
+            parent_plan_id="root-plan", parent_subtask_id="lead",
+            child_plan_id="child-plan", parent_budget_id=source.budget_id,
+            limits=dict(delegated.limits), policy_version="v1",
+        )
+        self.assertEqual(again, delegated)
+        with self.assertRaises(AgentBudgetAllocationError):
+            self.lifecycle.ensure_child_plan_budget(
+                parent_plan_id="other-root", parent_subtask_id="lead",
+                child_plan_id="child-plan", parent_budget_id=source.budget_id,
+                limits=dict(delegated.limits), policy_version="v1",
+            )
+
     def test_subtask_allocation_rejects_parent_capacity_overspend(self):
         parent = self.lifecycle.ensure_plan_budget(
             plan_id="plan-123", limits=LIMITS, policy_version="v1",
