@@ -30,6 +30,8 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             built = build_local_worker_runtime(Path(directory), FakeProvider())
             self.assertIs(built.supervisor.runtime, built.runtime)
             self.assertEqual(built.operator_actor_id, LOCAL_OPERATOR_ACTOR)
+            self.assertIs(built.coordinator.acceptance_store, built.acceptance_store)
+            self.assertIs(built.acceptance_store.verification_workflow, built.verification_workflow)
             self.assertEqual(
                 set(built.supervisor.worker.handlers),
                 {"research", "coding", "testing", "reporting"},
@@ -302,6 +304,34 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 build_local_worker_runtime(
                     directory, FakeProvider(), max_tasks_per_cycle=11,
                 )
+
+
+    def test_completed_local_task_is_automatically_captured_for_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="automatic-artifact-capture",
+                subtasks=[SubtaskSpec(
+                    "capture-research", "Produce a short artifact", ("research",),
+                    requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            result = built.supervisor.worker.run_once()
+            self.assertEqual(result.state, "succeeded")
+            refreshed = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            acceptance = built.acceptance_store.get(
+                plan_id=plan.plan_id, subtask_id="capture-research", task_id=task_id,
+            )
+            self.assertEqual(acceptance["state"], "awaiting_verification")
+            self.assertIsNotNone(acceptance["artifact_id"])
+            artifact = built.verification_workflow.get_status(acceptance["artifact_id"])["artifact"]
+            self.assertEqual(artifact["artifact_sha256"], __import__("hashlib").sha256(
+                b"bounded specialist output"
+            ).hexdigest())
+            self.assertEqual(refreshed.subtasks[0].status, "succeeded")
 
 
 if __name__ == "__main__":
