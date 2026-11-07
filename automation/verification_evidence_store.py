@@ -10,6 +10,7 @@ from dataclasses import asdict
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -54,7 +55,7 @@ class VerificationEvidenceStore:
         return db
 
     def _initialize(self):
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS verification_reports (
                     report_id TEXT PRIMARY KEY,
@@ -122,7 +123,7 @@ class VerificationEvidenceStore:
         serialized = self._serialize(report)
         report_id = self._report_id(serialized)
         decision_json = json.dumps(asdict(decision), sort_keys=True, separators=(",", ":"))
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT report_json, decision_json FROM verification_reports WHERE report_id=?",
@@ -145,7 +146,7 @@ class VerificationEvidenceStore:
     def get(self, report_id: str) -> dict | None:
         if not isinstance(report_id, str) or len(report_id) != 64 or any(c not in "0123456789abcdef" for c in report_id):
             raise ValueError("report_id must be a lowercase SHA-256 digest")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT report_json, decision_json FROM verification_reports WHERE report_id=?",
                 (report_id,),
@@ -162,7 +163,7 @@ class VerificationEvidenceStore:
             raise ValueError("artifact_sha256 must be a lowercase SHA-256 digest")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 """SELECT report_id, decision_json, created_at
                    FROM verification_reports WHERE artifact_sha256=?
