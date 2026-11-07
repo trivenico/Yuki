@@ -126,8 +126,8 @@ class ReviewerLeaseAuthority:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_leases WHERE task_id=?", (task_id,)).fetchone()
-            if row and (row[1] != artifact_sha256 or row[2] != reviewer_agent_id):
-                raise ReviewerLeaseConflict("reviewer_lease_assignment_conflict")
+            if row and row[1] != artifact_sha256:
+                raise ReviewerLeaseConflict("reviewer_lease_artifact_conflict")
             if row and datetime.fromisoformat(row[4]) > now:
                 raise ReviewerLeaseConflict("reviewer_lease_already_active")
             generation = (row[3] + 1) if row else 1
