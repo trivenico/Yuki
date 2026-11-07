@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
@@ -40,7 +41,7 @@ class EngineeringAcceptanceStore:
             raise ValueError("database_path is required")
         self.verification_workflow = verification_workflow
         self.authorize = authorize
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS engineering_acceptance (
                     plan_id TEXT NOT NULL,
@@ -102,7 +103,7 @@ class EngineeringAcceptanceStore:
         created_at = self._time(created_at)
         if self.authorize(actor_id, "acceptance:register", plan_id) is not True:
             raise PermissionError("acceptance registration is not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
@@ -139,7 +140,7 @@ class EngineeringAcceptanceStore:
         artifact = status["artifact"]
         if (artifact["plan_id"], artifact["subtask_id"], artifact["task_id"]) != (plan_id, subtask_id, task_id):
             raise EngineeringAcceptanceError("artifact_task_identity_mismatch")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
@@ -175,7 +176,7 @@ class EngineeringAcceptanceStore:
         created_at = self._time(created_at)
         if self.authorize(actor_id, "acceptance:decide", plan_id) is not True:
             raise PermissionError("acceptance decision is not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
                 (plan_id, subtask_id, task_id),
@@ -192,7 +193,7 @@ class EngineeringAcceptanceStore:
         )
         if target == row["state"]:
             return dict(row)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             current = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
@@ -222,7 +223,7 @@ class EngineeringAcceptanceStore:
         created_at = self._time(created_at)
         if self.authorize(actor_id, "acceptance:remediate", plan_id) is not True:
             raise PermissionError("remediation is not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
@@ -250,7 +251,7 @@ class EngineeringAcceptanceStore:
         return self.get(plan_id=plan_id, subtask_id=subtask_id, task_id=task_id)["state"] == "accepted"
 
     def get(self, *, plan_id: str, subtask_id: str, task_id: str) -> dict:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM engineering_acceptance WHERE plan_id=? AND subtask_id=? AND task_id=?",
                 (plan_id, subtask_id, task_id),
