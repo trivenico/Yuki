@@ -56,6 +56,7 @@ class ReviewerExecutionAdapterTests(unittest.TestCase):
         self.provisioned = ProvisionedReviewerTask(
             task_id=self.task.task_id, check_name="tests",
             reviewer_agent_id="reviewer-a", session_token=self.token,
+            review_task=self.task,
         )
 
     def tearDown(self):
@@ -83,6 +84,20 @@ class ReviewerExecutionAdapterTests(unittest.TestCase):
         record = self.ledger.get(actor_id="coordinator", task_id=self.task.task_id)
         self.assertTrue(record["signature_verified"])
         self.assertEqual(record["state"], "submitted")
+
+    def test_executes_from_provisioned_task_contract_without_separate_task_argument(self):
+        adapter = ReviewerExecutionAdapter(
+            self.ledger, evidence_reader=lambda ref, digest: b"test-output"
+        )
+        outcome = adapter.execute(
+            provisioned_task=self.provisioned, actor_id="reviewer-a",
+            expected_version=0,
+            executor=lambda task, evidence: build_review_result(
+                task, status="passed", summary="Provisioned contract reviewed."
+            ),
+        )
+        self.assertEqual(outcome.result_status, "passed")
+        self.assertEqual(outcome.state, "submitted")
 
     def test_executor_failure_becomes_blocked_signed_result(self):
         adapter = ReviewerExecutionAdapter(
