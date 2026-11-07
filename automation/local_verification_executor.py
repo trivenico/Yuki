@@ -234,11 +234,11 @@ class LocalVerificationExecutor:
                     output_sha256, output_bytes, output_excerpt, status, artifact_sha256
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    receipt.execution_id, receipt.command_id, receipt.artifact_sha256, receipt.argv_json,
+                    receipt.execution_id, receipt.command_id, receipt.argv_json,
                     receipt.workspace, receipt.started_at, receipt.finished_at,
                     receipt.exit_code, int(receipt.timed_out), int(receipt.output_limited),
                     receipt.output_sha256, receipt.output_bytes, receipt.output_excerpt,
-                    receipt.status,
+                    receipt.status, receipt.artifact_sha256,
                 ),
             )
 
