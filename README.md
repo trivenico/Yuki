@@ -6,6 +6,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Portable local data
+
+Set `YUKI_HOME` to keep conversations, authentication, memory, and other workspace data outside the source checkout (for example, on an external SSD). Set `YUKI_VENV_DIR` separately for the Python environment. Recreate the virtual environment on each destination computer; do not copy it between machines. See [portable local data instructions](docs/PORTABLE_LOCAL_DATA.md) for setup, backup cautions, and migration limitations.
+
 ## Run the local alpha
 
 Yuki is suitable for carefully scoped local testing, not public production
