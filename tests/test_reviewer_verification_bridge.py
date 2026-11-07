@@ -6,6 +6,7 @@ from automation.reviewer_contracts import build_review_result
 from automation.reviewer_team import ReviewerAssignment, ReviewerTeamPlan
 from automation.reviewer_workflow import build_review_tasks
 from automation.reviewer_ledger import ReviewerTaskLedger
+from automation.reviewer_signing import HMACReviewerSigner
 from automation.reviewer_verification_bridge import (
     ReviewerVerificationBridge, ReviewerVerificationBridgeError,
 )
@@ -17,9 +18,11 @@ class ReviewerVerificationBridgeTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.digest = "b" * 64
+        self.signer = HMACReviewerSigner(key_id="review-key-v1", key=b"z" * 32)
         self.ledger = ReviewerTaskLedger(
             root / "ledger.sqlite",
             authorize=lambda actor, action, digest: digest == self.digest,
+            signer_resolver=lambda actor, key_id: self.signer if key_id in (None, "review-key-v1") else None,
         )
         plan = ReviewerTeamPlan(
             artifact_sha256=self.digest, author_agent_id="builder",
