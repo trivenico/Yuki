@@ -62,6 +62,7 @@ class DockerVerificationExecutorTests(unittest.TestCase):
             self.assertIn("--read-only", argv)
             self.assertIn("--cap-drop=ALL", argv)
             self.assertIn("--security-opt=no-new-privileges:true", argv)
+            self.assertIn("--security-opt=seccomp=default", argv)
             self.assertIn("--pull=never", argv)
             self.assertEqual(receipt.status, "passed")
             self.assertEqual(executor.get(receipt.execution_id)["artifact_sha256"], "b" * 64)
@@ -77,6 +78,23 @@ class DockerVerificationExecutorTests(unittest.TestCase):
             with self.assertRaisesRegex(DockerVerificationError, "snapshot_digest_mismatch"):
                 executor.run("unit-tests", artifact_sha256="b" * 64)
             popen.assert_not_called()
+
+    def test_rejects_symlink_workspace_root(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
+        ):
+            base = Path(temp)
+            real = base / "real"
+            real.mkdir()
+            link = base / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "real_directory"):
+                DockerVerificationExecutor(
+                    link, base / "receipts.sqlite3",
+                    image="python:3.12-slim@sha256:" + "a" * 64,
+                    expected_snapshot_sha256="a" * 64,
+                    commands={"unit-tests": SandboxCommand("unit-tests", ("python", "-m", "pytest"))},
+                )
 
     def test_rejects_mutable_image_tag(self):
         with tempfile.TemporaryDirectory() as temp, patch(
