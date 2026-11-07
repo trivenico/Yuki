@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from automation.reviewer_ledger import ReviewerLedgerConflict, ReviewerTaskLedger
+from automation.reviewer_leases import ReviewerLeaseConflict
 from automation.reviewer_worker_registry import (
     ReviewerWorkerRegistry, ReviewerWorkerRegistryConflict,
 )
@@ -121,7 +122,7 @@ class ReviewerWorkerRecoverySupervisor:
                     task["task_id"], previous, replacement, result["state"],
                     "expired_worker_and_task_lease_recovered",
                 ))
-            except (ReviewerLedgerConflict, ReviewerWorkerRegistryConflict):
+            except (ReviewerLedgerConflict, ReviewerLeaseConflict, ReviewerWorkerRegistryConflict):
                 # Version/lease changed concurrently: never force a stale recovery.
                 deferred += 1
                 outcomes.append(ReviewerRecoveryOutcome(
