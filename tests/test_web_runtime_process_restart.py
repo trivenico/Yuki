@@ -60,8 +60,8 @@ def _child(mode: str, workspace: str):
     try:
         if mode == "seed":
             auth = runtime.app.auth
-            user = auth.bootstrap_admin(USERNAME, PASSWORD)
-            actor_id = memory_actor_id_for_owner(user.user_id)
+            session = auth.authenticate(USERNAME, PASSWORD)
+            actor_id = memory_actor_id_for_owner(session.user.user_id)
             memory = runtime.app.memory_store.remember(
                 actor_id=actor_id,
                 agent_id="assistant",
