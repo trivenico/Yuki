@@ -80,7 +80,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
     def test_submit_binds_result_and_is_idempotent(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
         self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
-                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
+                           session_token=self.session_token, operation_id="claim-task")
         result = build_review_result(
             self.task, status="failed", summary="A security issue needs remediation.",
             findings=(ReviewFinding(
@@ -113,7 +113,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
     def test_conflicting_second_submission_is_rejected(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
         self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
-                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
+                           session_token=self.session_token, operation_id="claim-task")
         result = build_review_result(self.task, status="passed", summary="No findings.")
         self.ledger.submit(
             actor_id="security-reviewer", task_id=self.task.task_id,
@@ -131,7 +131,7 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
     def test_read_rejects_invalid_signature(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
         self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
-                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
+                           session_token=self.session_token, operation_id="claim-task")
         result = build_review_result(self.task, status="passed", summary="No findings.")
         self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
                            expected_version=1, result=result, session_token=self.session_token,
@@ -142,6 +142,15 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         from automation.reviewer_ledger import ReviewerLedgerError
         with self.assertRaisesRegex(ReviewerLedgerError, "signature_invalid"):
             self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
+
+    def test_claim_rejects_replayed_operation_id(self):
+        self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
+        args = dict(actor_id="security-reviewer", task_id=self.task.task_id,
+                    expected_version=0, session_token=self.session_token,
+                    operation_id="single-use-claim")
+        self.ledger.claim(**args)
+        with self.assertRaises(PermissionError):
+            self.ledger.claim(**args)
 
     def test_read_detects_tampered_task_payload(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
