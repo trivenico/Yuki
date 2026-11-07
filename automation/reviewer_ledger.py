@@ -671,8 +671,7 @@ class ReviewerTaskLedger:
         return {"task_id": task_id, "state": "submitted", "version": version,
                 "reused": False, "result_digest": digest}
 
-    @staticmethod
-    def _verify_integrity(row, events) -> None:
+    def _verify_integrity(self, row, events) -> None:
         """Verify signed result integrity and replay the complete task lifecycle."""
         task_json = row["task_json"]
         task_digest = hashlib.sha256(task_json.encode("utf-8")).hexdigest()
