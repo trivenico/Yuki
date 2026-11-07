@@ -132,6 +132,28 @@ class RestoreYukiTests(unittest.TestCase):
             self.assertEqual((destination / "keep.txt").read_text(encoding="utf-8"), "do not overwrite")
             self.assertEqual(list(root.glob(".restored.restore-*")), [])
 
+    def test_restore_marks_interrupted_publication_without_deleting_destination_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, backup = self._backup(root)
+            destination = root / "restored"
+            import scripts.restore_yuki as restore_module
+            original_rename = restore_module.os.rename
+
+            def fail_after_first_publication(source, target):
+                original_rename(source, target)
+                (destination / "external.txt").write_text("preserve me", encoding="utf-8")
+                raise OSError("simulated interruption during publication")
+
+            with patch.object(restore_module.os, "rename", side_effect=fail_after_first_publication):
+                with self.assertRaisesRegex(OSError, "simulated interruption"):
+                    restore_backup(backup, destination)
+
+            self.assertTrue((destination / ".yuki-restore-incomplete").is_file())
+            self.assertEqual((destination / "external.txt").read_text(encoding="utf-8"), "preserve me")
+            self.assertTrue((destination / "nested" / "memory.sqlite3").is_file())
+            self.assertEqual(list(root.glob(".restored.restore-*")), [])
+
     def test_restore_rejects_corrupt_manifest_format(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
