@@ -6,6 +6,7 @@ import getpass
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 
@@ -29,6 +30,16 @@ def _provider_ready(provider: str, model: str | None, environ: dict[str, str]) -
     return selected.is_available()
 
 
+def _port_available(port: int, host: str = "127.0.0.1") -> bool:
+    """Return whether the local listener can bind the requested address."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind((host, port))
+        return True
+    except OSError:
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=("ollama", "openai"),
@@ -42,6 +53,9 @@ def main() -> int:
         return 1
     if not 1 <= args.port <= 65535:
         print("Port must be between 1 and 65535.")
+        return 1
+    if not _port_available(args.port):
+        print(f"Port {args.port} is already in use on 127.0.0.1. Stop the other service or choose another port.")
         return 1
 
     provider = args.provider or input("Provider [ollama/openai] (default ollama): ").strip().lower() or "ollama"
