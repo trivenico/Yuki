@@ -88,6 +88,58 @@ class ReviewerWorkerRecoveryTests(unittest.TestCase):
         self.assertEqual(report.outcomes[0].reason_code,
                          "task_or_lease_changed_during_recovery")
 
+    def test_incident_store_enforces_cooldown_and_records_success(self):
+        registry = Mock()
+        registry.expire_stale.return_value = 1
+        registry.list_workers.return_value = (Mock(state="expired"),)
+        ledger = Mock()
+        ledger.list_expired_in_progress.return_value = ({
+            "task_id": "task-a", "reviewer_agent_id": "reviewer-a",
+            "version": 4,
+        },)
+        ledger.recover_in_progress.return_value = {"state": "assigned"}
+        incidents = Mock()
+        incidents.begin_attempt.return_value = True
+        supervisor = ReviewerWorkerRecoverySupervisor(
+            registry, ledger, actor_id="recovery-controller",
+            worker_ids=("reviewer-a",),
+            replacement_resolver=lambda *_: "reviewer-b",
+            incident_store=incidents,
+        )
+        report = supervisor.run_once()
+        self.assertEqual(report.recovered_tasks, 1)
+        incidents.begin_attempt.assert_called_once_with(
+            actor_id="recovery-controller", task_id="task-a",
+            worker_id="reviewer-a",
+        )
+        incidents.record_outcome.assert_called_once_with(
+            actor_id="recovery-controller", task_id="task-a",
+            state="recovered", reason_code="lease_reassigned",
+        )
+
+    def test_incident_cooldown_prevents_ledger_recovery(self):
+        registry = Mock()
+        registry.expire_stale.return_value = 1
+        registry.list_workers.return_value = (Mock(state="expired"),)
+        ledger = Mock()
+        ledger.list_expired_in_progress.return_value = ({
+            "task_id": "task-a", "reviewer_agent_id": "reviewer-a",
+            "version": 4,
+        },)
+        incidents = Mock()
+        incidents.begin_attempt.return_value = False
+        supervisor = ReviewerWorkerRecoverySupervisor(
+            registry, ledger, actor_id="recovery-controller",
+            worker_ids=("reviewer-a",),
+            replacement_resolver=lambda *_: "reviewer-b",
+            incident_store=incidents,
+        )
+        report = supervisor.run_once()
+        self.assertEqual(report.deferred_tasks, 1)
+        self.assertEqual(report.outcomes[0].reason_code,
+                         "incident_cooldown_or_dead_letter")
+        ledger.recover_in_progress.assert_not_called()
+
     def test_missing_replacement_defers_without_mutating_task(self):
         registry = Mock()
         registry.expire_stale.return_value = 1
