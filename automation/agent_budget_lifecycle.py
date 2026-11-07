@@ -40,6 +40,11 @@ class AgentBudgetLifecycle:
         raw = "\x00".join((kind, *parts)).encode("utf-8")
         return "yt-" + hashlib.sha256(raw).hexdigest()[:40]
 
+    @classmethod
+    def subtask_task_identity(cls, plan_id: str, subtask_id: str) -> str:
+        """Return the stable logical task identity carried in workflow metadata."""
+        return cls._task_identity("subtask", plan_id, subtask_id)
+
     @staticmethod
     def _verify(snapshot: ExecutionBudgetSnapshot, *, budget_id: str,
                 task_id: str, parent_budget_id: str | None,
