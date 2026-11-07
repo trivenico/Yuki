@@ -522,6 +522,32 @@ class ReviewerTaskLedger:
         if lifecycle_state != row["state"] or current_reviewer != row["reviewer_agent_id"]:
             raise ReviewerLedgerError("review_task_lifecycle_projection_mismatch")
 
+    def list_expired_in_progress(self, *, actor_id: str, limit: int = 50) -> tuple[dict, ...]:
+        """List expired in-progress tasks for an authorized recovery controller."""
+        actor = self._actor(actor_id)
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid_reviewer_recovery_limit")
+        now = _now()
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT t.task_id,t.artifact_sha256,t.reviewer_agent_id,t.task_json,
+                          t.version,l.expires_at,l.generation
+                   FROM reviewer_tasks t JOIN reviewer_leases l ON l.task_id=t.task_id
+                   WHERE t.state='in_progress' AND l.expires_at<=?
+                   ORDER BY l.expires_at,t.task_id LIMIT ?""", (now,limit)
+            ).fetchall()
+            results=[]
+            for row in rows:
+                if not self._allowed(actor,"review:recover:list",row["artifact_sha256"]):
+                    continue
+                results.append({
+                    "task_id":row["task_id"],"artifact_sha256":row["artifact_sha256"],
+                    "reviewer_agent_id":row["reviewer_agent_id"],
+                    "task":json.loads(row["task_json"]),"version":row["version"],
+                    "lease_expires_at":row["expires_at"],"lease_generation":row["generation"],
+                })
+        return tuple(results)
+
     def get(self, *, actor_id: str, task_id: str) -> dict:
         actor = self._actor(actor_id)
         with self._connect() as db:
