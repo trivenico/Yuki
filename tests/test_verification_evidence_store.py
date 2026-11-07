@@ -35,6 +35,30 @@ class VerificationEvidenceStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "trusted_reviewer_authorizer_not_configured"):
                 store.record(make_report())
 
+    def test_author_and_each_reviewer_are_authorized_for_exact_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+            def authorize(actor_id, action, digest):
+                calls.append((actor_id, action, digest))
+                return True
+            report = make_report()
+            store = VerificationEvidenceStore(
+                Path(tmp) / "verification.sqlite3",
+                reviewer_authorizer=authorize,
+            )
+            store.record(report)
+            self.assertEqual(len(calls), 1 + len(NAMES))
+            self.assertEqual(calls[0], (
+                report.author_agent_id, "verification:submit", report.artifact_sha256
+            ))
+            self.assertEqual(
+                set(calls[1:]),
+                {
+                    (check.reviewer_agent_id, "verification:review", report.artifact_sha256)
+                    for check in report.checks
+                },
+            )
+
     def test_rejects_unregistered_reviewer_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = VerificationEvidenceStore(
