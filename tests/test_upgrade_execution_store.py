@@ -172,7 +172,7 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_request_snapshot_and_execution_records_cannot_be_rewritten_or_deleted(self):
         row = self.store.create(self.request)
-        with self.store._connect() as db:
+        with closing(self.store._connect()) as db:
             with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_request_snapshot_is_immutable"):
                 db.execute(
                     "UPDATE upgrade_executions SET request_json='{}' WHERE execution_id=?",
@@ -197,7 +197,7 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
         stored = self.store.record_evidence(
             row.execution_id, expected_version=row.version, evidence=self.evidence(),
         )
-        with self.store._connect() as db:
+        with closing(self.store._connect()) as db:
             with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_evidence_is_write_once"):
                 db.execute(
                     "UPDATE upgrade_executions SET evidence_json='{}' WHERE execution_id=?",
