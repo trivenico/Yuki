@@ -22,7 +22,7 @@ class CoordinatorReviewerAuthorizationTests(unittest.TestCase):
     def test_checks_registered_agent_and_current_coordinator_policy(self):
         digest = "a" * 64
         self.assertTrue(self.authorize("reviewer-a", "verification:review", digest))
-        self.assertEqual(self.calls, [("reviewer-a", "verification:review", digest)])
+        self.assertEqual(self.calls, [("principal-reviewer-a", "verification:review", digest)])
 
     def test_rejects_unknown_agent_and_unknown_action(self):
         self.assertFalse(self.authorize("not-registered", "verification:review", "a" * 64))
