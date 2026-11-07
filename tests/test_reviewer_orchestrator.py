@@ -195,6 +195,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             evidence_references_by_check={"acceptance_criteria":()},
         )
         task=batch.tasks[0]
+        self.assertIsInstance(task.dispatch_id,str)
         records=self.ledger.list_dispatches(
             actor_id="coordinator",artifact_sha256=self.digest,
         )
@@ -214,6 +215,18 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         self.assertEqual(self.ledger.list_dispatches(
             actor_id="coordinator",artifact_sha256=self.digest,
         )[0]["state"],"delivered")
+
+    def test_dispatch_claim_cannot_impersonate_assigned_worker(self):
+        self.orchestrator.provision_batch(
+            coordinator_id="coordinator",artifact_sha256=self.digest,
+            author_agent_id="author",agents=(self.agents[0],),
+            requirements_by_check={"acceptance_criteria":("Check criteria.",)},
+            evidence_references_by_check={"acceptance_criteria":()},
+        )
+        with self.assertRaisesRegex(PermissionError,"cannot_impersonate"):
+            self.ledger.claim_dispatches(
+                actor_id="coordinator",worker_id="reviewer-a",
+            )
 
     def test_dispatch_failure_uses_bounded_retry_then_dead_letters(self):
         self.orchestrator.provision_batch(
