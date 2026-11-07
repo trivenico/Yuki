@@ -10,6 +10,7 @@ from automation.local_worker_runtime import (
     WORKER_SERVICE_ACTOR,
     build_local_worker_runtime,
 )
+from automation.local_verification_executor import VerificationCommand
 
 
 class FakeProvider:
@@ -37,6 +38,32 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 {"research", "coding", "testing", "reporting"},
             )
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
+
+
+    def test_verification_executor_can_target_separate_materialized_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = root / "state"
+            execution_workspace = root / "snapshot"
+            storage.mkdir()
+            execution_workspace.mkdir()
+            built = build_local_worker_runtime(
+                storage,
+                FakeProvider(),
+                verification_workspace=execution_workspace,
+                verification_commands={
+                    "python-version": VerificationCommand(
+                        "python-version", ("/usr/bin/python3", "--version"), 10,
+                    ),
+                },
+            )
+            self.assertIsNotNone(built.verification_executor)
+            self.assertEqual(
+                built.verification_executor.workspace,
+                execution_workspace.resolve(),
+            )
+            receipt = built.verification_executor.run("python-version")
+            self.assertEqual(receipt.status, "passed")
 
     def test_local_runtime_accepts_per_specialist_provider_preferences(self):
         class RoutedManager:
