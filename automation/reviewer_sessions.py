@@ -99,10 +99,11 @@ class ReviewerSessionAuthority:
             raise ValueError("invalid_reviewer_identity")
         if not isinstance(artifact_sha256, str) or not _SHA.fullmatch(artifact_sha256):
             raise ValueError("invalid_artifact_sha256")
-        if not isinstance(actions, (tuple, list, set, frozenset)):
+        if (not isinstance(actions, (tuple, list, set, frozenset))
+                or any(not isinstance(action, str) for action in actions)):
             raise ValueError("invalid_reviewer_session_actions")
         granted = tuple(sorted(set(actions)))
-        if not granted or any(not isinstance(action, str) or action not in _ACTIONS for action in granted):
+        if not granted or any(action not in _ACTIONS for action in granted):
             raise ValueError("invalid_reviewer_session_actions")
         for action in granted:
             try:
@@ -129,7 +130,10 @@ class ReviewerSessionAuthority:
 
     def validate(self, token: str, *, reviewer_agent_id: str,
                  artifact_sha256: str, action: str, operation_id: str) -> bool:
-        if not isinstance(action, str) or action not in _ACTIONS or not isinstance(operation_id, str) or not _ID.fullmatch(operation_id):
+        if (not isinstance(reviewer_agent_id, str) or not _ID.fullmatch(reviewer_agent_id)
+                or not isinstance(artifact_sha256, str) or not _SHA.fullmatch(artifact_sha256)
+                or not isinstance(action, str) or action not in _ACTIONS
+                or not isinstance(operation_id, str) or not _ID.fullmatch(operation_id)):
             return False
         try:
             payload = self._decode(token)
