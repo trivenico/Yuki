@@ -196,6 +196,11 @@ class ReviewerLeaseAuthority:
     def recover(self, *, actor_id: str, task_id: str, artifact_sha256: str,
                 replacement_reviewer_agent_id: str, ttl_seconds: int = 300) -> ReviewerLease:
         """Explicitly supersede an expired lease; generation always increases."""
+        if not isinstance(actor_id, str) or not _ID.fullmatch(actor_id):
+            raise ValueError("invalid_reviewer_lease_actor")
+        self._validate(task_id, artifact_sha256, replacement_reviewer_agent_id)
+        if not self._allowed(actor_id, "review:lease:recover", artifact_sha256):
+            raise PermissionError("reviewer_lease_recovery_not_authorized")
         return self.acquire(actor_id=actor_id,task_id=task_id,artifact_sha256=artifact_sha256,
             reviewer_agent_id=replacement_reviewer_agent_id,ttl_seconds=ttl_seconds)
 
