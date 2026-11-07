@@ -32,7 +32,7 @@ from providers.usage_meter import UsageMeteredProvider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
-from core.readiness import build_readiness_report
+from core.readiness import build_readiness_report, recommended_worker_concurrency
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
@@ -183,7 +183,9 @@ def main():
         active_provider = raw_provider
     ai = YukiAgent(active_provider)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    local_workers = build_local_worker_runtime(workspace, ai.provider)
+    local_workers = build_local_worker_runtime(
+        workspace, ai.provider, max_workers=recommended_worker_concurrency()
+    )
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
