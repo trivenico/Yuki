@@ -27,7 +27,7 @@ class EngineeringAcceptanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.evidence = VerificationEvidenceStore(root / "evidence.sqlite")
+        self.evidence = VerificationEvidenceStore(root / "evidence.sqlite", reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64)
         self.workflow = VerificationWorkflow(
             root / "artifacts.sqlite", self.evidence,
             reviewer_authorize=lambda actor, action, artifact: actor == "reviewer" and action == "verification:submit",
