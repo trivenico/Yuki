@@ -69,6 +69,9 @@ def main() -> int:
         cli = shutil.which("gemini")
         failures += not check("Gemini CLI", bool(cli),
                               cli or "install and authenticate Gemini CLI")
+    elif provider in {"openai", "gemini"}:
+        # CLI availability is not authentication; the acceptance command verifies inference.
+        pass
     elif provider == "hybrid":
         model = str(config.get("ollama_model", "")).strip()
         cli = shutil.which("ollama")
