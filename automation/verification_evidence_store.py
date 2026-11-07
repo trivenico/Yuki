@@ -11,7 +11,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from automation.independent_verification import (
     VerificationCheck, VerificationReport, evaluate_verification,
@@ -29,8 +29,11 @@ class VerificationConflict(VerificationStoreError):
 class VerificationEvidenceStore:
     """SQLite-backed append-only report store with idempotent report creation."""
 
-    def __init__(self, database_path: str | Path):
+    def __init__(self, database_path: str | Path, *, execution_evidence_validator: Callable[[str, str, str], bool] | None = None):
         self.database_path = str(database_path)
+        if execution_evidence_validator is not None and not callable(execution_evidence_validator):
+            raise TypeError("execution_evidence_validator must be callable")
+        self.execution_evidence_validator = execution_evidence_validator
         if not self.database_path.strip():
             raise ValueError("database_path is required")
         self._initialize()
@@ -79,6 +82,14 @@ class VerificationEvidenceStore:
             report,
             **({"required_checks": required_checks} if required_checks is not None else {}),
         )
+        for check in report.checks:
+            if check.evidence_reference.startswith("yuki-verification-execution://"):
+                if self.execution_evidence_validator is None:
+                    raise VerificationStoreError("execution_receipt_validator_not_configured")
+                if self.execution_evidence_validator(
+                    check.evidence_reference, report.artifact_sha256, check.name,
+                ) is not True:
+                    raise VerificationStoreError("execution_receipt_invalid_or_not_successful")
         serialized = self._serialize(report)
         report_id = self._report_id(serialized)
         decision_json = json.dumps(asdict(decision), sort_keys=True, separators=(",", ":"))
