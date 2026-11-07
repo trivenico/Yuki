@@ -1,5 +1,6 @@
 """Tests for consistent, checksummed SQLite workspace backups."""
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -16,7 +17,7 @@ class BackupYukiTests(unittest.TestCase):
             workspace.mkdir()
             database = workspace / "nested" / "memory.sqlite3"
             database.parent.mkdir()
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute("CREATE TABLE memories (value TEXT)")
                 db.execute("INSERT INTO memories VALUES ('persistent memory')")
             output = root / "backup"
@@ -27,7 +28,7 @@ class BackupYukiTests(unittest.TestCase):
             self.assertEqual(manifest["database_count"], 1)
             self.assertEqual(entry["path"], "nested/memory.sqlite3")
             self.assertEqual(entry["sha256"], __import__("hashlib").sha256(backup_db.read_bytes()).hexdigest())
-            with sqlite3.connect(backup_db) as db:
+            with closing(sqlite3.connect(backup_db)) as db, db:
                 self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(db.execute("SELECT value FROM memories").fetchone()[0], "persistent memory")
 
@@ -36,7 +37,7 @@ class BackupYukiTests(unittest.TestCase):
             root = Path(temporary)
             workspace = root / "workspace"
             workspace.mkdir()
-            with sqlite3.connect(workspace / "app.db") as db:
+            with closing(sqlite3.connect(workspace / "app.db")) as db, db:
                 db.execute("CREATE TABLE sample (id INTEGER)")
             (workspace / ".yuki-restore-incomplete").write_text("inspect", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "incomplete restore"):
@@ -65,7 +66,7 @@ class BackupYukiTests(unittest.TestCase):
             root = Path(temporary)
             workspace = root / "workspace"
             workspace.mkdir()
-            with sqlite3.connect(workspace / "app.db") as db:
+            with closing(sqlite3.connect(workspace / "app.db")) as db, db:
                 db.execute("CREATE TABLE sample (id INTEGER)")
             output = root / "existing"
             output.mkdir()
@@ -78,7 +79,7 @@ class BackupYukiTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             outside = root / "private.db"
-            with sqlite3.connect(outside) as db:
+            with closing(sqlite3.connect(outside)) as db, db:
                 db.execute("CREATE TABLE secrets (value TEXT)")
                 db.execute("INSERT INTO secrets VALUES ('must not be copied')")
             link = workspace / "linked.db"
