@@ -18,7 +18,7 @@ import re
 from typing import Callable, Sequence
 
 from automation.approved_workspace_changes import FileChange
-from automation.authorized_read_tools import ToolInputError
+from automation.authorized_read_tools import ToolAuthorizationError, ToolInputError
 
 _MAX_CHANGES = 8
 _MAX_FILE_BYTES = 256 * 1024
