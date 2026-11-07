@@ -38,7 +38,9 @@ results. The service does not automatically replay in-progress tasks.
 ## Deployment
 
 All instances for one reviewer identity must share the same SQLite registry
-database and use the same configured global concurrency cap. SQLite WAL and
+database and use the same configured global concurrency cap. The registry
+persists the first accepted cap and rejects later mismatched configurations;
+slot contention is treated as backpressure rather than an execution failure. SQLite WAL and
 locking require a filesystem with supported SQLite semantics; do not treat a
 shared network filesystem as a distributed database. Use a transactional
 shared database or coordination service for multi-host deployments.
