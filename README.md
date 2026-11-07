@@ -6,6 +6,24 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Local specialist-runtime smoke test
+
+After installing the project dependencies, run a deterministic wiring check:
+
+```bash
+python scripts/local_smoke.py
+```
+
+This creates a temporary workspace, submits one coordinator-managed specialist task, validates its persisted budget reference, and executes it through a fake provider. It requires no API key, Ollama server, model download, or network access. A successful result verifies local orchestration wiring only; it does **not** verify real model inference or production readiness.
+
+To keep the task database for inspection, pass a workspace path:
+
+```bash
+python scripts/local_smoke.py --workspace ./yuki-smoke-workspace
+```
+
+For environment diagnostics, run `python scripts/doctor.py`. The doctor checks the existing prototype's core imports; it is not a substitute for the smoke test or the unit suite.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
