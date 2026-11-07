@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -49,6 +50,8 @@ class AgentExecutionLoop:
         cancellation_requested: Callable[[], bool] | None = None,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        budget_store=None,
+        budget_id: str | None = None,
     ):
         if not callable(model):
             raise TypeError("model must be callable.")
@@ -83,6 +86,16 @@ class AgentExecutionLoop:
         self.cancellation_requested = cancellation_requested or (lambda: False)
         self.on_event = on_event
         self.clock = clock
+        if (budget_store is None) != (budget_id is None):
+            raise ValueError("budget_store_and_budget_id_must_be_supplied_together")
+        if budget_store is not None:
+            from core.reasoning.execution_budget_store import ExecutionBudgetStore
+            if not isinstance(budget_store, ExecutionBudgetStore):
+                raise TypeError("budget_store_must_be_ExecutionBudgetStore")
+            if not isinstance(budget_id, str) or not budget_id:
+                raise ValueError("budget_id_required")
+        self.budget_store = budget_store
+        self.budget_id = budget_id
 
     def _event(self, kind: str, **details: Any) -> None:
         if self.on_event is not None:
@@ -143,6 +156,7 @@ class AgentExecutionLoop:
         ]
         turns = 0
         calls_total = 0
+        execution_id = uuid.uuid4().hex
         self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
 
         while turns < self.max_model_turns:
@@ -156,6 +170,27 @@ class AgentExecutionLoop:
                 return AgentExecutionResult("limit_reached", "", turns, calls_total,
                                             max(0.0, self.clock() - started))
 
+            if self.budget_store is not None:
+                try:
+                    self.budget_store.reserve(
+                        budget_id=self.budget_id, resource="model_turns", amount=1,
+                        idempotency_key=execution_id + ":model:" + str(turns + 1),
+                    )
+                    prompt_chars = sum(len(item["content"]) for item in messages)
+                    if prompt_chars:
+                        self.budget_store.reserve(
+                            budget_id=self.budget_id, resource="transcript_chars",
+                            amount=prompt_chars,
+                            idempotency_key=execution_id + ":transcript:" + str(turns + 1),
+                        )
+                except Exception as exc:
+                    from core.reasoning.execution_budget_store import ExecutionBudgetStoreError
+                    if isinstance(exc, ExecutionBudgetStoreError) and str(exc).startswith("budget_exhausted"):
+                        self._event("agent.stopped", reason="limit_reached", limit="durable_budget",
+                                    model_turns=turns, tool_calls=calls_total)
+                        return AgentExecutionResult("limit_reached", "", turns, calls_total,
+                                                    max(0.0, self.clock() - started))
+                    raise
             try:
                 if self.stream_model is not None and on_text_delta is not None:
                     response = None
@@ -250,6 +285,21 @@ class AgentExecutionLoop:
                 self._event("agent.stopped", reason=reason, model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult(reason, "", turns, calls_total,
                                             max(0.0, self.clock() - started))
+
+            if self.budget_store is not None:
+                try:
+                    self.budget_store.reserve(
+                        budget_id=self.budget_id, resource="tool_calls", amount=len(parsed),
+                        idempotency_key=execution_id + ":tools:" + str(turns),
+                    )
+                except Exception as exc:
+                    from core.reasoning.execution_budget_store import ExecutionBudgetStoreError
+                    if isinstance(exc, ExecutionBudgetStoreError) and str(exc).startswith("budget_exhausted"):
+                        self._event("agent.stopped", reason="limit_reached", limit="durable_budget",
+                                    model_turns=turns, tool_calls=calls_total)
+                        return AgentExecutionResult("limit_reached", "", turns, calls_total,
+                                                    max(0.0, self.clock() - started))
+                    raise
 
             messages.append({"role": "assistant", "content": text or encoded_envelope})
             try:
