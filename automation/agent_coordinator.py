@@ -17,6 +17,8 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
+from automation.agent_budget_lifecycle import AgentBudgetLifecycle, AgentBudgetAllocationError
+from core.reasoning.execution_budget_store import ExecutionBudgetStore
 from automation.agent_contracts import AgentContract, validate_agent_input, validate_agent_output
 from automation.agent_runtime_readiness import AgentRuntimeReadiness, AgentRuntimeRequirement
 from automation.task_runtime import TaskRecord, TaskRuntime
@@ -136,6 +138,9 @@ class SpecialistAgentCoordinator:
         trace_store: AgentExecutionTraceStore | None = None,
         contracts: dict[str, AgentContract] | None = None,
         runtime_readiness: Callable[[SpecialistAgent], AgentRuntimeReadiness] | None = None,
+        budget_store: ExecutionBudgetStore | None = None,
+        budget_policy: Callable[[str, str, str | None], dict[str, int]] | None = None,
+        budget_policy_version: str = "v1",
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -156,6 +161,18 @@ class SpecialistAgentCoordinator:
         if runtime_readiness is not None and not callable(runtime_readiness):
             raise TypeError("runtime_readiness must be callable.")
         self.runtime_readiness = runtime_readiness
+        if (budget_store is None) != (budget_policy is None):
+            raise TypeError("budget_store and budget_policy must be supplied together.")
+        if budget_store is not None and not isinstance(budget_store, ExecutionBudgetStore):
+            raise TypeError("budget_store must be an ExecutionBudgetStore.")
+        if budget_policy is not None and not callable(budget_policy):
+            raise TypeError("budget_policy must be callable.")
+        if not isinstance(budget_policy_version, str) or not budget_policy_version.strip() or len(budget_policy_version) > 64:
+            raise ValueError("budget_policy_version must be bounded non-empty text.")
+        self.budget_store = budget_store
+        self.budget_policy = budget_policy
+        self.budget_policy_version = budget_policy_version
+        self.budget_lifecycle = AgentBudgetLifecycle(budget_store) if budget_store is not None else None
         if contracts is not None and not isinstance(contracts, dict):
             raise TypeError('contracts must be a mapping of agent IDs to AgentContract values.')
         self.trace_errors = 0
@@ -195,6 +212,10 @@ class SpecialistAgentCoordinator:
                 db.execute("ALTER TABLE agent_plans ADD COLUMN request_key TEXT NOT NULL DEFAULT ''")
             if "owner_id" not in plan_columns:
                 db.execute("ALTER TABLE agent_plans ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''")
+            if "budget_id" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN budget_id TEXT")
+            if "budget_allocation_state" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN budget_allocation_state TEXT NOT NULL DEFAULT 'pending'")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
                     plan_id TEXT NOT NULL,
@@ -217,6 +238,10 @@ class SpecialistAgentCoordinator:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
             if "agent_identity_digest" not in columns:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN agent_identity_digest TEXT NOT NULL DEFAULT ""')
+            if "budget_id" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN budget_id TEXT")
+            if "budget_allocation_state" not in columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN budget_allocation_state TEXT NOT NULL DEFAULT 'pending'")
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_hierarchy (
@@ -743,6 +768,76 @@ class SpecialistAgentCoordinator:
                 active += 1
         return active
 
+    def ensure_plan_budgets(self, *, actor_id: str, plan_id: str) -> dict:
+        """Reconcile deterministic plan/subtask allocations before dispatch.
+
+        The budget store uses its own SQLite connection, so allocations are
+        performed outside coordinator write transactions. Durable state is
+        updated after each verified allocation; retries verify immutable
+        snapshots rather than creating fresh budgets.
+        """
+        if self.budget_lifecycle is None or self.budget_policy is None:
+            raise AgentPlanError("plan budget enforcement is not configured.")
+        if not self._allowed(actor_id, "agent:dispatch", plan_id):
+            raise PermissionError("agent budget preparation is not authorized.")
+        with self._connect() as db:
+            plan = db.execute(
+                "SELECT plan_id, owner_id, budget_id FROM agent_plans WHERE plan_id=?",
+                (plan_id,),
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            if plan["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan ownership mismatch.")
+            rows = [dict(row) for row in db.execute(
+                "SELECT subtask_id, agent_id, budget_id FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
+                (plan_id,),
+            ).fetchall()]
+        try:
+            plan_limits = self.budget_policy("plan", plan_id, None)
+            root = self.budget_lifecycle.ensure_plan_budget(
+                plan_id=plan_id, limits=plan_limits,
+                policy_version=self.budget_policy_version,
+            )
+            with self._connect() as db:
+                db.execute(
+                    "UPDATE agent_plans SET budget_id=?, budget_allocation_state='allocated' WHERE plan_id=?",
+                    (root.budget_id, plan_id),
+                )
+            for row in rows:
+                limits = self.budget_policy("subtask", plan_id, row["subtask_id"])
+                child = self.budget_lifecycle.ensure_subtask_budget(
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    parent_budget_id=root.budget_id, limits=limits,
+                    policy_version=self.budget_policy_version,
+                )
+                with self._connect() as db:
+                    db.execute(
+                        """UPDATE agent_plan_subtasks
+                           SET budget_id=?, budget_allocation_state='allocated'
+                           WHERE plan_id=? AND subtask_id=?""",
+                        (child.budget_id, plan_id, row["subtask_id"]),
+                    )
+            return {
+                "plan_budget_id": root.budget_id,
+                "allocated_subtasks": len(rows),
+                "state": "allocated",
+            }
+        except Exception as exc:
+            with self._connect() as db:
+                db.execute(
+                    "UPDATE agent_plans SET budget_allocation_state='failed' WHERE plan_id=?",
+                    (plan_id,),
+                )
+                db.execute(
+                    """UPDATE agent_plan_subtasks SET budget_allocation_state='failed'
+                       WHERE plan_id=? AND budget_allocation_state!='allocated'""",
+                    (plan_id,),
+                )
+            if isinstance(exc, (AgentBudgetAllocationError, AgentPlanError)):
+                raise AgentPlanError("plan budget allocation failed; dispatch is blocked.") from exc
+            raise AgentPlanError("plan budget policy or allocation failed; dispatch is blocked.") from exc
+
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
@@ -750,6 +845,10 @@ class SpecialistAgentCoordinator:
         # Refresh persisted operator changes before dispatch. A coordinator that
         # has been running for a long time must not keep using stale enablement.
         self._refresh_agent_registry(strict=False)
+        # Budget allocations are reconciled before any dispatch reservation or
+        # TaskRuntime enqueue. Allocation failure is fail-closed.
+        if self.budget_lifecycle is not None:
+            self.ensure_plan_budgets(actor_id=actor_id, plan_id=plan_id)
         # Never hold a coordinator SQLite write lock while calling TaskRuntime:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
