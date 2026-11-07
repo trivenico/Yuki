@@ -481,6 +481,46 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(child.subtasks[0].required_permissions, ("web:read",))
         self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
 
+
+    def test_parent_dispatch_waits_for_child_team_success(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-gated-parent",
+            subtasks=[SubtaskSpec(
+                "engineering-lead", "Integrate specialist findings", ("research",),
+                requires_approval=False,
+            )],
+        )
+        child = self.coordinator.submit_child_plan(
+            actor_id="alice", parent_plan_id=parent.plan_id,
+            parent_subtask_id="engineering-lead",
+            idempotency_key="hierarchy-gated-child",
+            subtasks=[SubtaskSpec(
+                "research-task", "Gather technical evidence", ("research",),
+                requires_approval=False,
+            )],
+        )
+
+        waiting = self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        self.assertIsNone(waiting.subtasks[0].task_id)
+        child_waiting = self.coordinator.get_plan(actor_id="alice", plan_id=child.plan_id)
+        self.assertIsNotNone(child_waiting.subtasks[0].task_id)
+        self.assertEqual(child_waiting.subtasks[0].status, "queued")
+
+        claimed = self.store.claim_next(worker_id="hierarchy-child-worker")
+        self.assertIsNotNone(claimed)
+        self.store.transition(
+            claimed.run_id, expected_version=claimed.version, to_state="succeeded",
+            result={"ok": True, "output": "Evidence gathered"},
+            expected_lease_owner="hierarchy-child-worker",
+            event_kind="task.completed", event_actor_id="alice",
+            event_payload={"state_version": claimed.version + 1},
+        )
+
+        completed = self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        self.assertEqual(completed.subtasks[0].status, "queued")
+        self.assertIsNotNone(completed.subtasks[0].task_id)
+        self.assertNotEqual(completed.subtasks[0].task_id, claimed.run_id)
+
     def test_child_team_cannot_escalate_parent_permissions(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="hierarchy-scope-parent",
