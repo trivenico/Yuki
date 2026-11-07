@@ -52,10 +52,12 @@ class ReviewerWorkerRecoverySupervisor:
         worker_ids: Iterable[str],
         replacement_resolver: Callable[[dict, str], str | None],
     ) -> None:
-        if not isinstance(registry, ReviewerWorkerRegistry):
-            raise TypeError("reviewer_worker_registry_required")
-        if not isinstance(ledger, ReviewerTaskLedger):
-            raise TypeError("reviewer_task_ledger_required")
+        if not all(callable(getattr(registry, name, None)) for name in
+                   ("expire_stale", "list_workers")):
+            raise TypeError("reviewer_worker_registry_interface_required")
+        if not all(callable(getattr(ledger, name, None)) for name in
+                   ("list_expired_in_progress", "recover_in_progress")):
+            raise TypeError("reviewer_task_ledger_interface_required")
         if not isinstance(actor_id, str) or not actor_id:
             raise ValueError("reviewer_recovery_actor_required")
         ids = tuple(dict.fromkeys(worker_ids))
