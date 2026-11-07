@@ -163,6 +163,14 @@ class ReviewerSessionAuthority:
         except (ReviewerSessionError, PermissionError, ValueError, KeyError, TypeError, sqlite3.IntegrityError):
             return False
 
+    def revoke_token(self, token: str) -> None:
+        """Revoke a host-held session token without exposing its session ID."""
+        payload = self._decode(token)
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise ReviewerSessionError("invalid_reviewer_session_token")
+        self.revoke(session_id=session_id)
+
     def revoke(self, *, session_id: str) -> None:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id_required")
