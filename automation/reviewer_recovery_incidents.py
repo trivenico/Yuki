@@ -199,6 +199,70 @@ class ReviewerRecoveryIncidentStore:
             row["updated_at"],
         )
 
+    def list_incidents(
+        self, *, actor_id: str, state: str | None = None, limit: int = 100,
+    ) -> tuple[RecoveryIncident, ...]:
+        actor = self._id(actor_id, "invalid_recovery_incident_actor")
+        if state is not None and state not in ("open", "cooldown", "recovered", "dead_letter"):
+            raise ValueError("invalid_recovery_incident_state")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid_recovery_incident_limit")
+        # The authorization callback receives a reserved collection scope.
+        self._allowed(actor, "review:recovery:list", "recovery-incidents")
+        with self._connect() as db:
+            if state is None:
+                rows = db.execute(
+                    "SELECT * FROM reviewer_recovery_incidents ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM reviewer_recovery_incidents WHERE state=? ORDER BY updated_at DESC LIMIT ?",
+                    (state, limit),
+                ).fetchall()
+        return tuple(RecoveryIncident(
+            row["task_id"], row["worker_id"], row["state"], row["attempts"],
+            row["max_attempts"], row["next_attempt_at"], row["last_reason_code"],
+            row["updated_at"],
+        ) for row in rows)
+
+    def remediate_dead_letter(
+        self, *, actor_id: str, task_id: str, reason_code: str,
+        max_attempts: int | None = None,
+    ) -> RecoveryIncident:
+        actor = self._id(actor_id, "invalid_recovery_incident_actor")
+        task = self._id(task_id, "invalid_recovery_incident_task")
+        if not isinstance(reason_code, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", reason_code):
+            raise ValueError("invalid_recovery_incident_reason")
+        maximum = self.default_max_attempts if max_attempts is None else max_attempts
+        if type(maximum) is not int or not 1 <= maximum <= 100:
+            raise ValueError("invalid_recovery_incident_max_attempts")
+        self._allowed(actor, "review:recovery:remediate", task)
+        stamp = self._stamp(self._now())
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("recovery incident not found")
+            if row["state"] != "dead_letter":
+                raise ReviewerRecoveryIncidentConflict("incident_not_dead_letter")
+            db.execute("""UPDATE reviewer_recovery_incidents SET state='open',
+                attempts=0,max_attempts=?,next_attempt_at=NULL,last_reason_code=?,
+                updated_at=? WHERE task_id=?""", (maximum, reason_code, stamp, task))
+            db.execute("""INSERT INTO reviewer_recovery_incident_events
+                (task_id,event_type,reason_code,occurred_at,metadata_json)
+                VALUES (?,'operator_remediated',?,?,'{}')""", (task, reason_code, stamp))
+            updated = db.execute(
+                "SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)
+            ).fetchone()
+        return RecoveryIncident(
+            updated["task_id"], updated["worker_id"], updated["state"],
+            updated["attempts"], updated["max_attempts"], updated["next_attempt_at"],
+            updated["last_reason_code"], updated["updated_at"],
+        )
+
     def list_events(self, *, actor_id: str, task_id: str) -> tuple[dict, ...]:
         actor = self._id(actor_id, "invalid_recovery_incident_actor")
         task = self._id(task_id, "invalid_recovery_incident_task")
