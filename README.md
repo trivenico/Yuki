@@ -129,7 +129,7 @@ To keep the task database for inspection, pass a workspace path:
 python scripts/local_smoke.py --workspace ./yuki-smoke-workspace
 ```
 
-For environment diagnostics, run `python scripts/doctor.py`. The doctor checks the existing prototype's core imports; it is not a substitute for the smoke test or the unit suite.
+For environment diagnostics, run `python scripts/doctor.py`. This uses the shared read-only runtime doctor to validate Python, configuration and provider availability. It does not send an inference prompt; run the smoke test and unit suite separately.
 
 ## Minimal project structure and navigation
 
