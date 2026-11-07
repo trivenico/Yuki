@@ -253,9 +253,13 @@ class ReviewerTaskLedger:
         claimed=[]
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            stale=db.execute("""SELECT dispatch_id,attempts FROM reviewer_dispatch_outbox
-                WHERE state='claimed' AND claim_expires_at<=?""",(now,)).fetchall()
+            stale=db.execute("""SELECT dispatch_id,attempts,artifact_sha256,reviewer_agent_id
+                FROM reviewer_dispatch_outbox
+                WHERE state='claimed' AND claim_expires_at<=? AND reviewer_agent_id=?""",
+                (now,worker)).fetchall()
             for item in stale:
+                if not self._allowed(actor,"review:dispatch:recover",item["artifact_sha256"]):
+                    continue
                 state="dead_letter" if item["attempts"] >= max_attempts else "pending"
                 db.execute("""UPDATE reviewer_dispatch_outbox SET state=?,claimed_by=NULL,
                     claim_token_digest=NULL,claim_expires_at=NULL,
