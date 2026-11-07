@@ -84,7 +84,11 @@ class ReviewerWorkerRecoverySupervisor:
             statuses = self.registry.list_workers(
                 actor_id=self.actor_id, worker_id=worker_id,
             )
-            if any(item.state == "expired" for item in statuses):
+            # A stale historical instance must not mark an identity dead while
+            # another instance for that reviewer still holds a live lease.
+            has_live_instance = any(item.state in ("running", "stopping") for item in statuses)
+            has_expired_instance = any(item.state == "expired" for item in statuses)
+            if has_expired_instance and not has_live_instance:
                 expired_ids.add(worker_id)
 
         if not expired_ids:
