@@ -242,6 +242,7 @@ def build_training_preflight(
     required_storage_bytes,
     estimated_cost,
     budget_limit,
+    quality_report,
 ):
     """Create a fail-closed, non-executing resource-fit report for an experiment.
 
@@ -249,6 +250,31 @@ def build_training_preflight(
     guarantees. This function never dispatches a job or authorizes spending.
     """
     verify_experiment_spec(spec)
+    if not isinstance(quality_report, dict) or set(quality_report) != {
+        "schema_version", "record_count", "unique_record_count",
+        "duplicate_record_count", "oversized_record_count",
+        "potential_sensitive_finding_count", "average_prompt_chars",
+        "average_response_chars", "content_sha256", "status", "findings",
+        "source_modified", "legal_rights_verified", "pii_scan_is_heuristic",
+    }:
+        raise TrainingExperimentError("invalid_dataset_quality_report")
+    quality_digest = _digest(quality_report.get("content_sha256"), "dataset_quality_content_sha256")
+    if (quality_report.get("schema_version") != 1
+            or quality_report.get("status") != "passed"
+            or quality_report.get("source_modified") is not False
+            or quality_report.get("pii_scan_is_heuristic") is not True
+            or quality_report.get("legal_rights_verified") is not False
+            or quality_report.get("findings") != []
+            or type(quality_report.get("record_count")) is not int
+            or quality_report["record_count"] < 1
+            or type(quality_report.get("unique_record_count")) is not int
+            or quality_report["unique_record_count"] < 1
+            or quality_report["unique_record_count"] > quality_report["record_count"]
+            or quality_report.get("potential_sensitive_finding_count") != 0
+            or quality_report.get("oversized_record_count") != 0):
+        raise TrainingExperimentError("dataset_quality_not_approved")
+    if type(quality_report.get("duplicate_record_count")) is not int or quality_report["duplicate_record_count"] < 0:
+        raise TrainingExperimentError("invalid_dataset_quality_report")
     if not isinstance(worker, dict) or set(worker) != {
         "worker_id", "online", "paired", "enabled", "backends",
         "ram_available_bytes", "storage_available_bytes",
@@ -296,6 +322,8 @@ def build_training_preflight(
         "schema_version": 1,
         "experiment_id": spec["experiment_id"],
         "experiment_sha256": spec["experiment_sha256"],
+        "dataset_quality_content_sha256": quality_digest,
+        "dataset_quality_status": quality_report["status"],
         "worker_id": worker["worker_id"],
         "backend": backend,
         "estimated_peak_memory_bytes": estimated_peak_memory_bytes,
