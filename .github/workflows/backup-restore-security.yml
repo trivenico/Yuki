@@ -1,0 +1,38 @@
+name: Yuki Backup and Restore Security
+
+on:
+  push:
+    branches:
+      - "feature/reasoning-context-builder"
+    paths:
+      - "scripts/backup_yuki.py"
+      - "scripts/restore_yuki.py"
+      - "tests/test_backup_yuki.py"
+      - "tests/test_restore_yuki.py"
+      - ".github/workflows/backup-restore-security.yml"
+  pull_request:
+    paths:
+      - "scripts/backup_yuki.py"
+      - "scripts/restore_yuki.py"
+      - "tests/test_backup_yuki.py"
+      - "tests/test_restore_yuki.py"
+      - ".github/workflows/backup-restore-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite-backup-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile backup and restore modules
+        run: python -m py_compile scripts/backup_yuki.py scripts/restore_yuki.py
+      - name: Run backup regression tests
+        run: python -m unittest discover -s tests -p "test_backup_yuki.py" -v
+      - name: Run restore regression tests
+        run: python -m unittest discover -s tests -p "test_restore_yuki.py" -v
