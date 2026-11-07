@@ -111,6 +111,42 @@ class ReviewerLeaseAuthority:
             raise ReviewerLeaseError("noncanonical_reviewer_lease_token")
         return payload
 
+    def acquire_in_transaction(self, db, *, actor_id: str, task_id: str,
+                               artifact_sha256: str, reviewer_agent_id: str,
+                               ttl_seconds: int = 300) -> ReviewerLease:
+        """Create a lease inside a caller-owned transaction on this database."""
+        self._validate(task_id, artifact_sha256, reviewer_agent_id)
+        if not isinstance(actor_id, str) or not _ID.fullmatch(actor_id):
+            raise ValueError("invalid_reviewer_lease_actor")
+        if type(ttl_seconds) is not int or not 30 <= ttl_seconds <= 3600:
+            raise ValueError("invalid_reviewer_lease_ttl")
+        if not self._allowed(actor_id, "review:lease:acquire", artifact_sha256):
+            raise PermissionError("reviewer_lease_acquisition_not_authorized")
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        nonce = secrets.token_urlsafe(24)
+        row = db.execute("SELECT artifact_sha256,generation,expires_at FROM reviewer_leases WHERE task_id=?",
+                         (task_id,)).fetchone()
+        if row and row[0] != artifact_sha256:
+            raise ReviewerLeaseConflict("reviewer_lease_artifact_conflict")
+        if row and datetime.fromisoformat(row[2]) > now:
+            raise ReviewerLeaseConflict("reviewer_lease_already_active")
+        generation = row[1] + 1 if row else 1
+        token = self._issue_token(task_id=task_id,digest=artifact_sha256,
+            reviewer=reviewer_agent_id,generation=generation,expires=expires,nonce=nonce)
+        db.execute("""INSERT INTO reviewer_leases VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(task_id) DO UPDATE SET artifact_sha256=excluded.artifact_sha256,
+            reviewer_agent_id=excluded.reviewer_agent_id,generation=excluded.generation,
+            expires_at=excluded.expires_at,token_nonce=excluded.token_nonce,
+            updated_at=excluded.updated_at""",
+            (task_id,artifact_sha256,reviewer_agent_id,generation,expires,nonce,now.isoformat()))
+        db.execute("""INSERT INTO reviewer_lease_events
+            (task_id,generation,event_type,actor_id,reviewer_agent_id,occurred_at,details_json)
+            VALUES(?,?,?,?,?,?,?)""",
+            (task_id,generation,"acquired",actor_id,reviewer_agent_id,now.isoformat(),
+             json.dumps({"expires_at":expires},sort_keys=True)))
+        return ReviewerLease(task_id,artifact_sha256,reviewer_agent_id,generation,expires,token)
+
     def acquire(self, *, actor_id: str, task_id: str, artifact_sha256: str,
                 reviewer_agent_id: str, ttl_seconds: int = 300) -> ReviewerLease:
         self._validate(task_id, artifact_sha256, reviewer_agent_id)
