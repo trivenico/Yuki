@@ -1141,6 +1141,21 @@ class SpecialistAgentCoordinator:
         self, *, actor_id: str, parent_plan_id: str, parent_subtask_id: str,
         idempotency_key: str, subtasks: Iterable[SubtaskSpec],
     ) -> AgentPlan:
+        # Serialize child creation with dispatches made through this coordinator
+        # instance so a parent task cannot be dispatched between validation and
+        # durable attachment. Cross-process parent/child atomicity still needs
+        # a single shared transaction API and is not claimed by this method.
+        with self._agent_lock:
+            return self._submit_child_plan_locked(
+                actor_id=actor_id, parent_plan_id=parent_plan_id,
+                parent_subtask_id=parent_subtask_id,
+                idempotency_key=idempotency_key, subtasks=subtasks,
+            )
+
+    def _submit_child_plan_locked(
+        self, *, actor_id: str, parent_plan_id: str, parent_subtask_id: str,
+        idempotency_key: str, subtasks: Iterable[SubtaskSpec],
+    ) -> AgentPlan:
         """Create a bounded child team plan without broadening parent permissions.
 
         This persists hierarchy and inherited permission scope. It does not yet
