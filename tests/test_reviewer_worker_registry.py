@@ -1,3 +1,4 @@
+from contextlib import closing
 """Tests for durable reviewer worker registration and global slots."""
 from __future__ import annotations
 
@@ -68,7 +69,7 @@ class ReviewerWorkerRegistryTests(unittest.TestCase):
                                      instance_id="instance-a", lease_seconds=10)
         # Expiry is simulated by making the lease timestamp stale in SQLite.
         import sqlite3
-        with sqlite3.connect(self.db) as db:
+        with closing(sqlite3.connect(self.db)) as db, db:
             db.execute("UPDATE reviewer_worker_instances SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE instance_id=?",
                        (reg.instance_id,))
         with self.assertRaisesRegex(ReviewerWorkerRegistryConflict,
