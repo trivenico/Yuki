@@ -15,6 +15,7 @@ from automation.reviewer_leases import ReviewerLeaseConflict
 from automation.reviewer_worker_registry import (
     ReviewerWorkerRegistry, ReviewerWorkerRegistryConflict,
 )
+from automation.reviewer_recovery_incidents import ReviewerRecoveryIncidentStore
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,8 @@ class ReviewerWorkerRecoverySupervisor:
         actor_id: str,
         worker_ids: Iterable[str],
         replacement_resolver: Callable[[dict, str], str | None],
+        incident_store: ReviewerRecoveryIncidentStore | None = None,
+        incident_cooldown_seconds: int = 300,
     ) -> None:
         if not all(callable(getattr(registry, name, None)) for name in
                    ("expire_stale", "list_workers")):
@@ -65,11 +68,17 @@ class ReviewerWorkerRecoverySupervisor:
             raise ValueError("reviewer_recovery_worker_ids_required")
         if not callable(replacement_resolver):
             raise TypeError("trusted_reviewer_replacement_resolver_required")
+        if incident_store is not None and not callable(getattr(incident_store, "begin_attempt", None)):
+            raise TypeError("reviewer_recovery_incident_store_required")
+        if type(incident_cooldown_seconds) is not int or not 1 <= incident_cooldown_seconds <= 86400:
+            raise ValueError("invalid_reviewer_recovery_incident_cooldown")
         self.registry = registry
         self.ledger = ledger
         self.actor_id = actor_id
         self.worker_ids = ids
         self.replacement_resolver = replacement_resolver
+        self.incident_store = incident_store
+        self.incident_cooldown_seconds = incident_cooldown_seconds
 
     def run_once(self, *, limit: int = 100) -> ReviewerRecoveryReport:
         if type(limit) is not int or not 1 <= limit <= 500:
@@ -105,8 +114,26 @@ class ReviewerWorkerRecoverySupervisor:
             previous = task["reviewer_agent_id"]
             if previous not in expired_ids:
                 continue
+            if self.incident_store is not None:
+                allowed = self.incident_store.begin_attempt(
+                    actor_id=self.actor_id, task_id=task["task_id"],
+                    worker_id=previous,
+                )
+                if not allowed:
+                    deferred += 1
+                    outcomes.append(ReviewerRecoveryOutcome(
+                        task["task_id"], previous, None, "deferred",
+                        "incident_cooldown_or_dead_letter",
+                    ))
+                    continue
             replacement = self.replacement_resolver(dict(task), previous)
             if replacement is None:
+                if self.incident_store is not None:
+                    self.incident_store.record_outcome(
+                        actor_id=self.actor_id, task_id=task["task_id"],
+                        state="cooldown", reason_code="no_eligible_replacement",
+                        cooldown_seconds=self.incident_cooldown_seconds,
+                    )
                 deferred += 1
                 outcomes.append(ReviewerRecoveryOutcome(
                     task["task_id"], previous, None, "deferred",
@@ -123,6 +150,11 @@ class ReviewerWorkerRecoverySupervisor:
                     replacement_reviewer_agent_id=replacement,
                     reason="reviewer_worker_lease_expired",
                 )
+                if self.incident_store is not None:
+                    self.incident_store.record_outcome(
+                        actor_id=self.actor_id, task_id=task["task_id"],
+                        state="recovered", reason_code="lease_reassigned",
+                    )
                 recovered += 1
                 outcomes.append(ReviewerRecoveryOutcome(
                     task["task_id"], previous, replacement, result["state"],
@@ -130,6 +162,12 @@ class ReviewerWorkerRecoverySupervisor:
                 ))
             except (ReviewerLedgerConflict, ReviewerLeaseConflict, ReviewerWorkerRegistryConflict):
                 # Version/lease changed concurrently: never force a stale recovery.
+                if self.incident_store is not None:
+                    self.incident_store.record_outcome(
+                        actor_id=self.actor_id, task_id=task["task_id"],
+                        state="cooldown", reason_code="task_or_lease_changed",
+                        cooldown_seconds=self.incident_cooldown_seconds,
+                    )
                 deferred += 1
                 outcomes.append(ReviewerRecoveryOutcome(
                     task["task_id"], previous, replacement, "deferred",
