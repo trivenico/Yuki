@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 from automation.agent_coordinator import SubtaskSpec
@@ -53,7 +54,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 verification_workspace=execution_workspace,
                 verification_commands={
                     "python-version": VerificationCommand(
-                        "python-version", ("/usr/bin/python3", "--version"), 10,
+                        "python-version", (sys.executable, "--version"), 10,
                     ),
                 },
             )
