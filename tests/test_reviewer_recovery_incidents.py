@@ -1,6 +1,6 @@
-from contextlib import closing
 """Tests for durable recovery incident attempt limits and audit events."""
 from __future__ import annotations
+from contextlib import closing
 
 import tempfile
 import unittest
