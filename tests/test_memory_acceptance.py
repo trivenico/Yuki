@@ -13,6 +13,7 @@ class MemoryAcceptanceTests(unittest.TestCase):
     def test_sqlite_memory_survives_store_reopen_and_can_be_deleted(self):
         result = MODULE.run_acceptance()
         self.assertEqual(result["result"], "passed")
+        self.assertIn("persistence_after_separate_process_restart", result["checks"])
         self.assertIn("persistence_after_store_reopen", result["checks"])
         self.assertIn("actor_scope_isolation", result["checks"])
         self.assertIn("authorized_memory_deletion", result["checks"])
