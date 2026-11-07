@@ -73,6 +73,7 @@ class DockerVerificationExecutor:
         database_path: str | Path,
         *,
         image: str,
+        expected_snapshot_sha256: str,
         commands: Mapping[str, SandboxCommand],
         docker_binary: str = "docker",
         memory_limit: str = "2g",
@@ -85,6 +86,8 @@ class DockerVerificationExecutor:
             raise ValueError("sandbox_workspace_must_be_real_directory")
         if not isinstance(image, str) or not _IMAGE.fullmatch(image):
             raise ValueError("sandbox_image_must_be_digest_pinned")
+        if not isinstance(expected_snapshot_sha256, str) or not _SHA.fullmatch(expected_snapshot_sha256):
+            raise ValueError("expected_snapshot_sha256_required")
         if not isinstance(docker_binary, str) or not docker_binary.strip():
             raise ValueError("docker_binary_required")
         if not isinstance(memory_limit, str) or not re.fullmatch(r"[1-9][0-9]*(?:m|g)", memory_limit):
@@ -111,6 +114,7 @@ class DockerVerificationExecutor:
         self.workspace = root
         self.database_path = str(database_path)
         self.image = image
+        self.expected_snapshot_sha256 = expected_snapshot_sha256
         self.commands = checked
         self.docker_binary = resolved_docker
         self.memory_limit = memory_limit
@@ -137,13 +141,30 @@ class DockerVerificationExecutor:
         db.row_factory = sqlite3.Row
         return db
 
+    def _verify_workspace_snapshot(self) -> None:
+        from automation.repository_snapshot import RepositorySnapshotBuilder
+
+        files = {}
+        for path in self.workspace.rglob("*"):
+            if path.is_symlink():
+                raise DockerVerificationError("sandbox_workspace_symlink_detected")
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise DockerVerificationError("sandbox_workspace_non_regular_entry")
+            relative = path.relative_to(self.workspace).as_posix()
+            files[relative] = path.read_bytes()
+        snapshot = RepositorySnapshotBuilder().build(files)
+        if snapshot.snapshot_sha256 != self.expected_snapshot_sha256:
+            raise DockerVerificationError("sandbox_workspace_snapshot_digest_mismatch")
+
     def _docker_argv(self, command: SandboxCommand) -> list[str]:
         return [
             self.docker_binary, "run", "--rm", "--pull=never", "--init",
             "--network=none", "--read-only", "--user=65532:65532",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             f"--pids-limit={self.pids_limit}", f"--memory={self.memory_limit}",
-            f"--cpus={self.cpu_limit}",
+            f"--memory-swap={self.memory_limit}", f"--cpus={self.cpu_limit}",
             "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m",
             "--mount", f"type=bind,src={self.workspace},dst=/workspace,readonly",
             "--workdir=/workspace",
@@ -159,6 +180,7 @@ class DockerVerificationExecutor:
             raise ValueError("artifact_sha256_required")
         command = self.commands[command_id]
         command.validate()
+        self._verify_workspace_snapshot()
         started = datetime.now(timezone.utc).isoformat()
         execution_id = uuid4().hex
         output = bytearray()
