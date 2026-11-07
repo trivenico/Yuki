@@ -129,6 +129,55 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(len(provider.prompts), 1)
 
+    def test_coordinator_task_reuses_child_budget_and_exhaustion_blocks_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            built = build_local_worker_runtime(directory, provider)
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="integrated-budget-exhaustion-plan",
+                subtasks=[SubtaskSpec(
+                    "research-budget", "Bounded research request", ("research",),
+                    requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            task = built.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
+            step = task.steps[0]
+            execution = step["execution"]
+            # Local policy grants five model turns to this specialist. Reuse
+            # the same immutable logical-task budget across distinct queued
+            # attempts to prove cumulative store accounting is authoritative.
+            for index in range(4):
+                built.runtime.enqueue(
+                    actor_id=LOCAL_OPERATOR_ACTOR,
+                    idempotency_key=f"integrated-budget-replay-{index}",
+                    name="agent-research-budget-probe",
+                    steps=[{
+                        "name": "probe", "action": "emit", "argument": "bounded replay",
+                        "requires_approval": False, "execution": dict(execution),
+                    }],
+                )
+            completed = [built.supervisor.worker.run_once() for _ in range(5)]
+            self.assertTrue(all(item is not None and item.state == "succeeded" for item in completed))
+            self.assertEqual(built.budget_store.usage(execution["budget_id"])["model_turns"], 5)
+            self.assertEqual(len(provider.prompts), 5)
+
+            built.runtime.enqueue(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="integrated-budget-replay-over-limit",
+                name="agent-research-budget-probe",
+                steps=[{
+                    "name": "probe", "action": "emit", "argument": "must not reach provider",
+                    "requires_approval": False, "execution": dict(execution),
+                }],
+            )
+            rejected = built.supervisor.worker.run_once()
+            self.assertEqual(rejected.state, "failed")
+            self.assertEqual(len(provider.prompts), 5)
+            self.assertEqual(built.budget_store.usage(execution["budget_id"])["model_turns"], 5)
+
     def test_operator_approval_is_allowed_and_session_is_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             first = build_local_worker_runtime(directory, FakeProvider())
