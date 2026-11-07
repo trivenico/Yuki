@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,25 @@ class ReviewerSessionAuthorityTests(unittest.TestCase):
             self.token, reviewer_agent_id="reviewer-1",
             artifact_sha256=self.digest, action="review:execute", operation_id="task-1",
         ))
+
+    def test_persisted_session_claim_mismatch_is_rejected(self):
+        payload = self.authority._decode(self.token)
+        with sqlite3.connect(self.authority.database_path) as db:
+            db.execute(
+                "UPDATE reviewer_sessions SET artifact_sha256=? WHERE session_id=?",
+                ("e" * 64, payload["session_id"]),
+            )
+        self.assertFalse(self.authority.validate(
+            self.token, reviewer_agent_id="reviewer-1",
+            artifact_sha256=self.digest, action="review:execute", operation_id="task-db-tamper",
+        ))
+
+    def test_invalid_action_collection_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid_reviewer_session_actions"):
+            self.authority.issue(
+                reviewer_agent_id="reviewer-1", artifact_sha256=self.digest,
+                actions="review:execute",
+            )
 
     def test_authorization_is_rechecked_at_use(self):
         self.allowed = False
