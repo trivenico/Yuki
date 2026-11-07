@@ -102,6 +102,11 @@ class ReviewerWorkerRegistry:
                 acquired_at TEXT NOT NULL,
                 lease_expires_at TEXT NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS reviewer_worker_limits (
+                worker_id TEXT PRIMARY KEY,
+                max_concurrency INTEGER NOT NULL CHECK(max_concurrency BETWEEN 1 AND 32),
+                updated_at TEXT NOT NULL
+            )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_reviewer_worker_slots_live
                 ON reviewer_worker_slots(worker_id,lease_expires_at)""")
 
@@ -227,6 +232,16 @@ class ReviewerWorkerRegistry:
                 or owner["state"] != "running" or owner["lease_expires_at"] <= stamp):
                 raise ReviewerWorkerRegistryConflict("worker_not_live_for_slot_claim")
             db.execute("DELETE FROM reviewer_worker_slots WHERE lease_expires_at<=?", (stamp,))
+            configured = db.execute(
+                "SELECT max_concurrency FROM reviewer_worker_limits WHERE worker_id=?",
+                (worker,),
+            ).fetchone()
+            if configured is None:
+                db.execute("""INSERT INTO reviewer_worker_limits
+                    (worker_id,max_concurrency,updated_at) VALUES (?,?,?)""",
+                    (worker, max_concurrency, stamp))
+            elif configured["max_concurrency"] != max_concurrency:
+                raise ReviewerWorkerRegistryConflict("reviewer_global_concurrency_configuration_mismatch")
             expiry = min(_stamp(now + timedelta(seconds=ttl)), owner["lease_expires_at"])
             count = db.execute("""SELECT COUNT(*) AS n FROM reviewer_worker_slots
                 WHERE worker_id=? AND lease_expires_at>?""", (worker, stamp)).fetchone()["n"]
