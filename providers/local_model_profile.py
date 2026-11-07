@@ -188,6 +188,22 @@ def admit_catalog_profile(
             readiness["recommended"] = False
             readiness["status"] = "not_admitted"
             readiness["reasons"].append("insufficient_or_unverified_gpu_memory")
+        else:
+            readiness["reasons"] = [
+                reason for reason in readiness["reasons"]
+                if reason != "gpu_requirement_not_verified"
+            ]
+            readiness["compatible"] = not readiness["reasons"]
+            readiness["recommended"] = (
+                readiness["compatible"]
+                and runtime_budget is not None
+                and runtime_budget >= normalized["recommended_ram_bytes"]
+            )
+            readiness["status"] = (
+                "recommended" if readiness["recommended"]
+                else "fits_minimum" if readiness["compatible"]
+                else "not_admitted"
+            )
     return {
         "profile": normalized,
         "profile_sha256": profile_digest(normalized),
