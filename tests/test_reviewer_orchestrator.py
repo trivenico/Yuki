@@ -27,6 +27,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
                 "review:lease:acquire", "review:lease:recover",
                 "review:dispatch:claim", "review:dispatch:complete",
                 "review:dispatch:fail", "review:dispatch:read",
+                "review:dispatch:recover",
             }
         self.sessions = ReviewerSessionAuthority(
             root / "sessions.sqlite", secret=b"s" * 32,
