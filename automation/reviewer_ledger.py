@@ -29,7 +29,6 @@ class ReviewerLedgerConflict(ReviewerLedgerError):
     """Raised for stale transitions or conflicting idempotent submissions."""
 
 
-@dataclass_event = None
 
 
 def _now() -> str:
