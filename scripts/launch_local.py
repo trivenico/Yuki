@@ -48,8 +48,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    if sys.version_info < (3, 10):
-        print("Yuki requires Python 3.10 or newer.")
+    if sys.version_info < (3, 11):
+        print("Yuki requires Python 3.11 or newer.")
         return 1
     if not 1 <= args.port <= 65535:
         print("Port must be between 1 and 65535.")
