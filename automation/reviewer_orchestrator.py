@@ -30,6 +30,7 @@ class ProvisionedReviewerTask:
     session_token: str
     lease_token: str | None = None
     lease_generation: int | None = None
+    review_task: ReviewTask | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,21 @@ class ReviewerOrchestrator:
                     except Exception: pass
                 outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "blocked", previous, replacement, None, "recovery_or_session_provisioning_failed:" + type(exc).__name__))
                 continue
-            provisioned = ProvisionedReviewerTask(task_id=item["task_id"], check_name=check_name, reviewer_agent_id=replacement, session_token=session_token, lease_token=recovered["lease_token"], lease_generation=recovered["lease_generation"])
+            recovered_task = ReviewTask(
+                task_id=task["task_id"], artifact_sha256=digest,
+                author_agent_id=task["author_agent_id"],
+                reviewer_agent_id=replacement, check_name=check_name,
+                requirements=tuple(task["requirements"]),
+                evidence_references=tuple(task["evidence_references"]),
+            )
+            recovered_task.validate()
+            provisioned = ProvisionedReviewerTask(
+                task_id=item["task_id"], check_name=check_name,
+                reviewer_agent_id=replacement, session_token=session_token,
+                lease_token=recovered["lease_token"],
+                lease_generation=recovered["lease_generation"],
+                review_task=recovered_task,
+            )
             outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "recovered", previous, replacement, provisioned, "expired_lease_recovered"))
         return tuple(outcomes)
     def provision_batch(
@@ -214,6 +229,7 @@ class ReviewerOrchestrator:
                     session_token=token,
                     lease_token=receipt["lease_token"],
                     lease_generation=receipt["lease_generation"],
+                    review_task=task,
                 ))
         except Exception as exc:
             for token in tokens:
