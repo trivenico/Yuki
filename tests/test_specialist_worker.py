@@ -16,6 +16,7 @@ from evaluation.agent_experience import AgentExperienceStore
 from evaluation.agent_evaluator import AgentEvaluator
 from evaluation.agent_review_queue import AgentEvaluationReviewQueue
 from evaluation.agent_learning_pipeline import AgentLearningPipeline
+from core.reasoning.execution_budget_store import ExecutionBudgetStore
 
 
 class FakeProvider:
@@ -77,6 +78,80 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_budget_is_reserved_before_handler_and_persisted(self):
+        db = str(Path(self.tmp.name) / "budget-worker.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="worker-budget", task_id="logical-worker-task",
+            limits={
+                "max_model_turns": 2, "max_tool_calls": 1,
+                "max_duration_ms": 60_000, "max_transcript_chars": 500,
+            },
+            policy_version="test-v1",
+        )
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="budgeted-worker-task",
+            name="agent-code-review-implement",
+            steps=[{
+                "name": "implement", "action": "emit",
+                "argument": "Review this patch",
+                "requires_approval": False,
+                "execution": {
+                    "budget_id": "worker-budget",
+                    "task_identity": "logical-worker-task",
+                    "policy_version": "test-v1",
+                },
+            }],
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="budget-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "reviewed"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        usage = budget_store.usage("worker-budget")
+        self.assertEqual(usage["model_turns"], 1)
+        self.assertEqual(usage["transcript_chars"], len("Review this patch"))
+
+    def test_budget_binding_mismatch_fails_before_handler_invocation(self):
+        db = str(Path(self.tmp.name) / "budget-mismatch.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="worker-budget", task_id="expected-logical-task",
+            limits={
+                "max_model_turns": 2, "max_tool_calls": 1,
+                "max_duration_ms": 60_000, "max_transcript_chars": 500,
+            },
+            policy_version="test-v1",
+        )
+        self.runtime.enqueue(
+            actor_id="alice", idempotency_key="budgeted-mismatch-task",
+            name="agent-code-review-implement",
+            steps=[{
+                "name": "implement", "action": "emit",
+                "argument": "Do not execute",
+                "requires_approval": False,
+                "execution": {
+                    "budget_id": "worker-budget",
+                    "task_identity": "tampered-logical-task",
+                    "policy_version": "test-v1",
+                },
+            }],
+        )
+        calls = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="budget-mismatch-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "unexpected"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(calls, [])
+        self.assertEqual(budget_store.usage("worker-budget")["model_turns"], 0)
 
     def test_worker_retrieves_authorized_memory_before_specialist_handler(self):
         task_id = self.create_task()
