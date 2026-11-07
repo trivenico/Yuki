@@ -11,7 +11,7 @@ echo
 PYTHON=""
 for candidate in python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
       PYTHON="$candidate"
       break
     fi
@@ -19,8 +19,8 @@ for candidate in python3 python; do
 done
 
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: Python 3.10 or newer was not found."
-  echo "Install Python 3.10+ and run this script again."
+  echo "ERROR: Python 3.11 or newer was not found."
+  echo "Install Python 3.11+ and run this script again."
   exit 1
 fi
 
@@ -34,7 +34,7 @@ fi
 
 echo "[2/4] Updating pip..."
 if ! .venv/bin/python -m pip install --upgrade pip; then
-  echo "WARNING: pip upgrade failed; continuing because Yuki has no third-party dependencies."
+  echo "WARNING: pip upgrade failed; continuing with the currently installed pip version."
 fi
 
 echo "[3/4] Checking declared dependencies..."
