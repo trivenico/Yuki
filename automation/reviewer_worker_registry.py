@@ -150,6 +150,16 @@ class ReviewerWorkerRegistry:
             ).fetchone()
             if old and old["state"] in ("running", "stopping") and old["lease_expires_at"] > _stamp(now):
                 raise ReviewerWorkerRegistryConflict("worker_instance_already_live")
+            if old:
+                existing = db.execute(
+                    "SELECT worker_id FROM reviewer_worker_instances WHERE instance_id=?",
+                    (instance,),
+                ).fetchone()
+                if existing["worker_id"] != worker:
+                    raise ReviewerWorkerRegistryConflict("worker_instance_identity_conflict")
+                # Re-registration fences the old token; remove any orphaned
+                # reservations before the new incarnation becomes live.
+                db.execute("DELETE FROM reviewer_worker_slots WHERE instance_id=?", (instance,))
             db.execute("""INSERT INTO reviewer_worker_instances
                 (instance_id,worker_id,token_digest,state,registered_at,heartbeat_at,
                  lease_expires_at,updated_at) VALUES (?,?,?,'running',?,?,?,?)
@@ -217,6 +227,7 @@ class ReviewerWorkerRegistry:
                 or owner["state"] != "running" or owner["lease_expires_at"] <= stamp):
                 raise ReviewerWorkerRegistryConflict("worker_not_live_for_slot_claim")
             db.execute("DELETE FROM reviewer_worker_slots WHERE lease_expires_at<=?", (stamp,))
+            expiry = min(_stamp(now + timedelta(seconds=ttl)), owner["lease_expires_at"])
             count = db.execute("""SELECT COUNT(*) AS n FROM reviewer_worker_slots
                 WHERE worker_id=? AND lease_expires_at>?""", (worker, stamp)).fetchone()["n"]
             if count >= max_concurrency:
@@ -225,6 +236,38 @@ class ReviewerWorkerRegistry:
                 (slot_id,worker_id,instance_id,acquired_at,lease_expires_at)
                 VALUES (?,?,?,?,?)""", (slot, worker, instance, stamp, expiry))
             return slot
+
+    def renew_slot(
+        self, *, actor_id: str, worker_id: str, instance_id: str,
+        lease_token: str, slot_id: str, slot_seconds: int = 60,
+    ) -> str:
+        """Renew an active slot without allowing it to outlive its worker lease."""
+        actor = self._id(actor_id, "invalid_worker_registry_actor")
+        worker = self._id(worker_id, "invalid_reviewer_worker_id")
+        instance = self._id(instance_id, "invalid_worker_instance_id")
+        slot = self._id(slot_id, "invalid_worker_slot_id")
+        ttl = self._ttl(slot_seconds, "invalid_worker_slot_ttl")
+        if not isinstance(lease_token, str) or not 20 <= len(lease_token) <= 256:
+            raise ValueError("invalid_worker_lease_token")
+        if not self._allowed(actor, "review:worker:slot:renew", worker):
+            raise PermissionError("reviewer worker slot renewal not authorized")
+        now = _now()
+        stamp = _stamp(now)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            owner = db.execute("SELECT * FROM reviewer_worker_instances WHERE instance_id=?",
+                               (instance,)).fetchone()
+            if (owner is None or owner["worker_id"] != worker
+                or owner["token_digest"] != _digest(lease_token)
+                or owner["state"] != "running" or owner["lease_expires_at"] <= stamp):
+                raise ReviewerWorkerRegistryConflict("worker_lease_invalid")
+            expiry = min(_stamp(now + timedelta(seconds=ttl)), owner["lease_expires_at"])
+            changed = db.execute("""UPDATE reviewer_worker_slots SET lease_expires_at=?
+                WHERE slot_id=? AND worker_id=? AND instance_id=? AND lease_expires_at>?""",
+                (expiry, slot, worker, instance, stamp)).rowcount
+            if changed != 1:
+                raise ReviewerWorkerRegistryConflict("worker_slot_missing_or_expired")
+            return expiry
 
     def release_slot(
         self, *, actor_id: str, worker_id: str, instance_id: str,
