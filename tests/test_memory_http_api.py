@@ -105,6 +105,13 @@ class MemoryHttpApiTests(unittest.TestCase):
         self.assertTrue(approved["memory"]["verified"])
         self.assertEqual(approved["memory"]["lifecycle_status"], "approved")
 
+        status, remaining = self.request(
+            "GET", "/v1/memory/candidates?conversation_id=" + conversation_id,
+            token=self.session.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(remaining["candidates"], [])
+
         status, repeated = self.request(
             "POST", path, {"conversation_id": conversation_id}, token=self.session.token,
         )
