@@ -57,6 +57,7 @@ def build_local_worker_runtime(
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
     verification_commands: Mapping[str, VerificationCommand] | None = None,
+    verification_workspace: str | Path | None = None,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -93,8 +94,11 @@ def build_local_worker_runtime(
     budget_store = ExecutionBudgetStore(database_path)
     verification_executor = None
     if verification_commands is not None:
+        execution_root = Path(verification_workspace).expanduser().resolve() if verification_workspace is not None else root.resolve()
+        if not execution_root.is_dir():
+            raise ValueError("verification_workspace_must_exist")
         verification_executor = LocalVerificationExecutor(
-            root, root / "yuki_verification_executions.sqlite3",
+            execution_root, root / "yuki_verification_executions.sqlite3",
             verification_commands,
         )
     verification_evidence_store = VerificationEvidenceStore(
