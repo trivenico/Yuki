@@ -94,6 +94,10 @@ def print_help():
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
   /upgrade status | /upgrade list | /upgrade review PROPOSAL_ID approve|reject
+  /engineering status | agents
+  /engineering plan ROLE | DESCRIPTION
+  /engineering show PLAN_ID | advance PLAN_ID | cancel PLAN_ID
+  /engineering approve TASK_ID | cycle
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -365,6 +369,110 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering show "):
+            plan_id = command[len("/engineering show "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            try:
+                plan = local_workers.coordinator.get_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(
+                        f"- {item.subtask_id}: {item.status}; specialist={item.agent_id}; "
+                        f"task={item.task_id or 'not dispatched'}; approval_required={item.requires_approval}"
+                    )
+            except Exception as exc:
+                print(f"Yuki > Could not read plan ({type(exc).__name__}).")
+        elif command.startswith("/engineering advance "):
+            plan_id = command[len("/engineering advance "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            if not _confirm(
+                "engineering:dispatch",
+                f"Create dependency-ready workflow tasks for plan {plan_id}; no worker execution occurs yet.",
+                "high",
+            ):
+                print("Yuki > Plan advancement cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.advance(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan advanced: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: {item.status}; task={item.task_id or 'not dispatched'}")
+                print("Queued tasks remain idle until individually approved and a worker cycle is run.")
+            except Exception as exc:
+                print(f"Yuki > Plan advancement failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering approve "):
+            task_id = command[len("/engineering approve "):].strip()
+            if not task_id:
+                print("Yuki > Provide a task ID.")
+                continue
+            try:
+                task = local_workers.runtime.get(
+                    actor_id=local_workers.operator_actor_id, task_id=task_id
+                )
+                if task.state != "queued":
+                    print(f"Yuki > Task is {task.state}; only queued tasks can be approved.")
+                    continue
+                if not _confirm(
+                    "engineering:approve_task",
+                    f"Approve queued task {task_id} for this terminal session? Its exact definition digest will be bound to the approval.",
+                    "high",
+                ):
+                    print("Yuki > Task approval cancelled.")
+                    continue
+                approved = local_workers.runtime.store.approve(
+                    task_id, actor_id=local_workers.operator_actor_id,
+                    session_id=local_workers.approval_session_id,
+                    expected_version=task.version,
+                )
+                print(f"Yuki > Task approved: {approved.run_id} (version {approved.version}).")
+            except Exception as exc:
+                print(f"Yuki > Task approval failed safely ({type(exc).__name__}).")
+        elif command == "/engineering cycle":
+            if not _confirm(
+                "engineering:worker_cycle",
+                "Run one bounded local worker cycle. Approved queued specialist tasks may call the configured model provider.",
+                "high",
+            ):
+                print("Yuki > Worker cycle cancelled.")
+                continue
+            try:
+                report = local_workers.supervisor.run_cycle()
+                print(
+                    f"Yuki > Worker cycle finished: processed={report.processed_count}, "
+                    f"succeeded={report.succeeded_count}, failed={report.failed_count}, "
+                    f"recovered={len(report.recovered_task_ids)}, idle={report.idle}."
+                )
+            except Exception as exc:
+                print(f"Yuki > Worker cycle stopped safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering cancel "):
+            plan_id = command[len("/engineering cancel "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            if not _confirm(
+                "engineering:cancel_plan",
+                f"Cancel pending and dispatched work in plan {plan_id}.",
+                "high",
+            ):
+                print("Yuki > Plan cancellation cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.cancel_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan cancellation recorded: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: {item.status}")
+            except Exception as exc:
+                print(f"Yuki > Plan cancellation failed safely ({type(exc).__name__}).")
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
