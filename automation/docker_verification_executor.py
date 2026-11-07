@@ -75,6 +75,7 @@ class DockerVerificationExecutor:
         *,
         image: str,
         expected_snapshot_sha256: str,
+        expected_artifact_sha256: str,
         commands: Mapping[str, SandboxCommand],
         docker_binary: str = "docker",
         memory_limit: str = "2g",
@@ -92,6 +93,8 @@ class DockerVerificationExecutor:
             raise ValueError("sandbox_image_must_be_digest_pinned")
         if not isinstance(expected_snapshot_sha256, str) or not _SHA.fullmatch(expected_snapshot_sha256):
             raise ValueError("expected_snapshot_sha256_required")
+        if not isinstance(expected_artifact_sha256, str) or not _SHA.fullmatch(expected_artifact_sha256):
+            raise ValueError("expected_artifact_sha256_required")
         if not isinstance(docker_binary, str) or not docker_binary.strip():
             raise ValueError("docker_binary_required")
         if not isinstance(memory_limit, str) or not re.fullmatch(r"[1-9][0-9]*(?:m|g)", memory_limit):
@@ -119,6 +122,7 @@ class DockerVerificationExecutor:
         self.database_path = str(database_path)
         self.image = image
         self.expected_snapshot_sha256 = expected_snapshot_sha256
+        self.expected_artifact_sha256 = expected_artifact_sha256
         self.commands = checked
         self.docker_binary = resolved_docker
         self.memory_limit = memory_limit
@@ -187,6 +191,8 @@ class DockerVerificationExecutor:
             raise PermissionError("sandbox_command_not_allowlisted")
         if not isinstance(artifact_sha256, str) or not _SHA.fullmatch(artifact_sha256):
             raise ValueError("artifact_sha256_required")
+        if artifact_sha256 != self.expected_artifact_sha256:
+            raise DockerVerificationError("artifact_digest_does_not_match_configured_workspace")
         command = self.commands[command_id]
         command.validate()
         self._verify_workspace_snapshot()
