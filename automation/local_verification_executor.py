@@ -47,6 +47,7 @@ class VerificationCommand:
 class VerificationExecution:
     execution_id: str
     command_id: str
+    artifact_sha256: str | None
     argv_json: str
     workspace: str
     started_at: str
@@ -96,6 +97,7 @@ class LocalVerificationExecutor:
                 CREATE TABLE IF NOT EXISTS verification_executions (
                     execution_id TEXT PRIMARY KEY,
                     command_id TEXT NOT NULL,
+                    artifact_sha256 TEXT,
                     argv_json TEXT NOT NULL,
                     workspace TEXT NOT NULL,
                     started_at TEXT NOT NULL,
@@ -109,17 +111,23 @@ class LocalVerificationExecutor:
                     status TEXT NOT NULL CHECK(status IN ('passed','failed','timed_out','output_limited','launch_failed'))
                 )
             """)
+        with self._connect() as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(verification_executions)")}
+            if "artifact_sha256" not in columns:
+                db.execute("ALTER TABLE verification_executions ADD COLUMN artifact_sha256 TEXT")
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
         db.row_factory = sqlite3.Row
         return db
 
-    def run(self, command_id: str) -> VerificationExecution:
+    def run(self, command_id: str, *, artifact_sha256: str | None = None) -> VerificationExecution:
         if not isinstance(command_id, str) or command_id not in self.commands:
             raise PermissionError("verification_command_not_allowlisted")
         command = self.commands[command_id]
         command.validate()
+        if artifact_sha256 is not None and (not isinstance(artifact_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", artifact_sha256)):
+            raise ValueError("invalid_artifact_sha256")
         started = datetime.now(timezone.utc).isoformat()
         execution_id = uuid4().hex
         output = bytearray()
@@ -147,7 +155,7 @@ class LocalVerificationExecutor:
         except OSError:
             finished = datetime.now(timezone.utc).isoformat()
             receipt = VerificationExecution(
-                execution_id, command_id, json.dumps(command.argv), str(self.workspace),
+                execution_id, command_id, artifact_sha256, json.dumps(command.argv), str(self.workspace),
                 started, finished, None, False, False, hashlib.sha256(b"").hexdigest(),
                 0, "", "launch_failed",
             )
@@ -200,6 +208,7 @@ class LocalVerificationExecutor:
         receipt = VerificationExecution(
             execution_id=execution_id,
             command_id=command_id,
+            artifact_sha256=artifact_sha256,
             argv_json=json.dumps(command.argv, separators=(",", ":")),
             workspace=str(self.workspace),
             started_at=started,
@@ -220,9 +229,9 @@ class LocalVerificationExecutor:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT INTO verification_executions VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    receipt.execution_id, receipt.command_id, receipt.argv_json,
+                    receipt.execution_id, receipt.command_id, receipt.artifact_sha256, receipt.argv_json,
                     receipt.workspace, receipt.started_at, receipt.finished_at,
                     receipt.exit_code, int(receipt.timed_out), int(receipt.output_limited),
                     receipt.output_sha256, receipt.output_bytes, receipt.output_excerpt,
@@ -239,6 +248,25 @@ class LocalVerificationExecutor:
                 (execution_id,),
             ).fetchone()
         return dict(row) if row is not None else None
+
+    def validate_evidence_reference(self, reference: str, *, artifact_sha256: str, check_name: str) -> bool:
+        prefix = "yuki-verification-execution://"
+        if not isinstance(reference, str) or not reference.startswith(prefix):
+            return False
+        try:
+            stored = self.get(reference[len(prefix):])
+        except ValueError:
+            return False
+        if stored is None:
+            return False
+        expected_commands = {"tests": {"unit-tests"}, "security": {"security-scan"}}
+        allowed = expected_commands.get(check_name)
+        return bool(
+            allowed and stored["command_id"] in allowed
+            and stored["artifact_sha256"] == artifact_sha256
+            and stored["status"] == "passed" and stored["exit_code"] == 0
+            and not stored["timed_out"] and not stored["output_limited"]
+        )
 
     @staticmethod
     def evidence_reference(receipt: VerificationExecution) -> str:
