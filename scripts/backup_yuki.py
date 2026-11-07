@@ -78,7 +78,7 @@ def create_backup(workspace: Path, output: Path) -> Path:
             "databases": entries,
         }
         manifest_path = output / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2) + "\\n", encoding="utf-8")
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return manifest_path
     except Exception:
         import shutil
