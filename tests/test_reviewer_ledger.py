@@ -6,6 +6,7 @@ from pathlib import Path
 from automation.reviewer_contracts import ReviewFinding, build_review_result
 from automation.reviewer_team import ReviewerAssignment, ReviewerTeamPlan
 from automation.reviewer_workflow import build_review_tasks
+from automation.reviewer_signing import HMACReviewerSigner
 from automation.reviewer_ledger import (
     ReviewerLedgerConflict, ReviewerTaskLedger,
 )
@@ -32,7 +33,9 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         self.ledger = ReviewerTaskLedger(
             self.path,
             authorize=lambda actor, action, digest: self.allowed and digest == "a" * 64,
+            signer_resolver=lambda actor, key_id: self.signer if key_id in (None, "review-key-v1") else None,
         )
+        self.signer = HMACReviewerSigner(key_id="review-key-v1", key=b"z" * 32)
         self.task = tasks()[0]
 
     def tearDown(self):
@@ -86,6 +89,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         record = self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
         self.assertEqual(record["state"], "submitted")
         self.assertEqual(record["result"]["findings"][0]["severity"], "high")
+        self.assertTrue(record["signature_verified"])
+        self.assertEqual(record["signature"]["key_id"], "review-key-v1")
         self.assertEqual(record["events"][-1]["type"], "submitted")
 
     def test_conflicting_second_submission_is_rejected(self):
@@ -102,6 +107,19 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
                 actor_id="security-reviewer", task_id=self.task.task_id,
                 expected_version=1, result=different,
             )
+
+    def test_read_rejects_invalid_signature(self):
+        self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
+        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
+        result = build_review_result(self.task, status="passed", summary="No findings.")
+        self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
+                           expected_version=1, result=result)
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE reviewer_tasks SET signature_json=? WHERE task_id=?",
+                       ('{"key_id":"review-key-v1","algorithm":"hmac-sha256","signature_hex":"' + "0" * 64 + '"}', self.task.task_id))
+        from automation.reviewer_ledger import ReviewerLedgerError
+        with self.assertRaisesRegex(ReviewerLedgerError, "signature_invalid"):
+            self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
 
     def test_read_detects_tampered_task_payload(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
