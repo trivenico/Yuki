@@ -170,6 +170,9 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
             row=db.execute("SELECT state,reviewer_agent_id,version FROM reviewer_tasks WHERE task_id=?",
                            (self.task.task_id,)).fetchone()
         self.assertEqual(row,("assigned","reviewer-2",3))
+        history=self.ledger.get(actor_id="auditor",task_id=self.task.task_id)
+        self.assertEqual([event["type"] for event in history["events"]],
+                         ["assigned","claimed","abandoned","reassigned"])
         self.assertFalse(self.leases.validate(
             self.lease.token,task_id=self.task.task_id,artifact_sha256="a"*64,
             reviewer_agent_id="reviewer-1",generation=1,
@@ -197,6 +200,9 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
         self.assertEqual(second["version"],2)
         self.assertEqual(second["lease_generation"],3)
         self.assertEqual(first["lease_generation"],2)
+        history=self.ledger.get(actor_id="auditor",task_id=self.task.task_id)
+        self.assertEqual([event["type"] for event in history["events"]],
+                         ["assigned","reassigned","reassigned"])
 
     def test_lease_database_must_match_ledger_database(self):
         other = ReviewerLeaseAuthority(
