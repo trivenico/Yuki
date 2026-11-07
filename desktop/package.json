@@ -1,0 +1,17 @@
+{
+  "name": "yuki-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Windows-first native desktop shell for Yuki",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "predev": "node scripts/create-icon.mjs",
+    "prebuild": "node scripts/create-icon.mjs && npm run verify:bundle",
+    "verify:bundle": "node scripts/verify-bundle.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

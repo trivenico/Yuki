@@ -1,7 +1,11 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
+import os
+import threading
+import time
 from pathlib import Path
 import shlex
+from uuid import uuid4
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
@@ -24,14 +28,21 @@ from voice.tts import LocalTTS, TTSError
 from voice.wakeword import WakeWordDetector, WakeWordError
 from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
+from core.usage_ledger import UsageLedger
+from providers.usage_meter import UsageMeteredProvider
 from providers.hybrid import HybridProvider
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
-from core.readiness import build_readiness_report
+from core.readiness import build_readiness_report, recommended_worker_concurrency
 from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
 from automation.local_worker_runtime import build_local_worker_runtime
+from automation.agent_coordinator import SubtaskSpec
+from automation.self_upgrade_pipeline import SelfUpgradeReviewStore
+from automation.git_repository_snapshot import GitRepositorySnapshotReader
+from automation.reproducible_workspace import GitBackedWorkspaceManager
+from automation.docker_verification_executor import DockerVerificationExecutor, SandboxCommand
 
 
 def _ask_approval(request):
@@ -85,6 +96,16 @@ def print_help():
   /reminders | /reminders due
   /evolution status | /evolution record CATEGORY | SUMMARY
   /evolution run | /evolution review PROPOSAL_ID accept|reject
+  /upgrade status | /upgrade list | /upgrade review PROPOSAL_ID approve|reject
+  /engineering status | agents
+  /engineering plan ROLE | DESCRIPTION
+  /engineering show PLAN_ID | plan-events PLAN_ID
+  /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA
+  /engineering provenance ARTIFACT_ID | verify ARTIFACT_ID
+  /engineering sandbox-verify ARTIFACT_ID
+  /engineering tasks [STATE] | task-events TASK_ID
+  /engineering advance PLAN_ID | cancel PLAN_ID
+  /engineering approve TASK_ID | cycle
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
   /voice speak TEXT
@@ -107,14 +128,90 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 """)
 
 
+
+def _start_local_api():
+    """Start Yuki's authenticated loopback API alongside the terminal."""
+    if os.environ.get("YUKI_START_LOCAL_API", "true").strip().lower() in {"0", "false", "no", "off"}:
+        print("Yuki local API: disabled by YUKI_START_LOCAL_API.")
+        return None
+    try:
+        import uvicorn
+        from api.bootstrap import build_yuki_runtime
+        port = int(os.environ.get("YUKI_PORT", "8765"))
+        if not 1 <= port <= 65535:
+            raise ValueError("port_out_of_range")
+        runtime = build_yuki_runtime()
+        server = uvicorn.Server(uvicorn.Config(
+            runtime, host="127.0.0.1", port=port,
+            log_level="warning", access_log=False,
+        ))
+        thread = threading.Thread(target=server.run, name="yuki-local-api", daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and thread.is_alive() and not server.started:
+            time.sleep(0.05)
+        if not server.started:
+            server.should_exit = True
+            thread.join(timeout=5)
+            runtime.close()
+            print(f"Yuki local API did not become ready on 127.0.0.1:{port}; terminal mode remains available.")
+            return None
+        print(f"Yuki local API: http://127.0.0.1:{port}")
+        return server, thread, runtime
+    except Exception as exc:
+        print(f"Yuki local API failed to start safely ({type(exc).__name__}); terminal mode remains available.")
+        return None
+
+
+def _stop_local_api(handle):
+    if handle is None:
+        return
+    server, thread, runtime = handle
+    server.should_exit = True
+    thread.join(timeout=10)
+    if thread.is_alive():
+        print("Yuki local API is still shutting down; runtime cleanup deferred.")
+        return
+    runtime.close()
+
+
 def main():
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    ai = YukiAgent(create_provider(config))
+    raw_provider = create_provider(config)
+    usage_ledger = UsageLedger(workspace / "provider-usage.sqlite3")
+    if callable(getattr(raw_provider, "generate_chat", None)):
+        active_provider = UsageMeteredProvider(
+            raw_provider, ledger=usage_ledger,
+            provider_id=str(config.get("provider", "unknown")),
+            model_id=str(
+                getattr(raw_provider, "model", None)
+                or getattr(getattr(raw_provider, "local_provider", None), "model", None)
+                or config.get("openai_model", "configured-model")
+            ),
+            session_id="terminal",
+        )
+    else:
+        active_provider = raw_provider
+    ai = YukiAgent(active_provider)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    local_workers = build_local_worker_runtime(workspace, ai.provider)
+    local_workers = build_local_worker_runtime(
+        workspace, ai.provider, max_workers=recommended_worker_concurrency()
+    )
+    git_repository = os.environ.get("YUKI_GIT_REPOSITORY", "").strip()
+    git_workspace_manager = None
+    if git_repository:
+        try:
+            git_workspace_manager = GitBackedWorkspaceManager(
+                git_repository, workspace / "engineering-workspaces",
+                workspace / "yuki_workspace_provenance.sqlite3",
+                GitRepositorySnapshotReader(), local_workers.verification_workflow,
+            )
+            print("Yuki Git-backed snapshots: enabled for the configured repository.")
+        except Exception as exc:
+            print(f"Yuki Git-backed snapshots unavailable ({type(exc).__name__}).")
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -135,6 +232,7 @@ def main():
     )
     reminders = ReminderQueue(workspace / "yuki_reminders.json")
     evolution = DailyEvolutionCycle(workspace)
+    upgrade_reviews = SelfUpgradeReviewStore(workspace / 'self-upgrade-reviews.sqlite3')
     tts = LocalTTS(enabled=config["voice_enabled"], rate=config["tts_rate"],
                     backend=config["tts_backend"], model_path=config["piper_model_path"] or None)
     stt = FasterWhisperSTT(enabled=config["voice_enabled"], model_size=config["stt_model"])
@@ -160,6 +258,7 @@ def main():
             return "\n".join(f"{s['name']} [{s['risk']}] — {s['description']}" for s in agent.available_skills())
         return "Safe commands: /help, /status, /skills. Sensitive actions remain in the approval-gated terminal."
     
+    api_handle = _start_local_api()
     print(DEFAULT_PERSONA.greeting)
     print("Yuki guarded core is ready. Type /help for commands.")
     while True:
@@ -167,11 +266,13 @@ def main():
             command = input("\nYou > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nYuki > Goodbye.")
+            _stop_local_api(api_handle)
             return
         if not command:
             continue
         if command in {"/quit", "/exit"}:
             print("Yuki > Goodbye.")
+            _stop_local_api(api_handle)
             return
         if command == "/help":
             print_help()
@@ -215,15 +316,408 @@ def main():
                 print(f"Yuki recovery: {result.status} — {result.message}")
             except (KeyError, ValueError) as exc:
                 print(f"Yuki > Recovery request rejected: {exc}")
+        elif command == "/usage":
+            report = usage_ledger.summary()
+            print("Provider usage:")
+            print(f"- Events: {report['events']}")
+            print(f"- Input tokens: {report['input_tokens']}")
+            print(f"- Output tokens: {report['output_tokens']}")
+            print(f"- Total tokens: {report['total_tokens']}")
+            print(f"- Estimated events: {report['estimated_events']}")
+            print(f"- Unknown-cost events: {report['unknown_cost_events']}")
+            print(f"- Cost by currency: {report['cost_by_currency']}")
         elif command == "/status":
             print(f"Persona: {agent.persona.name}; wake word: {agent.persona.wake_word}")
             print(f"Workspace: {workspace}")
             print(f"Provider: {config['provider']} (configured adapter; availability depends on runtime/model credentials)")
+            print("Local API: " + ("running" if api_handle is not None else "not running"))
             print(f"Voice: {config['voice_enabled']}; language behavior: {config['language_behavior']}; voice style preference: {config['voice_style']}")
             print(f"Spoken reply policy: {config['spoken_reply_policy']} (end-to-end reply loop not connected)")
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
             print(f"Firewall: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']}); Gmail: {config['gmail_enabled']}")
             print(f"Skills: {', '.join(agent.registry.names())}")
+        elif command == "/engineering status":
+            print("Yuki engineering runtime:")
+            print(f"- Specialists registered: {len(local_workers.coordinator.agents)}")
+            print(f"- Worker concurrency limit: {local_workers.supervisor.max_workers}")
+            print(f"- Budget store: connected ({workspace / 'yuki_tasks.sqlite3'})")
+            print(f"- Artifact store: connected ({workspace / 'yuki_artifacts.sqlite3'})")
+            print(f"- Acceptance store: connected ({workspace / 'yuki_acceptance.sqlite3'})")
+            print(f"- Verification evidence: connected ({workspace / 'yuki_verification.sqlite3'})")
+            print(f"- Git workspace manager: {'enabled' if git_workspace_manager else 'disabled'}")
+            print(f"- Verification executor: {'configured' if local_workers.verification_executor is not None else 'disabled (no trusted command allowlist)'}")
+            print("- Autonomous dispatch: disabled; plans require explicit operator action")
+        elif command == "/engineering agents":
+            try:
+                agents = local_workers.coordinator.list_agents(
+                    actor_id=local_workers.operator_actor_id
+                )
+                for item in agents:
+                    print(f"- {item['agent_id']}: {item['name']} | enabled={item['enabled']} | capabilities={', '.join(item['capabilities'])}")
+            except Exception as exc:
+                print(f"Yuki > Could not list specialists ({type(exc).__name__}).")
+        elif command.startswith("/engineering plan "):
+            payload = command[len("/engineering plan "):]
+            if "|" not in payload:
+                print("Yuki > Use /engineering plan ROLE | DESCRIPTION")
+                continue
+            role, description = (part.strip() for part in payload.split("|", 1))
+            if role not in local_workers.coordinator.agents or not description:
+                print("Yuki > Choose a registered specialist role and provide a description.")
+                continue
+            if not _confirm(
+                "engineering:create_plan",
+                f"Persist one approval-gated {role} specialist task? Description length: {len(description)} characters.",
+                "medium",
+            ):
+                print("Yuki > Engineering plan creation cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.submit(
+                    actor_id=local_workers.operator_actor_id,
+                    idempotency_key="terminal-" + uuid4().hex,
+                    subtasks=(SubtaskSpec(
+                        subtask_id="task-1",
+                        description=description,
+                        required_capabilities=(role,),
+                        requires_approval=True,
+                    ),),
+                )
+                print(f"Yuki > Plan persisted: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: specialist={item.agent_id}, status={item.status}, approval_required={item.requires_approval}")
+                print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
+            except Exception as exc:
+                print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering sandbox-receipts "):
+            artifact_id = command[len("/engineering sandbox-receipts "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            image = os.environ.get("YUKI_VERIFICATION_IMAGE", "").strip()
+            if not image:
+                print("Yuki > Set YUKI_VERIFICATION_IMAGE to a locally available digest-pinned image.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                sandbox = DockerVerificationExecutor(
+                    provenance.workspace_path,
+                    workspace / "yuki_sandbox_verification.sqlite3",
+                    image=image,
+                    expected_snapshot_sha256=provenance.snapshot_sha256,
+                    expected_artifact_sha256=provenance.artifact_sha256,
+                    commands={
+                        "unit-tests": SandboxCommand(
+                            "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=300
+                        )
+                    },
+                )
+                receipts = sandbox.list_for_artifact(provenance.artifact_sha256, limit=20)
+                if not receipts:
+                    print("Yuki > No sandbox receipts recorded for this artifact.")
+                for receipt in receipts:
+                    print(
+                        f"- {receipt['execution_id']} | {receipt['command_id']} | "
+                        f"{receipt['status']} | exit={receipt['exit_code']} | "
+                        f"image={receipt['image']} | output_sha256={receipt['output_sha256']}"
+                    )
+                print("Receipts establish command execution only; they do not constitute independent review or acceptance.")
+            except Exception as exc:
+                print(f"Yuki > Receipt inspection failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering sandbox-verify "):
+            artifact_id = command[len("/engineering sandbox-verify "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            image = os.environ.get("YUKI_VERIFICATION_IMAGE", "").strip()
+            if not image:
+                print("Yuki > Set YUKI_VERIFICATION_IMAGE to a locally available image pinned with @sha256:<64 hex>.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                integrity = git_workspace_manager.verify_workspace(artifact_id)
+                if integrity["integrity"] != "passed":
+                    print("Yuki > Workspace integrity did not pass; execution refused.")
+                    continue
+                if not _confirm(
+                    "engineering:sandbox_execution",
+                    f"Run the pinned unit-test profile in isolated Docker image {image} against artifact {artifact_id}; network disabled.",
+                    "high",
+                ):
+                    print("Yuki > Sandboxed test execution cancelled.")
+                    continue
+                sandbox = DockerVerificationExecutor(
+                    provenance.workspace_path,
+                    workspace / "yuki_sandbox_verification.sqlite3",
+                    image=image,
+                    expected_snapshot_sha256=provenance.snapshot_sha256,
+                    expected_artifact_sha256=provenance.artifact_sha256,
+                    commands={
+                        "unit-tests": SandboxCommand(
+                            "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=300
+                        )
+                    },
+                )
+                receipt = sandbox.run(
+                    "unit-tests", artifact_sha256=provenance.artifact_sha256
+                )
+                print(
+                    f"Yuki > Sandboxed unit tests: {receipt.status}; "
+                    f"exit={receipt.exit_code}; image={receipt.image}"
+                )
+                print(
+                    f"- Execution: {receipt.execution_id}; output bytes={receipt.output_bytes}; "
+                    f"output SHA-256={receipt.output_sha256}"
+                )
+                if receipt.output_excerpt:
+                    print(receipt.output_excerpt[:2000])
+            except Exception as exc:
+                print(f"Yuki > Sandboxed verification failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering verify "):
+            artifact_id = command[len("/engineering verify "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            if not _confirm(
+                "engineering:verify_snapshot",
+                f"Revalidate artifact {artifact_id}, its immutable bundle, and every file in its managed workspace. No repository code will execute.",
+                "medium",
+            ):
+                print("Yuki > Workspace verification cancelled.")
+                continue
+            try:
+                result = git_workspace_manager.verify_workspace(artifact_id)
+                print(
+                    f"Yuki > Workspace integrity: {result['integrity']}; "
+                    f"commit={result['source_commit']}; snapshot={result['snapshot_sha256']}"
+                )
+                print(
+                    f"- Files: {result['file_count']}; bytes: {result['total_bytes']}; "
+                    f"workspace: {result['workspace_path']}"
+                )
+                print("Yuki > This is a source-integrity check, not a test-suite or security-scan result.")
+            except Exception as exc:
+                print(f"Yuki > Workspace integrity verification failed ({type(exc).__name__}).")
+        elif command.startswith("/engineering provenance "):
+            artifact_id = command[len("/engineering provenance "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                print(f"Yuki > Artifact: {provenance.artifact_id}")
+                print(f"- Artifact SHA-256: {provenance.artifact_sha256}")
+                print(f"- Source commit: {provenance.source_commit}")
+                print(f"- Snapshot SHA-256: {provenance.snapshot_sha256}")
+                print(f"- Dependency manifest SHA-256: {provenance.dependency_manifest_sha256}")
+                print(f"- Dependency files: {', '.join(provenance.dependency_files) or '(none)'}")
+                print(f"- Files: {provenance.file_count}; bytes: {provenance.total_bytes}")
+                print(f"- Workspace: {provenance.workspace_path}")
+            except Exception as exc:
+                print(f"Yuki > Provenance lookup failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering snapshot "):
+            parts = command.split()
+            if len(parts) != 5:
+                print("Yuki > Use /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Set YUKI_GIT_REPOSITORY to enable pinned Git snapshots.")
+                continue
+            _, _, plan_id, subtask_id, commit_sha = parts
+            try:
+                plan = local_workers.coordinator.get_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                subtask = next((item for item in plan.subtasks if item.subtask_id == subtask_id), None)
+                if subtask is None or not subtask.task_id:
+                    print("Yuki > Subtask must have a dispatched task before snapshot capture.")
+                    continue
+                if subtask.status in {"succeeded", "failed", "cancelled", "blocked"}:
+                    print(f"Yuki > Cannot capture workspace for terminal subtask state {subtask.status}.")
+                    continue
+                if not _confirm(
+                    "engineering:snapshot",
+                    f"Capture exact Git commit {commit_sha} for plan {plan_id}, subtask {subtask_id}.",
+                    "high",
+                ):
+                    print("Yuki > Snapshot capture cancelled.")
+                    continue
+                provenance = git_workspace_manager.capture(
+                    commit=commit_sha, plan_id=plan_id, subtask_id=subtask_id,
+                    task_id=subtask.task_id, author_agent_id=subtask.agent_id,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    workspace_name=f"snapshot-{commit_sha[:12]}-{uuid4().hex[:8]}",
+                )
+                print(
+                    f"Yuki > Snapshot captured: artifact={provenance.artifact_id}; "
+                    f"commit={provenance.source_commit}; digest={provenance.snapshot_sha256}; "
+                    f"files={provenance.file_count}; bytes={provenance.total_bytes}"
+                )
+                print(f"Yuki > Dependency manifest digest: {provenance.dependency_manifest_sha256}")
+                print(f"Yuki > Workspace: {provenance.workspace_path}")
+            except Exception as exc:
+                print(f"Yuki > Snapshot capture failed safely ({type(exc).__name__}).")
+        elif command == "/engineering tasks" or command.startswith("/engineering tasks "):
+            state = command[len("/engineering tasks"):].strip() or None
+            try:
+                tasks = local_workers.runtime.list_task_summaries(
+                    actor_id=local_workers.operator_actor_id, state=state, limit=50
+                )
+                if not tasks:
+                    print("Yuki > No matching tasks.")
+                for task in tasks:
+                    print(
+                        f"- {task.task_id}: {task.name}; state={task.state}; "
+                        f"version={task.version}; attempts={task.attempts}; updated={task.updated_at}"
+                    )
+            except Exception as exc:
+                print(f"Yuki > Task listing failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering task-events "):
+            task_id = command[len("/engineering task-events "):].strip()
+            if not task_id:
+                print("Yuki > Provide a task ID.")
+                continue
+            try:
+                events = local_workers.runtime.events(
+                    actor_id=local_workers.operator_actor_id, task_id=task_id, limit=50
+                )
+                for event in events:
+                    print(f"- #{event.sequence} {event.created_at} {event.kind} actor={event.actor_id}")
+                if not events:
+                    print("Yuki > No task events recorded.")
+            except Exception as exc:
+                print(f"Yuki > Task event inspection failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering plan-events "):
+            plan_id = command[len("/engineering plan-events "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            try:
+                events = local_workers.coordinator.plan_events(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id, limit=50
+                )
+                for event in events:
+                    print(f"- #{event['sequence']} {event['created_at']} {event['kind']}")
+                if not events:
+                    print("Yuki > No plan events recorded.")
+            except Exception as exc:
+                print(f"Yuki > Plan event inspection failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering show "):
+            plan_id = command[len("/engineering show "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            try:
+                plan = local_workers.coordinator.get_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(
+                        f"- {item.subtask_id}: {item.status}; specialist={item.agent_id}; "
+                        f"task={item.task_id or 'not dispatched'}; approval_required={item.requires_approval}"
+                    )
+            except Exception as exc:
+                print(f"Yuki > Could not read plan ({type(exc).__name__}).")
+        elif command.startswith("/engineering advance "):
+            plan_id = command[len("/engineering advance "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            if not _confirm(
+                "engineering:dispatch",
+                f"Create dependency-ready workflow tasks for plan {plan_id}; no worker execution occurs yet.",
+                "high",
+            ):
+                print("Yuki > Plan advancement cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.advance(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan advanced: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: {item.status}; task={item.task_id or 'not dispatched'}")
+                print("Queued tasks remain idle until individually approved and a worker cycle is run.")
+            except Exception as exc:
+                print(f"Yuki > Plan advancement failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering approve "):
+            task_id = command[len("/engineering approve "):].strip()
+            if not task_id:
+                print("Yuki > Provide a task ID.")
+                continue
+            try:
+                task = local_workers.runtime.get(
+                    actor_id=local_workers.operator_actor_id, task_id=task_id
+                )
+                if task.state != "queued":
+                    print(f"Yuki > Task is {task.state}; only queued tasks can be approved.")
+                    continue
+                if not _confirm(
+                    "engineering:approve_task",
+                    f"Approve queued task {task_id} for this terminal session? Its exact definition digest will be bound to the approval.",
+                    "high",
+                ):
+                    print("Yuki > Task approval cancelled.")
+                    continue
+                approved = local_workers.runtime.store.approve(
+                    task_id, actor_id=local_workers.operator_actor_id,
+                    session_id=local_workers.approval_session_id,
+                    expected_version=task.version,
+                )
+                print(f"Yuki > Task approved: {approved.run_id} (version {approved.version}).")
+            except Exception as exc:
+                print(f"Yuki > Task approval failed safely ({type(exc).__name__}).")
+        elif command == "/engineering cycle":
+            if not _confirm(
+                "engineering:worker_cycle",
+                "Run one bounded local worker cycle. Approved queued specialist tasks may call the configured model provider.",
+                "high",
+            ):
+                print("Yuki > Worker cycle cancelled.")
+                continue
+            try:
+                report = local_workers.supervisor.run_cycle()
+                print(
+                    f"Yuki > Worker cycle finished: processed={report.processed_count}, "
+                    f"succeeded={report.succeeded_count}, failed={report.failed_count}, "
+                    f"recovered={len(report.recovered_task_ids)}, idle={report.idle}."
+                )
+            except Exception as exc:
+                print(f"Yuki > Worker cycle stopped safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering cancel "):
+            plan_id = command[len("/engineering cancel "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            if not _confirm(
+                "engineering:cancel_plan",
+                f"Cancel pending and dispatched work in plan {plan_id}.",
+                "high",
+            ):
+                print("Yuki > Plan cancellation cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.cancel_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                print(f"Yuki > Plan cancellation recorded: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: {item.status}")
+            except Exception as exc:
+                print(f"Yuki > Plan cancellation failed safely ({type(exc).__name__}).")
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
@@ -387,6 +881,34 @@ def main():
                 print("Yuki > " + str(evolution.review(proposal_id, decision)))
             except (ValueError, RuntimeError) as exc:
                 print(f"Yuki > Proposal was not changed: {exc}")
+        elif command == "/upgrade status":
+            print(upgrade_reviews.status())
+        elif command == "/upgrade list":
+            reviews = upgrade_reviews.list()
+            if not reviews:
+                print("Yuki > No self-upgrade proposals have been recorded.")
+            for item in reviews:
+                print(f"{item['proposal_id']} [{item['status']}] {item['changed_paths']}")
+        elif command.startswith("/upgrade review "):
+            parts = command.split(maxsplit=4)
+            if len(parts) != 4 or parts[3] not in {"approve", "reject"}:
+                print("Yuki > Use /upgrade review PROPOSAL_ID approve|reject")
+                continue
+            proposal_id, decision = parts[2], parts[3]
+            if not _confirm(
+                "self-upgrade:review",
+                f"Record {decision} for proposal {proposal_id}. Approval only permits a later isolated-testing stage; it does not apply code or deploy.",
+                "high",
+            ):
+                print("Yuki > Self-upgrade review cancelled.")
+                continue
+            try:
+                item = upgrade_reviews.review(
+                    proposal_id, decision, reviewer="local-terminal-operator"
+                )
+                print(f"Yuki > {item['proposal_id']} is now {item['status']}.")
+            except (ValueError, RuntimeError) as exc:
+                print(f"Yuki > Review was not recorded: {exc}")
         elif command == "/voice status":
             print(f"Voice opt-in: {config['voice_enabled']}; recording starts only on explicit request.")
             print(f"Language behavior: {config['language_behavior']}; STT uses automatic detection by default.")

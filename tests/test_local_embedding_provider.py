@@ -1,7 +1,7 @@
 import sys, tempfile, types, unittest
 from pathlib import Path
 from unittest.mock import patch
-from providers.local_embeddings import HuggingFaceLocalEmbedder
+from providers.local_embeddings import HuggingFaceLocalEmbedder, LocalHashingEmbedder
 
 
 class FakeSentenceTransformer:
@@ -67,6 +67,23 @@ class LocalEmbeddingAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non_finite"):
             embedder.encode("test")
 
+
+
+    def test_hashing_fallback_is_deterministic_and_offline(self):
+        embedder = LocalHashingEmbedder(dimensions=128)
+        first = embedder.encode("local private memory retrieval")
+        second = embedder.encode("local private memory retrieval")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 128)
+        self.assertAlmostEqual(sum(value * value for value in first), 1.0, places=6)
+        self.assertEqual(embedder.encode_many(["alpha", "beta"])[0], embedder.encode("alpha"))
+        self.assertEqual(embedder.model_id, "yuki-local-hashing-v1")
+
+    def test_hashing_fallback_rejects_invalid_dimensions_and_empty_text(self):
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            LocalHashingEmbedder(dimensions=16)
+        with self.assertRaisesRegex(ValueError, "invalid_or_too_long"):
+            LocalHashingEmbedder().encode("   ")
 
 if __name__ == "__main__":
     unittest.main()

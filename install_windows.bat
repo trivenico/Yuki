@@ -10,14 +10,14 @@ echo.
 where python >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Python was not found.
-  echo Install Python 3.10 or newer from https://www.python.org/downloads/
+  echo Install Python 3.11 or newer from https://www.python.org/downloads/
   echo During installation, enable "Add Python to PATH".
   exit /b 1
 )
 
-python -c "import sys; print('Detected Python:', sys.version.split()[0]); sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+python -c "import sys; print('Detected Python:', sys.version.split()[0]); sys.exit(0 if sys.version_info >= (3, 11) else 1)"
 if errorlevel 1 (
-  echo ERROR: Yuki requires Python 3.10 or newer.
+  echo ERROR: Yuki requires Python 3.11 or newer.
   exit /b 1
 )
 
@@ -32,7 +32,7 @@ if not exist ".venv\Scripts\python.exe" (
 echo [2/4] Updating pip...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 (
-  echo WARNING: pip upgrade failed. Continuing because Yuki has no third-party dependencies.
+  echo WARNING: pip upgrade failed. Continuing with the currently installed pip version.
 )
 
 echo [3/4] Checking declared dependencies...

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 from automation.agent_coordinator import SubtaskSpec
@@ -10,13 +11,18 @@ from automation.local_worker_runtime import (
     WORKER_SERVICE_ACTOR,
     build_local_worker_runtime,
 )
+from automation.local_verification_executor import VerificationCommand
 
 
 class FakeProvider:
+    def __init__(self):
+        self.prompts = []
+
     def is_available(self):
         return True
 
     def generate(self, prompt):
+        self.prompts.append(prompt)
         return "bounded specialist output"
 
 
@@ -26,11 +32,58 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             built = build_local_worker_runtime(Path(directory), FakeProvider())
             self.assertIs(built.supervisor.runtime, built.runtime)
             self.assertEqual(built.operator_actor_id, LOCAL_OPERATOR_ACTOR)
+            self.assertIs(built.coordinator.acceptance_store, built.acceptance_store)
+            self.assertIs(built.acceptance_store.verification_workflow, built.verification_workflow)
             self.assertEqual(
                 set(built.supervisor.worker.handlers),
                 {"research", "coding", "testing", "reporting"},
             )
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
+
+
+    def test_reviewer_authorizer_is_explicitly_injected_and_fails_closed_by_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            self.assertIsNone(built.verification_evidence_store.reviewer_authorizer)
+            with self.assertRaisesRegex(Exception, "trusted_reviewer_authorizer_not_configured"):
+                built.verification_evidence_store.record(None)
+
+        calls = []
+        def authorizer(actor_id, action, artifact_digest):
+            calls.append((actor_id, action, artifact_digest))
+            return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(
+                directory, FakeProvider(),
+                verification_reviewer_authorizer=authorizer,
+            )
+            self.assertIs(built.verification_evidence_store.reviewer_authorizer, authorizer)
+
+    def test_verification_executor_can_target_separate_materialized_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = root / "state"
+            execution_workspace = root / "snapshot"
+            storage.mkdir()
+            execution_workspace.mkdir()
+            built = build_local_worker_runtime(
+                storage,
+                FakeProvider(),
+                verification_workspace=execution_workspace,
+                verification_commands={
+                    "python-version": VerificationCommand(
+                        "python-version", (sys.executable, "--version"), 10,
+                    ),
+                },
+            )
+            self.assertIsNotNone(built.verification_executor)
+            self.assertEqual(
+                built.verification_executor.workspace,
+                execution_workspace.resolve(),
+            )
+            receipt = built.verification_executor.run("python-version")
+            self.assertEqual(receipt.status, "passed")
 
     def test_local_runtime_accepts_per_specialist_provider_preferences(self):
         class RoutedManager:
@@ -89,6 +142,90 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 build_local_worker_runtime(
                     directory, FakeProvider(), provider_preferences={"research": ("ollama",)},
                 )
+
+    def test_local_runtime_shares_budget_store_and_enforces_provider_call_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            built = build_local_worker_runtime(directory, provider)
+            self.assertIs(built.supervisor.worker.budget_store, built.budget_store)
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="local-budget-enforcement",
+                subtasks=[SubtaskSpec(
+                    "budgeted-research", "Research this bounded request",
+                    ("research",), requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            task_id = plan.subtasks[0].task_id
+            task = built.runtime.get(
+                actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+            )
+            execution = task.steps[0]["execution"]
+            snapshot = built.budget_store.get_snapshot(execution["budget_id"])
+            self.assertEqual(snapshot.task_id, execution["task_identity"])
+            self.assertEqual(snapshot.policy_version, "local-v1")
+
+            result = built.supervisor.worker.run_once()
+            self.assertEqual(result.state, "succeeded")
+            usage = built.budget_store.usage(execution["budget_id"])
+            self.assertEqual(usage["model_turns"], 1)
+            self.assertEqual(
+                usage["transcript_chars"],
+                len("Research this bounded request"),
+            )
+            self.assertEqual(len(provider.prompts), 1)
+
+    def test_coordinator_task_reuses_child_budget_and_exhaustion_blocks_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            built = build_local_worker_runtime(directory, provider)
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="integrated-budget-exhaustion-plan",
+                subtasks=[SubtaskSpec(
+                    "research-budget", "Bounded research request", ("research",),
+                    requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            task = built.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
+            step = task.steps[0]
+            execution = step["execution"]
+            # Local policy grants five model turns to this specialist. Reuse
+            # the same immutable logical-task budget across distinct queued
+            # attempts to prove cumulative store accounting is authoritative.
+            for index in range(4):
+                built.runtime.enqueue(
+                    actor_id=LOCAL_OPERATOR_ACTOR,
+                    idempotency_key=f"integrated-budget-replay-{index}",
+                    name="agent-research-budget-probe",
+                    steps=[{
+                        "name": "probe", "action": "emit", "argument": "bounded replay",
+                        "requires_approval": False, "execution": dict(execution),
+                    }],
+                )
+            completed = [built.supervisor.worker.run_once() for _ in range(5)]
+            self.assertTrue(all(item is not None and item.state == "succeeded" for item in completed))
+            self.assertEqual(built.budget_store.usage(execution["budget_id"])["model_turns"], 5)
+            self.assertEqual(len(provider.prompts), 5)
+
+            built.runtime.enqueue(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="integrated-budget-replay-over-limit",
+                name="agent-research-budget-probe",
+                steps=[{
+                    "name": "probe", "action": "emit", "argument": "must not reach provider",
+                    "requires_approval": False, "execution": dict(execution),
+                }],
+            )
+            rejected = built.supervisor.worker.run_once()
+            self.assertEqual(rejected.state, "failed")
+            self.assertEqual(len(provider.prompts), 5)
+            self.assertEqual(built.budget_store.usage(execution["budget_id"])["model_turns"], 5)
 
     def test_operator_approval_is_allowed_and_session_is_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,6 +351,34 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 build_local_worker_runtime(
                     directory, FakeProvider(), max_tasks_per_cycle=11,
                 )
+
+
+    def test_completed_local_task_is_automatically_captured_for_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="automatic-artifact-capture",
+                subtasks=[SubtaskSpec(
+                    "capture-research", "Produce a short artifact", ("research",),
+                    requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            result = built.supervisor.worker.run_once()
+            self.assertEqual(result.state, "succeeded")
+            refreshed = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
+            acceptance = built.acceptance_store.get(
+                plan_id=plan.plan_id, subtask_id="capture-research", task_id=task_id,
+            )
+            self.assertEqual(acceptance["state"], "awaiting_verification")
+            self.assertIsNotNone(acceptance["artifact_id"])
+            artifact = built.verification_workflow.get_status(acceptance["artifact_id"])["artifact"]
+            self.assertEqual(artifact["artifact_sha256"], __import__("hashlib").sha256(
+                b"bounded specialist output"
+            ).hexdigest())
+            self.assertEqual(refreshed.subtasks[0].status, "succeeded")
 
 
 if __name__ == "__main__":

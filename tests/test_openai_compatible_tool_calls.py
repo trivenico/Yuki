@@ -144,6 +144,18 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "from-chat"})
         self.assertEqual(result["text"], "")
 
+    def test_generate_chat_preserves_exact_provider_usage_metadata(self):
+        body = self.response(content="Metered", finish="stop")
+        body["id"] = "chatcmpl-usage-1"
+        body["usage"] = {"prompt_tokens": 17, "completion_tokens": 9}
+        opener = FakeOpener(body, self.requests)
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            result = self.provider.generate_chat(messages=[{"role": "user", "content": "Hi"}], tools=[])
+        self.assertEqual(result["usage"], {
+            "input_tokens": 17, "output_tokens": 9, "estimated": False,
+        })
+        self.assertEqual(result["request_id"], "chatcmpl-usage-1")
+
     def test_generate_chat_rejects_bad_transcripts_before_network(self):
         invalid = [
             [],

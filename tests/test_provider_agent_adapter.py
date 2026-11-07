@@ -29,8 +29,31 @@ class ProviderAgentAdapterTests(unittest.TestCase):
             {"id": "c1", "name": "echo", "arguments": {"value": "x"}}
         ]}})
         result = ProviderAgentAdapter(provider)(
-            messages=[{"role": "user", "content": "do"}], tools=[], tool_choice="auto")
+            messages=[{"role": "user", "content": "do"}],
+            tools=[{"type": "function", "function": {"name": "echo"}}], tool_choice="auto")
         self.assertEqual(len(result["tool_calls"]["tool_calls"]), 1)
+
+    def test_preserves_validated_provider_usage_metadata(self):
+        provider = FakeChatProvider({
+            "text": "hello", "tool_calls": {"tool_calls": []},
+            "usage": {"input_tokens": 10, "output_tokens": 4, "estimated": False},
+            "request_id": "request-123",
+        })
+        result = ProviderAgentAdapter(provider)(
+            messages=[{"role": "user", "content": "x"}], tools=[]
+        )
+        self.assertEqual(result["usage"]["input_tokens"], 10)
+        self.assertEqual(result["request_id"], "request-123")
+
+    def test_rejects_malformed_provider_usage_metadata(self):
+        provider = FakeChatProvider({
+            "text": "hello", "tool_calls": {"tool_calls": []},
+            "usage": {"input_tokens": True, "output_tokens": 4, "estimated": False},
+        })
+        with self.assertRaisesRegex(ValueError, "usage_metadata_invalid"):
+            ProviderAgentAdapter(provider)(
+                messages=[{"role": "user", "content": "x"}], tools=[]
+            )
 
     def test_rejects_invalid_message_roles_and_shapes(self):
         adapter = ProviderAgentAdapter(FakeChatProvider())

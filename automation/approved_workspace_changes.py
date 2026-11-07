@@ -12,9 +12,11 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Callable, Mapping, Sequence
 
@@ -25,6 +27,12 @@ _MAX_FILE_BYTES = 256 * 1024
 _MAX_PATCH_BYTES = 1024 * 1024
 _MAX_OUTPUT_BYTES = 64 * 1024
 _MAX_TEST_TIMEOUT = 120
+_MAX_MANIFEST_FILES = 10000
+_MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+_EXECUTION_MANIFESTS = frozenset({
+    "requirements.txt", "requirements-dev.txt", "pyproject.toml", "poetry.lock",
+    "uv.lock", "Pipfile", "Pipfile.lock", "setup.cfg", "tox.ini",
+})
 _SAFE_MODULE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _BLOCKED_PARTS = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh", ".aws", ".azure", ".config"})
 _SECRET_PART = re.compile(r"(^\.env($|\.)|secret|credential|password|token|private.?key|id_rsa|id_ed25519)", re.I)
@@ -72,14 +80,23 @@ def _validate_principal(principal: ToolPrincipal, trusted: Callable[[ToolPrincip
         raise ToolAuthorizationError("required workspace permission is missing.")
 
 
-def _safe_existing_file(root: Path, relative: str) -> Path:
-    if not isinstance(relative, str) or not relative.strip() or len(relative) > 1000 or "\x00" in relative:
-        raise ToolInputError("path must be bounded relative text.")
-    candidate = Path(relative)
-    if candidate.is_absolute() or any(part in {"", ".."} for part in candidate.parts):
-        raise ToolInputError("absolute paths and parent traversal are not allowed.")
-    if any(part in _BLOCKED_PARTS or _SECRET_PART.search(part) for part in candidate.parts):
+def _validate_relative_posix_path(relative: str) -> tuple[str, ...]:
+    """Accept one canonical relative POSIX path on every host platform."""
+    if (not isinstance(relative, str) or not relative or len(relative) > 1000
+            or relative != relative.strip() or "\x00" in relative
+            or "\\" in relative or ":" in relative or relative.startswith("/")):
+        raise ToolInputError("path must be normalized relative POSIX text.")
+    parts = tuple(relative.split("/"))
+    if any(part in {"", ".", ".."} for part in parts):
+        raise ToolInputError("absolute paths and traversal components are not allowed.")
+    if any(part in _BLOCKED_PARTS or _SECRET_PART.search(part) for part in parts):
         raise ToolInputError("path is excluded by workspace policy.")
+    return parts
+
+
+def _safe_existing_file(root: Path, relative: str) -> Path:
+    parts = _validate_relative_posix_path(relative)
+    candidate = Path(*parts)
     target = root / candidate
     # Reject symlinks at every existing path component; resolution alone would follow them.
     cursor = root
@@ -97,6 +114,66 @@ def _safe_existing_file(root: Path, relative: str) -> Path:
     if resolved.stat().st_size > _MAX_FILE_BYTES:
         raise ToolInputError("existing file exceeds the edit size limit.")
     return resolved
+
+
+def _workspace_execution_digest(root: Path) -> str:
+    """Fingerprint project Python sources and dependency manifests for test approval.
+
+    This is a source-tree binding, not a lock on the installed interpreter environment.
+    """
+    entries = []
+    total_bytes = 0
+    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        current = Path(directory)
+        kept_dirs = []
+        for name in sorted(dirnames):
+            child = current / name
+            if name in _BLOCKED_PARTS or _SECRET_PART.search(name):
+                continue
+            if child.is_symlink():
+                raise ToolInputError("symlink directories are not allowed in test source trees.")
+            kept_dirs.append(name)
+        dirnames[:] = kept_dirs
+        for name in sorted(filenames):
+            if not (name.endswith(".py") or name in _EXECUTION_MANIFESTS):
+                continue
+            if _SECRET_PART.search(name):
+                continue
+            candidate = current / name
+            if candidate.is_symlink():
+                raise ToolInputError("symlink source files are not allowed in test source trees.")
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+                if not resolved.is_file():
+                    raise ToolInputError("test source entries must be regular files.")
+                size = resolved.stat().st_size
+                if size > _MAX_FILE_BYTES:
+                    raise ToolInputError("a test source file exceeds the manifest size limit.")
+                total_bytes += size
+                if total_bytes > _MAX_MANIFEST_BYTES:
+                    raise ToolInputError("test source tree exceeds the manifest size limit.")
+                content = resolved.read_bytes()
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ToolInputError("test source tree could not be safely fingerprinted.") from exc
+            relative = candidate.relative_to(root).as_posix()
+            entries.append({
+                "path": relative,
+                "bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            })
+            if len(entries) > _MAX_MANIFEST_FILES:
+                raise ToolInputError("test source tree contains too many files.")
+    if not entries:
+        raise ToolInputError("test source tree contains no fingerprintable Python files.")
+    payload = {
+        "python": sys.implementation.name,
+        "cache_tag": sys.implementation.cache_tag,
+        "version": [sys.version_info.major, sys.version_info.minor, sys.version_info.micro],
+        "files": entries,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 class ApprovedWorkspaceChanges:
@@ -118,11 +195,17 @@ class ApprovedWorkspaceChanges:
             raise TypeError("trusted principal, approval, and audit callbacks are required.")
         if not isinstance(allowed_paths, (tuple, list)) or not allowed_paths:
             raise ValueError("explicit allowed_paths are required.")
+        try:
+            validated_paths = tuple("/".join(_validate_relative_posix_path(path)) for path in allowed_paths)
+        except ToolInputError as exc:
+            raise ValueError("allowed_paths must contain safe normalized relative POSIX paths.") from exc
+        if len(set(validated_paths)) != len(validated_paths):
+            raise ValueError("allowed_paths must not contain duplicates.")
         self.root = root
         self.trusted_principal = trusted_principal
         self.approve_change = approve_change
         self.audit = audit
-        self.allowed_paths = frozenset(allowed_paths)
+        self.allowed_paths = frozenset(validated_paths)
 
     def _audit(self, actor: str, action: str, outcome: str, digest: str, paths: Sequence[str]) -> None:
         try:
@@ -265,8 +348,10 @@ class ApprovedTestRunner:
             raise ToolInputError("test target must resolve inside the workspace.") from exc
         if not source_file.is_file():
             raise ToolInputError("allow-listed test module is missing from the workspace.")
-        source_digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
-        run_digest = hashlib.sha256(f"{test_module}:{source_digest}:{sys.version_info.major}.{sys.version_info.minor}".encode()).hexdigest()
+        source_digest = _workspace_execution_digest(self.root)
+        run_digest = hashlib.sha256(
+            f"{test_module}:{source_digest}".encode("utf-8")
+        ).hexdigest()
         run_id = "test_" + run_digest[:24]
         try:
             approved = self.approve_run(principal.actor_id, run_id, run_digest) is True
@@ -275,28 +360,93 @@ class ApprovedTestRunner:
         if not approved:
             self._record(principal.actor_id, "tests.run", "denied", run_digest, test_module)
             raise ToolAuthorizationError("explicit approval for this test target and source digest is required.")
+        if _workspace_execution_digest(self.root) != source_digest:
+            self._record(principal.actor_id, "tests.run", "denied", run_digest, test_module)
+            raise WorkspaceChangeError("test source tree changed after approval; review and approve again.")
         self._record(principal.actor_id, "tests.run", "started", run_digest, test_module)
         env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(self.root),
                "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         start = time.monotonic()
+        process = None
+        captured = [bytearray(), bytearray()]
+        def drain(stream, buffer):
+            while True:
+                chunk = stream.read(8192)
+                if not chunk:
+                    return
+                remaining = _MAX_OUTPUT_BYTES - len(buffer)
+                if remaining > 0:
+                    buffer.extend(chunk[:remaining])
+
+        readers = []
         try:
-            result = subprocess.run(
+            creationflags = (
+                subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            )
+            process = subprocess.Popen(
                 [sys.executable, "-m", "unittest", test_module, "-v"],
                 cwd=str(self.root), env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=self.timeout_seconds,
-                check=False, shell=False,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                shell=False, start_new_session=(os.name != "nt"),
+                creationflags=creationflags,
             )
-            timed_out = False
-            exit_code = result.returncode
-            stdout = result.stdout[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = result.stderr[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            exit_code = 124
-            stdout = (exc.stdout or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            stderr = (exc.stderr or b"")[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            readers = [
+                threading.Thread(target=drain, args=(process.stdout, captured[0]), daemon=True),
+                threading.Thread(target=drain, args=(process.stderr, captured[1]), daemon=True),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                process.wait(timeout=self.timeout_seconds)
+                timed_out = False
+                exit_code = process.returncode
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                exit_code = 124
+                if process.poll() is None:
+                    try:
+                        if os.name == "nt":
+                            subprocess.run(
+                                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=5, check=False, shell=False,
+                            )
+                        else:
+                            os.killpg(process.pid, signal.SIGKILL)
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                    if process.poll() is None:
+                        process.kill()
+                process.wait()
+            for reader in readers:
+                reader.join(timeout=5)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        except Exception:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+            raise
+        stdout = bytes(captured[0]).decode("utf-8", errors="replace")
+        stderr = bytes(captured[1]).decode("utf-8", errors="replace")
+        source_changed = False
+        try:
+            source_changed = _workspace_execution_digest(self.root) != source_digest
+        except Exception:
+            source_changed = True
+        if source_changed and not timed_out:
+            # A test may have modified imported source while running. Never report
+            # that execution as a valid pass against the approved digest.
+            exit_code = 125
+            stderr = (stderr + "\\nYuki: source tree changed during execution; evidence invalidated.\\n")
         duration = round(time.monotonic() - start, 3)
-        self._record(principal.actor_id, "tests.run", "timed_out" if timed_out else ("succeeded" if exit_code == 0 else "failed"), run_digest, test_module)
+        outcome = (
+            "timed_out" if timed_out else
+            "source_changed" if source_changed else
+            ("succeeded" if exit_code == 0 else "failed")
+        )
+        self._record(principal.actor_id, "tests.run", outcome, run_digest, test_module)
         return TestRunResult(test_module, exit_code, timed_out, duration, stdout, stderr)
 
     def _record(self, actor: str, action: str, outcome: str, digest: str, target: str) -> None:

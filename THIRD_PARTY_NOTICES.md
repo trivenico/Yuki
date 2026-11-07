@@ -22,3 +22,14 @@ OpenClaw is used as a format and architecture reference for the Agent Skills Mar
 - License: MIT License; full text in `licenses/MIT-Hermes-Agent.txt`.
 - Changes: Adapted the root-cause debugging workflow for Yuki, removed Hermes-specific tool calls and unsupported delegation examples, added Yuki's actual verification and permission boundaries. The bundled skill is opt-in and imported through the data-only SKILL.md installer.
 - The upstream skill itself credits obra/superpowers; that attribution is retained in the Yuki skill's frontmatter.
+
+## Open-source projects reviewed for selective future reuse
+
+The following upstream projects were reviewed at pinned revisions for possible selective adaptation. **No source files from these projects are included in Yuki as a result of this review.** If a later commit copies or adapts any file, add its exact source path, revision, destination, copyright, license, and modification summary here, and include the applicable full license/NOTICE material.
+
+- eVi — https://github.com/evi-assistant/evi-ai — revision `a07852f74cd1a27709588a833a8981ddf5946e14` — MIT. Candidate: Tauri 2 desktop shell patterns and shared CLI/web/core architecture.
+- Personal Jarvis — https://github.com/tbckdev/PersonalJarvis — revision `bfc177ad3c8f3a79b4433671cf5f8c0ec12e7406` — Apache-2.0. Candidate: desktop agent workspace and companion patterns.
+- OpenWOP — https://github.com/openwop/openwop — revision `ec214ef38d1f515c275abc48194e4ec73ed9d3be` — Apache-2.0 code; CC BY 4.0 specification and documentation. Candidate: workflow interoperability contracts.
+- Thoth — https://github.com/tokwalabs/Thoth — revision `542bc106224df870fb5c1a2db8e0666b711c8a76` — Apache-2.0. Candidate: SQLite-backed knowledge graph patterns.
+
+Selection, source compatibility, security review, and integration gates are documented in `docs/OPEN_SOURCE_ACCELERATION_PLAN.md`.

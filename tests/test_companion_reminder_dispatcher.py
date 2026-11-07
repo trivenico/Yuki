@@ -1,0 +1,347 @@
+"""Tests for the reminder dispatcher using the real SQLite reminder store."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from companion.reminder_dispatcher import DeviceNotificationChannel, ReminderDispatcher
+from companion.reminder_store import CompanionReminderStore
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
+
+
+def _store(tmp_path):
+    return CompanionReminderStore(
+        tmp_path / "reminders.sqlite3",
+        authorize=lambda owner, action: owner == "owner-a" and action in {"create", "read", "cancel"},
+    )
+
+
+def test_dispatcher_delivers_and_acknowledges_with_stable_idempotency_key(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Review the deployment",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    received = []
+
+    async def deliver(envelope):
+        received.append(envelope)
+
+    dispatcher = ReminderDispatcher(store, deliver, poll_interval_seconds=0.1)
+    async def scenario():
+        await dispatcher.start()
+        for _ in range(30):
+            if received:
+                break
+            await asyncio.sleep(0.02)
+        await dispatcher.stop()
+
+    asyncio.run(scenario())
+    assert len(received) == 1
+    assert received[0]["reminder_id"] == reminder["reminder_id"]
+    assert received[0]["idempotency_key"] == reminder["reminder_id"]
+    assert received[0]["owner_id"] == "owner-a"
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "delivered"
+
+
+def test_dispatcher_records_delivery_failure_and_releases_lease(tmp_path):
+    store = _store(tmp_path)
+    store.create(
+        owner_id="owner-a", text="Check the build",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+
+    def deliver(_envelope):
+        raise OSError("notification channel unavailable")
+
+    dispatcher = ReminderDispatcher(store, deliver, poll_interval_seconds=0.1)
+    asyncio.run(dispatcher._deliver_one(store.claim_due()[0]))
+    row = store.list(owner_id="owner-a")[0]
+    assert row["status"] == "pending"
+    assert store.claim_due() == []
+
+
+
+
+def test_dispatcher_does_not_prelease_queued_reminders(tmp_path):
+    store = _store(tmp_path)
+    first = store.create(
+        owner_id="owner-a", text="Slow first delivery",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    second = store.create(
+        owner_id="owner-a", text="Second delivery gets a fresh lease",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    received = []
+
+    async def deliver(envelope):
+        received.append(envelope["reminder_id"])
+        if envelope["reminder_id"] == first["reminder_id"]:
+            await asyncio.sleep(5.2)
+
+    dispatcher = ReminderDispatcher(
+        store, deliver, poll_interval_seconds=0.1, batch_size=2, lease_seconds=5,
+    )
+
+    async def scenario():
+        await dispatcher.start()
+        for _ in range(400):
+            if len(received) == 2:
+                break
+            await asyncio.sleep(0.02)
+        await dispatcher.stop()
+
+    asyncio.run(scenario())
+    assert received == [first["reminder_id"], second["reminder_id"]]
+    rows = store.list(owner_id="owner-a", include_inactive=True)
+    assert {row["reminder_id"]: row["status"] for row in rows} == {
+        # The dispatcher renews the first reminder's lease while the slow
+        # callback is running, so it can acknowledge after it completes.
+        first["reminder_id"]: "delivered",
+        second["reminder_id"]: "delivered",
+    }
+
+def test_stop_is_bounded_when_delivery_resists_cancellation(tmp_path):
+    store = _store(tmp_path)
+    store.create(
+        owner_id="owner-a", text="Cancellation resistant",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=30)
+        dispatcher._STOP_GRACE_SECONDS = 0.05
+        dispatcher._CANCEL_GRACE_SECONDS = 0.05
+        await dispatcher.start()
+        await started.wait()
+        await dispatcher.stop()
+        assert cancelled.is_set()
+        assert dispatcher._task is not None
+        assert not dispatcher._task.done()
+        release.set()
+        try:
+            await asyncio.wait_for(dispatcher._task, timeout=2)
+        except asyncio.CancelledError:
+            pass
+        assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "pending"
+
+    asyncio.run(scenario())
+
+
+def test_dispatcher_shutdown_awaits_async_delivery_cancellation(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Stop cleanly",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due(lease_seconds=30)[0]
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=30)
+        task = asyncio.create_task(dispatcher._deliver_one(claim))
+        await started.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    assert cancelled.is_set()
+    row = store.list(owner_id="owner-a", include_inactive=True)[0]
+    assert row["status"] == "pending"
+
+
+def test_dispatcher_stops_async_delivery_when_lease_renewal_is_rejected(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Stop if lease is lost",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due(lease_seconds=5)[0]
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def deliver(_envelope):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def scenario():
+        dispatcher = ReminderDispatcher(store, deliver, lease_seconds=5)
+        async def reject_renewal(*, reminder_id, lease_token, lease_seconds):
+            await started.wait()
+            return False
+        dispatcher._store_call = lambda method, **kwargs: (
+            reject_renewal(**kwargs) if method == "renew_lease"
+            else asyncio.to_thread(getattr(store, method), **kwargs)
+        )
+        await dispatcher._deliver_one(claim)
+
+    asyncio.run(scenario())
+    assert cancelled.is_set()
+    row = store.list(owner_id="owner-a", include_inactive=True)[0]
+    assert row["status"] == "pending"
+
+
+def test_dispatcher_skips_delivery_when_reminder_was_cancelled_after_claim(tmp_path):
+    store = _store(tmp_path)
+    reminder = store.create(
+        owner_id="owner-a", text="Do not notify after cancellation",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    claim = store.claim_due()[0]
+    received = []
+
+    def deliver(envelope):
+        received.append(envelope)
+
+    assert store.cancel(owner_id="owner-a", reminder_id=reminder["reminder_id"])
+    dispatcher = ReminderDispatcher(store, deliver)
+    asyncio.run(dispatcher._deliver_one(claim))
+
+    assert received == []
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "cancelled"
+
+
+def test_dispatcher_rejects_invalid_configuration(tmp_path):
+    store = _store(tmp_path)
+    for kwargs in (
+        {"poll_interval_seconds": 0},
+        {"batch_size": 0},
+        {"lease_seconds": 1},
+    ):
+        try:
+            ReminderDispatcher(store, lambda _item: None, **kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid dispatcher configuration was accepted")
+
+
+def test_dispatcher_delivers_companion_reminder_to_paired_device_outbox(tmp_path):
+    store = _store(tmp_path)
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+    challenge = pairing.create_pairing_challenge("owner-a")
+    credential = pairing.pair_device(challenge.code, "Yuki Desktop")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+    channel = DeviceNotificationChannel(pairing, outbox)
+    reminder = store.create(
+        owner_id="owner-a",
+        text="Review the deployment",
+        due_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    dispatcher = ReminderDispatcher(store, channel, poll_interval_seconds=0.1)
+
+    async def scenario():
+        await dispatcher.start()
+        for _ in range(50):
+            page = outbox.poll(credential.token)
+            if page.events:
+                break
+            await asyncio.sleep(0.02)
+        await dispatcher.stop()
+        return page
+
+    page = asyncio.run(scenario())
+    assert len(page.events) == 1
+    event = page.events[0]
+    assert event.event_type == "companion.reminder_due"
+    assert event.payload["body"] == "Review the deployment"
+    assert event.payload["reminder_id"] == reminder["reminder_id"]
+    assert store.list(owner_id="owner-a", include_inactive=True)[0]["status"] == "delivered"
+    # Delivery to the durable outbox is not the same as OS display; the
+    # paired desktop worker owns the subsequent acknowledgement.
+    assert event.acknowledged_at is None
+
+
+def test_notification_channel_fans_out_idempotently_without_cross_owner_leakage(tmp_path):
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+
+    def pair(owner_id, name):
+        challenge = pairing.create_pairing_challenge(owner_id)
+        return pairing.pair_device(challenge.code, name)
+
+    owner_a_first = pair("owner-a", "Yuki Desktop A")
+    owner_a_second = pair("owner-a", "Yuki Desktop B")
+    owner_b = pair("owner-b", "Yuki Desktop C")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+    channel = DeviceNotificationChannel(pairing, outbox)
+    envelope = {
+        "owner_id": "owner-a",
+        "reminder_id": "a" * 32,
+        "text": "Private deployment reminder",
+        "due_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": "a" * 32,
+    }
+
+    assert channel(envelope) == 2
+    # A retry of the same reminder must reuse the existing per-device events.
+    assert channel(envelope) == 2
+
+    first_page = outbox.poll(owner_a_first.token)
+    second_page = outbox.poll(owner_a_second.token)
+    other_owner_page = outbox.poll(owner_b.token)
+
+    assert len(first_page.events) == 1
+    assert len(second_page.events) == 1
+    assert first_page.events[0].event_id != second_page.events[0].event_id
+    assert first_page.events[0].payload["body"] == "Private deployment reminder"
+    assert second_page.events[0].payload["body"] == "Private deployment reminder"
+    assert other_owner_page.events == []
+
+
+def test_notification_channel_fails_closed_if_device_is_revoked_after_listing(tmp_path):
+    pairing = DevicePairingService(tmp_path / "pairing.sqlite3")
+    challenge = pairing.create_pairing_challenge("owner-a")
+    credential = pairing.pair_device(challenge.code, "Yuki Desktop")
+    outbox = DeviceNotificationOutbox(tmp_path / "outbox.sqlite3", pairing)
+
+    class RevokeAfterListing:
+        def list_devices(self, owner_id):
+            devices = pairing.list_devices(owner_id)
+            assert pairing.revoke_device(owner_id, credential.device.device_id)
+            return devices
+
+    channel = DeviceNotificationChannel(RevokeAfterListing(), outbox)
+    envelope = {
+        "owner_id": "owner-a",
+        "reminder_id": "b" * 32,
+        "text": "Sensitive reminder",
+        "due_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": "b" * 32,
+    }
+
+    try:
+        channel(envelope)
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("revoked device unexpectedly received a reminder")
+
+    # Authentication is now revoked and no event was inserted for that device.
+    assert pairing.authenticate_device(credential.token) is None

@@ -16,6 +16,7 @@ from evaluation.agent_experience import AgentExperienceStore
 from evaluation.agent_evaluator import AgentEvaluator
 from evaluation.agent_review_queue import AgentEvaluationReviewQueue
 from evaluation.agent_learning_pipeline import AgentLearningPipeline
+from core.reasoning.execution_budget_store import ExecutionBudgetStore
 
 
 class FakeProvider:
@@ -46,9 +47,9 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
-            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit")],
+            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit", max_concurrency=2)],
             authorize=lambda actor, action, _plan: actor == "alice" and action in {
-                "agent:plan", "agent:dispatch", "agent:read"
+                "agent:plan", "agent:plan_without_approval", "agent:dispatch", "agent:read"
             },
         )
 
@@ -77,6 +78,155 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_budget_is_reserved_before_handler_and_persisted(self):
+        db = str(Path(self.tmp.name) / "budget-worker.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="worker-root-budget", task_id="logical-root-task",
+            limits={
+                "max_model_turns": 4, "max_tool_calls": 2,
+                "max_duration_ms": 120_000, "max_transcript_chars": 1_000,
+            },
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="worker-root-budget", child_budget_id="worker-budget",
+            task_id="logical-worker-task",
+            limits={
+                "max_model_turns": 2, "max_tool_calls": 1,
+                "max_duration_ms": 60_000, "max_transcript_chars": 500,
+            },
+            policy_version="test-v1", allocation_key="worker-task-allocation",
+        )
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="budgeted-worker-task",
+            name="agent-code-review-implement",
+            steps=[{
+                "name": "implement", "action": "emit",
+                "argument": "Review this patch",
+                "requires_approval": False,
+                "execution": {
+                    "budget_id": "worker-budget",
+                    "task_identity": "logical-worker-task",
+                    "policy_version": "test-v1",
+                },
+            }],
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="budget-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "reviewed"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        usage = budget_store.usage("worker-budget")
+        self.assertEqual(usage["model_turns"], 1)
+        self.assertEqual(usage["transcript_chars"], len("Review this patch"))
+
+    def test_budget_binding_mismatch_fails_before_handler_invocation(self):
+        db = str(Path(self.tmp.name) / "budget-mismatch.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="worker-root-budget", task_id="logical-root-task",
+            limits={
+                "max_model_turns": 4, "max_tool_calls": 2,
+                "max_duration_ms": 120_000, "max_transcript_chars": 1_000,
+            },
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="worker-root-budget", child_budget_id="worker-budget",
+            task_id="expected-logical-task",
+            limits={
+                "max_model_turns": 2, "max_tool_calls": 1,
+                "max_duration_ms": 60_000, "max_transcript_chars": 500,
+            },
+            policy_version="test-v1", allocation_key="worker-mismatch-allocation",
+        )
+        self.runtime.enqueue(
+            actor_id="alice", idempotency_key="budgeted-mismatch-task",
+            name="agent-code-review-implement",
+            steps=[{
+                "name": "implement", "action": "emit",
+                "argument": "Do not execute",
+                "requires_approval": False,
+                "execution": {
+                    "budget_id": "worker-budget",
+                    "task_identity": "tampered-logical-task",
+                    "policy_version": "test-v1",
+                },
+            }],
+        )
+        calls = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="budget-mismatch-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "unexpected"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(calls, [])
+        self.assertEqual(budget_store.usage("worker-budget")["model_turns"], 0)
+
+    def test_exhausted_budget_blocks_provider_handler(self):
+        db = str(Path(self.tmp.name) / "budget-exhaustion.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="exhaustion-root", task_id="root",
+            limits={"max_model_turns": 2, "max_tool_calls": 1,
+                     "max_duration_ms": 120_000, "max_transcript_chars": 1_000},
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="exhaustion-root", child_budget_id="one-turn-budget",
+            task_id="one-logical-task",
+            limits={"max_model_turns": 1, "max_tool_calls": 1,
+                     "max_duration_ms": 60_000, "max_transcript_chars": 500},
+            policy_version="test-v1", allocation_key="one-turn-allocation",
+        )
+        calls = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="exhaustion-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "ok"},
+            budget_store=budget_store,
+        )
+        for key in ("first-budgeted-task", "second-budgeted-task"):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key=key, name="agent-code-review-implement",
+                steps=[{"name": "implement", "action": "emit", "argument": "review",
+                        "requires_approval": False,
+                        "execution": {"budget_id": "one-turn-budget",
+                                      "task_identity": "one-logical-task",
+                                      "policy_version": "test-v1"}}],
+            )
+        first = worker.run_once()
+        second = worker.run_once()
+        self.assertEqual(first.state, "succeeded")
+        self.assertEqual(second.state, "failed")
+        self.assertEqual(calls, ["review"])
+        self.assertEqual(budget_store.usage("one-turn-budget")["model_turns"], 1)
+
+    def test_budget_metadata_is_required_when_budget_store_is_configured(self):
+        db = str(Path(self.tmp.name) / "budget-missing.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        calls = []
+        self.runtime.enqueue(
+            actor_id="alice", idempotency_key="missing-budget-metadata",
+            name="agent-code-review-implement",
+            steps=[{"name": "implement", "action": "emit", "argument": "do not run",
+                    "requires_approval": False}],
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="missing-budget-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "unexpected"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(calls, [])
 
     def test_worker_retrieves_authorized_memory_before_specialist_handler(self):
         task_id = self.create_task()
@@ -171,7 +321,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         result = worker.run_once()
         self.assertEqual(result.state, "succeeded")
-        self.assertIsNone(worker.last_learning_error_code)
+        self.assertIsNone(
+            worker.last_learning_error_code,
+            f"learning review failed: {worker.last_learning_error_type} "
+            f"{worker.last_learning_error_detail}",
+        )
         pending = queue.list_pending(actor_id="alice")
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["task_id"], task_id)
@@ -235,22 +389,30 @@ class SpecialistWorkerTests(unittest.TestCase):
 
         def slow_handler(_argument):
             started.set()
-            if not release.wait(timeout=5):
+            if not release.wait(timeout=30):
                 raise TimeoutError("test handler timed out")
             return "late provider response"
 
         worker = self.worker({"code-review": slow_handler})
         thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
         thread.start()
-        self.assertTrue(started.wait(timeout=5), "worker did not start handler")
-        running = self.store.get(task_id)
-        cancelled = self.runtime.cancel(
-            actor_id="alice", task_id=task_id, expected_version=running.version,
-        )
-        self.assertEqual(cancelled.state, "cancelled")
-        release.set()
-        thread.join(timeout=5)
+        try:
+            # Windows CI runners can be heavily loaded while importing the
+            # worker stack and initializing SQLite. Keep the test bounded but
+            # avoid treating ordinary runner startup latency as a cancellation bug.
+            self.assertTrue(started.wait(timeout=30), "worker did not start handler")
+            running = self.store.get(task_id)
+            cancelled = self.runtime.cancel(
+                actor_id="alice", task_id=task_id, expected_version=running.version,
+            )
+            self.assertEqual(cancelled.state, "cancelled")
+        finally:
+            # Always release and join the worker, including when an assertion
+            # fails, so TemporaryDirectory cleanup cannot race an open DB handle.
+            release.set()
+            thread.join(timeout=15)
         self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
+        self.assertIn("result", outcome, "worker exited without returning a task result")
         self.assertEqual(outcome["result"].state, "cancelled")
         self.assertEqual(self.store.get(task_id).state, "cancelled")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
@@ -408,10 +570,22 @@ class SpecialistWorkerTests(unittest.TestCase):
             ],
         )
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        # The specialist has two execution slots, so the third subtask must
+        # remain pending rather than being inserted into the runtime queue.
+        self.assertEqual(sum(s.task_id is not None for s in plan.subtasks), 2)
+        self.assertEqual(sum(s.status == "pending" for s in plan.subtasks), 1)
+        self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 2)
+
         results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently(
             max_workers=2, max_tasks=2,
         )
         self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.state == "succeeded" for result in results))
+
+        # Once capacity is released, another coordinator pass admits the
+        # deferred task; the queue never exceeds the specialist's limit.
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(sum(s.task_id is not None for s in plan.subtasks), 3)
         self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 1)
         with self.assertRaises(ValueError):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)

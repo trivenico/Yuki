@@ -26,6 +26,7 @@ class ModelCapability:
     evidence: str
     verified: bool = False
     runtime_status: str = "unknown"
+    model_digest: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.model_id, str) or not _MODEL_ID.fullmatch(self.model_id):
@@ -40,6 +41,8 @@ class ModelCapability:
             raise ValueError("verified must be boolean")
         if self.runtime_status not in {"verified", "incompatible", "unknown"}:
             raise ValueError("invalid_runtime_status")
+        if self.model_digest is not None and (not isinstance(self.model_digest, str) or not re.fullmatch(r"[A-Fa-f0-9]{32,128}", self.model_digest)):
+            raise ValueError("invalid_model_digest")
 
     def to_dict(self):
         value = asdict(self)

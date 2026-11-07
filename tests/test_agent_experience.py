@@ -46,6 +46,10 @@ class AgentExperienceStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already_recorded"):
             self.record()
 
+    def test_accepts_opaque_url_safe_workflow_run_ids(self):
+        item = self.record(task_id="_opaque-run-id")
+        self.assertEqual(item["task_id"], "_opaque-run-id")
+
     def test_write_and_read_permissions_are_enforced(self):
         self.grants["owner"].clear()
         with self.assertRaises(PermissionError):

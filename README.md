@@ -2,9 +2,134 @@
 
 Yuki is a modular personal-agent project combining a companion interface, guarded skills, local memory, developer workflows, optional voice, and defensive security-lab foundations.
 
-**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
+**Readiness status: not production-ready yet.** A bounded JSON-based model-guided task loop is now present and requires fresh approval for every registered-skill invocation; it is not a production-grade native tool-calling/ReAct runtime. See [current production-readiness gates](docs/PRODUCTION_READINESS_CURRENT.md) for the verified status and release blockers. There is no autonomous project builder, always-on wake-word service, tested custom wake-word model, production firewall auto-expiry/recovery, or independent security review. This repository deliberately reports those gaps rather than implying that module files alone make a finished assistant.
 
 
+
+## Portable local data
+
+Set `YUKI_HOME` to keep conversations, authentication, memory, and other workspace data outside the source checkout (for example, on an external SSD). Set `YUKI_VENV_DIR` separately for the Python environment. Recreate the virtual environment on each destination computer; do not copy it between machines. See [portable local data instructions](docs/PORTABLE_LOCAL_DATA.md) for setup, backup cautions, and migration limitations.
+
+## Run the local alpha
+
+Yuki is suitable for carefully scoped local testing, not public production
+deployment. Start with the read-only readiness check:
+
+```bash
+python -m pip install -r requirements.txt
+python scripts/local_alpha_check.py
+```
+
+The check validates the Python baseline, core dependencies, configured provider
+prerequisites, and workspace writability. It does not install software, pull
+models, contact cloud providers, or certify production readiness.
+
+For a deterministic offline orchestration check:
+
+```bash
+python scripts/local_smoke.py
+```
+
+This uses a fake provider and validates coordinator/worker/task persistence
+wiring only. It does not prove real model inference.
+
+For local Ollama inference, install and start Ollama separately, pull a model
+appropriate for your hardware, set `provider: ollama` and the exact installed
+model name in `config.yaml`, then run:
+
+```bash
+python scripts/local_alpha_check.py
+python yuki.py
+```
+
+For cloud inference, keep `provider: openai` and set `OPENAI_API_KEY` in
+your shell; do not put API keys in `config.yaml` or commit them. The configured
+default provider is OpenAI, so a missing key must be resolved before a real
+conversation can work.
+
+For the browser interface, use the guided local installer and launcher.
+They create an isolated `.venv`, install the pinned dependency ranges from
+`requirements.txt`, ask for the provider, and bootstrap the first administrator
+without writing credentials to `config.yaml`.
+
+**Windows PowerShell:**
+
+```powershell
+.\scripts\start_yuki.ps1
+```
+
+**macOS / Linux:**
+
+```bash
+chmod +x scripts/start_yuki.sh
+./scripts/start_yuki.sh
+```
+
+The launcher defaults to Ollama. Install and start Ollama separately, and
+download a model appropriate for your hardware before selecting it. Choose
+OpenAI if you have an API key; its entry is hidden and is not saved in the
+repository. The launcher starts the browser profile on loopback only, with
+tools disabled. Open `http://127.0.0.1:8000`. Do not expose it publicly; see
+[production-readiness gates](docs/PRODUCTION_READINESS_CURRENT.md).
+
+For manual setup, run `python scripts/install_local.py`, then
+`python scripts/launch_local.py` using the environment's Python interpreter.
+
+## Evidence-based local model selection
+
+Model discovery is not the same as model evaluation. To request a role-specific recommendation, provide a reviewed evidence file and run:
+
+```bash
+python scripts/select_model.py coding --profiles ./model-evidence.json
+```
+
+The evidence file contains two arrays: `capabilities` and `benchmarks`. Each capability record includes `model_id`, `model_digest`, `capabilities`, `evidence`, `verified`, and `runtime_status`. Each benchmark record includes `model_id`, `model_digest`, `capability`, `score` (0–1), `suite`, `suite_version`, `evaluated_on` (YYYY-MM-DD), and `evidence_reference` (HTTPS or file URI).
+
+Recommendations require an exact match to the installed Ollama digest, a reviewed runtime-compatible capability record, benchmark evidence for the requested role, and a conservative memory estimate. A missing or mismatched evidence record is not treated as a candidate. Selection never changes the active provider; activation remains a separate operator action.
+
+## Local model inventory (read-only)
+
+If Ollama is installed and running locally, inspect models already present:
+
+```bash
+python scripts/models.py
+python scripts/models.py --json
+```
+
+The command reads only the loopback Ollama `/api/tags` endpoint. It never pulls, deletes, loads, or executes models. It estimates memory from parameter-size and quantization metadata when available, then compares that heuristic with detected physical RAM. The estimate includes a small fixed overhead but does not account precisely for context length, runtime allocation, GPU offload, or concurrent models.
+
+Model licenses are deliberately reported as unknown unless separately verified from authoritative model metadata. Role suitability is also unverified: this inventory does not benchmark coding, reasoning, or tool-use quality.
+
+## Local hardware profile
+
+Run a read-only hardware and local-runtime profile:
+
+```bash
+python scripts/hardware_profile.py
+python scripts/hardware_profile.py --workspace ./yuki-workspace --json
+```
+
+The profile reports OS/architecture, CPU count, physical RAM when measurable, workspace-volume free space, NVIDIA GPU information when `nvidia-smi` is available, Ollama CLI/server/model configuration, and optional PyTorch/ONNX Runtime package discovery. It does not benchmark inference, download models, install drivers, or guarantee a model fits.
+
+The main local specialist runtime uses a conservative worker-count recommendation based on logical CPU count and physical RAM, bounded to 1–4 workers. This is a starting point, not a substitute for measuring model memory use; GPU VRAM, quantization, context length, and concurrent model residency can reduce safe concurrency.
+
+## Local specialist-runtime smoke test
+
+After installing the project dependencies, run a deterministic wiring check:
+
+```bash
+python scripts/local_smoke.py
+```
+
+This creates a temporary workspace, submits one coordinator-managed specialist task, validates its persisted budget reference, and executes it through a fake provider. It requires no API key, Ollama server, model download, or network access. A successful result verifies local orchestration wiring only; it does **not** verify real model inference or production readiness.
+
+To keep the task database for inspection, pass a workspace path:
+
+```bash
+python scripts/local_smoke.py --workspace ./yuki-smoke-workspace
+```
+
+For environment diagnostics, run `python scripts/doctor.py`. This uses the shared read-only runtime doctor to validate Python, configuration and provider availability. It does not send an inference prompt; run the smoke test and unit suite separately.
 
 ## Minimal project structure and navigation
 
@@ -120,7 +245,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 ## Install
 
-Python 3.10+ and PyYAML:
+Python 3.11+ and PyYAML:
 
 ```sh
 python -m pip install -r requirements.txt

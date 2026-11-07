@@ -193,5 +193,61 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
         ), [])
 
+
+    def test_agent_loop_factory_receives_authenticated_owner_per_request(self):
+        observed_owners = []
+        owner_b_conversation = self.service.create(owner_id="owner-b")
+
+        def factory(owner_id):
+            observed_owners.append(owner_id)
+            def owner_model(*, messages, tools, tool_choice):
+                return {"text": "Scoped answer for " + owner_id,
+                        "tool_calls": {"tool_calls": []}}
+            return AgentExecutionLoop(
+                owner_model,
+                StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing())),
+            )
+
+        scoped = ConversationService(self.store, self.loop, agent_loop_factory=factory)
+        result_a = scoped.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="A", request_id="owner-a-request", expected_version=0, tools=[],
+        )
+        result_b = scoped.reply(
+            owner_id="owner-b", conversation_id=owner_b_conversation["conversation_id"],
+            user_text="B", request_id="owner-b-request", expected_version=0, tools=[],
+        )
+        self.assertEqual(observed_owners, ["owner-a", "owner-b"])
+        self.assertEqual(result_a["answer"], "Scoped answer for owner-a")
+        self.assertEqual(result_b["answer"], "Scoped answer for owner-b")
+        self.assertEqual(self.observed, [])
+
+    def test_agent_loop_factory_is_not_called_for_unauthorized_conversation(self):
+        observed_owners = []
+        scoped = ConversationService(
+            self.store, self.loop,
+            agent_loop_factory=lambda owner_id: observed_owners.append(owner_id) or self.loop,
+        )
+        with self.assertRaises(ConversationNotFound):
+            scoped.reply(
+                owner_id="owner-b", conversation_id=self.conversation["conversation_id"],
+                user_text="Unauthorized", request_id="unauthorized-request",
+                expected_version=0, tools=[],
+            )
+        self.assertEqual(observed_owners, [])
+
+    def test_invalid_agent_loop_factory_fails_closed(self):
+        scoped = ConversationService(
+            self.store, self.loop, agent_loop_factory=lambda owner_id: object(),
+        )
+        result = scoped.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Invalid factory", request_id="invalid-factory-request",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("AI service", result["answer"])
+
+
 if __name__ == "__main__":
     unittest.main()

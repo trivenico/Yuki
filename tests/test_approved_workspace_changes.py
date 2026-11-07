@@ -66,11 +66,28 @@ class ApprovedWorkspaceChangesTests(unittest.TestCase):
     def test_unlisted_secret_and_parent_paths_rejected(self):
         with self.assertRaises(ToolAuthorizationError):
             self.service().apply(principal=self.principal, changes=[self.change(path=".env", content="x")])
-        with self.assertRaises(ToolInputError):
-            self.service(allowed=("../outside.py",)).apply(
-                principal=self.principal,
-                changes=[FileChange("../outside.py", "0" * 64, "x")],
-            )
+        with self.assertRaises(ValueError):
+            self.service(allowed=("../outside.py",))
+
+    def test_constructor_rejects_nonportable_and_ambiguous_allowlists(self):
+        for invalid in ("dir\\\\sample.py", "C:sample.py", "/sample.py", "dir//sample.py", "dir/../sample.py", "dir/./sample.py"):
+            with self.subTest(path=invalid):
+                with self.assertRaises(ValueError):
+                    self.service(allowed=(invalid,))
+        with self.assertRaises(ValueError):
+            self.service(allowed=("sample.py", "sample.py"))
+
+    def test_nested_posix_allowlist_is_supported(self):
+        nested = self.root / "src"
+        nested.mkdir()
+        target = nested / "module.py"
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        service = self.service(allowed=("src/module.py",))
+        old = target.read_bytes()
+        change = FileChange("src/module.py", hashlib.sha256(old).hexdigest(), "VALUE = 2\n")
+        result = service.apply(principal=self.principal, changes=[change])
+        self.assertEqual(result.changed_paths, ("src/module.py",))
+        self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 2\n")
 
     def test_symlink_paths_rejected(self):
         target = self.root / "target.py"
@@ -148,12 +165,15 @@ class ApprovedTestRunnerTests(unittest.TestCase):
             self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertFalse(any(event["outcome"] == "started" for event in self.audit_events))
 
-    def test_test_source_digest_is_part_of_approval(self):
+    def test_test_source_and_dependency_manifest_are_bound_to_approval(self):
         self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertEqual(len(self.calls[0][2]), 64)
         (self.root / "test_sample.py").write_text("import unittest\n", encoding="utf-8")
         self.runner().run(principal=self.principal, test_module="test_sample")
         self.assertNotEqual(self.calls[0][2], self.calls[1][2])
+        (self.root / "requirements.txt").write_text("example-dependency==1.0\n", encoding="utf-8")
+        self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertNotEqual(self.calls[1][2], self.calls[2][2])
 
     def test_timeout_is_bounded(self):
         (self.root / "test_sample.py").write_text(
@@ -164,6 +184,30 @@ class ApprovedTestRunnerTests(unittest.TestCase):
         result = self.runner(timeout=1).run(principal=self.principal, test_module="test_sample")
         self.assertTrue(result.timed_out)
         self.assertEqual(result.exit_code, 124)
+
+    def test_source_mutation_during_execution_invalidates_result(self):
+        generated_test = (
+            "import pathlib, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_mutates_tree(self):\n"
+            "        pathlib.Path('late_import.py').write_text('VALUE = 1')\n"
+        )
+        (self.root / "test_sample.py").write_text(generated_test, encoding="utf-8")
+        result = self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertEqual(result.exit_code, 125, result.stderr)
+        self.assertIn("source tree changed", result.stderr)
+        self.assertEqual(self.audit_events[-1]["outcome"], "source_changed")
+
+    def test_captured_output_is_bounded(self):
+        (self.root / "test_sample.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n"
+            " def test_noisy(self): print('x' * 100000)\n",
+            encoding="utf-8",
+        )
+        result = self.runner().run(principal=self.principal, test_module="test_sample")
+        self.assertEqual(result.exit_code, 0)
+        self.assertLessEqual(len(result.stdout.encode("utf-8")), 64 * 1024)
+        self.assertLessEqual(len(result.stderr.encode("utf-8")), 64 * 1024)
 
     def test_invalid_allowlist_and_timeout_rejected(self):
         with self.assertRaises(ValueError):

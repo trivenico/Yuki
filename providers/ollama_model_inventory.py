@@ -7,6 +7,7 @@ be measured on the target hardware.
 from __future__ import annotations
 from dataclasses import dataclass, asdict
 import json
+import math
 import re
 import urllib.error
 import urllib.request
@@ -126,3 +127,66 @@ class OllamaModelInventory:
         except (UnicodeDecodeError,json.JSONDecodeError):
             raise RuntimeError("Ollama returned invalid inventory JSON") from None
         return parse_model_inventory(payload)
+
+def assess_resource_fit(
+    model, *, available_host_memory_bytes, available_gpu_memory_bytes=None,
+    runtime_overhead_ratio=0.20, gpu_offload_ratio=0.0,
+    required_headroom_ratio=0.15,
+):
+    """Return a conservative, non-binding hardware-fit assessment."""
+    if not isinstance(model, InstalledModel):
+        raise TypeError("model must be InstalledModel")
+    for value, label in (
+        (available_host_memory_bytes, "available_host_memory_bytes"),
+        (available_gpu_memory_bytes, "available_gpu_memory_bytes"),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ValueError(f"invalid_{label}")
+    if available_host_memory_bytes is None:
+        raise ValueError("available_host_memory_required")
+    if (
+        isinstance(required_headroom_ratio, bool)
+        or not isinstance(required_headroom_ratio, (int, float))
+        or not 0.0 <= required_headroom_ratio <= 1.0
+    ):
+        raise ValueError("invalid_required_headroom_ratio")
+    estimate = estimate_requirements(
+        model, runtime_overhead_ratio=runtime_overhead_ratio,
+        gpu_offload_ratio=gpu_offload_ratio,
+    )
+    host_required = math.ceil(
+        estimate["estimated_host_memory_bytes"] * (1.0 + required_headroom_ratio)
+    )
+    host_fits = available_host_memory_bytes >= host_required
+    gpu_required = estimate["estimated_gpu_memory_bytes"]
+    if not host_fits:
+        status = "host_memory_insufficient"
+        reason = "available_host_memory_below_estimate_and_headroom"
+    elif gpu_offload_ratio > 0 and available_gpu_memory_bytes is None:
+        status = "unknown_gpu_capacity"
+        reason = "gpu_offload_requested_but_capacity_not_supplied"
+    elif gpu_offload_ratio > 0 and available_gpu_memory_bytes < math.ceil(
+        gpu_required * (1.0 + required_headroom_ratio)
+    ):
+        status = "gpu_memory_insufficient"
+        reason = "available_gpu_memory_below_estimate_and_headroom"
+    else:
+        status = "plausible_fit"
+        reason = "supplied_memory_snapshot_meets_heuristic_estimate_and_headroom"
+    return {
+        "model_id": model.name, "status": status, "reason": reason,
+        "available_host_memory_bytes": available_host_memory_bytes,
+        "estimated_host_memory_bytes": estimate["estimated_host_memory_bytes"],
+        "required_host_memory_with_headroom_bytes": host_required,
+        "available_gpu_memory_bytes": available_gpu_memory_bytes,
+        "estimated_gpu_memory_bytes": gpu_required,
+        "required_gpu_memory_with_headroom_bytes": (
+            math.ceil(gpu_required * (1.0 + required_headroom_ratio))
+            if gpu_offload_ratio > 0 else 0
+        ),
+        "estimate_kind": "heuristic_from_installed_size", "confidence": "low",
+        "requires_runtime_measurement": True, "automatic_download": False,
+        "automatic_activation": False,
+    }

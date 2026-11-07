@@ -21,7 +21,10 @@ class YukiWebApplicationTests(unittest.TestCase):
             return {"type": "http.request", "body": b"", "more_body": False}
         async def send(message):
             sent.append(message)
-        asyncio.run(app({"type": "http", "method": method, "path": path}, receive, send))
+        headers = [(b"host", b"localhost:8000")]
+        asyncio.run(app({
+            "type": "http", "method": method, "path": path, "headers": headers,
+        }, receive, send))
         return sent
 
     def test_root_serves_chat_shell_with_security_headers(self):
@@ -44,6 +47,43 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertIn(b"/v1/providers", sent[1]["body"])
         self.assertIn(b"loadProviderStatus", sent[1]["body"])
 
+    def test_chat_shell_exposes_owner_private_memory_controls(self):
+        html = self.request(YukiWebApplication(_FakeAPI()), "/")[1]["body"]
+        self.assertIn(b'id="open-memory"', html)
+        self.assertIn(b'id="memory-panel"', html)
+        script = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")[1]["body"]
+        for marker in (b"/v1/memory", b"loadMemory", b"Approve", b"Reject", b"Correct", b"Retire", b"Delete"):
+            self.assertIn(marker, script)
+        style = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.css")[1]["body"]
+        self.assertIn(b".memory-panel", style)
+
+    def test_chat_shell_exposes_owner_approved_memory_suggestions(self):
+        app = YukiWebApplication(_FakeAPI())
+        html = self.request(app, "/")[1]["body"]
+        self.assertIn(b'id="memory-candidate-list"', html)
+        script = self.request(app, "/assets/chat.js")[1]["body"]
+        for marker in (
+            b"/v1/memory/candidates", b"Approve and remember",
+            b"requires_owner_approval", b"conversation_id",
+        ):
+            self.assertIn(marker, script)
+        style = self.request(app, "/assets/chat.css")[1]["body"]
+        self.assertIn(b".memory-candidates", style)
+
+    def test_web_memory_panel_exposes_typed_owner_profile_preferences(self):
+        app = YukiWebApplication(_FakeAPI())
+        html = self.request(app, "/")[1]["body"]
+        for marker in (
+            b'id="profile-response-style"', b'id="profile-response-tone"',
+            b'id="profile-explanation-level"', b'id="save-profile"',
+        ):
+            self.assertIn(marker, html)
+        script = self.request(app, "/assets/chat.js")[1]["body"]
+        self.assertIn(b"/v1/profile/preferences", script)
+        self.assertIn(b"owner_web_preference", script)
+        style = self.request(app, "/assets/chat.css")[1]["body"]
+        self.assertIn(b".profile-preferences", style)
+
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
@@ -57,6 +97,133 @@ class YukiWebApplicationTests(unittest.TestCase):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/healthz")
         self.assertEqual(sent[0]["status"], 200)
         self.assertEqual(sent[1]["body"], b'{"status": "ok", "service": "yuki"}')
+
+
+    def test_rejects_missing_duplicate_and_untrusted_host_headers(self):
+        import asyncio
+        async def invoke(headers):
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(_FakeAPI())(
+                {"type": "http", "method": "GET", "path": "/healthz", "headers": headers},
+                receive, send,
+            )
+            return sent[0]["status"]
+        self.assertEqual(asyncio.run(invoke([])), 400)
+        self.assertEqual(asyncio.run(invoke([
+            (b"host", b"localhost:8000"), (b"host", b"localhost:8000"),
+        ])), 400)
+        self.assertEqual(asyncio.run(invoke([(b"host", b"attacker.example")])), 421)
+
+    def test_rejects_cross_origin_and_cross_site_state_changes(self):
+        import asyncio
+        async def invoke(headers):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": "POST", "path": "/v1/auth/login",
+                 "headers": [(b"host", b"localhost:8000"), *headers]},
+                receive, send,
+            )
+            return sent[0]["status"], api.calls
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"https://evil.example"),
+        ])), (403, 0))
+        self.assertEqual(asyncio.run(invoke([
+            (b"sec-fetch-site", b"cross-site"),
+        ])), (403, 0))
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"http://localhost:9000"),
+        ])), (403, 0))
+
+
+    def test_rejects_nondefault_origin_port_when_host_omits_port(self):
+        import asyncio
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        asyncio.run(YukiWebApplication(_FakeAPI())(
+            {"type": "http", "method": "POST", "path": "/v1/auth/login",
+             "headers": [(b"host", b"localhost"),
+                         (b"origin", b"http://localhost:9000")]},
+            receive, send,
+        ))
+        self.assertEqual(sent[0]["status"], 403)
+
+    def test_allows_only_explicit_tauri_origins_with_cors_preflight(self):
+        import asyncio
+
+        async def invoke(method, origin, path="/v1/auth/login"):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": method, "path": path,
+                 "headers": [(b"host", b"127.0.0.1:8765"),
+                             (b"origin", origin.encode("ascii")),
+                             (b"sec-fetch-site", b"cross-site")]},
+                receive, send,
+            )
+            return sent, api.calls
+
+        preflight, calls = asyncio.run(invoke("OPTIONS", "tauri://localhost"))
+        self.assertEqual(preflight[0]["status"], 204)
+        headers = dict(preflight[0]["headers"])
+        self.assertEqual(headers[b"access-control-allow-origin"], b"tauri://localhost")
+        self.assertIn(b"Authorization", headers[b"access-control-allow-headers"])
+        self.assertEqual(calls, 0)
+
+        response, calls = asyncio.run(invoke("POST", "http://tauri.localhost"))
+        self.assertEqual(response[0]["status"], 404)
+        self.assertEqual(
+            dict(response[0]["headers"])[b"access-control-allow-origin"],
+            b"http://tauri.localhost",
+        )
+        self.assertEqual(calls, 1)
+
+        rejected, calls = asyncio.run(invoke("OPTIONS", "https://evil.example"))
+        self.assertEqual(rejected[0]["status"], 403)
+        self.assertEqual(calls, 0)
+
+    def test_allows_same_origin_and_non_browser_bearer_clients(self):
+        import asyncio
+        async def invoke(headers):
+            api = _FakeAPI()
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await YukiWebApplication(api)(
+                {"type": "http", "method": "POST", "path": "/v1/auth/login",
+                 "headers": [(b"host", b"localhost:8000"), *headers]},
+                receive, send,
+            )
+            return sent[0]["status"], api.calls
+        self.assertEqual(asyncio.run(invoke([
+            (b"origin", b"http://localhost:8000"),
+        ])), (404, 1))
+        self.assertEqual(asyncio.run(invoke([
+            (b"authorization", b"Bearer client-token"),
+        ])), (404, 1))
+
+    def test_allowed_hosts_are_explicit_and_wildcards_are_rejected(self):
+        with self.assertRaises(ValueError):
+            YukiWebApplication(_FakeAPI(), allowed_hosts=["*"])
+        app = YukiWebApplication(_FakeAPI(), allowed_hosts=["chat.example.com"])
+        self.assertEqual(app.allowed_hosts, frozenset({"chat.example.com"}))
 
     def test_unknown_paths_delegate_to_api_and_post_root_is_rejected(self):
         api = _FakeAPI()

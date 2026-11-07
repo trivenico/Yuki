@@ -8,6 +8,9 @@ from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.owner_profile import OwnerProfileStore
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
 
 
 class _NoApprovals:
@@ -38,6 +41,21 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             runtime.close()
             self.assertTrue(runtime._closed)
+
+    def test_runtime_injects_owner_profile_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            profile_store = OwnerProfileStore(
+                str(Path(directory) / "profile.sqlite"),
+                authorize=lambda actor, action, resource: action == "owner_profile:read",
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                owner_profile_store=profile_store,
+            )
+            self.assertIs(runtime.app.owner_profile_store, profile_store)
+            runtime.close()
 
     def test_runtime_injects_provider_catalog_callback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -91,6 +109,72 @@ class ConversationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=object(), agent_loop=_loop(),
                 )
+
+
+
+    def test_runtime_injects_owner_scoped_agent_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            seen = []
+            def factory(owner_id):
+                seen.append(owner_id)
+                return _loop()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), agent_loop_factory=factory,
+            )
+            conversation = runtime.app.conversations.create(owner_id="runtime-owner")
+            result = runtime.app.conversations.reply(
+                owner_id="runtime-owner",
+                conversation_id=conversation["conversation_id"],
+                user_text="Hello", request_id="runtime-request",
+                expected_version=0, tools=[],
+            )
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(seen, ["runtime-owner"])
+            runtime.close()
+
+    def test_runtime_rejects_non_callable_agent_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "agent_loop_factory"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), agent_loop_factory=object(),
+                )
+
+
+    def test_runtime_injects_pairing_and_notification_outbox_into_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(root / "devices.sqlite")
+            outbox = DeviceNotificationOutbox(root / "outbox.sqlite", pairing)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, notification_outbox=outbox,
+            )
+            self.assertIs(runtime.app.device_pairing, pairing)
+            self.assertIs(runtime.app.notification_outbox, outbox)
+            self.assertIs(runtime.device_pairing, pairing)
+            self.assertIs(runtime.notification_outbox, outbox)
+            runtime.close()
+
+    def test_runtime_rejects_outbox_without_matching_pairing_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(root / "devices.sqlite")
+            other_pairing = DevicePairingService(root / "other-devices.sqlite")
+            outbox = DeviceNotificationOutbox(root / "outbox.sqlite", other_pairing)
+            with self.assertRaisesRegex(ValueError, "share the configured"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, notification_outbox=outbox,
+                )
+
 
 
 if __name__ == "__main__":

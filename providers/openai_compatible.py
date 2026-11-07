@@ -200,7 +200,21 @@ class OpenAICompatibleProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
-        return {"text": content or "", "tool_calls": envelope, "finish_reason": choice.get("finish_reason")}
+        result = {"text": content or "", "tool_calls": envelope, "finish_reason": choice.get("finish_reason")}
+        usage = body.get("usage")
+        if isinstance(usage, dict):
+            input_tokens = usage.get("prompt_tokens")
+            output_tokens = usage.get("completion_tokens")
+            if (type(input_tokens) is int and 0 <= input_tokens <= 10_000_000
+                    and type(output_tokens) is int and 0 <= output_tokens <= 10_000_000):
+                result["usage"] = {
+                    "input_tokens": input_tokens, "output_tokens": output_tokens,
+                    "estimated": False,
+                }
+        request_id = body.get("id")
+        if isinstance(request_id, str) and request_id.strip() and len(request_id) <= 160:
+            result["request_id"] = request_id
+        return result
 
 
     def generate_chat_stream(self, *, messages, tools, tool_choice="auto"):

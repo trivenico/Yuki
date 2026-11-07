@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.10+ and PyYAML.
+- Python 3.11+ and PyYAML.
 - For real AI responses, configure an OpenAI API key in your process environment. The mock provider is test-only and is no longer offered by the runtime provider registry.
 
 ## Basic install

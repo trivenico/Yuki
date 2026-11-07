@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.claimed", "task.lease_renewed", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.step.started", "task.step.succeeded", "task.step.failed", "task.step.needs_reconciliation", "task.step.reconciled"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -57,6 +57,62 @@ class TaskRecord:
     lease_expires_at: str | None
 
 
+class TaskLeaseRenewer:
+    """Bounded callable adapter for WorkerShutdownCoordinator heartbeats.
+
+    It reloads the current task version before each renewal so ordinary
+    progress/artifact events do not leave a long-running worker with a stale
+    compare-and-swap version. At most three CAS attempts are made per heartbeat.
+    """
+
+    MAX_CAS_ATTEMPTS = 3
+
+    def __init__(
+        self, runtime: "TaskRuntime", *, actor_id: str, task_id: str,
+        worker_id: str, lease_seconds: int = 60,
+    ) -> None:
+        if not isinstance(runtime, TaskRuntime):
+            raise TypeError("runtime must be a TaskRuntime.")
+        self.runtime = runtime
+        self.actor_id = TaskRuntime._actor(actor_id)
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200 or "\x00" in task_id:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        self.task_id = task_id.strip()
+        self.worker_id = worker_id.strip()
+        self.lease_seconds = lease_seconds
+
+    def __call__(self) -> bool:
+        if not self.runtime._allowed(self.actor_id, "task:lease:renew", self.task_id):
+            raise PermissionError("task lease renewal is not authorized.")
+        for attempt in range(self.MAX_CAS_ATTEMPTS):
+            current = self.runtime.store.get(self.task_id)
+            if current is None:
+                raise KeyError("task not found.")
+            if current.state != "running" or current.lease_owner != self.worker_id:
+                raise WorkflowTransitionError("worker no longer owns a running task lease.")
+            try:
+                self.runtime.renew_lease(
+                    actor_id=self.actor_id,
+                    task_id=self.task_id,
+                    worker_id=self.worker_id,
+                    expected_version=current.version,
+                    lease_seconds=self.lease_seconds,
+                )
+                return True
+            except WorkflowConflict:
+                # Retry only if a concurrent journal update advanced the version.
+                # An unchanged version indicates expiry or another non-retryable
+                # conflict; a changed owner/state is rejected on the next read.
+                latest = self.runtime.store.get(self.task_id)
+                if latest is None or latest.version == current.version or attempt + 1 == self.MAX_CAS_ATTEMPTS:
+                    raise
+        return False
+
+
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
@@ -92,12 +148,10 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
-        existing = self.store.list_task_events(run.run_id, limit=1)
-        if not existing:
-            self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
-                                         payload={"name": run.workflow_name, "step_count": len(run.definition)},
-                                         expected_version=run.version)
+        run = self.store.create(
+            idempotency_key=idempotency_key, workflow_name=name, definition=steps,
+            event_actor_id=actor,
+        )
         return self._record(self.store.get(run.run_id))
 
     def list_tasks(
@@ -165,6 +219,77 @@ class TaskRuntime:
             task_id, after_sequence=after_sequence, limit=limit,
         )
 
+    def recover_expired(
+        self, *, actor_id: str, task_id: str | None = None, limit: int = 50,
+    ):
+        """Recover one expired run or a bounded page; never replay workflow work."""
+        actor = self._actor(actor_id)
+        if task_id is not None:
+            if not self._allowed(actor, "task:recover", task_id):
+                raise PermissionError("task recovery is not authorized.")
+            return self._record(self.store.recover_expired_run(task_id, actor_id=actor))
+
+        if not self._allowed(actor, "task:recover", ""):
+            raise PermissionError("task recovery is not authorized.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        recovered = []
+        now = datetime.now(timezone.utc)
+        for run in self.store.list_expired_runs(now=now.isoformat(), limit=limit):
+            if not self._allowed(actor, "task:recover", run.run_id):
+                continue
+            recovered.append(self._record(
+                self.store.recover_expired_run(run.run_id, actor_id=actor)
+            ))
+        return recovered
+
+    def reconcile_step(
+        self, *, actor_id: str, task_id: str, step_id: str,
+        expected_step_version: int, decision: str, reason: str,
+    ):
+        """Record an audited operator disposition; this does not resume the task."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:step:resolve", task_id):
+            raise PermissionError("workflow step reconciliation is not authorized.")
+        return self.store.reconcile_step(
+            task_id, step_id, actor_id=actor,
+            expected_step_version=expected_step_version,
+            decision=decision, reason=reason,
+        )
+
+    def list_steps(self, *, actor_id: str, task_id: str):
+        """Read ordered, argument-redacted step metadata under task:read."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:read", task_id):
+            raise PermissionError("task step read is not authorized.")
+        if self.store.get(task_id) is None:
+            raise KeyError("task not found.")
+        return self.store.list_steps(task_id)
+
+    def transition_step(
+        self, *, actor_id: str, task_id: str, step_id: str, worker_id: str,
+        expected_step_version: int, to_status: str,
+    ):
+        """Authorize and atomically journal one worker-owned step transition."""
+        actor = self._actor(actor_id)
+        permissions = {
+            "running": "task:step:start",
+            "succeeded": "task:step:finish",
+            "failed": "task:step:finish",
+            "needs_reconciliation": "task:step:reconcile",
+        }
+        if not isinstance(to_status, str):
+            raise ValueError("Unknown workflow step status.")
+        permission = permissions.get(to_status)
+        if permission is None:
+            raise ValueError("Unknown workflow step status.")
+        if not self._allowed(actor, permission, task_id):
+            raise PermissionError("workflow step transition is not authorized.")
+        return self.store.transition_step(
+            task_id, step_id, worker_id=worker_id, actor_id=actor,
+            expected_step_version=expected_step_version, to_status=to_status,
+        )
+
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
                         message: str, percent: int | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
@@ -199,6 +324,7 @@ class TaskRuntime:
         renewed = self.store.renew_lease(
             task_id, worker_id=worker_id.strip(),
             expected_version=expected_version, lease_seconds=lease_seconds,
+            event_actor_id=actor,
         )
         return self._record(renewed)
 
@@ -236,13 +362,23 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
-        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+        expiry = run.lease_expires_at
+        if not expiry:
+            raise WorkflowConflict("workflow lease expiry is missing.")
+        try:
+            expiry_dt = datetime.fromisoformat(expiry)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("workflow lease expiry is malformed; completion is unsafe.") from exc
+        if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+            raise WorkflowConflict("workflow lease expiry must include a timezone; completion is unsafe.")
+        if expiry_dt <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
-        completed = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="succeeded", result=result)
-        self.store.append_task_event(task_id, kind="task.completed", actor_id=actor,
-                                     payload={"state_version": completed.version},
-                                     expected_version=completed.version)
+        completed = self.store.transition(
+            task_id, expected_version=expected_version, to_state="succeeded",
+            result=result, expected_lease_owner=worker_id,
+            event_kind="task.completed", event_actor_id=actor,
+            event_payload={"state_version": expected_version + 1},
+        )
         return self._record(self.store.get(task_id))
 
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
@@ -255,13 +391,25 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
+        expiry = run.lease_expires_at
+        if not expiry:
+            raise WorkflowConflict("workflow lease expiry is missing.")
+        try:
+            expiry_dt = datetime.fromisoformat(expiry)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("workflow lease expiry is malformed; failure update is unsafe.") from exc
+        if expiry_dt.tzinfo is None or expiry_dt.utcoffset() is None:
+            raise WorkflowConflict("workflow lease expiry must include a timezone; failure update is unsafe.")
+        if expiry_dt <= datetime.now(timezone.utc):
+            raise WorkflowConflict("expired lease cannot fail task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
-        failed = self.store.transition(task_id, expected_version=expected_version,
-                                       to_state="failed", error_code=error_code)
-        self.store.append_task_event(task_id, kind="task.failed", actor_id=actor,
-                                     payload={"error_code": error_code, "state_version": failed.version},
-                                     expected_version=failed.version)
+        failed = self.store.transition(
+            task_id, expected_version=expected_version, to_state="failed",
+            error_code=error_code, expected_lease_owner=worker_id,
+            event_kind="task.failed", event_actor_id=actor,
+            event_payload={"error_code": error_code, "state_version": expected_version + 1},
+        )
         return self._record(self.store.get(task_id))
 
 
@@ -293,37 +441,105 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            event_actor_id=actor,
+            event_payload={"name": original.workflow_name, "step_count": len(original.definition),
+                           "retry_of": original.run_id, "source_state": original.state,
+                           "source_version": original.version,
+                           "approval_required": self.store._requires_approval(original.definition)},
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=1)
-        if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
         return self._record(self.store.get(retried.run_id))
 
-    def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
-        """Mark expired worker leases interrupted and journal each recovery; never replay them."""
+    def authorize_operation_dispatch(self, *, actor_id: str, operation_id: str):
+        """Preflight both dispatch and outcome permissions before a provider side effect."""
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:recover", ""):
-            raise PermissionError("task recovery is not authorized.")
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise ValueError("limit must be an integer from 1 to 100.")
-        interrupted = self.store.mark_expired_running_as_interrupted(limit=limit)
-        records: list[TaskRecord] = []
-        for run in interrupted:
-            self.store.append_task_event(
-                run.run_id, kind="task.interrupted", actor_id=actor,
-                payload={"state": "interrupted", "error_code": "lease_expired",
-                         "automatic_replay": False},
-                expected_version=run.version,
-            )
-            records.append(self._record(self.store.get(run.run_id)))
-        return records
+        operation = self._authorized_operation(
+            actor, operation_id, "task:operation:dispatch",
+        )
+        if not self._allowed(actor, "task:operation:resolve", operation.task_id):
+            raise PermissionError("operation access is not authorized.")
+        return operation
+
+    def _authorized_operation(self, actor: str, operation_id: str, action: str):
+        operation = self.store.get_operation(operation_id)
+        if operation is None or not self._allowed(actor, action, operation.task_id):
+            # Do not expose whether an operation ID exists to unauthorized callers.
+            raise PermissionError("operation access is not authorized.")
+        return operation
+
+    def operation_events(self, *, actor_id: str, operation_id: str,
+                         limit: int = 100, before_event_id: int | None = None):
+        """Read bounded operation audit history after a dedicated authorization check."""
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:read")
+        return self.store.list_operation_events(
+            operation_id, limit=limit, before_event_id=before_event_id,
+        )
+
+    def prepare_operation(self, *, actor_id: str, task_id: str, idempotency_key: str,
+                          action: str, request: dict[str, Any]):
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:operation:prepare", task_id):
+            raise PermissionError("operation preparation is not authorized.")
+        return self.store.prepare_operation(
+            task_id, idempotency_key=idempotency_key, action=action, request=request,
+            principal_id=actor,
+        )
+
+    def mark_operation_in_flight(self, *, actor_id: str, operation_id: str,
+                                 worker_id: str, provider_name: str,
+                                 expected_version: int):
+        actor = self._actor(actor_id)
+        # Re-check both capabilities at the final durable transition, not only
+        # in the dispatcher's earlier preflight. Permission grants may change
+        # between preflight and this boundary.
+        self.authorize_operation_dispatch(actor_id=actor, operation_id=operation_id)
+        return self.store.mark_operation_in_flight(
+            operation_id, worker_id=worker_id, provider_name=provider_name,
+            expected_version=expected_version, principal_id=actor,
+        )
+
+    def reconcile_abandoned_operation(self, *, actor_id: str, operation_id: str,
+                                      expected_version: int):
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:recover")
+        return self.store.reconcile_abandoned_operation(
+            operation_id, expected_version=expected_version, principal_id=actor,
+        )
+
+    def record_operation_outcome(self, *, actor_id: str, operation_id: str,
+                                 expected_version: int, status: str,
+                                 provider_reference: str | None = None,
+                                 outcome: dict[str, Any] | list[Any] | None = None):
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
+        return self.store.record_operation_outcome(
+            operation_id, expected_version=expected_version, status=status,
+            provider_reference=provider_reference, outcome=outcome, principal_id=actor,
+        )
+
+    def record_operation_timeout(
+        self, *, actor_id: str, operation_id: str, expected_version: int,
+        timeout_seconds: int,
+    ):
+        """Record an uncertain provider timeout after checking resolve authority."""
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
+        return self.store.record_operation_timeout(
+            operation_id, expected_version=expected_version,
+            timeout_seconds=timeout_seconds, principal_id=actor,
+        )
+
+    def resolve_reconciled_operation(
+        self, *, actor_id: str, operation_id: str, expected_version: int,
+        provider_reference: str, evidence_source: str, evidence_digest: str,
+    ):
+        actor = self._actor(actor_id)
+        self._authorized_operation(actor, operation_id, "task:operation:resolve")
+        return self.store.resolve_reconciled_operation(
+            operation_id, expected_version=expected_version,
+            provider_reference=provider_reference, evidence_source=evidence_source,
+            evidence_digest=evidence_digest, principal_id=actor,
+        )
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
@@ -332,9 +548,9 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        cancelled = self.store.transition(task_id, expected_version=expected_version,
-                                          to_state="cancelled", error_code="cancelled")
-        self.store.append_task_event(task_id, kind="task.cancelled", actor_id=actor,
-                                     payload={"state_version": cancelled.version},
-                                     expected_version=cancelled.version)
+        cancelled = self.store.transition(
+            task_id, expected_version=expected_version, to_state="cancelled",
+            error_code="cancelled", event_kind="task.cancelled",
+            event_actor_id=actor, event_payload={"state_version": expected_version + 1},
+        )
         return self._record(self.store.get(task_id))

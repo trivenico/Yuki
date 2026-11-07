@@ -31,6 +31,8 @@
       <aside class="sidebar">
         <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
         <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <button id="open-memory" class="memory-nav-button" type="button">◇ <span>My memory</span></button>
+        <button id="open-devices" class="memory-nav-button" type="button">⌘ <span>Desktop devices</span></button>
         <p class="section-label">RECENT</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
         <div class="sidebar-bottom">
@@ -62,6 +64,65 @@
           </form>
           <p class="footer-note">Yuki AI · Your workspace, your intelligence</p>
         </div>
+      </section>
+      <section id="memory-panel" class="memory-panel" aria-labelledby="memory-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YOUR PRIVATE CONTEXT</p><h2 id="memory-title">Memory</h2><p class="muted">Notes are private to your account. New notes are unverified until you review them.</p></div>
+          <button id="close-memory" class="quiet-button" type="button" aria-label="Close memory">Close</button>
+        </header>
+        <form id="memory-form" class="memory-form">
+          <label for="memory-content">Remember something</label>
+          <textarea id="memory-content" rows="2" maxlength="8000" required placeholder="A preference, project detail, or useful context…"></textarea>
+          <button class="primary" type="submit">Save private note</button>
+        </form>
+        <p id="memory-status" class="muted" role="status"></p>
+        <section class="memory-candidates" aria-labelledby="memory-candidates-title">
+          <h3 id="memory-candidates-title">Suggestions from this conversation</h3>
+          <p class="muted">Yuki can propose preferences and project context. Nothing is saved until you approve it.</p>
+          <div id="memory-candidate-list" class="memory-list"></div>
+        </section>
+        <section class="profile-preferences" aria-labelledby="profile-preferences-title">
+          <h3 id="profile-preferences-title">Yuki's interaction preferences</h3>
+          <p class="muted">These typed preferences are private to your account. They guide presentation only and never change permissions.</p>
+          <div class="profile-fields">
+            <label>Response style
+              <select id="profile-response-style">
+                <option value="balanced">Balanced</option><option value="concise">Concise</option><option value="detailed">Detailed</option>
+              </select>
+            </label>
+            <label>Response tone
+              <select id="profile-response-tone">
+                <option value="neutral">Neutral</option><option value="friendly">Friendly</option><option value="formal">Formal</option><option value="technical">Technical</option>
+              </select>
+            </label>
+            <label>Explanation level
+              <select id="profile-explanation-level">
+                <option value="intermediate">Intermediate</option><option value="beginner">Beginner</option><option value="expert">Expert</option>
+              </select>
+            </label>
+          </div>
+          <button id="save-profile" class="memory-action" type="button">Save preferences</button>
+          <p id="profile-status" class="muted" role="status"></p>
+        </section>
+        <h3 class="memory-section-title">Saved memories</h3>
+        <div id="memory-list" class="memory-list"></div>
+      </section>
+      <section id="device-panel" class="memory-panel" aria-labelledby="device-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YUKI COMPANION</p><h2 id="device-title">Desktop devices</h2><p class="muted">Pair this desktop with your account. Its credential is stored in the operating-system credential vault.</p></div>
+          <button id="close-devices" class="quiet-button" type="button" aria-label="Close devices">Close</button>
+        </header>
+        <form id="device-pair-form" class="memory-form">
+          <label for="device-name">This device's name</label>
+          <input id="device-name" name="device-name" maxlength="80" required value="Yuki Desktop" autocomplete="off">
+          <button id="pair-device" class="primary" type="submit">Pair this desktop</button>
+        </form>
+        <p id="device-status" class="muted" role="status">Device pairing is available in the native Yuki Desktop app.</p>
+        <section class="paired-devices" aria-labelledby="paired-devices-title">
+          <h3 id="paired-devices-title">Paired devices</h3>
+          <div id="paired-device-list" class="memory-list"></div>
+        </section>
+        <p class="hint">Pairing codes expire quickly and can be used once. If secure credential storage fails, Yuki will revoke the newly created device.</p>
       </section>
     </section>
     <div id="toast" class="toast" role="status"></div>

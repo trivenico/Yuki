@@ -1,5 +1,6 @@
 import tempfile
 import sqlite3
+from contextlib import closing
 import unittest
 from pathlib import Path
 from core.agent_memory import AgentMemoryStore
@@ -24,6 +25,16 @@ class AgentMemoryTests(unittest.TestCase):
   self.grants["owner"].add("agent_memory:share")
   self.store.remember(actor_id="owner",agent_id="research",content="shared fact",source="review",scope="shared")
   self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="developer")),1)
+ def test_shared_memory_disappears_when_share_permission_is_revoked(self):
+  item=self.store.remember(actor_id="owner",agent_id="research",content="shared fact",source="review",scope="shared")
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="research")),1)
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="developer")),1)
+  self.grants["owner"].remove("agent_memory:share")
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research"),[])
+  self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="developer"),[])
+  self.assertEqual(self.store.list_memories_page(actor_id="owner",agent_id="research"),[])
+  self.assertEqual(self.store.list_memories_page(actor_id="owner",agent_id="developer"),[])
+
  def test_verified_flag_is_explicit_not_assumed(self):
   item=self.store.remember(actor_id="owner",agent_id="research",content="A reviewed fact",source="human review",verified=True)
   self.assertTrue(item["verified"])
@@ -58,8 +69,8 @@ class AgentMemoryTests(unittest.TestCase):
   new=self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
    content="Timeout is 60 seconds",source="verified runbook",reason="Owner verified updated configuration")
   self.assertNotEqual(old["memory_id"],new["memory_id"])
-  self.assertTrue(new["verified"])
-  self.assertEqual(new["lifecycle_status"],"approved")
+  self.assertFalse(new["verified"])
+  self.assertEqual(new["lifecycle_status"],"pending_review")
   self.assertEqual(new["source"],"verified runbook")
   self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research")[0]["memory_id"],new["memory_id"])
   history=self.store.correction_history(actor_id="owner",agent_id="research",memory_id=old["memory_id"])
@@ -96,7 +107,7 @@ class AgentMemoryTests(unittest.TestCase):
   self.grants["owner"].add("agent_memory:correct")
   self.store.correct(actor_id="owner",agent_id="research",memory_id=old["memory_id"],
    content="new",source="review",reason="owner approved")
-  with sqlite3.connect(self.store.database_path) as db:
+  with closing(sqlite3.connect(self.store.database_path)) as db, db:
    with self.assertRaises(sqlite3.IntegrityError):
     db.execute("UPDATE agent_memory_corrections SET reason='tampered'")
    with self.assertRaises(sqlite3.IntegrityError):
@@ -163,7 +174,7 @@ class AgentMemoryTests(unittest.TestCase):
   item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
    memory_id=item["memory_id"],status="approved",reason="Reviewed")
-  with sqlite3.connect(self.store.database_path) as db:
+  with closing(sqlite3.connect(self.store.database_path)) as db, db:
    with self.assertRaises(sqlite3.IntegrityError):
     db.execute("UPDATE agent_memory_lifecycle_events SET reason='tampered'")
    with self.assertRaises(sqlite3.IntegrityError):
@@ -175,6 +186,61 @@ class AgentMemoryTests(unittest.TestCase):
   with self.assertRaises(PermissionError):
    self.store.transition_lifecycle(actor_id="owner",agent_id="research",
     memory_id=item["memory_id"],status="approved",reason="Reviewed")
+
+
+ def test_owner_reviewed_candidate_promotion_is_idempotent_and_authorized(self):
+  first=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",
+   candidate_id="memcand-0123456789abcdef01234567",
+   content="I prefer concise technical explanations",
+   source="conversation:abc:message:message-1",category="semantic",
+  )
+  second=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",
+   candidate_id="memcand-0123456789abcdef01234567",
+   content="I prefer concise technical explanations",
+   source="conversation:abc:message:message-1",category="semantic",
+  )
+  self.assertEqual(first["memory_id"],second["memory_id"])
+  self.assertTrue(first["verified"])
+  self.assertTrue(self.store.candidate_was_promoted(
+   actor_id="owner",agent_id="assistant",candidate_id="memcand-0123456789abcdef01234567"
+  ))
+  self.assertEqual(len(self.store.list_memories(actor_id="owner",agent_id="assistant")),1)
+
+ def test_deleted_promoted_candidate_cannot_be_resurrected(self):
+  candidate_id="memcand-abcdef0123456789abcdef01"
+  item=self.store.remember_candidate(
+   actor_id="owner",agent_id="assistant",candidate_id=candidate_id,
+   content="I prefer concise explanations",source="conversation:abc:message:1",
+   category="semantic",
+  )
+  self.assertTrue(self.store.delete(
+   actor_id="owner",agent_id="assistant",memory_id=item["memory_id"]
+  ))
+  self.assertTrue(self.store.candidate_was_promoted(
+   actor_id="owner",agent_id="assistant",candidate_id=candidate_id
+  ))
+  with self.assertRaises(ValueError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",candidate_id=candidate_id,
+    content="I prefer concise explanations",source="conversation:abc:message:1",
+    category="semantic",
+   )
+
+ def test_candidate_promotion_rejects_invalid_ids_and_missing_write_permission(self):
+  with self.assertRaises(ValueError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",candidate_id="not-a-candidate",
+    content="A preference",source="conversation:abc:message:1",
+  )
+  self.grants["owner"].discard("agent_memory:write")
+  with self.assertRaises(PermissionError):
+   self.store.remember_candidate(
+    actor_id="owner",agent_id="assistant",
+    candidate_id="memcand-0123456789abcdef01234567",
+    content="A preference",source="conversation:abc:message:1",
+   )
 
 
 if __name__=="__main__": unittest.main()

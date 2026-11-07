@@ -1,5 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from automation.task_runtime import TaskRuntime
@@ -12,10 +15,11 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list"}
+                       "task:lease:renew", "task:complete", "task:fail", "task:cancel",
+                       "task:retry", "task:list", "task:operation:prepare", "task:operation:dispatch", "task:operation:resolve", "task:operation:read", "task:step:start", "task:step:finish", "task:step:reconcile"}
         self.runtime = TaskRuntime(
             self.store,
-            authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
+            authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action in {"task:recover", "task:step:resolve"}),
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
@@ -26,6 +30,121 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_operation_access_checks_hide_existence_from_unauthorized_actors(self):
+        task = self.create("operation-auth")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="auth-key",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        self.grants.remove("task:operation:resolve")
+        for method, kwargs in (
+            (self.runtime.mark_operation_in_flight, {
+                "actor_id": "bob", "operation_id": operation.operation_id,
+                "worker_id": "worker-a", "provider_name": "payments.test", "expected_version": operation.version,
+            }),
+            (self.runtime.reconcile_abandoned_operation, {
+                "actor_id": "bob", "operation_id": operation.operation_id,
+                "expected_version": operation.version,
+            }),
+            (self.runtime.record_operation_outcome, {
+                "actor_id": "alice", "operation_id": operation.operation_id,
+                "expected_version": operation.version, "status": "succeeded",
+            }),
+        ):
+            with self.assertRaises(PermissionError):
+                method(**kwargs)
+        for method, kwargs in (
+            (self.runtime.mark_operation_in_flight, {
+                "actor_id": "bob", "operation_id": "missing-operation",
+                "worker_id": "worker-a", "provider_name": "payments.test", "expected_version": 0,
+            }),
+            (self.runtime.reconcile_abandoned_operation, {
+                "actor_id": "alice", "operation_id": "missing-operation",
+                "expected_version": 0,
+            }),
+            (self.runtime.record_operation_outcome, {
+                "actor_id": "alice", "operation_id": "missing-operation",
+                "expected_version": 0, "status": "succeeded",
+            }),
+        ):
+            with self.assertRaises(PermissionError):
+                method(**kwargs)
+
+    def test_operation_audit_preserves_authenticated_principal_and_worker(self):
+        task = self.create("operation-audit-principal")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="audit-principal",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        inflight = self.runtime.mark_operation_in_flight(
+            actor_id="alice", operation_id=operation.operation_id,
+            worker_id="worker-a", provider_name="payments.test", expected_version=operation.version,
+        )
+        self.runtime.record_operation_outcome(
+            actor_id="alice", operation_id=inflight.operation_id,
+            expected_version=inflight.version, status="succeeded",
+            provider_reference="provider-audit",
+        )
+        events = self.store.list_operation_events(operation.operation_id)
+        self.assertEqual([event.principal_id for event in events], ["alice", "alice", "alice"])
+        self.assertEqual(events[0].actor_id, "workflow_store")
+        self.assertEqual(events[1].actor_id, "worker-a")
+        self.assertEqual(events[2].actor_id, "workflow_store")
+
+    def test_operation_audit_reads_require_dedicated_capability_and_are_bounded(self):
+        task = self.create("operation-audit-read")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="audit-read",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        self.assertEqual(len(self.runtime.operation_events(
+            actor_id="alice", operation_id=operation.operation_id, limit=1,
+        )), 1)
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="bob", operation_id=operation.operation_id)
+        self.grants.remove("task:operation:read")
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="alice", operation_id=operation.operation_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.operation_events(actor_id="alice", operation_id="missing-operation")
+
+    def test_dispatch_transition_requires_outcome_permission_too(self):
+        task = self.create("operation-dispatch-resolve-grant")
+        self.store.claim_next(worker_id="worker-a")
+        operation = self.runtime.prepare_operation(
+            actor_id="alice", task_id=task.task_id, idempotency_key="dispatch-resolve-key",
+            action="provider.call", request={"payload_digest": "safe"},
+        )
+        # Alice currently has dispatch permission but not resolve permission.
+        self.grants.remove("task:operation:resolve")
+        with self.assertRaises(PermissionError):
+            self.runtime.mark_operation_in_flight(
+                actor_id="alice", operation_id=operation.operation_id,
+                worker_id="worker-a", provider_name="payments.test", expected_version=operation.version,
+            )
+        self.assertEqual(self.store.get_operation(operation.operation_id).status, "prepared")
+
+    def test_enqueue_and_creation_event_roll_back_together(self):
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_creation_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.created'
+                BEGIN SELECT RAISE(ABORT, 'simulated creation journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.enqueue(actor_id="alice", idempotency_key="atomic-create",
+                                 name="atomic-create", steps=self.steps)
+        with self.store._connect() as db:
+            run = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key=?",
+                ("atomic-create",),
+            ).fetchone()
+            self.assertIsNone(run)
 
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
@@ -77,19 +196,323 @@ class TaskRuntimeTests(unittest.TestCase):
             expected_version=first.version, message="second update", percent=50,
         )
         page_one = self.runtime.events(
-            actor_id="alice", task_id=task.task_id, after_sequence=1, limit=1,
+            actor_id="alice", task_id=task.task_id, after_sequence=2, limit=1,
         )
         page_two = self.runtime.events(
             actor_id="alice", task_id=task.task_id,
             after_sequence=page_one[-1].sequence, limit=1,
         )
-        self.assertEqual([event.sequence for event in page_one], [2])
-        self.assertEqual([event.sequence for event in page_two], [3])
+        self.assertEqual([event.sequence for event in page_one], [3])
+        self.assertEqual([event.sequence for event in page_two], [4])
         self.assertEqual(page_one[0].payload["message"], "first update")
         with self.assertRaises(ValueError):
             self.runtime.events(actor_id="alice", task_id=task.task_id, limit=501)
         with self.assertRaises(PermissionError):
             self.runtime.events(actor_id="supervisor", task_id=task.task_id)
+
+    def test_supervisor_recovery_quarantines_running_steps_after_lease_expiry(self):
+        task = self.create("expired-step-recovery")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(), task.task_id),
+            )
+        with self.assertRaises(PermissionError):
+            self.runtime.recover_expired(actor_id="alice", task_id=task.task_id)
+        recovered = self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        self.assertEqual(recovered.state, "interrupted")
+        self.assertIsNone(recovered.lease_owner)
+        quarantined = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((quarantined.status, quarantined.version), ("needs_reconciliation", 2))
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], [
+            "task.created", "task.claimed", "task.step.started",
+            "task.step.needs_reconciliation", "task.interrupted",
+        ])
+        self.assertEqual(events[-1].actor_id, "supervisor")
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+
+    def test_supervisor_reconciliation_is_audited_and_does_not_resume_task(self):
+        task = self.create("reconcile-step")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.reconcile_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="succeeded", reason="verified",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="succeeded", reason=" ",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision=[], reason="invalid decision type",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="contains\x00nul",
+            )
+        resolved = self.runtime.reconcile_step(
+            actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+            expected_step_version=2, decision="succeeded",
+            reason="External operation verified in provider audit log.",
+        )
+        self.assertEqual((resolved.status, resolved.version), ("succeeded", 3))
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "interrupted")
+        self.assertIsNone(current.lease_owner)
+        event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(event.kind, "task.step.reconciled")
+        self.assertEqual(event.actor_id, "supervisor")
+        self.assertFalse(event.payload["workflow_resumed"])
+        self.assertEqual(event.payload["decision"], "succeeded")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="stale decision",
+            )
+
+    def test_reconciliation_event_failure_rolls_back_step_disposition(self):
+        task = self.create("reconcile-atomic")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_reconciliation_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.step.reconciled'
+                BEGIN SELECT RAISE(ABORT, 'simulated reconciliation journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.reconcile_step(
+                actor_id="supervisor", task_id=task.task_id, step_id=step.step_id,
+                expected_step_version=2, decision="failed", reason="provider confirms failure",
+            )
+        current = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((current.status, current.version), ("needs_reconciliation", 2))
+        self.assertEqual(self.store.get(task.task_id).state, "interrupted")
+
+    def test_concurrent_recovery_has_single_winner(self):
+        task = self.create("concurrent-recovery")
+        self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+
+        def recover():
+            try:
+                return self.runtime.recover_expired(
+                    actor_id="supervisor", task_id=task.task_id,
+                )
+            except WorkflowTransitionError:
+                return "already-recovered"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: recover(), range(2)))
+        self.assertEqual(sum(outcome != "already-recovered" for outcome in outcomes), 1)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(
+            sum(event.kind == "task.interrupted" for event in events), 1,
+        )
+        self.assertEqual(self.store.get(task.task_id).state, "interrupted")
+
+    def test_bulk_recovery_pages_oldest_expired_runs_without_starvation(self):
+        tasks = []
+        for index in range(3):
+            task = self.create(f"bulk-expired-{index}")
+            self.claim(task)
+            tasks.append(task)
+        with self.store._connect() as db:
+            for index, task in enumerate(tasks):
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (f"2000-01-0{index + 1}T00:00:00+00:00", task.task_id),
+                )
+        recovered_ids = []
+        for _ in range(3):
+            page = self.runtime.recover_expired(
+                actor_id="supervisor", limit=1,
+            )
+            self.assertEqual(len(page), 1)
+            recovered_ids.append(page[0].task_id)
+        self.assertEqual(set(recovered_ids), {task.task_id for task in tasks})
+        self.assertEqual(
+            self.runtime.recover_expired(actor_id="supervisor", limit=1), [],
+        )
+
+    def test_bulk_recovery_skips_malformed_and_timezone_naive_expiries(self):
+        task_ids = []
+        for index, expiry in enumerate(("not-a-timestamp", "2000-01-01T00:00:00")):
+            task = self.create(f"bulk-invalid-expiry-{index}")
+            self.claim(task)
+            task_ids.append(task.task_id)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+        self.assertEqual(
+            self.runtime.recover_expired(actor_id="supervisor", limit=10), [],
+        )
+        self.assertTrue(all(
+            self.store.get(task_id).state == "running" for task_id in task_ids
+        ))
+
+    def test_recovery_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for invalid_expiry in ("not-a-timestamp", "2000-01-01T00:00:00"):
+            with self.subTest(invalid_expiry=invalid_expiry):
+                task = self.create("invalid-expiry-" + str(len(invalid_expiry)))
+                self.claim(task)
+                with self.store._connect() as db:
+                    db.execute(
+                        "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                        (invalid_expiry, task.task_id),
+                    )
+                with self.assertRaises(WorkflowConflict):
+                    self.runtime.recover_expired(
+                        actor_id="supervisor", task_id=task.task_id,
+                    )
+                self.assertEqual(self.store.get(task.task_id).state, "running")
+
+    def test_recovery_requires_expired_lease(self):
+        task = self.create("live-step-recovery")
+        self.claim(task)
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.recover_expired(actor_id="supervisor", task_id=task.task_id)
+
+    def test_step_transitions_are_lease_bound_versioned_and_journaled(self):
+        task = self.create("step-transitions")
+        claimed = self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.assertEqual(step.status, "pending")
+        started = self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=step.version, to_status="running",
+        )
+        self.assertEqual((started.status, started.attempts, started.version), ("running", 1, 1))
+        finished = self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=started.version, to_status="succeeded",
+        )
+        self.assertEqual((finished.status, finished.version), ("succeeded", 2))
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events],
+                         ["task.created", "task.claimed", "task.step.started", "task.step.succeeded"])
+        self.assertEqual(events[-1].payload["step_id"], step.step_id)
+        self.assertEqual(events[-1].actor_id, "alice")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=started.version, to_status="succeeded",
+            )
+
+    def test_step_transition_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for expiry in ("not-a-timestamp", "2030-01-01T00:00:00"):
+            with self.subTest(expiry=expiry):
+                task = self.create("invalid-step-lease-" + str(len(expiry)))
+                self.claim(task)
+                step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+                with self.store._connect() as db:
+                    db.execute(
+                        "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                        (expiry, task.task_id),
+                    )
+                with self.assertRaises(WorkflowConflict):
+                    self.runtime.transition_step(
+                        actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                        worker_id="worker-a", expected_step_version=0, to_status="running",
+                    )
+                current = self.store.list_steps(task.task_id)[0]
+                self.assertEqual((current.status, current.version), ("pending", 0))
+
+    def test_step_transition_rejects_non_string_status_without_type_error(self):
+        task = self.create("invalid-step-status")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        for invalid in ([], {}, None, 1):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    self.runtime.transition_step(
+                        actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                        worker_id="worker-a", expected_step_version=0, to_status=invalid,
+                    )
+        self.assertEqual(self.store.list_steps(task.task_id)[0].status, "pending")
+
+    def test_step_transition_rejects_wrong_worker_and_missing_permission(self):
+        task = self.create("step-worker-guard")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-b", expected_step_version=0, to_status="running",
+            )
+        restricted = TaskRuntime(self.store, authorize=lambda actor, action, target: action == "task:read")
+        with self.assertRaises(PermissionError):
+            restricted.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=0, to_status="running",
+            )
+        self.assertEqual(self.store.list_steps(task.task_id)[0].status, "pending")
+
+    def test_step_state_and_event_roll_back_together(self):
+        task = self.create("atomic-step-event")
+        self.claim(task)
+        step = self.runtime.list_steps(actor_id="alice", task_id=task.task_id)[0]
+        self.runtime.transition_step(
+            actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+            worker_id="worker-a", expected_step_version=0, to_status="running",
+        )
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_step_success
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.step.succeeded'
+                BEGIN SELECT RAISE(ABORT, 'simulated step journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.transition_step(
+                actor_id="alice", task_id=task.task_id, step_id=step.step_id,
+                worker_id="worker-a", expected_step_version=1, to_status="succeeded",
+            )
+        current = self.store.list_steps(task.task_id)[0]
+        self.assertEqual((current.status, current.version), ("running", 1))
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)],
+            ["task.created", "task.claimed", "task.step.started"])
 
     def test_authorization_fails_closed(self):
         with self.assertRaises(PermissionError):
@@ -99,6 +522,220 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             broken.enqueue(actor_id="alice", idempotency_key="broken-auth",
                            name="task", steps=self.steps)
+
+    def test_claim_is_journaled_atomically_with_worker_identity(self):
+        task = self.create("claim-event")
+        claimed = self.claim(task)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
+        self.assertEqual(events[-1].actor_id, "worker-a")
+        self.assertEqual(events[-1].payload["attempt"], 1)
+        self.assertEqual(events[-1].payload["lease_expires_at"], claimed.lease_expires_at)
+
+    def test_claim_and_claim_event_roll_back_together(self):
+        task = self.create("atomic-claim-event")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_claim_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.claimed'
+                BEGIN SELECT RAISE(ABORT, 'simulated claim journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.claim_next(worker_id="worker-a")
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "queued")
+        self.assertEqual(current.version, task.version)
+        self.assertIsNone(current.lease_owner)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created"])
+
+    def test_task_lease_renewer_tracks_latest_version_after_progress(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter")
+        claimed = self.claim(task)
+        progressed = self.runtime.record_progress(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, message="worker is active", percent=10,
+        )
+        renewer = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-a", lease_seconds=120,
+        )
+        self.assertIs(renewer(), True)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, progressed.version + 1)
+        self.assertEqual(current.lease_owner, "worker-a")
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.lease_renewed")
+        self.assertEqual(events[-1].actor_id, "alice")
+
+    def test_task_lease_renewer_reloads_after_concurrent_version_conflict(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter-cas-race")
+        claimed = self.claim(task)
+        original_renew = self.runtime.renew_lease
+        injected = []
+
+        def concurrent_progress_then_renew(**kwargs):
+            if not injected:
+                injected.append(True)
+                self.runtime.record_progress(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=kwargs["expected_version"],
+                    message="concurrent worker progress", percent=15,
+                )
+            return original_renew(**kwargs)
+
+        self.runtime.renew_lease = concurrent_progress_then_renew
+        renewer = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-a",
+        )
+        self.assertIs(renewer(), True)
+        self.assertEqual(len(injected), 1)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, claimed.version + 2)
+        self.assertEqual(
+            [event.kind for event in self.runtime.events(
+                actor_id="alice", task_id=task.task_id
+            )][-2:],
+            ["task.progress", "task.lease_renewed"],
+        )
+
+    def test_durable_task_cancellation_reaches_running_heartbeat_handler(self):
+        import threading
+        import time
+        from automation.task_runtime import TaskLeaseRenewer
+        from automation.worker_lifecycle import WorkerLeaseLost, WorkerShutdownCoordinator
+
+        task = self.create("heartbeat-cancellation-propagation")
+        claimed = self.claim(task)
+        coordinator = WorkerShutdownCoordinator()
+        self.assertTrue(coordinator.try_begin_claim("worker-a"))
+        coordinator.register_claim("worker-a", task.task_id)
+        handler_started = threading.Event()
+        outcomes = []
+
+        def handler(_claimed, stop_requested):
+            handler_started.set()
+            self.assertTrue(stop_requested.wait(1.0))
+            return "must-not-be-accepted"
+
+        def execute():
+            try:
+                outcomes.append(coordinator.execute_claimed_with_heartbeat(
+                    "worker-a", claimed, handler,
+                    TaskLeaseRenewer(
+                        self.runtime, actor_id="alice", task_id=task.task_id,
+                        worker_id="worker-a",
+                    ),
+                    heartbeat_interval=0.01,
+                ))
+            except BaseException as exc:
+                outcomes.append(exc)
+
+        thread = threading.Thread(target=execute)
+        thread.start()
+        self.assertTrue(handler_started.wait(1.0))
+        deadline = time.monotonic() + 1.0
+        cancelled = False
+        while thread.is_alive() and time.monotonic() < deadline:
+            current = self.store.get(task.task_id)
+            if current.state == "cancelled":
+                cancelled = True
+                break
+            try:
+                self.runtime.cancel(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=current.version,
+                )
+                cancelled = True
+                break
+            except WorkflowConflict:
+                # A heartbeat may advance the task version between the read
+                # and cancellation CAS. Reload and retry while the task runs.
+                time.sleep(0.001)
+        self.assertTrue(cancelled, "task cancellation did not win the version race")
+        thread.join(1.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(outcomes), 1)
+        self.assertIsInstance(outcomes[0], WorkerLeaseLost)
+        self.assertEqual(self.store.get(task.task_id).state, "cancelled")
+        self.assertEqual(coordinator.snapshot()["active_workers"], {})
+
+    def test_task_lease_renewer_fails_closed_for_wrong_owner_or_unauthorized_actor(self):
+        from automation.task_runtime import TaskLeaseRenewer
+
+        task = self.create("heartbeat-adapter-authz")
+        self.claim(task)
+        wrong_owner = TaskLeaseRenewer(
+            self.runtime, actor_id="alice", task_id=task.task_id,
+            worker_id="worker-b",
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            wrong_owner()
+
+        denied = TaskRuntime(self.store, authorize=lambda *_: False)
+        renewer = TaskLeaseRenewer(
+            denied, actor_id="mallory", task_id=task.task_id,
+            worker_id="worker-a",
+        )
+        with self.assertRaises(PermissionError):
+            renewer()
+
+    def test_lease_renewal_is_journaled_with_worker_identity(self):
+        task = self.create("lease-renewal-event")
+        claimed = self.claim(task)
+        renewed = self.runtime.renew_lease(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, lease_seconds=120,
+        )
+        event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(event.kind, "task.lease_renewed")
+        self.assertEqual(event.actor_id, "alice")
+        self.assertEqual(event.payload["worker_id"], "worker-a")
+        self.assertEqual(event.payload["lease_expires_at"], renewed.lease_expires_at)
+
+    def test_lease_renewal_rejects_malformed_or_timezone_naive_expiry(self):
+        for index, expiry in enumerate(("invalid", "2000-01-01T00:00:00")):
+            task = self.create(f"renew-invalid-expiry-{index}")
+            claimed = self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+            with self.assertRaises(WorkflowConflict):
+                self.runtime.renew_lease(
+                    actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                    expected_version=claimed.version, lease_seconds=120,
+                )
+            self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
+    def test_lease_renewal_and_event_roll_back_together(self):
+        task = self.create("atomic-lease-renewal")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_lease_renewal_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.lease_renewed'
+                BEGIN SELECT RAISE(ABORT, 'simulated lease event failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, lease_seconds=120,
+            )
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual(current.lease_expires_at, claimed.lease_expires_at)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)],
+            ["task.created", "task.claimed"])
 
     def test_progress_is_versioned_and_durable(self):
         task = self.create()
@@ -110,7 +747,7 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, message="stale")
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
-                         ["task.created", "task.progress"])
+                         ["task.created", "task.claimed", "task.progress"])
 
     def test_artifact_is_journaled(self):
         task = self.create()
@@ -134,6 +771,60 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
                          "task.completed")
 
+    def test_cancellation_and_terminal_event_roll_back_together(self):
+        task = self.create("atomic-cancellation-event")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_cancel_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.cancelled'
+                BEGIN SELECT RAISE(ABORT, 'simulated event journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.cancel(actor_id="alice", task_id=task.task_id,
+                                expected_version=task.version)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "queued")
+        self.assertEqual(current.version, task.version)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created"])
+
+    def test_completion_and_terminal_event_roll_back_together(self):
+        task = self.create("atomic-completion-event")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_terminal_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.completed'
+                BEGIN SELECT RAISE(ABORT, 'simulated event journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.complete(actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a", result={"ok": True})
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        self.assertEqual([event.kind for event in self.runtime.events(
+            actor_id="alice", task_id=task.task_id)], ["task.created", "task.claimed"])
+
+    def test_completion_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for index, expiry in enumerate(("invalid", "2000-01-01T00:00:00")):
+            task = self.create(f"complete-invalid-expiry-{index}")
+            claimed = self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+            with self.assertRaises(WorkflowConflict):
+                self.runtime.complete(
+                    actor_id="alice", task_id=task.task_id,
+                    worker_id="worker-a", expected_version=claimed.version,
+                    result={"ok": True},
+                )
+            self.assertEqual(self.store.get(task.task_id).state, "running")
+
     def test_expired_lease_cannot_complete(self):
         task = self.create()
         claimed = self.claim(task)
@@ -143,6 +834,35 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowConflict):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
+
+    def test_failure_rejects_malformed_or_timezone_naive_lease_expiry(self):
+        for index, expiry in enumerate(("invalid", "2000-01-01T00:00:00")):
+            task = self.create(f"fail-invalid-expiry-{index}")
+            claimed = self.claim(task)
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                    (expiry, task.task_id),
+                )
+            with self.assertRaises(WorkflowConflict):
+                self.runtime.fail(
+                    actor_id="alice", task_id=task.task_id,
+                    worker_id="worker-a", expected_version=claimed.version,
+                    error_code="worker_error",
+                )
+            self.assertEqual(self.store.get(task.task_id).state, "running")
+            self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
+    def test_expired_lease_cannot_fail_task(self):
+        task = self.create()
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute("UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                       (task.task_id,))
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="provider_error")
 
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
@@ -212,6 +932,28 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.record_progress(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, message="ok", percent=True)
+
+    def test_expired_lease_recovery_and_event_roll_back_together(self):
+        task = self.create("recover-atomic")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+            db.execute("""
+                CREATE TRIGGER reject_interruption_event
+                BEFORE INSERT ON task_events
+                WHEN NEW.kind = 'task.interrupted'
+                BEGIN SELECT RAISE(ABORT, 'simulated interruption journal failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.recover_expired(actor_id="supervisor")
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.version, claimed.version)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created", "task.claimed"])
 
     def test_expired_lease_recovery_is_authorized_and_journaled(self):
         task = self.create("recover-expired")

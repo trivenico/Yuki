@@ -268,5 +268,61 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "cancelled")
         self.assertEqual(deltas, ["partial"])
 
+    def test_durable_budget_is_reserved_before_model_and_tool_actions(self):
+        import os
+        import tempfile
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+        with tempfile.TemporaryDirectory() as directory:
+            store = ExecutionBudgetStore(os.path.join(directory, "budget.sqlite3"))
+            store.create_snapshot(
+                budget_id="loop-budget", task_id="loop-task",
+                limits={"max_model_turns": 2, "max_tool_calls": 1,
+                        "max_duration_ms": 1000, "max_transcript_chars": 5000},
+                policy_version="test",
+            )
+            observed = []
+            def model(**kwargs):
+                observed.append(store.usage("loop-budget").copy())
+                if len(observed) == 1:
+                    return {"text": "", "tool_calls": {"tool_calls": [
+                        {"id": "call_budget", "name": "echo", "arguments": {"value": "x"}}
+                    ]}}
+                return {"text": "done", "tool_calls": {"tool_calls": []}}
+            loop = AgentExecutionLoop(model, self.protocol, budget_store=store,
+                                      budget_id="loop-budget")
+            result = loop.run("Do it", tools=self.tools)
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(observed[0]["model_turns"], 1)
+            self.assertEqual(store.usage("loop-budget")["model_turns"], 2)
+            self.assertEqual(store.usage("loop-budget")["tool_calls"], 1)
+
+    def test_durable_budget_exhaustion_prevents_model_invocation(self):
+        import os
+        import tempfile
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+        with tempfile.TemporaryDirectory() as directory:
+            store = ExecutionBudgetStore(os.path.join(directory, "budget.sqlite3"))
+            store.create_snapshot(
+                budget_id="loop-budget", task_id="loop-task",
+                limits={"max_model_turns": 1, "max_tool_calls": 1,
+                        "max_duration_ms": 1000, "max_transcript_chars": 5000},
+                policy_version="test",
+            )
+            store.reserve(budget_id="loop-budget", resource="model_turns",
+                          amount=1, idempotency_key="previous-worker:model:1")
+            calls = []
+            loop = AgentExecutionLoop(
+                lambda **kwargs: calls.append(True),
+                self.protocol, budget_store=store, budget_id="loop-budget",
+            )
+            result = loop.run("must not run", tools=[])
+            self.assertEqual(result.status, "limit_reached")
+            self.assertEqual(calls, [])
+
+    def test_budget_store_and_id_must_be_paired(self):
+        from unittest.mock import Mock
+        with self.assertRaises(ValueError):
+            AgentExecutionLoop(lambda **kwargs: {}, self.protocol, budget_store=Mock())
+
 if __name__ == "__main__":
     unittest.main()

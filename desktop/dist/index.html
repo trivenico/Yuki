@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <meta name="description" content="Yuki AI — your private intelligent workspace">
+  <title>Yuki AI</title>
+  <link rel="stylesheet" href="assets/chat.css">
+  <script src="assets/chat.js" defer></script>
+</head>
+<body>
+  <main id="app" class="shell">
+    <section id="login-view" class="login-card">
+      <div class="brand-mark">雪</div>
+      <p class="eyebrow">YOUR INTELLIGENT WORKSPACE</p>
+      <h1>Welcome to Yuki</h1>
+      <p class="muted">Sign in to continue your conversations.</p>
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required minlength="3">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="primary full" type="submit">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+      <p class="hint">Account creation is managed by your Yuki administrator.</p>
+    </section>
+
+    <section id="chat-view" class="chat-layout" hidden>
+      <aside class="sidebar">
+        <div class="sidebar-brand"><span class="brand-mark small">雪</span><strong>Yuki</strong><span class="version">AI</span></div>
+        <button id="new-chat" class="new-chat">＋ <span>New conversation</span></button>
+        <button id="open-memory" class="memory-nav-button" type="button">◇ <span>My memory</span></button>
+        <button id="open-devices" class="memory-nav-button" type="button">⌘ <span>Desktop devices</span></button>
+        <p class="section-label">RECENT</p>
+        <nav id="conversation-list" aria-label="Conversations"></nav>
+        <div class="sidebar-bottom">
+          <div id="account-label" class="account-label"></div>
+          <button id="logout" class="quiet-button">Sign out</button>
+        </div>
+      </aside>
+      <section class="main-panel">
+        <header class="topbar">
+          <div><span class="status-dot"></span><span id="connection-label">Connected</span></div>
+          <span id="provider-label" class="provider-label">Checking model…</span><label class="provider-control" for="provider-select">Model <select id="provider-select" aria-label="Active Yuki model provider" hidden></select></label><span class="topbar-brand">YUKI AI</span>
+        </header>
+        <div id="messages" class="messages" aria-live="polite">
+          <div class="welcome">
+            <div class="brand-mark">雪</div>
+            <p class="eyebrow">A NEW WAY TO THINK</p>
+            <h1>What can I help you with?</h1>
+            <p class="muted">Ask a question, explore an idea, or get something done.</p>
+          </div>
+        </div>
+        <div class="composer-wrap">
+          <form id="composer" class="composer">
+            <textarea id="message-input" rows="1" maxlength="20000" placeholder="Message Yuki…" aria-label="Message Yuki" required></textarea>
+            <div class="composer-footer">
+              <span class="composer-note">Yuki can make mistakes. Verify important information.</span>
+              <button id="send-button" class="send-button" type="submit" aria-label="Send message">↑</button>
+              <button id="cancel-button" class="cancel-button" type="button" hidden>Stop</button>
+            </div>
+          </form>
+          <p class="footer-note">Yuki AI · Your workspace, your intelligence</p>
+        </div>
+      </section>
+      <section id="memory-panel" class="memory-panel" aria-labelledby="memory-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YOUR PRIVATE CONTEXT</p><h2 id="memory-title">Memory</h2><p class="muted">Notes are private to your account. New notes are unverified until you review them.</p></div>
+          <button id="close-memory" class="quiet-button" type="button" aria-label="Close memory">Close</button>
+        </header>
+        <form id="memory-form" class="memory-form">
+          <label for="memory-content">Remember something</label>
+          <textarea id="memory-content" rows="2" maxlength="8000" required placeholder="A preference, project detail, or useful context…"></textarea>
+          <button class="primary" type="submit">Save private note</button>
+        </form>
+        <p id="memory-status" class="muted" role="status"></p>
+        <section class="memory-candidates" aria-labelledby="memory-candidates-title">
+          <h3 id="memory-candidates-title">Suggestions from this conversation</h3>
+          <p class="muted">Yuki can propose preferences and project context. Nothing is saved until you approve it.</p>
+          <div id="memory-candidate-list" class="memory-list"></div>
+        </section>
+        <section class="profile-preferences" aria-labelledby="profile-preferences-title">
+          <h3 id="profile-preferences-title">Yuki's interaction preferences</h3>
+          <p class="muted">These typed preferences are private to your account. They guide presentation only and never change permissions.</p>
+          <div class="profile-fields">
+            <label>Response style
+              <select id="profile-response-style">
+                <option value="balanced">Balanced</option><option value="concise">Concise</option><option value="detailed">Detailed</option>
+              </select>
+            </label>
+            <label>Response tone
+              <select id="profile-response-tone">
+                <option value="neutral">Neutral</option><option value="friendly">Friendly</option><option value="formal">Formal</option><option value="technical">Technical</option>
+              </select>
+            </label>
+            <label>Explanation level
+              <select id="profile-explanation-level">
+                <option value="intermediate">Intermediate</option><option value="beginner">Beginner</option><option value="expert">Expert</option>
+              </select>
+            </label>
+          </div>
+          <button id="save-profile" class="memory-action" type="button">Save preferences</button>
+          <p id="profile-status" class="muted" role="status"></p>
+        </section>
+        <h3 class="memory-section-title">Saved memories</h3>
+        <div id="memory-list" class="memory-list"></div>
+      </section>
+      <section id="device-panel" class="memory-panel" aria-labelledby="device-title" hidden>
+        <header class="memory-header">
+          <div><p class="eyebrow">YUKI COMPANION</p><h2 id="device-title">Desktop devices</h2><p class="muted">Pair this desktop with your account. Its credential is stored in the operating-system credential vault.</p></div>
+          <button id="close-devices" class="quiet-button" type="button" aria-label="Close devices">Close</button>
+        </header>
+        <form id="device-pair-form" class="memory-form">
+          <label for="device-name">This device's name</label>
+          <input id="device-name" name="device-name" maxlength="80" required value="Yuki Desktop" autocomplete="off">
+          <button id="pair-device" class="primary" type="submit">Pair this desktop</button>
+        </form>
+        <p id="device-status" class="muted" role="status">Device pairing is available in the native Yuki Desktop app.</p>
+        <section class="notification-preferences" aria-labelledby="notification-preferences-title">
+          <h3 id="notification-preferences-title">Desktop notifications</h3>
+          <p class="muted">Choose whether this paired desktop may receive Yuki notifications. Permission and delivery are controlled separately.</p>
+          <div class="notification-actions">
+            <button id="enable-notifications" class="memory-action" type="button">Enable notifications</button>
+            <button id="disable-notifications" class="memory-action" type="button">Stop notifications</button>
+            <button id="refresh-notification-status" class="memory-action" type="button">Refresh status</button>
+          </div>
+          <p id="notification-worker-status" class="muted" role="status">Notification delivery is not enabled.</p>
+        </section>
+        <section class="paired-devices" aria-labelledby="paired-devices-title">
+          <h3 id="paired-devices-title">Paired devices</h3>
+          <div id="paired-device-list" class="memory-list"></div>
+        </section>
+        <p class="hint">Pairing codes expire quickly and can be used once. If secure credential storage fails, Yuki will revoke the newly created device.</p>
+      </section>
+    </section>
+    <div id="toast" class="toast" role="status"></div>
+  </main>
+</body>
+</html>

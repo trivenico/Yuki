@@ -9,15 +9,29 @@ from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
 from api.web import YukiWebApplication
+from core.agent_memory import AgentMemoryStore
+from core.owner_profile import OwnerProfileStore
+from companion.reminder_store import CompanionReminderStore
+from companion.reminder_dispatcher import ReminderDispatcher
+from core.device_pairing import DevicePairingService
+from core.device_notification_outbox import DeviceNotificationOutbox
 
 
 class ConversationRuntime:
     """Own the API and its persistence resource for one application process."""
 
-    def __init__(self, app: YukiConversationAPI, store: Any):
+    def __init__(
+        self, app: YukiConversationAPI, store: Any,
+        reminder_dispatcher: ReminderDispatcher | None = None,
+        device_pairing: DevicePairingService | None = None,
+        notification_outbox: DeviceNotificationOutbox | None = None,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.store = store
+        self.reminder_dispatcher = reminder_dispatcher
+        self.device_pairing = device_pairing
+        self.notification_outbox = notification_outbox
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -29,8 +43,12 @@ class ConversationRuntime:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
+                if self.reminder_dispatcher is not None:
+                    await self.reminder_dispatcher.start()
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
+                if self.reminder_dispatcher is not None:
+                    await self.reminder_dispatcher.stop()
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
@@ -50,30 +68,54 @@ def build_conversation_runtime(
     *,
     auth_service: BuiltInAuthService,
     agent_loop: AgentExecutionLoop,
+    agent_loop_factory: Callable[[str], AgentExecutionLoop] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     device_agent: Any | None = None,
+    memory_store: AgentMemoryStore | None = None,
+    owner_profile_store: OwnerProfileStore | None = None,
+    reminder_store: CompanionReminderStore | None = None,
+    reminder_dispatcher: ReminderDispatcher | None = None,
+    device_pairing: DevicePairingService | None = None,
+    notification_outbox: DeviceNotificationOutbox | None = None,
 ) -> ConversationRuntime:
-    """Build an authenticated ASGI API with the configured persistence backend.
+    """Build an authenticated ASGI API with configured persistence.
 
-    The caller owns provider and auth construction. This function owns the
-    conversation store and guarantees the selected backend is injected into the
-    same service used by every API route.
+    The caller owns provider, auth, and notification-channel construction.
+    The optional dispatcher starts only when a real delivery channel has been
+    explicitly supplied by the composition root.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if agent_loop_factory is not None and not callable(agent_loop_factory):
+        raise TypeError("agent_loop_factory must be callable when provided.")
+    if reminder_dispatcher is not None and not isinstance(reminder_dispatcher, ReminderDispatcher):
+        raise TypeError("reminder_dispatcher must be a ReminderDispatcher.")
+    if device_pairing is not None and not isinstance(device_pairing, DevicePairingService):
+        raise TypeError("device_pairing must be a DevicePairingService.")
+    if notification_outbox is not None and not isinstance(notification_outbox, DeviceNotificationOutbox):
+        raise TypeError("notification_outbox must be a DeviceNotificationOutbox.")
+    if notification_outbox is not None and notification_outbox.pairing is not device_pairing:
+        raise ValueError("notification_outbox must share the configured device_pairing service.")
     store = create_conversation_store(config)
     try:
-        service = ConversationService(store, agent_loop)
+        service = ConversationService(
+            store, agent_loop, agent_loop_factory=agent_loop_factory,
+        )
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
-            device_agent=device_agent,
+            device_agent=device_agent, memory_store=memory_store,
+            owner_profile_store=owner_profile_store,
+            reminder_store=reminder_store, device_pairing=device_pairing,
+            notification_outbox=notification_outbox,
         )
-        return ConversationRuntime(app, store)
+        return ConversationRuntime(
+            app, store, reminder_dispatcher, device_pairing, notification_outbox
+        )
     except Exception:
         close = getattr(store, "close", None)
         if callable(close):

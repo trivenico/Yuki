@@ -33,6 +33,7 @@ class AgentTaskRouterTests(unittest.TestCase):
   self.assertEqual(result["specialist_candidates"],[])
   self.assertIn("vision",result["classification"]["required_capabilities"])
   self.assertIn("coding",result["classification"]["required_capabilities"])
+  self.assertEqual(result["reasoning_budget"]["profile"],"high")
  def test_ambiguous_request_is_not_auto_routed(self):
   result=recommend_task_route("Please help me",actor_id="owner",coordinator=self.coordinator)
   self.assertTrue(result["needs_clarification"])
@@ -41,6 +42,25 @@ class AgentTaskRouterTests(unittest.TestCase):
  def test_coordinator_authorization_is_used(self):
   recommend_task_route("debug this Python function",actor_id="owner",coordinator=self.coordinator)
   self.assertEqual(self.coordinator.calls,["owner"])
+ def test_route_includes_reasoning_budget_for_coding_task(self):
+  result=recommend_task_route("Debug this Python function",actor_id="owner",
+    coordinator=self.coordinator)
+  budget=result["reasoning_budget"]
+  self.assertEqual(budget["profile"],"high")
+  self.assertEqual(budget["max_model_turns"],10)
+  self.assertEqual(budget["max_tool_calls"],20)
+
+ def test_device_limits_reduce_route_budget(self):
+  result=recommend_task_route("Debug this Python function",actor_id="owner",
+    coordinator=self.coordinator,device_limits={"max_model_turns":2,"max_tool_calls":3})
+  self.assertEqual(result["reasoning_budget"]["max_model_turns"],2)
+  self.assertEqual(result["reasoning_budget"]["max_tool_calls"],3)
+
+ def test_invalid_effort_is_rejected_before_route_recommendation(self):
+  with self.assertRaisesRegex(ValueError,"unsupported_reasoning_effort"):
+   recommend_task_route("Debug this Python function",actor_id="owner",
+    coordinator=self.coordinator,requested_effort="unlimited")
+
  def test_rejects_invalid_inputs(self):
   with self.assertRaises(ValueError):
    recommend_task_route(" ",actor_id="owner",coordinator=self.coordinator)

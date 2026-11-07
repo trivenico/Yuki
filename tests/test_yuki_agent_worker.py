@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.agent_execution_observability import AgentExecutionTraceStore
 from yuki_agent_runtime import TaskStore
 from yuki_agent_worker import AgentWorker, TaskCancelled
 
@@ -57,6 +58,45 @@ class AgentWorkerTests(unittest.TestCase):
         worker = AgentWorker(self.store, worker_id="worker-1", handlers={"echo": cancelling_handler})
         outcome = worker.run_once()
         self.assertEqual(outcome.status, "cancelled")
+
+
+    def test_worker_emits_privacy_safe_execution_trace(self):
+        task = self.submit()
+        trace_store = AgentExecutionTraceStore(str(Path(self.store.database).parent / "traces.sqlite3"))
+        worker = AgentWorker(
+            self.store, worker_id="worker-1",
+            handlers={"echo": lambda payload, ctx: {"echo": payload["message"]}},
+            trace_store=trace_store,
+        )
+        outcome = worker.run_once()
+        self.assertEqual(outcome.status, "succeeded")
+        with trace_store._connect() as db:
+            row = db.execute(
+                "SELECT execution_id,status,task_id FROM agent_execution_traces WHERE task_id=?",
+                (task["id"],),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], "succeeded")
+        events = trace_store.list_events(row["execution_id"])
+        self.assertEqual(
+            [event["event_type"] for event in events],
+            ["execution.created", "execution.started", "execution.completed"],
+        )
+        self.assertEqual(worker.trace_errors, 0)
+
+    def test_trace_store_failure_does_not_change_worker_execution(self):
+        task = self.submit()
+        trace_store = AgentExecutionTraceStore(str(Path(self.store.database).parent / "traces.sqlite3"))
+        trace_store.database_path = str(Path(self.store.database).parent / "missing" / "trace.sqlite3")
+        worker = AgentWorker(
+            self.store, worker_id="worker-1",
+            handlers={"echo": lambda payload, ctx: {"ok": True}},
+            trace_store=trace_store,
+        )
+        outcome = worker.run_once()
+        self.assertEqual(outcome.status, "succeeded")
+        self.assertGreater(worker.trace_errors, 0)
+        self.assertEqual(self.store.get(task["id"])["result"], {"ok": True})
 
     def test_invalid_worker_configuration_is_rejected(self):
         with self.assertRaises(ValueError):

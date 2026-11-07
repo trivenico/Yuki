@@ -6,10 +6,14 @@ import unittest
 from pathlib import Path
 
 from api.conversations import YukiConversationAPI
+from companion.persona import DEFAULT_PERSONA
 from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
+from core.agent_memory import AgentMemoryStore
+from core.owner_profile import OwnerProfileStore
+from core.owner_identity import memory_actor_id_for_owner
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -27,7 +31,9 @@ class ConversationAPITests(unittest.TestCase):
         self.user = self.auth.bootstrap_admin("admin-user", "a-secure-test-password")
         self.issued = self.auth.authenticate("admin-user", "a-secure-test-password")
 
+        self.model_messages = []
         def model(**kwargs):
+            self.model_messages.append(kwargs["messages"])
             return {"text": "Hello from Yuki", "tool_calls": {"tool_calls": []}}
 
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
@@ -191,6 +197,8 @@ class ConversationAPITests(unittest.TestCase):
         status, history, _ = self.request("GET", f"/v1/conversations/{cid}/messages", token=token)
         self.assertEqual(status, 200)
         self.assertEqual([item["role"] for item in history["messages"]], ["user", "assistant"])
+        self.assertEqual(self.model_messages[0][0]["role"], "system")
+        self.assertEqual(self.model_messages[0][0]["content"], DEFAULT_PERSONA.system_guidance())
 
         status, _, _ = self.request("POST", "/v1/auth/logout", token=token)
         self.assertEqual(status, 200)
@@ -241,6 +249,257 @@ class ConversationAPITests(unittest.TestCase):
             return sent[0]["status"]
         self.assertEqual(asyncio.run(run()), 400)
 
+
+
+    def test_companion_context_uses_only_approved_private_owner_memory(self):
+        actor_id = memory_actor_id_for_owner(self.user.user_id)
+        grants = {
+            "agent_memory:read", "agent_memory:write", "agent_memory:review",
+            "owner_profile:read", "owner_profile:write",
+        }
+        authorize = lambda actor, action, agent: actor == actor_id and action in grants and (
+            (agent == "assistant" and action.startswith("agent_memory:"))
+            or (agent == "owner_profile" and action.startswith("owner_profile:"))
+        )
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "context-memory.sqlite"), authorize=authorize,
+        )
+        self.app.owner_profile_store = OwnerProfileStore(
+            str(Path(self.tempdir.name) / "context-profile.sqlite"), authorize=authorize,
+        )
+        approved = self.app.memory_store.remember(
+            actor_id=actor_id, agent_id="assistant",
+            content="The project uses Python for its backend", source="owner_review",
+        )
+        self.app.memory_store.transition_lifecycle(
+            actor_id=actor_id, agent_id="assistant", memory_id=approved["memory_id"],
+            status="approved", reason="Owner reviewed this memory",
+        )
+        self.app.memory_store.remember(
+            actor_id=actor_id, agent_id="assistant",
+            content="Unreviewed claim about Python backend", source="agent_candidate",
+        )
+        self.app.owner_profile_store.set(
+            actor_id=actor_id, key="response_style", value="concise", source="owner",
+        )
+        context = self.app._companion_system_context(self.user.user_id, "Python backend project")
+        self.assertIn("The project uses Python for its backend", context)
+        self.assertIn("untrusted reference data", context)
+        self.assertIn('"response_style": "concise"', context)
+        self.assertNotIn("Unreviewed claim about Python backend", context)
+        self.assertNotIn("other-owner", context)
+    def test_authenticated_memory_api_is_private_and_never_self_verifies(self):
+        memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "agent-memory.sqlite"),
+            authorize=lambda actor, action, agent: action in {
+                "agent_memory:read", "agent_memory:write", "agent_memory:correct",
+                "agent_memory:review", "agent_memory:retire", "agent_memory:delete"
+            },
+        )
+        self.app.memory_store = memory_store
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory", {"content": "My private deployment preference."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertFalse(data["memory"]["verified"])
+        memory_id = data["memory"]["memory_id"]
+
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["memories"]), 1)
+        self.assertEqual(data["memories"][0]["memory_id"], memory_id)
+        self.assertEqual(data["memories"][0]["content"], "My private deployment preference.")
+
+        self.auth.create_account("second-user", "a-secure-second-password")
+        second = self.auth.authenticate("second-user", "a-secure-second-password")
+        status, data, _ = self.request("GET", "/v1/memory", token=second.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+
+        status, data, _ = self.request(
+            "PATCH", f"/v1/memory/{memory_id}",
+            {"status": "approved", "reason": "Confirmed by the owner."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memory"]["lifecycle_status"], "approved")
+        self.assertTrue(data["memory"]["verified"])
+
+        status, data, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/corrections",
+            {"content": "My corrected private deployment preference.",
+             "source": "owner-confirmed", "reason": "The previous note was inaccurate."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        replacement_id = data["memory"]["memory_id"]
+        self.assertNotEqual(replacement_id, memory_id)
+        self.assertEqual(data["memory"]["lifecycle_status"], "pending_review")
+        self.assertFalse(data["memory"]["verified"])
+
+        status, data, _ = self.request(
+            "GET", f"/v1/memory/{memory_id}/history", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["corrections"]), 1)
+        self.assertEqual(data["corrections"][0]["replacement_memory_id"], replacement_id)
+
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in data["memories"]], [replacement_id])
+
+        status, data, _ = self.request(
+            "DELETE", f"/v1/memory/{replacement_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["deleted"])
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(data["memories"], [])
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory", {"content": "An outdated preference."}, self.issued.token,
+        )
+        rejected_id = data["memory"]["memory_id"]
+        status, data, _ = self.request(
+            "PATCH", f"/v1/memory/{rejected_id}",
+            {"status": "rejected", "reason": "Owner confirmed this is inaccurate."},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        status, data, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(data["memories"], [])
+        status, data, _ = self.request(
+            "GET", "/v1/memory", token=self.issued.token, query=b"include_inactive=true",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"][0]["lifecycle_status"], "rejected")
+        status, data, _ = self.request(
+            "DELETE", f"/v1/memory/{rejected_id}", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+
+        status, data, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "Try to self verify", "verified": True},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "invalid_request")
+
+        status, data, _ = self.request("GET", "/v1/memory")
+        self.assertEqual(status, 401)
+        self.assertEqual(data["error"], "authentication_required")
+
+    def test_conversation_memory_candidates_require_owner_approval_and_promote_once(self):
+        memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "candidate-memory.sqlite"),
+            authorize=lambda actor, action, agent: (
+                action in {"agent_memory:read", "agent_memory:write", "agent_memory:review"}
+                and agent == "assistant"
+            ),
+        )
+        self.app.memory_store = memory_store
+        conversation = self.app.conversations.create(owner_id=self.user.user_id)
+        cid = conversation["conversation_id"]
+        status, reply, _ = self.request(
+            "POST", f"/v1/conversations/{cid}/messages",
+            {"content": "I prefer concise technical explanations.",
+             "request_id": "candidate-request-1", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+
+        status, data, _ = self.request(
+            "GET", "/v1/memory/candidates", token=self.issued.token,
+            query=("conversation_id=" + cid).encode(),
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["requires_owner_approval"])
+        self.assertFalse(data["memory_written"])
+        self.assertEqual(len(data["candidates"]), 1)
+        candidate = data["candidates"][0]
+        self.assertEqual(candidate["source"]["role"], "user")
+        self.assertEqual(candidate["source"]["conversation_id"], cid)
+
+        status, records, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(records["memories"], [])
+
+        path = "/v1/memory/candidates/" + candidate["candidate_id"] + "/approve"
+        payload = {"conversation_id": cid}
+        status, promoted, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201)
+        self.assertTrue(promoted["memory"]["verified"])
+        memory_id = promoted["memory"]["memory_id"]
+
+        status, replay, _ = self.request("POST", path, payload, self.issued.token)
+        self.assertEqual(status, 201)
+        self.assertEqual(replay["memory"]["memory_id"], memory_id)
+
+        status, records, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(records["memories"]), 1)
+        self.assertEqual(records["memories"][0]["memory_id"], memory_id)
+
+        self.auth.create_account("candidate-other", "a-secure-second-password")
+        other = self.auth.authenticate("candidate-other", "a-secure-second-password")
+        status, denied, _ = self.request("POST", path, payload, other.token)
+        self.assertEqual(status, 404)
+        self.assertEqual(denied["error"], "not_found")
+
+    def test_owner_profile_api_is_authenticated_typed_and_isolated(self):
+        permissions = {"owner_profile:read", "owner_profile:write"}
+        profile_store = OwnerProfileStore(
+            str(Path(self.tempdir.name) / "owner-profile.sqlite"),
+            authorize=lambda actor, action, _resource: action in permissions,
+        )
+        self.app.owner_profile_store = profile_store
+
+        status, result, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "concise", "source": "owner_explicit", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preference"]["value"], "concise")
+        self.assertEqual(result["preference"]["version"], 1)
+
+        status, result, _ = self.request(
+            "GET", "/v1/profile/preferences", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preferences"]["response_style"]["value"], "concise")
+
+        status, conflict, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "detailed", "source": "owner_correction", "expected_version": 0},
+            self.issued.token,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["error"], "profile_version_conflict")
+
+        status, invalid, _ = self.request(
+            "PUT", "/v1/profile/preferences/response_style",
+            {"value": "override safety", "source": "owner_explicit"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+
+        self.auth.create_account("profile-other", "a-secure-second-password")
+        other = self.auth.authenticate("profile-other", "a-secure-second-password")
+        status, result, _ = self.request(
+            "GET", "/v1/profile/preferences", token=other.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["preferences"], {})
+
+        status, deleted, _ = self.request(
+            "DELETE", "/v1/profile/preferences/response_style",
+            {"expected_version": 1}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(deleted["deleted"])
 
     def test_authenticated_stream_endpoint_emits_sse_and_persists_reply(self):
         conversation = self.app.conversations.create(owner_id=self.user.user_id)

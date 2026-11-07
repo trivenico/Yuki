@@ -6,6 +6,7 @@ approval and use the existing coordinator/runtime APIs for execution.
 """
 from __future__ import annotations
 
+from core.reasoning.effort_policy import resolve_reasoning_budget
 from core.model_capabilities import (
     ModelCapabilityRegistry,
     classify_task,
@@ -22,6 +23,8 @@ def recommend_task_route(
     coordinator,
     model_registry: ModelCapabilityRegistry | None = None,
     explicit_task_type: str | None = None,
+    requested_effort: str | None = None,
+    device_limits: dict[str, int] | None = None,
 ) -> dict:
     """Return explainable specialist and model candidates for a bounded task."""
     if not isinstance(task_text, str) or not task_text.strip() or len(task_text) > _MAX_TASK_CHARS:
@@ -32,6 +35,9 @@ def recommend_task_route(
         raise TypeError("coordinator must expose authorized list_agents()")
     classification = classify_task(task_text, explicit_task_type=explicit_task_type)
     required = set(classification["required_capabilities"])
+    primary_type = classification["task_type"]
+    effort_task_class = ("coding" if primary_type == "coding" else "research" if primary_type in {"reasoning", "multi_capability"} else "conversation")
+    reasoning_budget = resolve_reasoning_budget(task_class=effort_task_class, requested_effort=requested_effort, device_limits=device_limits)
     agents = coordinator.list_agents(actor_id=actor_id.strip())
     if not isinstance(agents, (list, tuple)):
         raise TypeError("coordinator returned an invalid agent registry")
@@ -58,6 +64,7 @@ def recommend_task_route(
         model_recommendations = recommend_capable_models(classification, model_registry)
     return {
         "classification": classification,
+        "reasoning_budget": reasoning_budget.to_dict(),
         "specialist_candidates": agent_candidates,
         "model_recommendations": model_recommendations,
         "needs_clarification": classification["needs_clarification"],

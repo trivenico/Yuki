@@ -1,0 +1,55 @@
+# Phase 160 — Owner-scoped memory in the authenticated web runtime
+
+## Runtime composition
+
+The local web launcher now composes the following components:
+
+1. Authenticated conversation request resolves the owner from the server-side bearer session.
+2. `ConversationService` invokes `agent_loop_factory(owner_id)` only after ownership, idempotency, and version checks.
+3. `providers.reasoning_runtime` hashes the authenticated owner ID into a stable opaque `owner-<sha256>` memory key. Client-provided actor IDs are never accepted.
+4. `AgentMemoryStore` enforces private owner scope and the web authorization callback permits only `agent_memory:read` and `agent_memory:write` for the opaque owner key and the `assistant` agent.
+5. Shared memory remains denied; the callback does not grant `agent_memory:share`. Owner-entered notes are retrieved with `include_unverified=True` and remain in a separate unverified evidence bucket.
+6. `AgentMemoryRetriever` asks the authorized store for candidate records before consulting the embedding cache. Cached vectors therefore cannot widen visibility.
+7. `ReasoningAgentAdapter` places only server policy in the system message. Preferences and memory are serialized as untrusted reference data.
+8. The web profile exposes no tools. The `GuardedToolRuntime` policy denies all tool execution.
+
+## Local embeddings
+
+No embedding model is downloaded automatically.
+
+- Default: `LocalHashingEmbedder`, a deterministic, offline lexical hashing baseline.
+- Optional: set `YUKI_EMBEDDING_MODEL_PATH` to an already-present local Sentence Transformers model directory.
+- Optional: set `YUKI_EMBEDDING_DEVICE` to `cpu`, `cuda`, or `mps`.
+- Optional: set `YUKI_EMBEDDING_MODEL_ID` when intentionally versioning a local model cache identity.
+
+The persistent SQLite embedding index shares the memory database file and keys records by actor, memory ID, model identity, and content SHA-256. Changing content or model identity invalidates the cached vector.
+
+The hashing fallback is not a trained semantic model and should not be described as equivalent to a sentence-transformer. Install and configure a suitable local model for stronger semantic recall.
+
+## Validation
+
+Regression tests cover deterministic fallback embeddings, local-only Hugging Face loading, owner-specific memory keys, private-memory non-disclosure across owners, shared-memory denial, and web-launcher composition.
+
+The authenticated API exposes these owner-scoped operations:
+
+- `GET /v1/memory` lists private, non-expired, non-superseded memories; `?include_inactive=true` is available to the owner management view so rejected and retired records remain inspectable and deletable, but they are excluded from normal reasoning retrieval.
+- `POST /v1/memory` creates a private, unverified owner note.
+- `PATCH /v1/memory/{id}` approves, rejects, or retires a record with a required reason.
+- `POST /v1/memory/{id}/corrections` preserves the prior claim, creates its approved replacement, and writes immutable correction history.
+- `GET /v1/memory/{id}/history` returns lifecycle and correction audit events.
+- `DELETE /v1/memory/{id}` removes the owner's selected record and its derived embedding cache rows.
+
+Owner-entered notes are unverified and are presented to the reasoner as untrusted unverified reference evidence, not policy. POST accepts exactly `{\"content\": string}` and always creates a private, unverified owner note with a server-assigned source; clients cannot set actor IDs, scope, confidence, or verification state. GET returns only the authenticated owner's private records. The browser chat now includes a private Memory panel for adding notes, approving, rejecting, correcting, inspecting audit history, retiring, and deleting records. It uses text-only DOM rendering for memory content to avoid HTML injection. Correction, lifecycle review, and deletion endpoints remain intentionally unexposed until their approval and audit flows are integrated.
+
+## Conversation-derived memory proposals
+
+The authenticated chat API now provides `GET /v1/memory/candidates?conversation_id=...` and `POST /v1/memory/candidates/{candidate_id}/approve`. Candidate extraction is deterministic and bounded to the latest 20 messages. It considers only explicit user-authored preference/context statements, excludes obvious credential/payment-secret content, preserves source message provenance, and does not write memory.
+
+Approval re-reads the conversation through the authenticated conversation store, recomputes the candidate, and requires the same source-bound candidate ID. The memory store promotes it transactionally with a unique owner/agent/candidate key, so repeated approval is idempotent. The promotion ledger survives deletion, preventing a previously deleted candidate from being silently re-created. Only this owner-approved promotion marks the record verified. This is a deterministic candidate workflow, not autonomous truth verification or model-weight training. The web Memory panel surfaces suggestions from the active conversation and requires an explicit approval click.
+
+
+## Owner profile preferences
+
+A separate `OwnerProfileStore` persists a small allowlist of typed interaction preferences: response style and tone, preferred language and code language, measurement system, date format, code-comment verbosity, and explanation level. It deliberately rejects arbitrary keys and values, so profile data cannot become a prompt or tool instruction. It excludes sensitive personal data.
+
+The authenticated API exposes `GET /v1/profile/preferences`, `PUT /v1/profile/preferences/{key}`, and `DELETE /v1/profile/preferences/{key}`. Identity comes only from the authenticated session. Every store operation checks a separate owner-profile permission; values are owner-scoped, versioned, and support optimistic concurrency to prevent lost updates. Explicit source labels and update events provide basic provenance. Profile preferences are separate from verified memories and do not grant permissions.

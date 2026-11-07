@@ -98,6 +98,15 @@ class AgentMemoryStore:
             db.execute("""CREATE TRIGGER IF NOT EXISTS trg_memory_corrections_no_delete
                 BEFORE DELETE ON agent_memory_corrections
                 BEGIN SELECT RAISE(ABORT, 'memory_correction_audit_is_immutable'); END""")
+            db.execute("""CREATE TABLE IF NOT EXISTS agent_memory_candidate_promotions (
+                actor_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                candidate_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                promoted_at TEXT NOT NULL,
+                PRIMARY KEY(actor_id, agent_id, candidate_id),
+                UNIQUE(actor_id, agent_id, memory_id)
+            )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_scope
                 ON agent_memories(actor_id, agent_id, category, created_at)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_agent_memory_expiry
@@ -186,7 +195,78 @@ class AgentMemoryStore:
             row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
         return self._record(row)
 
-    def list_memories(self, *, actor_id, agent_id, limit=50, include_shared=True):
+
+    def remember_candidate(
+        self, *, actor_id, agent_id, candidate_id, content, source,
+        category="episodic", confidence=0.5, retention_days=365,
+    ):
+        """Promote one owner-reviewed candidate exactly once, transactionally."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(candidate_id, str) or not re.fullmatch(r"memcand-[a-f0-9]{24}", candidate_id):
+            raise ValueError("invalid_memory_candidate_id")
+        if not isinstance(content, str) or not content.strip() or len(content) > _MAX_TEXT or "\\x00" in content:
+            raise ValueError("invalid_memory_content")
+        if not isinstance(source, str) or not source.strip() or len(source) > _MAX_SOURCE:
+            raise ValueError("memory_source_required")
+        if category not in _CATEGORIES:
+            raise ValueError("invalid_memory_category")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("invalid_memory_confidence")
+        if type(retention_days) is not int or not 1 <= retention_days <= 3650:
+            raise ValueError("retention_days_must_be_1_to_3650")
+        if not self._allowed(actor_id, "agent_memory:write", agent_id):
+            raise PermissionError("agent memory write is not authorized")
+        now = datetime.now(timezone.utc)
+        with self._lock, self._connect() as db:
+            promotion = db.execute(
+                """SELECT memory_id FROM agent_memory_candidate_promotions
+                   WHERE actor_id=? AND agent_id=? AND candidate_id=?""",
+                (actor_id, agent_id, candidate_id),
+            ).fetchone()
+            if promotion is not None:
+                existing = db.execute(
+                    "SELECT * FROM agent_memories WHERE memory_id=?",
+                    (promotion["memory_id"],),
+                ).fetchone()
+                if existing is None:
+                    raise ValueError("memory_candidate_previously_promoted_and_deleted")
+                return self._record(existing)
+            memory_id = uuid4().hex
+            expires = (now + timedelta(days=retention_days)).isoformat()
+            db.execute(
+                """INSERT INTO agent_memories
+                   (memory_id,actor_id,agent_id,category,content,source,confidence,
+                    verified,scope,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (memory_id, actor_id, agent_id, category, content.strip(), source.strip(),
+                 float(confidence), 1, "private", now.isoformat(), expires),
+            )
+            db.execute(
+                """INSERT INTO agent_memory_candidate_promotions
+                   (actor_id,agent_id,candidate_id,memory_id,promoted_at)
+                   VALUES(?,?,?,?,?)""",
+                (actor_id, agent_id, candidate_id, memory_id, now.isoformat()),
+            )
+            row = db.execute("SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)).fetchone()
+        return self._record(row)
+
+
+    def candidate_was_promoted(self, *, actor_id, agent_id, candidate_id):
+        """Check the durable promotion ledger without exposing another owner."""
+        self._validate_scope(actor_id, agent_id)
+        if not isinstance(candidate_id, str) or not re.fullmatch(r"memcand-[a-f0-9]{24}", candidate_id):
+            raise ValueError("invalid_memory_candidate_id")
+        if not self._allowed(actor_id, "agent_memory:read", agent_id):
+            raise PermissionError("agent memory read is not authorized")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT 1 FROM agent_memory_candidate_promotions
+                   WHERE actor_id=? AND agent_id=? AND candidate_id=?""",
+                (actor_id, agent_id, candidate_id),
+            ).fetchone()
+        return row is not None
+
+    def list_memories(self, *, actor_id, agent_id, limit=50, include_shared=True, include_inactive=False):
         self._validate_scope(actor_id, agent_id)
         if not self._allowed(actor_id, "agent_memory:read", agent_id):
             raise PermissionError("agent memory read is not authorized")
@@ -194,18 +274,23 @@ class AgentMemoryStore:
             raise ValueError("limit_must_be_1_to_100")
         if type(include_shared) is not bool:
             raise ValueError("include_shared_must_be_boolean")
+        if type(include_inactive) is not bool:
+            raise ValueError("include_inactive_must_be_boolean")
         shared_visible = include_shared and self._allowed(
             actor_id, "agent_memory:share", agent_id
         )
         now = datetime.now(timezone.utc).isoformat()
+        sql = """SELECT * FROM agent_memories
+            WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
+            AND (expires_at IS NULL OR expires_at>?)
+            AND superseded_by IS NULL"""
+        if not include_inactive:
+            sql += " AND lifecycle_status NOT IN ('rejected', 'retired')"
+        sql += " ORDER BY created_at DESC LIMIT ?"
         with self._connect() as db:
-            rows = db.execute("""SELECT * FROM agent_memories
-                WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
-                AND (expires_at IS NULL OR expires_at>?)
-                AND superseded_by IS NULL
-                AND lifecycle_status NOT IN ('rejected', 'retired')
-                ORDER BY created_at DESC LIMIT ?""",
-                (actor_id, agent_id, int(shared_visible), now, limit)).fetchall()
+            rows = db.execute(
+                sql, (actor_id, agent_id, int(shared_visible), now, limit)
+            ).fetchall()
         return [self._record(row) for row in rows]
 
     def list_memories_page(self, *, actor_id, agent_id, limit=100,
@@ -236,7 +321,7 @@ class AgentMemoryStore:
         )
         now = datetime.now(timezone.utc).isoformat()
         sql = """SELECT * FROM agent_memories
-            WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+            WHERE actor_id=? AND ((agent_id=? AND scope='private') OR (scope='shared' AND ?=1))
             AND (expires_at IS NULL OR expires_at>?)
             AND superseded_by IS NULL
             AND lifecycle_status NOT IN ('rejected', 'retired')"""
@@ -338,9 +423,9 @@ class AgentMemoryStore:
                     lifecycle_status,lifecycle_updated_at,lifecycle_reason)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (replacement_id, actor_id, agent_id, previous["category"],
-                 content.strip(), source.strip(), float(confidence), 1,
+                 content.strip(), source.strip(), float(confidence), 0,
                  previous["scope"], now, expires_at, None, None,
-                 "approved", now, reason.strip()),
+                 "pending_review", now, reason.strip()),
             )
             db.execute(
                 """INSERT INTO agent_memory_corrections
@@ -444,7 +529,6 @@ class AgentMemoryStore:
         if not self._allowed(actor_id, "agent_memory:renew", agent_id):
             raise PermissionError("memory renewal is not authorized")
         now = datetime.now(timezone.utc)
-        expires = (now + timedelta(days=retention_days)).isoformat()
         event_id = uuid4().hex
         with self._lock, self._connect() as db:
             row = db.execute(
@@ -457,6 +541,20 @@ class AgentMemoryStore:
             if row["lifecycle_status"] in {"rejected", "retired"}:
                 raise ValueError("terminal_memory_status_cannot_be_renewed")
             previous = row["lifecycle_status"]
+            # Renewal extends from the later of now or the existing expiry;
+            # a short renewal interval must never shorten a longer retention.
+            existing_expiry = row["expires_at"]
+            if existing_expiry:
+                try:
+                    expiry_dt = datetime.fromisoformat(existing_expiry)
+                    if expiry_dt.tzinfo is None:
+                        expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    raise ValueError("invalid_existing_memory_expiry")
+                renewal_base = max(now, expiry_dt)
+            else:
+                renewal_base = now
+            expires = (renewal_base + timedelta(days=retention_days)).isoformat()
             db.execute(
                 """UPDATE agent_memories SET expires_at=?,
                    lifecycle_updated_at=?, lifecycle_reason=?
