@@ -827,8 +827,17 @@ class SpecialistAgentCoordinator:
                     "UPDATE agent_plans SET budget_id=?, budget_allocation_state='allocated' WHERE plan_id=?",
                     (root.budget_id, plan_id),
                 )
+            if not rows:
+                raise AgentPlanError("budgeted plans must contain at least one subtask.")
             for row in rows:
-                limits = self.budget_policy("subtask", plan_id, row["subtask_id"])
+                requested_limits = self.budget_policy("subtask", plan_id, row["subtask_id"])
+                # A delegated plan's children must fit inside the delegated
+                # envelope. Divide each resource ceiling across the declared
+                # subtasks, then honor any stricter per-specialist policy.
+                limits = {
+                    name: min(requested_limits[name], max(1, root.limits[name] // len(rows)))
+                    for name in root.limits
+                }
                 child = self.budget_lifecycle.ensure_subtask_budget(
                     plan_id=plan_id, subtask_id=row["subtask_id"],
                     parent_budget_id=root.budget_id, limits=limits,
