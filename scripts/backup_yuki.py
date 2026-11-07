@@ -31,6 +31,25 @@ def _backup_database(source: Path, destination: Path) -> None:
         os.fsync(handle.fileno())
 
 
+def _discover_databases(workspace: Path, output: Path) -> list[Path]:
+    """Find workspace databases without following database-file symlinks."""
+    databases = []
+    for path in workspace.rglob("*"):
+        if path.suffix.lower() not in {".sqlite", ".sqlite3", ".db"}:
+            continue
+        if path.is_symlink():
+            raise ValueError(f"Refusing to back up a symbolic-link database: {path.relative_to(workspace)}")
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if workspace not in resolved.parents:
+            raise ValueError("Database path resolves outside the live workspace.")
+        if output == resolved or output in resolved.parents:
+            continue
+        databases.append(path)
+    return sorted(databases)
+
+
 def create_backup(workspace: Path, output: Path) -> Path:
     workspace = workspace.expanduser().resolve()
     output = output.expanduser().resolve()
@@ -38,11 +57,7 @@ def create_backup(workspace: Path, output: Path) -> Path:
         raise ValueError("Workspace directory does not exist.")
     if output == workspace or workspace in output.parents:
         raise ValueError("Backup output must be outside the live workspace.")
-    databases = sorted(
-        path for path in workspace.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".sqlite", ".sqlite3", ".db"}
-        and output not in path.parents
-    )
+    databases = _discover_databases(workspace, output)
     if not databases:
         raise ValueError("No SQLite databases were found in the workspace.")
 
