@@ -64,6 +64,12 @@ class LocalAlphaCheckTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("unsupported provider: unknown", output)
 
+    def test_python_310_fails_supported_baseline(self):
+        with patch.object(MODULE.sys, "version_info", (3, 10, 0)):
+            result, output = self._run(config={}, environ={"OPENAI_API_KEY": "test-key"})
+        self.assertEqual(result, 1)
+        self.assertIn("Python 3.11+ required", output)
+
     def test_missing_required_yaml_dependency_fails(self):
         result, output = self._run(
             config={},
