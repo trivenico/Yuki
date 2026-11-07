@@ -96,7 +96,9 @@ def print_help():
   /upgrade status | /upgrade list | /upgrade review PROPOSAL_ID approve|reject
   /engineering status | agents
   /engineering plan ROLE | DESCRIPTION
-  /engineering show PLAN_ID | advance PLAN_ID | cancel PLAN_ID
+  /engineering show PLAN_ID | plan-events PLAN_ID
+  /engineering tasks [STATE] | task-events TASK_ID
+  /engineering advance PLAN_ID | cancel PLAN_ID
   /engineering approve TASK_ID | cycle
   /voice status
   /voice record SECONDS          Explicitly record and transcribe short audio
@@ -369,6 +371,51 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command == "/engineering tasks" or command.startswith("/engineering tasks "):
+            state = command[len("/engineering tasks"):].strip() or None
+            try:
+                tasks = local_workers.runtime.list_task_summaries(
+                    actor_id=local_workers.operator_actor_id, state=state, limit=50
+                )
+                if not tasks:
+                    print("Yuki > No matching tasks.")
+                for task in tasks:
+                    print(
+                        f"- {task.task_id}: {task.name}; state={task.state}; "
+                        f"version={task.version}; attempts={task.attempts}; updated={task.updated_at}"
+                    )
+            except Exception as exc:
+                print(f"Yuki > Task listing failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering task-events "):
+            task_id = command[len("/engineering task-events "):].strip()
+            if not task_id:
+                print("Yuki > Provide a task ID.")
+                continue
+            try:
+                events = local_workers.runtime.events(
+                    actor_id=local_workers.operator_actor_id, task_id=task_id, limit=50
+                )
+                for event in events:
+                    print(f"- #{event.sequence} {event.created_at} {event.kind} actor={event.actor_id}")
+                if not events:
+                    print("Yuki > No task events recorded.")
+            except Exception as exc:
+                print(f"Yuki > Task event inspection failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering plan-events "):
+            plan_id = command[len("/engineering plan-events "):].strip()
+            if not plan_id:
+                print("Yuki > Provide a plan ID.")
+                continue
+            try:
+                events = local_workers.coordinator.plan_events(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id, limit=50
+                )
+                for event in events:
+                    print(f"- #{event['sequence']} {event['created_at']} {event['kind']}")
+                if not events:
+                    print("Yuki > No plan events recorded.")
+            except Exception as exc:
+                print(f"Yuki > Plan event inspection failed safely ({type(exc).__name__}).")
         elif command.startswith("/engineering show "):
             plan_id = command[len("/engineering show "):].strip()
             if not plan_id:
