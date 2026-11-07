@@ -312,7 +312,8 @@ class ApprovedUpgradeExecutorTests(unittest.TestCase):
         target = root / "src" / "example.py"
         target.parent.mkdir(parents=True)
         original = "VALUE = 1\n"
-        target.write_text(original, encoding="utf-8")
+        # Keep fixture bytes identical across POSIX and Windows newline modes.
+        target.write_bytes(original.encode("utf-8"))
         expected = hashlib.sha256(original.encode("utf-8")).hexdigest()
         store = SelfUpgradeReviewStore(root / "reviews.sqlite3")
         proposal = SelfUpgradeProposalBuilder(["src/example.py"]).build([
