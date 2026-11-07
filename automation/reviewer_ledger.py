@@ -562,11 +562,13 @@ class ReviewerTaskLedger:
                 (task_id,),
             ).fetchall()
             self._verify_integrity(row, events)
+            task_projection = json.loads(row["task_json"])
+            task_projection["reviewer_agent_id"] = row["reviewer_agent_id"]
         return {
             "task_id": row["task_id"],
             "artifact_sha256": row["artifact_sha256"],
             "reviewer_agent_id": row["reviewer_agent_id"],
-            "task": json.loads(row["task_json"]),
+            "task": task_projection,
             "task_digest": row["task_digest"],
             "state": row["state"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
