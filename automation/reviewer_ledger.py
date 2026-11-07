@@ -212,13 +212,42 @@ class ReviewerTaskLedger:
                                 "version": 0, "reused": False})
         return tuple(created)
 
+    def abandon(self, *, actor_id: str, task_id: str, expected_version: int,
+                reason: str) -> dict:
+        """Mark a claimed task abandoned after its lease has expired."""
+        actor = self._actor(actor_id)
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("invalid_expected_version")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ValueError("invalid_reviewer_abandonment_reason")
+        if self.lease_authority is None:
+            raise ReviewerLedgerError("reviewer_lease_authority_required")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError("review task not found")
+            if not self._allowed(actor, "review:abandon", row["artifact_sha256"]):
+                raise PermissionError("review task abandonment is not authorized")
+            if row["state"] != "in_progress" or row["version"] != expected_version:
+                raise ReviewerLedgerConflict("only_current_in_progress_tasks_can_be_abandoned")
+            lease_row = db.execute("SELECT expires_at,reviewer_agent_id FROM reviewer_leases WHERE task_id=?",
+                                   (task_id,)).fetchone()
+            if (lease_row is None or lease_row["reviewer_agent_id"] != row["reviewer_agent_id"]
+                    or datetime.fromisoformat(lease_row["expires_at"]) > datetime.now(timezone.utc)):
+                raise ReviewerLedgerConflict("reviewer_lease_must_expire_before_abandonment")
+            now = _now()
+            version = expected_version + 1
+            db.execute("UPDATE reviewer_tasks SET state='assigned',updated_at=?,version=? WHERE task_id=?",
+                       (now,version,task_id))
+            self._event(db,task_id,version,"abandoned",actor,
+                        {"previous_reviewer_agent_id":row["reviewer_agent_id"],"reason":reason.strip()},now)
+        return {"task_id":task_id,"state":"assigned","version":version,
+                "reviewer_agent_id":row["reviewer_agent_id"]}
+
     def reassign(self, *, actor_id: str, task_id: str, expected_version: int,
                  replacement_reviewer_agent_id: str) -> dict:
-        """Atomically reassign an unclaimed task and rotate its expired lease.
-
-        In-progress work is deliberately not reassigned yet: doing so requires
-        a richer event-chain migration to preserve the old claim history.
-        """
+        """Atomically reassign assigned or abandoned work and rotate its lease."""
         actor = self._actor(actor_id)
         replacement = self._actor(replacement_reviewer_agent_id)
         if type(expected_version) is not int or expected_version < 0:
@@ -245,14 +274,56 @@ class ReviewerTaskLedger:
             version = expected_version + 1
             previous = row["reviewer_agent_id"]
             db.execute("UPDATE reviewer_tasks SET reviewer_agent_id=?,updated_at=?,version=? WHERE task_id=?",
-                       (replacement, now, version, task_id))
-            self._event(db, task_id, version, "reassigned", actor,
-                        {"previous_reviewer_agent_id": previous,
-                         "replacement_reviewer_agent_id": replacement,
-                         "lease_generation": lease.generation}, now)
-        return {"task_id": task_id, "state": "assigned", "version": version,
-                "reviewer_agent_id": replacement, "lease_generation": lease.generation,
-                "lease_token": lease.token}
+                       (replacement,now,version,task_id))
+            self._event(db,task_id,version,"reassigned",actor,
+                        {"previous_reviewer_agent_id":previous,
+                         "replacement_reviewer_agent_id":replacement,
+                         "lease_generation":lease.generation},now)
+        return {"task_id":task_id,"state":"assigned","version":version,
+                "reviewer_agent_id":replacement,"lease_generation":lease.generation,
+                "lease_token":lease.token}
+
+    def recover_in_progress(self, *, actor_id: str, task_id: str, expected_version: int,
+                            replacement_reviewer_agent_id: str, reason: str) -> dict:
+        """Atomically abandon expired work and reassign it to a new reviewer."""
+        actor = self._actor(actor_id)
+        replacement = self._actor(replacement_reviewer_agent_id)
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("invalid_expected_version")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ValueError("invalid_reviewer_recovery_reason")
+        if self.lease_authority is None:
+            raise ReviewerLedgerError("reviewer_lease_authority_required")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError("review task not found")
+            if not self._allowed(actor,"review:abandon",row["artifact_sha256"]) or not self._allowed(actor,"review:reassign",row["artifact_sha256"]):
+                raise PermissionError("review task recovery is not authorized")
+            if row["state"] != "in_progress" or row["version"] != expected_version:
+                raise ReviewerLedgerConflict("only_current_in_progress_tasks_can_be_recovered")
+            if replacement == row["reviewer_agent_id"]:
+                raise ValueError("replacement_reviewer_must_be_different")
+            lease = self.lease_authority.recover_in_transaction(
+                db,actor_id=actor,task_id=task_id,artifact_sha256=row["artifact_sha256"],
+                replacement_reviewer_agent_id=replacement,
+            )
+            now = _now()
+            abandoned_version = expected_version + 1
+            reassigned_version = expected_version + 2
+            previous = row["reviewer_agent_id"]
+            db.execute("UPDATE reviewer_tasks SET state='assigned',reviewer_agent_id=?,updated_at=?,version=? WHERE task_id=?",
+                       (replacement,now,reassigned_version,task_id))
+            self._event(db,task_id,abandoned_version,"abandoned",actor,
+                        {"previous_reviewer_agent_id":previous,"reason":reason.strip()},now)
+            self._event(db,task_id,reassigned_version,"reassigned",actor,
+                        {"previous_reviewer_agent_id":previous,
+                         "replacement_reviewer_agent_id":replacement,
+                         "lease_generation":lease.generation},now)
+        return {"task_id":task_id,"state":"assigned","version":reassigned_version,
+                "reviewer_agent_id":replacement,"lease_generation":lease.generation,
+                "lease_token":lease.token}
 
     def claim(self, *, actor_id: str, task_id: str, expected_version: int,
               session_token: str, operation_id: str,
