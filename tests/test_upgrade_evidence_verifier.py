@@ -118,8 +118,9 @@ class Ed25519EvidenceVerifierTests(unittest.TestCase):
             self.verifier.verify(naive, now=self.now)
 
     def test_rejects_invalid_signature_encoding(self):
-        evidence = self.evidence(signature="not-base64")
-        with self.assertRaises(EvidenceVerificationError):
+        evidence = self.evidence()
+        evidence = ExecutionEvidence(**{**evidence.__dict__, "signature": "not-base64"})
+        with self.assertRaisesRegex(EvidenceVerificationError, "evidence_signature_encoding_invalid"):
             self.verifier.verify(evidence, now=self.now)
 
 
