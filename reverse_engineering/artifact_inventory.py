@@ -66,9 +66,16 @@ def _hash_regular_file(path: Path, expected: os.stat_result, chunk_bytes: int) -
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
             raise ArtifactInventoryError(f"File changed type during inventory: {path.name}")
-        if (opened.st_dev, opened.st_ino, opened.st_size) != (
-            expected.st_dev, expected.st_ino, expected.st_size
-        ):
+        # Windows may report unstable/zero inode values for regular files.
+        # Keep the strong file-id comparison on POSIX; on Windows compare
+        # stable metadata and verify the path again after hashing.
+        identity_changed = (
+            opened.st_size != expected.st_size
+            or opened.st_mtime_ns != expected.st_mtime_ns
+            or (os.name != "nt" and (opened.st_dev, opened.st_ino) !=
+                (expected.st_dev, expected.st_ino))
+        )
+        if identity_changed:
             raise ArtifactInventoryError(f"File changed during inventory: {path.name}")
         digest = hashlib.sha256()
         while True:
@@ -158,9 +165,13 @@ def inventory_artifact_root(
                 current = child_path.lstat()
             except OSError as exc:
                 raise ArtifactInventoryError(f"File disappeared during inventory: {relative}") from exc
-            if stat.S_ISLNK(current.st_mode) or (
-                current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns
-            ) != (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns):
+            path_changed = (
+                current.st_size != metadata.st_size
+                or current.st_mtime_ns != metadata.st_mtime_ns
+                or (os.name != "nt" and (current.st_dev, current.st_ino) !=
+                    (metadata.st_dev, metadata.st_ino))
+            )
+            if stat.S_ISLNK(current.st_mode) or path_changed:
                 raise ArtifactInventoryError(f"File changed during inventory: {relative}")
             total_bytes += metadata.st_size
             entries.append({
