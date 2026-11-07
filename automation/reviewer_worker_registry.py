@@ -7,6 +7,8 @@ reported as recovery candidates, not automatically allowed to replay tasks.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -80,7 +82,7 @@ class ReviewerWorkerRegistry:
             raise ValueError("database_path_required")
         self.authorize = authorize
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("""CREATE TABLE IF NOT EXISTS reviewer_worker_instances (
@@ -147,7 +149,7 @@ class ReviewerWorkerRegistry:
         now = _now()
         token = secrets.token_urlsafe(32)
         expiry = _stamp(now + timedelta(seconds=ttl))
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             old = db.execute(
                 "SELECT state,lease_expires_at FROM reviewer_worker_instances WHERE instance_id=?",
@@ -191,7 +193,7 @@ class ReviewerWorkerRegistry:
             raise PermissionError("reviewer worker heartbeat not authorized")
         now = _now()
         expiry = _stamp(now + timedelta(seconds=ttl))
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_worker_instances WHERE instance_id=?",
                              (instance,)).fetchone()
@@ -223,7 +225,7 @@ class ReviewerWorkerRegistry:
         stamp = _stamp(now)
         expiry = _stamp(now + timedelta(seconds=ttl))
         slot = str(uuid.uuid4())
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             owner = db.execute("SELECT * FROM reviewer_worker_instances WHERE instance_id=?",
                                (instance,)).fetchone()
@@ -268,7 +270,7 @@ class ReviewerWorkerRegistry:
             raise PermissionError("reviewer worker slot renewal not authorized")
         now = _now()
         stamp = _stamp(now)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             owner = db.execute("SELECT * FROM reviewer_worker_instances WHERE instance_id=?",
                                (instance,)).fetchone()
@@ -296,7 +298,7 @@ class ReviewerWorkerRegistry:
             raise ValueError("invalid_worker_lease_token")
         if not self._allowed(actor, "review:worker:slot:release", worker):
             raise PermissionError("reviewer worker slot release not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             owner = db.execute("SELECT token_digest FROM reviewer_worker_instances WHERE instance_id=? AND worker_id=?",
                                (instance, worker)).fetchone()
@@ -317,7 +319,7 @@ class ReviewerWorkerRegistry:
         if not self._allowed(actor, "review:worker:stop", worker):
             raise PermissionError("reviewer worker stop not authorized")
         now = _stamp(_now())
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT token_digest FROM reviewer_worker_instances WHERE instance_id=? AND worker_id=?",
                              (instance, worker)).fetchone()
@@ -334,7 +336,7 @@ class ReviewerWorkerRegistry:
         if not self._allowed(actor, "review:worker:recover", worker):
             raise PermissionError("reviewer worker recovery not authorized")
         now = _stamp(_now())
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute("""UPDATE reviewer_worker_instances SET state='expired',
                 updated_at=? WHERE worker_id=? AND state IN ('running','stopping')
@@ -349,7 +351,7 @@ class ReviewerWorkerRegistry:
         if not self._allowed(actor, "review:worker:inspect", worker):
             raise PermissionError("reviewer worker inspection not authorized")
         now = _stamp(_now())
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute("""SELECT w.*,
                 (SELECT COUNT(*) FROM reviewer_worker_slots s
                  WHERE s.instance_id=w.instance_id AND s.lease_expires_at>?) AS active_slots
