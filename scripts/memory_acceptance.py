@@ -31,7 +31,7 @@ def run_acceptance(*, store_factory=None):
         "agent_memory:delete", "agent_memory:share",
     }
     authorize = lambda actor, action, resource: (
-        actor == ACTOR and action in permissions
+        actor in {ACTOR, "different-owner"} and action in permissions
     )
 
     with tempfile.TemporaryDirectory(prefix="yuki-memory-alpha-") as directory:
