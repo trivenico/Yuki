@@ -66,13 +66,17 @@ class VerificationEvidenceStoreTests(unittest.TestCase):
 
     def test_failed_report_is_persisted_but_not_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store = VerificationEvidenceStore(Path(tmp) / "verification.sqlite3")
+            store = VerificationEvidenceStore(
+                Path(tmp) / "verification.sqlite3", reviewer_authorizer=allow_test_reviewers
+            )
             result = store.record(make_report(status="not_run"))
             self.assertFalse(result["decision"]["accepted"])
 
     def test_artifact_history_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store = VerificationEvidenceStore(Path(tmp) / "verification.sqlite3")
+            store = VerificationEvidenceStore(
+                Path(tmp) / "verification.sqlite3", reviewer_authorizer=allow_test_reviewers
+            )
             report = make_report()
             store.record(report)
             self.assertEqual(len(store.list_for_artifact(report.artifact_sha256)), 1)
