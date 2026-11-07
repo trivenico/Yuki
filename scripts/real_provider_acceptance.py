@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 PROMPT = "Reply with exactly: Yuki local provider acceptance passed."
+EXPECTED_RESPONSE = "Yuki local provider acceptance passed."
 MAX_RESPONSE_CHARS = 4_000
 
 
@@ -50,6 +51,8 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None):
         raise RuntimeError("Provider returned an empty or invalid response.")
     if len(response) > MAX_RESPONSE_CHARS:
         raise RuntimeError("Provider response exceeded the acceptance-test size limit.")
+    if response.strip() != EXPECTED_RESPONSE:
+        raise RuntimeError("Provider did not satisfy the exact-response acceptance contract.")
 
     model = getattr(provider, "model", None)
     if not isinstance(model, str) or not model:
