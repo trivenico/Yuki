@@ -96,6 +96,31 @@ class VerificationWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(self.workflow.get_status(self.artifact.artifact_id)["verified"])
 
+    def test_exact_artifact_bytes_are_durably_retrievable_and_digest_checked(self):
+        self.assertEqual(
+            self.workflow.read_artifact(self.artifact.artifact_id),
+            b"artifact bytes",
+        )
+
+    def test_legacy_artifact_row_without_content_fails_closed(self):
+        import sqlite3
+        with sqlite3.connect(self.workflow.database_path) as db:
+            db.execute(
+                "UPDATE engineering_artifacts SET content=NULL WHERE artifact_id=?",
+                (self.artifact.artifact_id,),
+            )
+        with self.assertRaisesRegex(VerificationWorkflowError, "content_unavailable"):
+            self.workflow.read_artifact(self.artifact.artifact_id)
+
+    def test_idempotent_artifact_registration_preserves_exact_content(self):
+        repeated = self.workflow.record_artifact(
+            plan_id="plan-1", subtask_id="subtask-1", task_id="task-1",
+            author_agent_id="builder", content=b"artifact bytes",
+            created_at=self.artifact.created_at,
+        )
+        self.assertEqual(repeated, self.artifact)
+        self.assertEqual(self.workflow.read_artifact(repeated.artifact_id), b"artifact bytes")
+
 
 if __name__ == "__main__":
     unittest.main()
