@@ -126,7 +126,16 @@ class ReviewerWorkerRecoverySupervisor:
                         "incident_cooldown_or_dead_letter",
                     ))
                     continue
-            replacement = self.replacement_resolver(dict(task), previous)
+            try:
+                replacement = self.replacement_resolver(dict(task), previous)
+            except Exception:
+                if self.incident_store is not None:
+                    self.incident_store.record_outcome(
+                        actor_id=self.actor_id, task_id=task["task_id"],
+                        state="cooldown", reason_code="replacement_resolver_failed",
+                        cooldown_seconds=self.incident_cooldown_seconds,
+                    )
+                raise
             if replacement is None:
                 if self.incident_store is not None:
                     self.incident_store.record_outcome(
@@ -141,6 +150,12 @@ class ReviewerWorkerRecoverySupervisor:
                 ))
                 continue
             if not isinstance(replacement, str) or not replacement or replacement == previous:
+                if self.incident_store is not None:
+                    self.incident_store.record_outcome(
+                        actor_id=self.actor_id, task_id=task["task_id"],
+                        state="cooldown", reason_code="invalid_replacement_identity",
+                        cooldown_seconds=self.incident_cooldown_seconds,
+                    )
                 raise ValueError("invalid_reviewer_replacement_identity")
             try:
                 result = self.ledger.recover_in_progress(
