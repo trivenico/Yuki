@@ -6,6 +6,56 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Run the local alpha
+
+Yuki is suitable for carefully scoped local testing, not public production
+deployment. Start with the read-only readiness check:
+
+```bash
+python -m pip install -r requirements.txt
+python scripts/local_alpha_check.py
+```
+
+The check validates the Python baseline, core dependencies, configured provider
+prerequisites, and workspace writability. It does not install software, pull
+models, contact cloud providers, or certify production readiness.
+
+For a deterministic offline orchestration check:
+
+```bash
+python scripts/local_smoke.py
+```
+
+This uses a fake provider and validates coordinator/worker/task persistence
+wiring only. It does not prove real model inference.
+
+For local Ollama inference, install and start Ollama separately, pull a model
+appropriate for your hardware, set `provider: ollama` and the exact installed
+model name in `config.yaml`, then run:
+
+```bash
+python scripts/local_alpha_check.py
+python yuki.py
+```
+
+For cloud inference, keep `provider: openai` and set `OPENAI_API_KEY` in
+your shell; do not put API keys in `config.yaml` or commit them. The configured
+default provider is OpenAI, so a missing key must be resolved before a real
+conversation can work.
+
+For the browser interface, install the optional server dependency and configure
+a bootstrap administrator before first launch:
+
+```bash
+python -m pip install -r requirements-web.txt
+# Set YUKI_BOOTSTRAP_ADMIN_USERNAME and YUKI_BOOTSTRAP_ADMIN_PASSWORD
+python scripts/run_web.py
+```
+
+The browser profile is loopback-only by default and intentionally exposes no
+tools. Open `http://127.0.0.1:8000`. Do not expose it publicly; see
+[production-readiness gates](docs/PRODUCTION_READINESS_CURRENT.md).
+
 ## Evidence-based local model selection
 
 Model discovery is not the same as model evaluation. To request a role-specific recommendation, provide a reviewed evidence file and run:
