@@ -1042,6 +1042,15 @@ class SpecialistAgentCoordinator:
                         "name": row["subtask_id"], "action": agent.action,
                         "argument": argument,
                         "requires_approval": bool(row["requires_approval"]),
+                        **({
+                            "execution": {
+                                "budget_id": row["budget_id"],
+                                "task_identity": self.budget_lifecycle.subtask_task_identity(
+                                    plan_id, row["subtask_id"],
+                                ),
+                                "policy_version": self.budget_policy_version,
+                            }
+                        } if self.budget_lifecycle is not None else {}),
                     }],
                 )
                 with self._connect() as binding_db:
