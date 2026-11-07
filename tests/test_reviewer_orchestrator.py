@@ -185,6 +185,21 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         self.assertEqual(record["task"]["reviewer_agent_id"], "reviewer-b")
         self.assertEqual(record["state"], "assigned")
 
+    def test_initial_lease_failure_rolls_back_task_assignment(self):
+        self.leases._authorize = lambda actor, action, digest: False
+        with self.assertRaisesRegex(ReviewerOrchestrationError, "persistence_failed"):
+            self.orchestrator.provision_batch(
+                coordinator_id="coordinator", artifact_sha256=self.digest,
+                author_agent_id="author", agents=(self.agents[0],),
+                requirements_by_check={"acceptance_criteria": ("Check criteria.",)},
+                evidence_references_by_check={"acceptance_criteria": ()},
+            )
+        with sqlite3.connect(Path(self.temp.name) / "ledger.sqlite") as db:
+            count = db.execute("SELECT COUNT(*) FROM reviewer_tasks").fetchone()[0]
+            lease_count = db.execute("SELECT COUNT(*) FROM reviewer_leases").fetchone()[0]
+        self.assertEqual(count, 0)
+        self.assertEqual(lease_count, 0)
+
     def test_denied_coordinator_does_not_create_tasks(self):
         self.allowed = False
         with self.assertRaisesRegex(ReviewerOrchestrationError, "not_authorized"):
