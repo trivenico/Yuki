@@ -554,7 +554,7 @@ class UpgradeExecutionStore:
             return self._record(db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone())
 
     def list_events(self, execution_id: str) -> list[dict[str, object]]:
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             rows = db.execute("""
                 SELECT sequence, from_state, to_state, actor_id, reason_code, created_at
                 FROM upgrade_execution_events WHERE execution_id=? ORDER BY sequence
