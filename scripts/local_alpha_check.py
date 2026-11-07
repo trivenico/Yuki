@@ -70,8 +70,36 @@ def main() -> int:
         failures += not check("Gemini CLI", bool(cli),
                               cli or "install and authenticate Gemini CLI")
     elif provider == "hybrid":
-        failures += not check("Hybrid provider", True,
-                              "local/cloud routing still needs provider-specific validation")
+        model = str(config.get("ollama_model", "")).strip()
+        cli = shutil.which("ollama")
+        failures += not check("Ollama CLI", bool(cli),
+                              cli or "install Ollama and start its local service")
+        if not model:
+            failures += 1
+            check("Hybrid local model", False, "set ollama_model in config.yaml")
+        else:
+            from providers.ollama import OllamaProvider
+            try:
+                available = OllamaProvider(
+                    config.get("ollama_base_url", "http://127.0.0.1:11434"),
+                    model,
+                ).is_available()
+            except (TypeError, ValueError):
+                available = False
+            failures += not check("Hybrid local model", available,
+                                  model + (" is installed and server responds"
+                                           if available else " not confirmed; start Ollama and pull this model"))
+        cloud_model = os.environ.get("YUKI_CLOUD_MODEL", "").strip()
+        cloud_tasks = os.environ.get("YUKI_CLOUD_TASKS", "").strip()
+        if cloud_model and cloud_tasks:
+            key_name = os.environ.get("YUKI_CLOUD_API_KEY_ENV", "OPENAI_API_KEY").strip()
+            valid_key_name = key_name.isidentifier() and len(key_name) <= 128
+            cloud_key = os.environ.get(key_name, "").strip() if valid_key_name else ""
+            check("Hybrid cloud opt-in", bool(cloud_key),
+                  "cloud routing configured" if cloud_key else
+                  "cloud route configured without credentials; local-only mode remains available")
+        else:
+            check("Hybrid cloud opt-in", True, "local-only mode; no cloud tasks configured")
     else:
         failures += 1
         check("Provider configuration", False, "unsupported provider: " + provider)
