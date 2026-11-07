@@ -40,6 +40,8 @@ from core.recovery_audit import RecoveryAuditLog
 from automation.local_worker_runtime import build_local_worker_runtime
 from automation.agent_coordinator import SubtaskSpec
 from automation.self_upgrade_pipeline import SelfUpgradeReviewStore
+from automation.git_repository_snapshot import GitRepositorySnapshotReader
+from automation.reproducible_workspace import GitBackedWorkspaceManager
 
 
 def _ask_approval(request):
@@ -97,6 +99,7 @@ def print_help():
   /engineering status | agents
   /engineering plan ROLE | DESCRIPTION
   /engineering show PLAN_ID | plan-events PLAN_ID
+  /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA
   /engineering tasks [STATE] | task-events TASK_ID
   /engineering advance PLAN_ID | cancel PLAN_ID
   /engineering approve TASK_ID | cycle
@@ -194,6 +197,18 @@ def main():
     local_workers = build_local_worker_runtime(
         workspace, ai.provider, max_workers=recommended_worker_concurrency()
     )
+    git_repository = os.environ.get("YUKI_GIT_REPOSITORY", "").strip()
+    git_workspace_manager = None
+    if git_repository:
+        try:
+            git_workspace_manager = GitBackedWorkspaceManager(
+                git_repository, workspace / "engineering-workspaces",
+                workspace / "yuki_workspace_provenance.sqlite3",
+                GitRepositorySnapshotReader(), local_workers.verification_workflow,
+            )
+            print("Yuki Git-backed snapshots: enabled for the configured repository.")
+        except Exception as exc:
+            print(f"Yuki Git-backed snapshots unavailable ({type(exc).__name__}).")
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
@@ -326,6 +341,7 @@ def main():
             print(f"- Artifact store: connected ({workspace / 'yuki_artifacts.sqlite3'})")
             print(f"- Acceptance store: connected ({workspace / 'yuki_acceptance.sqlite3'})")
             print(f"- Verification evidence: connected ({workspace / 'yuki_verification.sqlite3'})")
+            print(f"- Git workspace manager: {'enabled' if git_workspace_manager else 'disabled'}")
             print(f"- Verification executor: {'configured' if local_workers.verification_executor is not None else 'disabled (no trusted command allowlist)'}")
             print("- Git workspace manager: not configured in terminal startup")
             print("- Autonomous dispatch: disabled; plans require explicit operator action")
@@ -371,6 +387,48 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering snapshot "):
+            parts = command.split()
+            if len(parts) != 5:
+                print("Yuki > Use /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Set YUKI_GIT_REPOSITORY to enable pinned Git snapshots.")
+                continue
+            _, _, plan_id, subtask_id, commit_sha = parts
+            try:
+                plan = local_workers.coordinator.get_plan(
+                    actor_id=local_workers.operator_actor_id, plan_id=plan_id
+                )
+                subtask = next((item for item in plan.subtasks if item.subtask_id == subtask_id), None)
+                if subtask is None or not subtask.task_id:
+                    print("Yuki > Subtask must have a dispatched task before snapshot capture.")
+                    continue
+                if subtask.status in {"succeeded", "failed", "cancelled", "blocked"}:
+                    print(f"Yuki > Cannot capture workspace for terminal subtask state {subtask.status}.")
+                    continue
+                if not _confirm(
+                    "engineering:snapshot",
+                    f"Capture exact Git commit {commit_sha} for plan {plan_id}, subtask {subtask_id}.",
+                    "high",
+                ):
+                    print("Yuki > Snapshot capture cancelled.")
+                    continue
+                provenance = git_workspace_manager.capture(
+                    commit=commit_sha, plan_id=plan_id, subtask_id=subtask_id,
+                    task_id=subtask.task_id, author_agent_id=subtask.agent_id,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    workspace_name=f"{plan_id}-{subtask_id}-{commit_sha[:12]}",
+                )
+                print(
+                    f"Yuki > Snapshot captured: artifact={provenance.artifact_id}; "
+                    f"commit={provenance.source_commit}; digest={provenance.snapshot_sha256}; "
+                    f"files={provenance.file_count}; bytes={provenance.total_bytes}"
+                )
+                print(f"Yuki > Dependency manifest digest: {provenance.dependency_manifest_sha256}")
+                print(f"Yuki > Workspace: {provenance.workspace_path}")
+            except Exception as exc:
+                print(f"Yuki > Snapshot capture failed safely ({type(exc).__name__}).")
         elif command == "/engineering tasks" or command.startswith("/engineering tasks "):
             state = command[len("/engineering tasks"):].strip() or None
             try:
