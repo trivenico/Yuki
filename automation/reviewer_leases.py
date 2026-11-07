@@ -193,6 +193,45 @@ class ReviewerLeaseAuthority:
                  json.dumps({"expires_at":expires},sort_keys=True)))
         return ReviewerLease(task_id,digest,reviewer,payload["generation"],expires,renewed)
 
+    def recover_in_transaction(self, db, *, actor_id: str, task_id: str,
+                               artifact_sha256: str, replacement_reviewer_agent_id: str,
+                               ttl_seconds: int = 300) -> ReviewerLease:
+        """Recover using a caller-owned SQLite write transaction.
+
+        The caller must hold BEGIN IMMEDIATE on this authority's database and
+        commit or roll back the lease change together with its own state change.
+        """
+        self._validate(task_id, artifact_sha256, replacement_reviewer_agent_id)
+        if not isinstance(actor_id, str) or not _ID.fullmatch(actor_id):
+            raise ValueError("invalid_reviewer_lease_actor")
+        if type(ttl_seconds) is not int or not 30 <= ttl_seconds <= 3600:
+            raise ValueError("invalid_reviewer_lease_ttl")
+        if not self._allowed(actor_id, "review:lease:recover", artifact_sha256):
+            raise PermissionError("reviewer_lease_recovery_not_authorized")
+        now = datetime.now(timezone.utc)
+        row = db.execute("SELECT artifact_sha256,generation,expires_at FROM reviewer_leases WHERE task_id=?",
+                         (task_id,)).fetchone()
+        if row is None or row[0] != artifact_sha256:
+            raise ReviewerLeaseConflict("reviewer_lease_not_found")
+        if datetime.fromisoformat(row[2]) > now:
+            raise ReviewerLeaseConflict("reviewer_lease_still_active")
+        generation = row[1] + 1
+        expires = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        nonce = secrets.token_urlsafe(24)
+        token = self._issue_token(task_id=task_id,digest=artifact_sha256,
+            reviewer=replacement_reviewer_agent_id,generation=generation,
+            expires=expires,nonce=nonce)
+        db.execute("""UPDATE reviewer_leases SET reviewer_agent_id=?,generation=?,
+            expires_at=?,token_nonce=?,updated_at=? WHERE task_id=?""",
+            (replacement_reviewer_agent_id,generation,expires,nonce,now.isoformat(),task_id))
+        db.execute("""INSERT INTO reviewer_lease_events
+            (task_id,generation,event_type,actor_id,reviewer_agent_id,occurred_at,details_json)
+            VALUES(?,?,?,?,?,?,?)""",
+            (task_id,generation,"recovered",actor_id,replacement_reviewer_agent_id,
+             now.isoformat(),json.dumps({"previous_generation":row[1]},sort_keys=True)))
+        return ReviewerLease(task_id,artifact_sha256,replacement_reviewer_agent_id,
+                             generation,expires,token)
+
     def recover(self, *, actor_id: str, task_id: str, artifact_sha256: str,
                 replacement_reviewer_agent_id: str, ttl_seconds: int = 300) -> ReviewerLease:
         """Explicitly supersede an expired lease; generation always increases."""
