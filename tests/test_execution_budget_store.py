@@ -103,12 +103,87 @@ class ExecutionBudgetStoreTests(unittest.TestCase):
         self.assertCountEqual(outcomes, ["reserved", "rejected"])
         self.assertEqual(self.store.usage("budget-1")["tool_calls"], 2)
 
-    def test_child_snapshot_requires_existing_parent(self):
-        with self.assertRaises(ExecutionBudgetStoreError):
+    def test_child_snapshot_cannot_bypass_allocation_api(self):
+        with self.assertRaisesRegex(ExecutionBudgetStoreError, "allocate_child_snapshot"):
             self.store.create_snapshot(
                 budget_id="child-1", task_id="task-child", limits=self.limits,
-                policy_version="1", parent_budget_id="missing-parent",
+                policy_version="1", parent_budget_id="budget-1",
             )
+
+    def test_child_allocations_reserve_parent_capacity(self):
+        child_limits = {
+            "max_model_turns": 1, "max_tool_calls": 1,
+            "max_duration_ms": 400, "max_transcript_chars": 2000,
+        }
+        child = self.store.allocate_child_snapshot(
+            parent_budget_id="budget-1", child_budget_id="child-1",
+            task_id="child-task-1", limits=child_limits, policy_version="1",
+            allocation_key="research-team",
+        )
+        self.assertEqual(child.parent_budget_id, "budget-1")
+        with self.assertRaisesRegex(ExecutionBudgetStoreError, "parent_budget_exhausted"):
+            self.store.allocate_child_snapshot(
+                parent_budget_id="budget-1", child_budget_id="child-2",
+                task_id="child-task-2", limits=child_limits, policy_version="1",
+                allocation_key="engineering-team",
+            )
+
+    def test_child_allocation_is_idempotent_but_not_mutable(self):
+        limits = {
+            "max_model_turns": 1, "max_tool_calls": 1,
+            "max_duration_ms": 400, "max_transcript_chars": 2000,
+        }
+        first = self.store.allocate_child_snapshot(
+            parent_budget_id="budget-1", child_budget_id="child-1",
+            task_id="child-task-1", limits=limits, policy_version="1",
+            allocation_key="research",
+        )
+        second = self.store.allocate_child_snapshot(
+            parent_budget_id="budget-1", child_budget_id="child-1",
+            task_id="child-task-1", limits=limits, policy_version="1",
+            allocation_key="research",
+        )
+        self.assertEqual(first.digest, second.digest)
+        changed = dict(limits, max_tool_calls=2)
+        with self.assertRaisesRegex(ExecutionBudgetStoreError, "allocation_key_conflict"):
+            self.store.allocate_child_snapshot(
+                parent_budget_id="budget-1", child_budget_id="child-1",
+                task_id="child-task-1", limits=changed, policy_version="1",
+                allocation_key="research",
+            )
+
+    def test_parallel_child_allocations_cannot_overallocate_parent(self):
+        child_limits = {
+            "max_model_turns": 1, "max_tool_calls": 2,
+            "max_duration_ms": 500, "max_transcript_chars": 2500,
+        }
+        barrier = threading.Barrier(2)
+        outcomes = []
+        lock = threading.Lock()
+
+        def allocate(key):
+            barrier.wait()
+            try:
+                self.store.allocate_child_snapshot(
+                    parent_budget_id="budget-1", child_budget_id="child-" + key,
+                    task_id="task-" + key, limits=child_limits, policy_version="1",
+                    allocation_key=key,
+                )
+                result = "allocated"
+            except ExecutionBudgetStoreError:
+                result = "rejected"
+            with lock:
+                outcomes.append(result)
+
+        workers = [
+            threading.Thread(target=allocate, args=("team-a",)),
+            threading.Thread(target=allocate, args=("team-b",)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+        self.assertCountEqual(outcomes, ["allocated", "rejected"])
 
 
 if __name__ == "__main__":
