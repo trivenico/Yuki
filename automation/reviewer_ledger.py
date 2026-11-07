@@ -560,6 +560,13 @@ class ReviewerTaskLedger:
                         {"previous_reviewer_agent_id":previous,
                          "replacement_reviewer_agent_id":replacement,
                          "lease_generation":lease.generation},now)
+            # Task state, lease fencing, audit history, and dispatch ownership
+            # move together. The previous claim token is invalidated atomically.
+            db.execute("""UPDATE reviewer_dispatch_outbox SET reviewer_agent_id=?,
+                state='pending',claimed_by=NULL,claim_token_digest=NULL,
+                claim_expires_at=NULL,available_at=?,last_error='review_task_recovered',
+                updated_at=? WHERE task_id=?""",
+                (replacement,now,now,task_id))
         return {"task_id":task_id,"state":"assigned","version":reassigned_version,
                 "reviewer_agent_id":replacement,"lease_generation":lease.generation,
                 "lease_token":lease.token}
