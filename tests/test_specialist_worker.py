@@ -83,12 +83,21 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "budget-worker.sqlite3")
         budget_store = ExecutionBudgetStore(db)
         budget_store.create_snapshot(
-            budget_id="worker-budget", task_id="logical-worker-task",
+            budget_id="worker-root-budget", task_id="logical-root-task",
+            limits={
+                "max_model_turns": 4, "max_tool_calls": 2,
+                "max_duration_ms": 120_000, "max_transcript_chars": 1_000,
+            },
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="worker-root-budget", child_budget_id="worker-budget",
+            task_id="logical-worker-task",
             limits={
                 "max_model_turns": 2, "max_tool_calls": 1,
                 "max_duration_ms": 60_000, "max_transcript_chars": 500,
             },
-            policy_version="test-v1",
+            policy_version="test-v1", allocation_key="worker-task-allocation",
         )
         task = self.runtime.enqueue(
             actor_id="alice", idempotency_key="budgeted-worker-task",
@@ -120,12 +129,21 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "budget-mismatch.sqlite3")
         budget_store = ExecutionBudgetStore(db)
         budget_store.create_snapshot(
-            budget_id="worker-budget", task_id="expected-logical-task",
+            budget_id="worker-root-budget", task_id="logical-root-task",
+            limits={
+                "max_model_turns": 4, "max_tool_calls": 2,
+                "max_duration_ms": 120_000, "max_transcript_chars": 1_000,
+            },
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="worker-root-budget", child_budget_id="worker-budget",
+            task_id="expected-logical-task",
             limits={
                 "max_model_turns": 2, "max_tool_calls": 1,
                 "max_duration_ms": 60_000, "max_transcript_chars": 500,
             },
-            policy_version="test-v1",
+            policy_version="test-v1", allocation_key="worker-mismatch-allocation",
         )
         self.runtime.enqueue(
             actor_id="alice", idempotency_key="budgeted-mismatch-task",
@@ -152,6 +170,63 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "failed")
         self.assertEqual(calls, [])
         self.assertEqual(budget_store.usage("worker-budget")["model_turns"], 0)
+
+    def test_exhausted_budget_blocks_provider_handler(self):
+        db = str(Path(self.tmp.name) / "budget-exhaustion.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        budget_store.create_snapshot(
+            budget_id="exhaustion-root", task_id="root",
+            limits={"max_model_turns": 2, "max_tool_calls": 1,
+                     "max_duration_ms": 120_000, "max_transcript_chars": 1_000},
+            policy_version="test-v1",
+        )
+        budget_store.allocate_child_snapshot(
+            parent_budget_id="exhaustion-root", child_budget_id="one-turn-budget",
+            task_id="one-logical-task",
+            limits={"max_model_turns": 1, "max_tool_calls": 1,
+                     "max_duration_ms": 60_000, "max_transcript_chars": 500},
+            policy_version="test-v1", allocation_key="one-turn-allocation",
+        )
+        calls = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="exhaustion-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "ok"},
+            budget_store=budget_store,
+        )
+        for key in ("first-budgeted-task", "second-budgeted-task"):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key=key, name="agent-code-review-implement",
+                steps=[{"name": "implement", "action": "emit", "argument": "review",
+                        "requires_approval": False,
+                        "execution": {"budget_id": "one-turn-budget",
+                                      "task_identity": "one-logical-task",
+                                      "policy_version": "test-v1"}}],
+            )
+        first = worker.run_once()
+        second = worker.run_once()
+        self.assertEqual(first.state, "succeeded")
+        self.assertEqual(second.state, "failed")
+        self.assertEqual(calls, ["review"])
+        self.assertEqual(budget_store.usage("one-turn-budget")["model_turns"], 1)
+
+    def test_budget_metadata_is_required_when_budget_store_is_configured(self):
+        db = str(Path(self.tmp.name) / "budget-missing.sqlite3")
+        budget_store = ExecutionBudgetStore(db)
+        calls = []
+        self.runtime.enqueue(
+            actor_id="alice", idempotency_key="missing-budget-metadata",
+            name="agent-code-review-implement",
+            steps=[{"name": "implement", "action": "emit", "argument": "do not run",
+                    "requires_approval": False}],
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="missing-budget-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda value: calls.append(value) or "unexpected"},
+            budget_store=budget_store,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(calls, [])
 
     def test_worker_retrieves_authorized_memory_before_specialist_handler(self):
         task_id = self.create_task()
