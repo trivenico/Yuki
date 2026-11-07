@@ -100,6 +100,15 @@ class EngineeringAcceptanceTests(unittest.TestCase):
             self.store.attach_artifact(plan_id="other", subtask_id="subtask", task_id="task",
                                        artifact_id=self.artifact.artifact_id, actor_id="owner", created_at=self.now)
 
+    def test_registration_accepts_urlsafe_task_ids(self):
+        for index, task_id in enumerate(("_worker-token", "-worker-token")):
+            record = self.store.register_task(
+                plan_id=f"plan-{index}", subtask_id="subtask",
+                task_id=task_id, owner_id="owner", actor_id="owner",
+                created_at=self.now,
+            )
+            self.assertEqual(record["task_id"], task_id)
+
     def test_registration_and_transitions_require_authorization(self):
         with self.assertRaises(PermissionError):
             self.store.register_task(plan_id="p2", subtask_id="s2", task_id="t2",
