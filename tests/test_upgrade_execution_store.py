@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -156,7 +157,7 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_audit_events_are_append_only_at_database_boundary(self):
         row = self.store.create(self.request)
-        with self.store._connect() as db:
+        with closing(self.store._connect()) as db:
             with self.assertRaisesRegex(sqlite3.IntegrityError, "upgrade_event_is_append_only"):
                 db.execute(
                     "UPDATE upgrade_execution_events SET reason_code='rewritten' WHERE execution_id=?",
