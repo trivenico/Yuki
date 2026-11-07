@@ -105,6 +105,47 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
         )
         self.assertEqual(submitted["state"], "submitted")
 
+
+    def test_reassign_atomically_updates_task_and_lease_after_expiry(self):
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
+                       (expired, self.task.task_id))
+        result = self.ledger.reassign(
+            actor_id="supervisor", task_id=self.task.task_id,
+            expected_version=0, replacement_reviewer_agent_id="reviewer-2",
+        )
+        self.assertEqual(result["reviewer_agent_id"], "reviewer-2")
+        self.assertEqual(result["lease_generation"], 2)
+        record = self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
+        self.assertEqual(record["reviewer_agent_id"], "reviewer-2")
+        self.assertEqual(record["state"], "assigned")
+        self.assertEqual(record["version"], 1)
+        self.assertEqual(record["events"][1]["type"], "reassigned")
+        self.assertFalse(self.leases.validate(
+            self.lease.token, task_id=self.task.task_id,
+            artifact_sha256="a" * 64, reviewer_agent_id="reviewer-1",
+            generation=1,
+        ))
+
+    def test_reassignment_rejects_active_lease_and_in_progress_task(self):
+        with self.assertRaisesRegex(Exception, "only_current_unclaimed_tasks"):
+            self.ledger.claim(
+                actor_id="reviewer-1", task_id=self.task.task_id,
+                expected_version=0, session_token=self.session,
+                operation_id="claim-before-reassign", lease_token=self.lease.token,
+                lease_generation=self.lease.generation,
+            )
+            self.ledger.reassign(
+                actor_id="supervisor", task_id=self.task.task_id,
+                expected_version=1, replacement_reviewer_agent_id="reviewer-2",
+            )
+        with self.assertRaises(Exception):
+            self.ledger.reassign(
+                actor_id="supervisor", task_id=self.task.task_id,
+                expected_version=0, replacement_reviewer_agent_id="reviewer-2",
+            )
+
     def test_lease_database_must_match_ledger_database(self):
         other = ReviewerLeaseAuthority(
             Path(self.temp.name) / "other.sqlite", secret=b"x" * 32,
