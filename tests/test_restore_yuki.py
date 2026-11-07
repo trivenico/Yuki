@@ -50,7 +50,7 @@ class RestoreYukiTests(unittest.TestCase):
                 linked.symlink_to(outside)
             except (OSError, NotImplementedError):
                 self.skipTest("Symbolic links are unavailable on this platform")
-            with self.assertRaisesRegex(ValueError, "must not be symbolic links"):
+            with self.assertRaisesRegex(ValueError, "must not contain symbolic links"):
                 restore_backup(backup, root / "restored")
 
     def test_restore_rejects_symlinked_parent_directory(self):
