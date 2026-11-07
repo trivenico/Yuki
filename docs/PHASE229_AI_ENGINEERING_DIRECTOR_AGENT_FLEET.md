@@ -31,7 +31,7 @@ Yuki owns the goal, planning, delegation policy, memory, evidence review and fin
 
 - The model-assisted director currently accepts at most 10 tasks per proposal.
 - The coordinator accepts at most 20 subtasks per plan.
-- The new concurrency gate uses an in-process lock. It prevents concurrent dispatch races through one coordinator instance, but is **not yet a distributed semaphore** across multiple coordinator processes or hosts.
+- The concurrency gate now combines an in-process lock with SQLite BEGIN IMMEDIATE admission transactions. This serializes slot checks and task registration across multiple coordinator instances/processes that share the same local SQLite database. It is not a cross-host distributed semaphore; a server database or dedicated lease service is still required for multi-machine scheduling.
 - Registry manifests can describe large fleets, but no benchmark currently demonstrates hundreds of simultaneously executing agents.
 - Provider quotas, global model token budgets, per-tenant fairness, distributed scheduling, hierarchical subplan persistence and cross-host capacity accounting remain future work.
 - Agent max_concurrency is now enforced within one coordinator instance during dispatch; it must not be represented as a global fleet-wide guarantee.
@@ -54,8 +54,8 @@ A future distributed scheduler must reserve capacity atomically, expire/reconcil
 
 ## Required roadmap
 
-1. Complete local concurrency gate: verify all OS CI; ensure terminal task reconciliation frees capacity and cancellation releases slots.
-2. Durable distributed capacity ledger: transactional slot reservations, lease expiry/reconciliation and multi-process race tests.
+1. Verify transactional SQLite concurrency gate across all OS CI; ensure terminal task reconciliation frees capacity and cancellation releases slots. Cross-host capacity still requires a shared transactional service.
+2. Cross-host capacity ledger: transactional slot reservations in a server database or lease service, expiry/reconciliation and multi-host race tests.
 3. Hierarchical team plans: persist parent-child plan links, depth/descendant budgets, inherited scope and cycle prevention.
 4. AI Engineering Director: explicit engineering phases: discover, requirements, architecture, plan, implement, test, security review, release, observe and learn.
 5. Provider/resource scheduler: per-provider token/request ceilings, worker capability matching, fair queues and backpressure.
