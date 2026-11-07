@@ -31,9 +31,9 @@ class LocalModel:
 @dataclass(frozen=True)
 class ModelRecommendation:
     model_name: str
-    roles: tuple[str, ...]
     estimated_memory_gib: float | None
     status: str
+    role_fit: str
     rationale: str
 
 
@@ -143,7 +143,6 @@ class LocalModelRegistry:
         models: list[LocalModel],
         *,
         available_memory_gib: float | None,
-        roles: tuple[str, ...] = ("general", "coding", "reasoning"),
     ) -> list[ModelRecommendation]:
         if available_memory_gib is not None and available_memory_gib <= 0:
             raise ValueError("available_memory_gib must be positive or None")
@@ -168,9 +167,9 @@ class LocalModelRegistry:
                 rationale = f"Estimated model memory is about {estimate:.1f} GiB, above the conservative 70% memory budget."
             recommendations.append(ModelRecommendation(
                 model_name=model.name,
-                roles=roles,
                 estimated_memory_gib=estimate,
                 status=status,
+                role_fit="unverified",
                 rationale=rationale + " This is a heuristic, not a benchmark or guarantee; context, runtime overhead, and GPU offload change actual use.",
             ))
         return sorted(
