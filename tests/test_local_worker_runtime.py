@@ -193,7 +193,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             plan = built.coordinator.advance(actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id)
             task_id = plan.subtasks[0].task_id
             task = built.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id)
-            step = task.definition[0]
+            step = task.steps[0]
             execution = step["execution"]
             # Local policy grants five model turns to this specialist. Reuse
             # the same immutable logical-task budget across distinct queued
