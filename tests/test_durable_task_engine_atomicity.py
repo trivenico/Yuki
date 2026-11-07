@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,7 +27,7 @@ class DurableTaskEngineAtomicityTests(unittest.TestCase):
         self.claimed = self.engine.claim("worker-a", lease_seconds=30)
 
     def reject_event(self, event_type):
-        with self.engine._connect() as db:
+        with closing(self.engine._connect()) as db:
             # SQLite trigger definitions do not accept bound parameters.
             # event_type is a fixed test constant, not user-controlled input.
             db.execute(
