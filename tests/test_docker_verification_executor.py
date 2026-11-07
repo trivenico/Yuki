@@ -42,6 +42,7 @@ class DockerVerificationExecutorTests(unittest.TestCase):
             workspace, base / "receipts.sqlite3",
             image="python:3.12-slim@sha256:" + "a" * 64,
             expected_snapshot_sha256=snapshot.snapshot_sha256,
+            expected_artifact_sha256="b" * 64,
             commands={"unit-tests": SandboxCommand(
                 "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=30
             )},
@@ -79,6 +80,18 @@ class DockerVerificationExecutorTests(unittest.TestCase):
                 reference, artifact_sha256="b" * 64, check_name="security"
             ))
 
+
+    def test_rejects_artifact_digest_mismatch_before_launch(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
+        ), patch(
+            "automation.docker_verification_executor.subprocess.Popen"
+        ) as popen:
+            executor, _ = self._executor(Path(temp))
+            with self.assertRaisesRegex(DockerVerificationError, "artifact_digest_does_not_match"):
+                executor.run("unit-tests", artifact_sha256="c" * 64)
+            popen.assert_not_called()
+
     def test_rejects_workspace_tampering_before_launch(self):
         with tempfile.TemporaryDirectory() as temp, patch(
             "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
@@ -105,6 +118,7 @@ class DockerVerificationExecutorTests(unittest.TestCase):
                     link, base / "receipts.sqlite3",
                     image="python:3.12-slim@sha256:" + "a" * 64,
                     expected_snapshot_sha256="a" * 64,
+                    expected_artifact_sha256="b" * 64,
                     commands={"unit-tests": SandboxCommand("unit-tests", ("python", "-m", "pytest"))},
                 )
 
@@ -118,6 +132,7 @@ class DockerVerificationExecutorTests(unittest.TestCase):
                 DockerVerificationExecutor(
                     root, Path(temp) / "receipts.sqlite3", image="python:latest",
                     expected_snapshot_sha256="a" * 64,
+                    expected_artifact_sha256="b" * 64,
                     commands={"unit-tests": SandboxCommand("unit-tests", ("python", "-m", "pytest"))},
                 )
 
