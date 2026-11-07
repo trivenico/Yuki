@@ -1,6 +1,6 @@
-from contextlib import closing
 """Tests for durable reviewer worker registration and global slots."""
 from __future__ import annotations
+from contextlib import closing
 
 import tempfile
 import unittest
