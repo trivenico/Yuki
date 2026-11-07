@@ -65,7 +65,19 @@ class DockerVerificationExecutorTests(unittest.TestCase):
             self.assertIn("--security-opt=seccomp=default", argv)
             self.assertIn("--pull=never", argv)
             self.assertEqual(receipt.status, "passed")
-            self.assertEqual(executor.get(receipt.execution_id)["artifact_sha256"], "b" * 64)
+            stored = executor.get(receipt.execution_id)
+            self.assertEqual(stored["artifact_sha256"], "b" * 64)
+            self.assertEqual(stored["argv_json"], '["python", "-m", "pytest", "-q"]')
+            reference = "yuki-verification-execution://" + receipt.execution_id
+            self.assertTrue(executor.validate_evidence_reference(
+                reference, artifact_sha256="b" * 64, check_name="tests"
+            ))
+            self.assertFalse(executor.validate_evidence_reference(
+                reference, artifact_sha256="c" * 64, check_name="tests"
+            ))
+            self.assertFalse(executor.validate_evidence_reference(
+                reference, artifact_sha256="b" * 64, check_name="security"
+            ))
 
     def test_rejects_workspace_tampering_before_launch(self):
         with tempfile.TemporaryDirectory() as temp, patch(
