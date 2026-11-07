@@ -6,6 +6,8 @@ must come from protected local storage and is never persisted by this module.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -42,7 +44,7 @@ class ReviewerSessionAuthority:
         self._secret = secret
         self._authorize = authorize
         self._ttl = session_ttl_seconds
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("""CREATE TABLE IF NOT EXISTS reviewer_sessions (
@@ -122,7 +124,7 @@ class ReviewerSessionAuthority:
             "issued_at": now.isoformat(),
             "expires_at": (now + timedelta(seconds=self._ttl)).isoformat(),
         }
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("INSERT INTO reviewer_sessions VALUES (?,?,?,?,0)", (
                 payload["session_id"], reviewer_agent_id, artifact_sha256, payload["expires_at"]
             ))
@@ -145,7 +147,7 @@ class ReviewerSessionAuthority:
                 return False
             if self._authorize(reviewer_agent_id, action, artifact_sha256) is not True:
                 return False
-            with self._connect() as db:
+            with closing(self._connect()) as db, db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
                     "SELECT reviewer_agent_id,artifact_sha256,revoked,expires_at FROM reviewer_sessions WHERE session_id=?",
@@ -174,7 +176,7 @@ class ReviewerSessionAuthority:
     def revoke(self, *, session_id: str) -> None:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id_required")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             changed = db.execute(
                 "UPDATE reviewer_sessions SET revoked=1 WHERE session_id=?", (session_id,)
             ).rowcount
