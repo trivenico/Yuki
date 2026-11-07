@@ -396,7 +396,7 @@ class ConversationAPITests(unittest.TestCase):
         memory_store = AgentMemoryStore(
             str(Path(self.tempdir.name) / "candidate-memory.sqlite"),
             authorize=lambda actor, action, agent: (
-                action in {"agent_memory:read", "agent_memory:write"}
+                action in {"agent_memory:read", "agent_memory:write", "agent_memory:review"}
                 and agent == "assistant"
             ),
         )
