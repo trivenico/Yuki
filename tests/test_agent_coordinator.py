@@ -1153,5 +1153,83 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(count, 1)
 
 
+    def test_acceptance_store_blocks_dependent_dispatch_until_verified(self):
+        from datetime import datetime, timezone
+        from automation.engineering_acceptance import EngineeringAcceptanceStore
+        from automation.independent_verification import VerificationCheck, VerificationReport, sha256_artifact
+        from automation.verification_evidence_store import VerificationEvidenceStore
+        from automation.verification_workflow import VerificationWorkflow
+
+        root = Path(self.tmp.name)
+        evidence = VerificationEvidenceStore(root / "acceptance-evidence.sqlite3")
+        verification = VerificationWorkflow(
+            root / "acceptance-artifacts.sqlite3", evidence,
+            reviewer_authorize=lambda actor, action, artifact: actor == "alice" and action == "verification:submit",
+        )
+        acceptance = EngineeringAcceptanceStore(
+            root / "acceptance-state.sqlite3", verification,
+            authorize=lambda actor, action, plan: actor == "alice" and action.startswith("acceptance:"),
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            acceptance_store=acceptance,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="acceptance-dependency-gate", subtasks=[
+            SubtaskSpec("first", "Create source artifact", ("research",), requires_approval=False),
+            SubtaskSpec("second", "Use verified source artifact", ("write",), depends_on=("first",), requires_approval=False),
+        ])
+        dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        first = next(item for item in dispatched.subtasks if item.subtask_id == "first")
+        second = next(item for item in dispatched.subtasks if item.subtask_id == "second")
+        self.assertIsNotNone(first.task_id)
+        self.assertIsNone(second.task_id)
+
+        claimed = self.store.claim_next(worker_id="acceptance-worker")
+        self.store.transition(
+            claimed.run_id, expected_version=claimed.version, to_state="succeeded",
+            result={"ok": True, "output": "source complete"},
+            expected_lease_owner="acceptance-worker", event_kind="task.completed",
+            event_actor_id="alice", event_payload={"state_version": claimed.version + 1},
+        )
+        waiting = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        waiting_by_id = {item.subtask_id: item for item in waiting.subtasks}
+        self.assertEqual(waiting_by_id["first"].status, "succeeded")
+        self.assertEqual(acceptance.get(plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id)["state"], "awaiting_artifact")
+        self.assertIsNone(waiting_by_id["second"].task_id)
+
+        artifact_bytes = b"verified source artifact"
+        now = datetime.now(timezone.utc).isoformat()
+        artifact = verification.record_artifact(
+            plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id,
+            author_agent_id="research", content=artifact_bytes, created_at=now,
+        )
+        acceptance.attach_artifact(
+            plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id,
+            artifact_id=artifact.artifact_id, actor_id="alice", created_at=now,
+        )
+        names = ("acceptance_criteria", "tests", "security", "architecture", "claims_and_provenance")
+        report = VerificationReport(
+            artifact_sha256=sha256_artifact(artifact_bytes), author_agent_id="research",
+            checks=tuple(VerificationCheck(
+                name=name, reviewer_agent_id="reviewer-" + name, status="passed",
+                evidence_reference="evidence://" + name, summary="Verified " + name,
+            ) for name in names),
+            created_at=now,
+        )
+        stored = evidence.record(report)
+        verification.link_report(
+            artifact_id=artifact.artifact_id, report_id=stored["report_id"],
+            reviewer_actor_id="alice", created_at=now,
+        )
+        acceptance.refresh_verification(
+            plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id,
+            actor_id="alice", created_at=now,
+        )
+        released = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        released_by_id = {item.subtask_id: item for item in released.subtasks}
+        self.assertEqual(acceptance.get(plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id)["state"], "accepted")
+        self.assertIsNotNone(released_by_id["second"].task_id)
+
+
 if __name__ == "__main__":
     unittest.main()
