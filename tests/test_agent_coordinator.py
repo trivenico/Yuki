@@ -477,7 +477,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 "SELECT parent_plan_id, parent_subtask_id, depth, created_by "
                 "FROM agent_plan_hierarchy WHERE child_plan_id=?", (child.plan_id,),
             ).fetchone()
-        self.assertEqual(row, (parent.plan_id, "engineering-lead", 1, "alice"))
+        self.assertEqual(tuple(row), (parent.plan_id, "engineering-lead", 1, "alice"))
         self.assertEqual(child.subtasks[0].required_permissions, ("web:read",))
         self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
 
@@ -921,7 +921,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                    WHERE plan_id=? AND subtask_id=?""",
                 (plan.plan_id, "collect"),
             ).fetchone()
-        self.assertEqual(row, ("research", "enqueued", task_id))
+        self.assertEqual(tuple(row), ("research", "enqueued", task_id))
         # Repeated advancement must not create another reservation or task.
         again = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(again.subtasks[0].task_id, task_id)
