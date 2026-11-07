@@ -17,6 +17,7 @@ from typing import Callable, Iterable
 
 from automation.reviewer_contracts import ReviewResult, ReviewTask
 from automation.reviewer_signing import HMACReviewerSigner, ReviewerSignature
+from automation.reviewer_sessions import ReviewerSessionAuthority
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA = re.compile(r"^[a-f0-9]{64}$")
@@ -74,16 +75,20 @@ class ReviewerTaskLedger:
 
     def __init__(self, database_path: str | Path, *,
                  authorize: Callable[[str, str, str], bool],
-                 signer_resolver: Callable[[str, str | None], HMACReviewerSigner | None]):
+                 signer_resolver: Callable[[str, str | None], HMACReviewerSigner | None],
+                 session_authority: ReviewerSessionAuthority):
         if not callable(authorize):
             raise TypeError("trusted_reviewer_authorizer_required")
         if not callable(signer_resolver):
             raise TypeError("trusted_reviewer_signer_resolver_required")
+        if not isinstance(session_authority, ReviewerSessionAuthority):
+            raise TypeError("trusted_reviewer_session_authority_required")
         self.database_path = str(database_path)
         if not self.database_path.strip():
             raise ValueError("database_path_required")
         self.authorize = authorize
         self.signer_resolver = signer_resolver
+        self.session_authority = session_authority
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -197,7 +202,8 @@ class ReviewerTaskLedger:
                                 "version": 0, "reused": False})
         return tuple(created)
 
-    def claim(self, *, actor_id: str, task_id: str, expected_version: int) -> dict:
+    def claim(self, *, actor_id: str, task_id: str, expected_version: int,
+              session_token: str, operation_id: str) -> dict:
         actor = self._actor(actor_id)
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_review_task_id")
@@ -210,6 +216,8 @@ class ReviewerTaskLedger:
                 raise KeyError("review task not found")
             if actor != row["reviewer_agent_id"] or not self._allowed(actor, "review:execute", row["artifact_sha256"]):
                 raise PermissionError("review task execution is not authorized")
+            if not self.session_authority.validate(session_token, reviewer_agent_id=actor, artifact_sha256=row["artifact_sha256"], action="review:execute", operation_id=operation_id):
+                raise PermissionError("review execution session is invalid or replayed")
             if row["version"] != expected_version or row["state"] != "assigned":
                 raise ReviewerLedgerConflict("review_task_state_or_version_conflict")
             now = _now()
@@ -222,7 +230,7 @@ class ReviewerTaskLedger:
         return {"task_id": task_id, "state": "in_progress", "version": version}
 
     def submit(self, *, actor_id: str, task_id: str, expected_version: int,
-               result: ReviewResult) -> dict:
+               result: ReviewResult, session_token: str, operation_id: str) -> dict:
         actor = self._actor(actor_id)
         if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_review_task_id")
@@ -237,6 +245,8 @@ class ReviewerTaskLedger:
                 raise KeyError("review task not found")
             if actor != row["reviewer_agent_id"] or not self._allowed(actor, "review:submit", row["artifact_sha256"]):
                 raise PermissionError("review result submission is not authorized")
+            if not self.session_authority.validate(session_token, reviewer_agent_id=actor, artifact_sha256=row["artifact_sha256"], action="review:submit", operation_id=operation_id):
+                raise PermissionError("review submission session is invalid or replayed")
             task_data = json.loads(row["task_json"])
             task = ReviewTask(
                 task_id=task_data["task_id"],
