@@ -521,6 +521,37 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIsNotNone(completed.subtasks[0].task_id)
         self.assertNotEqual(completed.subtasks[0].task_id, claimed.run_id)
 
+
+    def test_plan_tree_aggregates_parent_and_child_progress_without_dispatch(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-progress-parent",
+            subtasks=[SubtaskSpec(
+                "engineering-lead", "Integrate team results", ("research",),
+                requires_approval=False,
+            )],
+        )
+        child = self.coordinator.submit_child_plan(
+            actor_id="alice", parent_plan_id=parent.plan_id,
+            parent_subtask_id="engineering-lead",
+            idempotency_key="hierarchy-progress-child",
+            subtasks=[SubtaskSpec(
+                "research-task", "Collect evidence", ("research",),
+                requires_approval=False,
+            )],
+        )
+        before = self.coordinator.get_plan_tree(actor_id="alice", plan_id=parent.plan_id)
+        self.assertEqual(before["status"], "in_progress")
+        self.assertEqual(before["progress"]["child_plans"], 1)
+        self.assertEqual(before["progress"]["child_subtasks"], 1)
+        self.assertEqual(before["subtasks"][0]["children"][0]["plan_id"], child.plan_id)
+        self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
+
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        tree = self.coordinator.get_plan_tree(actor_id="alice", plan_id=parent.plan_id)
+        self.assertEqual(tree["status"], "in_progress")
+        self.assertEqual(tree["progress"]["child_succeeded"], 0)
+        self.assertIsNone(dispatched.subtasks[0].task_id)
+
     def test_child_team_cannot_escalate_parent_permissions(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="hierarchy-scope-parent",
