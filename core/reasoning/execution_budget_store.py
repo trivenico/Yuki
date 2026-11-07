@@ -28,7 +28,7 @@ _LIMITS = {
     "max_duration_ms": 3_600_000,
     "max_transcript_chars": 1_000_000,
 }
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
 class ExecutionBudgetStoreError(ValueError):
