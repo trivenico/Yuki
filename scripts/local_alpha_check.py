@@ -28,7 +28,7 @@ def main() -> int:
 
     failures += not check("Python version", sys.version_info >= (3, 10),
                           "Python 3.10+ required")
-    for module in ("yaml", "requests"):
+    for module in ("yaml",):
         available = importlib.util.find_spec(module) is not None
         failures += not check("Dependency " + module, available,
                               "installed" if available else "install requirements.txt")
