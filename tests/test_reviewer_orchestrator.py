@@ -174,6 +174,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         self.assertEqual(outcome.state, "recovered")
         self.assertEqual(outcome.replacement_reviewer_agent_id, "reviewer-b")
         self.assertEqual(outcome.provisioned_task.lease_generation, 2)
+        self.assertEqual(outcome.provisioned_task.review_task.reviewer_agent_id, "reviewer-b")
         self.assertTrue(sessions.validate(
             outcome.provisioned_task.session_token,
             reviewer_agent_id="reviewer-b", artifact_sha256=self.digest,
