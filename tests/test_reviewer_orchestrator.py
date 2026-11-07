@@ -164,6 +164,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         ))
         record = ledger.get(actor_id="coordinator", task_id=task.task_id)
         self.assertEqual(record["reviewer_agent_id"], "reviewer-b")
+        self.assertEqual(record["task"]["reviewer_agent_id"], "reviewer-b")
         self.assertEqual(record["state"], "assigned")
 
     def test_denied_coordinator_does_not_create_tasks(self):
