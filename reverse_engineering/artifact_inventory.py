@@ -84,9 +84,13 @@ def _hash_regular_file(path: Path, expected: os.stat_result, chunk_bytes: int) -
                 break
             digest.update(chunk)
         after = os.fstat(descriptor)
-        if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
-            opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns
-        ):
+        content_changed = (
+            after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+            or (os.name != "nt" and (after.st_dev, after.st_ino) !=
+                (opened.st_dev, opened.st_ino))
+        )
+        if content_changed:
             raise ArtifactInventoryError(f"File changed while hashing: {path.name}")
         return digest.hexdigest()
     finally:
