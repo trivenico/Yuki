@@ -9,8 +9,12 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from threading import Event
+from threading import Event, Thread
 from typing import Callable
+
+from automation.reviewer_worker_registry import (
+    ReviewerWorkerRegistry, ReviewerWorkerRegistryConflict,
+)
 
 
 class ReviewerWorkerServiceError(RuntimeError):
@@ -53,6 +57,11 @@ class ReviewerWorkerService:
         heartbeat_callback: Callable[[ReviewerWorkerHeartbeat], None],
         max_concurrency: int = 1,
         poll_interval_seconds: float = 2.0,
+        registry: ReviewerWorkerRegistry | None = None,
+        registry_actor_id: str | None = None,
+        instance_id: str | None = None,
+        worker_lease_seconds: int = 60,
+        slot_lease_seconds: int = 60,
     ) -> None:
         if not callable(getattr(worker, "run_once", None)):
             raise TypeError("reviewer_worker_run_once_required")
@@ -71,9 +80,77 @@ class ReviewerWorkerService:
         self.worker_id = worker_id
         self.heartbeat_callback = heartbeat_callback
         self.max_concurrency = max_concurrency
+        if registry is not None and not isinstance(registry, ReviewerWorkerRegistry):
+            raise TypeError("reviewer_worker_registry_required")
+        if registry is not None and (not isinstance(registry_actor_id, str) or not registry_actor_id):
+            raise ValueError("reviewer_worker_registry_actor_required")
+        if type(worker_lease_seconds) is not int or not 10 <= worker_lease_seconds <= 900:
+            raise ValueError("invalid_reviewer_worker_lease_ttl")
+        if type(slot_lease_seconds) is not int or not 10 <= slot_lease_seconds <= 900:
+            raise ValueError("invalid_reviewer_worker_slot_ttl")
         self.poll_interval_seconds = float(poll_interval_seconds)
+        self.registry = registry
+        self.registry_actor_id = registry_actor_id
+        self.instance_id = instance_id
+        self.worker_lease_seconds = worker_lease_seconds
+        self.slot_lease_seconds = slot_lease_seconds
+        self._registration = None
         self._stop = Event()
         self._running = False
+
+    def _run_reserved(self, *, limit: int = 1):
+        if self.registry is None:
+            return self.worker.run_once(limit=limit)
+        registration = self._registration
+        if registration is None:
+            raise ReviewerWorkerServiceError("worker_registry_not_registered")
+        slot = self.registry.claim_slot(
+            actor_id=self.registry_actor_id, worker_id=self.worker_id,
+            instance_id=registration.instance_id, lease_token=registration.lease_token,
+            max_concurrency=self.max_concurrency, slot_seconds=self.slot_lease_seconds,
+        )
+        finished = Event()
+        renewal_errors = []
+
+        def renew():
+            interval = max(1.0, min(self.slot_lease_seconds, self.worker_lease_seconds) / 3)
+            while not finished.wait(interval):
+                try:
+                    self.registry.heartbeat(
+                        actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                        instance_id=registration.instance_id,
+                        lease_token=registration.lease_token,
+                        lease_seconds=self.worker_lease_seconds,
+                    )
+                    self.registry.renew_slot(
+                        actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                        instance_id=registration.instance_id,
+                        lease_token=registration.lease_token, slot_id=slot,
+                        slot_seconds=self.slot_lease_seconds,
+                    )
+                except Exception as exc:
+                    renewal_errors.append(type(exc).__name__)
+                    finished.set()
+
+        renewer = Thread(target=renew, name="yuki-reviewer-slot-renewal", daemon=True)
+        renewer.start()
+        try:
+            report = self.worker.run_once(limit=limit)
+            if renewal_errors:
+                raise ReviewerWorkerServiceError("worker_slot_lease_renewal_failed")
+            return report
+        finally:
+            finished.set()
+            renewer.join(timeout=max(1.0, min(self.slot_lease_seconds, self.worker_lease_seconds) / 3 + 1))
+            try:
+                self.registry.release_slot(
+                    actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                    instance_id=registration.instance_id,
+                    lease_token=registration.lease_token, slot_id=slot,
+                )
+            except ReviewerWorkerRegistryConflict:
+                # Expired/revoked slots are already unavailable to new work.
+                pass
 
     def stop(self) -> None:
         """Request graceful shutdown; already-running executions are not killed."""
@@ -101,13 +178,18 @@ class ReviewerWorkerService:
         cycles = completed = failures = 0
         last_error = None
         try:
+            if self.registry is not None:
+                self._registration = self.registry.register(
+                    actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                    instance_id=self.instance_id, lease_seconds=self.worker_lease_seconds,
+                )
             with ThreadPoolExecutor(
                 max_workers=self.max_concurrency,
                 thread_name_prefix="yuki-reviewer",
             ) as pool:
                 while not self._stop.is_set():
                     futures = [
-                        pool.submit(self.worker.run_once, limit=1)
+                        pool.submit(self._run_reserved, limit=1)
                         for _ in range(self.max_concurrency)
                     ]
                     cycles += 1
@@ -128,6 +210,13 @@ class ReviewerWorkerService:
                         failures=failures,
                         last_error=last_error,
                     )
+                    if self.registry is not None and not self._stop.is_set():
+                        self.registry.heartbeat(
+                            actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                            instance_id=self._registration.instance_id,
+                            lease_token=self._registration.lease_token,
+                            lease_seconds=self.worker_lease_seconds,
+                        )
                     if self._stop.is_set():
                         break
                     if claimed_this_cycle == 0:
@@ -143,6 +232,15 @@ class ReviewerWorkerService:
                 stopped=True,
             )
         finally:
+            if self.registry is not None and self._registration is not None:
+                try:
+                    self.registry.stop(
+                        actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                        instance_id=self._registration.instance_id,
+                        lease_token=self._registration.lease_token,
+                    )
+                finally:
+                    self._registration = None
             self._running = False
 
 
