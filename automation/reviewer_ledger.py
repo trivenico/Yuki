@@ -567,8 +567,21 @@ class ReviewerTaskLedger:
                 claim_expires_at=NULL,available_at=?,last_error='review_task_recovered',
                 updated_at=? WHERE task_id=?""",
                 (replacement,now,now,task_id)).rowcount
-            if dispatch_changed != 1:
-                raise ReviewerLedgerConflict("review_recovery_dispatch_missing")
+            if dispatch_changed == 0:
+                # Older/directly-created reviewer tasks may predate the dispatch
+                # outbox. Recovery must still create exactly one durable pending
+                # delivery record in the same transaction as lease fencing.
+                dispatch_id = "dispatch-" + hashlib.sha256(
+                    (task_id + ":" + row["task_digest"]).encode("utf-8")
+                ).hexdigest()[:32]
+                db.execute("""INSERT INTO reviewer_dispatch_outbox
+                    (dispatch_id,task_id,artifact_sha256,reviewer_agent_id,state,
+                     attempts,available_at,created_at,updated_at)
+                    VALUES(?,?,?,?, 'pending',0,?,?,?)""",
+                    (dispatch_id, task_id, row["artifact_sha256"], replacement,
+                     now, now, now))
+            elif dispatch_changed != 1:
+                raise ReviewerLedgerConflict("review_recovery_dispatch_conflict")
         return {"task_id":task_id,"state":"assigned","version":reassigned_version,
                 "reviewer_agent_id":replacement,"lease_generation":lease.generation,
                 "lease_token":lease.token}
