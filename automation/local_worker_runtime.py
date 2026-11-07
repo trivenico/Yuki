@@ -19,6 +19,7 @@ from automation.specialist_worker import (
 from automation.task_runtime import TaskRuntime
 from automation.worker_supervisor import WorkerSupervisor
 from automation.workflow_store import WorkflowRunStore
+from core.reasoning.execution_budget_store import ExecutionBudgetStore
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -34,6 +35,7 @@ class LocalWorkerRuntime:
     coordinator: SpecialistAgentCoordinator
     operator_actor_id: str
     approval_session_id: str
+    budget_store: ExecutionBudgetStore
 
 
 def build_local_worker_runtime(
@@ -78,6 +80,25 @@ def build_local_worker_runtime(
         WorkflowRunStore(database_path),
         authorize=authorize,
     )
+    budget_store = ExecutionBudgetStore(database_path)
+
+    def budget_policy(kind: str, plan_id: str, subtask_id: str | None):
+        if kind == "plan" and subtask_id is None:
+            return {
+                "max_model_turns": 100,
+                "max_tool_calls": 20,
+                "max_duration_ms": 1_200_000,
+                "max_transcript_chars": 200_000,
+            }
+        if kind == "subtask" and isinstance(subtask_id, str):
+            return {
+                "max_model_turns": 5,
+                "max_tool_calls": 1,
+                "max_duration_ms": 60_000,
+                "max_transcript_chars": 10_000,
+            }
+        raise ValueError("unsupported budget policy scope.")
+
     coordinator = SpecialistAgentCoordinator(
         runtime,
         database_path,
@@ -94,6 +115,9 @@ def build_local_worker_runtime(
             actor_id == LOCAL_OPERATOR_ACTOR
             and action in {"agent:plan", "agent:plan_without_approval", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
+        budget_store=budget_store,
+        budget_policy=budget_policy,
+        budget_policy_version="local-v1",
     )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
@@ -109,6 +133,7 @@ def build_local_worker_runtime(
         worker_id="yuki-local-worker",
         service_actor_id=WORKER_SERVICE_ACTOR,
         handlers=handlers,
+        budget_store=budget_store,
     )
     supervisor = WorkerSupervisor(
         runtime,
@@ -123,4 +148,5 @@ def build_local_worker_runtime(
         coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
         approval_session_id=token_urlsafe(32),
+        budget_store=budget_store,
     )
