@@ -5,6 +5,8 @@ separate executor; this module never executes privileged operations.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -109,7 +111,7 @@ class ReviewerRemediationPlanStore:
         self.database = str(database)
         self.authorize = authorize
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS reviewer_remediation_plans (
                 plan_id TEXT PRIMARY KEY, finding_code TEXT NOT NULL,
@@ -159,7 +161,7 @@ class ReviewerRemediationPlanStore:
         if len(rows) > 500 or any(not isinstance(x, RemediationPlan) for x in rows):
             raise ValueError("invalid_remediation_plan_batch")
         saved = 0
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             for plan in rows:
                 plan_id = self._identifier(plan.plan_id, "invalid_remediation_plan_id")
@@ -188,7 +190,7 @@ class ReviewerRemediationPlanStore:
         action = "review:remediation:approve" if decision == "approved" else "review:remediation:reject"
         self._allow(actor, action, plan)
         stamp = self._stamp()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT approval_state FROM reviewer_remediation_plans WHERE plan_id=?", (plan,)).fetchone()
             if row is None:
@@ -212,7 +214,7 @@ class ReviewerRemediationPlanStore:
             raise ValueError("invalid_remediation_evidence_digest")
         self._allow(actor, "review:remediation:receipt", plan)
         stamp = self._stamp()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT approval_state FROM reviewer_remediation_plans WHERE plan_id=?", (plan,)).fetchone()
             if row is None:
