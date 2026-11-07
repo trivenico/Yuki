@@ -33,8 +33,12 @@ def main() -> int:
         failures += not check("Dependency " + module, available,
                               "installed" if available else "install requirements.txt")
 
-    from core.config import load_config
-    config = load_config()
+    try:
+        from core.config import load_config
+        config = load_config()
+    except Exception as exc:
+        print(f"ACTION  Configuration: could not load ({type(exc).__name__}); install requirements and validate config.yaml")
+        return 1
     provider = str(config.get("provider", "openai")).strip().lower()
     if provider == "ollama":
         model = str(config.get("ollama_model", "")).strip()
