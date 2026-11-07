@@ -245,7 +245,7 @@ A plugin must define a concrete subclass of `skills.base.Skill`, implement `run(
 
 ## Install
 
-Python 3.10+ and PyYAML:
+Python 3.11+ and PyYAML:
 
 ```sh
 python -m pip install -r requirements.txt
