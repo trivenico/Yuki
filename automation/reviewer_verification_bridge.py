@@ -7,7 +7,7 @@ execution-receipt validation; this bridge does not execute or authenticate work.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Callable, Iterable
 
 from automation.independent_verification import VerificationCheck, VerificationReport
 from automation.verification_evidence_store import VerificationEvidenceStore
@@ -19,13 +19,17 @@ class ReviewerVerificationBridgeError(RuntimeError):
 
 
 class ReviewerVerificationBridge:
-    def __init__(self, ledger: ReviewerTaskLedger, evidence_store: VerificationEvidenceStore):
+    def __init__(self, ledger: ReviewerTaskLedger, evidence_store: VerificationEvidenceStore, *,
+                 evidence_reference_validator: Callable[[str, str], bool]):
         if not isinstance(ledger, ReviewerTaskLedger):
             raise TypeError("reviewer_task_ledger_required")
         if not isinstance(evidence_store, VerificationEvidenceStore):
             raise TypeError("verification_evidence_store_required")
+        if not callable(evidence_reference_validator):
+            raise TypeError("trusted_evidence_reference_validator_required")
         self.ledger = ledger
         self.evidence_store = evidence_store
+        self.evidence_reference_validator = evidence_reference_validator
 
     def submit_report(
         self,
@@ -63,6 +67,13 @@ class ReviewerVerificationBridge:
                 raise ReviewerVerificationBridgeError("review_result_binding_mismatch")
             if result.get("reviewer_agent_id") != task.get("reviewer_agent_id"):
                 raise ReviewerVerificationBridgeError("reviewer_identity_mismatch")
+            for reference in task.get("evidence_references", ()):
+                if self.evidence_reference_validator(reference, artifact_sha256) is not True:
+                    raise ReviewerVerificationBridgeError("review_task_evidence_reference_invalid")
+            for finding in result.get("findings", ()):
+                reference = finding.get("evidence_reference")
+                if self.evidence_reference_validator(reference, artifact_sha256) is not True:
+                    raise ReviewerVerificationBridgeError("review_finding_evidence_reference_invalid")
             check_name = result.get("check_name")
             if check_name != task.get("check_name") or check_name in seen_checks:
                 raise ReviewerVerificationBridgeError("duplicate_or_mismatched_review_check")
