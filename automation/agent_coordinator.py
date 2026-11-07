@@ -18,6 +18,7 @@ from typing import Callable, Iterable
 
 from automation.agent_execution_observability import AgentExecutionTraceStore
 from automation.agent_budget_lifecycle import AgentBudgetLifecycle, AgentBudgetAllocationError
+from automation.engineering_acceptance import EngineeringAcceptanceStore, EngineeringAcceptanceError
 from core.reasoning.execution_budget_store import ExecutionBudgetStore
 from automation.agent_contracts import AgentContract, validate_agent_input, validate_agent_output
 from automation.agent_runtime_readiness import AgentRuntimeReadiness, AgentRuntimeRequirement
@@ -141,6 +142,7 @@ class SpecialistAgentCoordinator:
         budget_store: ExecutionBudgetStore | None = None,
         budget_policy: Callable[[str, str, str | None], dict[str, int]] | None = None,
         budget_policy_version: str = "v1",
+        acceptance_store: EngineeringAcceptanceStore | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -172,6 +174,9 @@ class SpecialistAgentCoordinator:
         self.budget_store = budget_store
         self.budget_policy = budget_policy
         self.budget_policy_version = budget_policy_version
+        if acceptance_store is not None and not isinstance(acceptance_store, EngineeringAcceptanceStore):
+            raise TypeError("acceptance_store must be an EngineeringAcceptanceStore.")
+        self.acceptance_store = acceptance_store
         self.budget_lifecycle = AgentBudgetLifecycle(budget_store) if budget_store is not None else None
         if contracts is not None and not isinstance(contracts, dict):
             raise TypeError('contracts must be a mapping of agent IDs to AgentContract values.')
@@ -958,6 +963,20 @@ class SpecialistAgentCoordinator:
                 if dep_task.state != "succeeded":
                     waiting = True
                     break
+                if self.acceptance_store is not None:
+                    try:
+                        acceptance = self.acceptance_store.get(
+                            plan_id=plan_id, subtask_id=dep_id, task_id=dep["task_id"],
+                        )
+                    except KeyError:
+                        acceptance = self.acceptance_store.register_task(
+                            plan_id=plan_id, subtask_id=dep_id, task_id=dep["task_id"],
+                            owner_id=actor_id, actor_id=actor_id,
+                            created_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                    if acceptance["state"] != "accepted":
+                        waiting = True
+                        break
                 dependency_states.append(dep_task.state)
                 if isinstance(dep_task.result, dict):
                     output = dep_task.result.get("output")
@@ -1132,6 +1151,17 @@ class SpecialistAgentCoordinator:
                 continue
             task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
             if task.state == 'succeeded':
+                if self.acceptance_store is not None:
+                    try:
+                        self.acceptance_store.register_task(
+                            plan_id=plan_id, subtask_id=row["subtask_id"],
+                            task_id=row["task_id"], owner_id=actor_id,
+                            actor_id=actor_id, created_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                    except Exception as exc:
+                        raise AgentPlanError(
+                            "engineering acceptance registration failed; dependent dispatch is blocked."
+                        ) from exc
                 contract = self.contracts.get(row['agent_id'])
                 if contract is not None:
                     output = task.result.get('output') if isinstance(task.result, dict) and 'output' in task.result else task.result
