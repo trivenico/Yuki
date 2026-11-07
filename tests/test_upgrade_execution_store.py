@@ -225,5 +225,72 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
             )
 
 
+
+    def test_only_one_worker_can_claim_queued_execution(self):
+        from datetime import datetime, timezone
+        row = self.store.create(self.request)
+        claimed = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            lease_seconds=30, now=datetime(2026, 11, 7, 0, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(claimed.state, "running")
+        self.assertEqual(claimed.version, 1)
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "execution_not_queued"):
+            self.store.claim_queued(
+                row.execution_id, owner_id="worker-b", lease_token="token-b",
+                now=datetime(2026, 11, 7, 0, 0, tzinfo=timezone.utc),
+            )
+
+    def test_lease_renewal_requires_matching_live_owner_and_token(self):
+        from datetime import datetime, timezone
+        start = datetime(2026, 11, 7, 0, 0, tzinfo=timezone.utc)
+        row = self.store.create(self.request)
+        self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            lease_seconds=30, now=start,
+        )
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "lease_owner_or_token_mismatch"):
+            self.store.renew_lease(
+                row.execution_id, owner_id="worker-b", lease_token="token-a", now=start,
+            )
+        expiry = self.store.renew_lease(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            lease_seconds=60, now=start,
+        )
+        self.assertEqual(expiry, "2026-11-07T00:01:00+00:00")
+
+    def test_expired_worker_lease_is_rejected_not_automatically_replayed(self):
+        from datetime import datetime, timezone
+        start = datetime(2026, 11, 7, 0, 0, tzinfo=timezone.utc)
+        row = self.store.create(self.request)
+        self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            lease_seconds=5, now=start,
+        )
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "lease_not_expired"):
+            self.store.reject_expired_lease(
+                row.execution_id, now=datetime(2026, 11, 7, 0, 0, 4, tzinfo=timezone.utc),
+            )
+        recovered = self.store.reject_expired_lease(
+            row.execution_id, now=datetime(2026, 11, 7, 0, 0, 6, tzinfo=timezone.utc),
+        )
+        self.assertEqual(recovered.state, "rejected")
+        self.assertEqual(recovered.version, 2)
+        self.assertEqual(self.store.list_events(row.execution_id)[-1]["reason_code"], "worker_lease_expired")
+
+    def test_expired_lease_cannot_be_renewed(self):
+        from datetime import datetime, timezone
+        start = datetime(2026, 11, 7, 0, 0, tzinfo=timezone.utc)
+        row = self.store.create(self.request)
+        self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            lease_seconds=5, now=start,
+        )
+        with self.assertRaisesRegex(UpgradeExecutionConflict, "lease_expired"):
+            self.store.renew_lease(
+                row.execution_id, owner_id="worker-a", lease_token="token-a",
+                now=datetime(2026, 11, 7, 0, 0, 6, tzinfo=timezone.utc),
+            )
+
 if __name__ == "__main__":
     unittest.main()
