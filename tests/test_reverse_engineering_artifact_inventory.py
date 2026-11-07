@@ -24,6 +24,17 @@ class ArtifactInventoryTests(unittest.TestCase):
                 __import__("hashlib").sha256(b"export const answer = 42;").hexdigest(),
             )
 
+    def test_inventory_fingerprint_changes_when_file_content_changes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "app.py"
+            target.write_text("value = 1", encoding="utf-8")
+            first = inventory_artifact_root(root)["inventory_sha256"]
+            target.write_text("value = 2", encoding="utf-8")
+            second = inventory_artifact_root(root)["inventory_sha256"]
+            self.assertNotEqual(first, second)
+            self.assertEqual(len(first), 64)
+
     def test_default_exclusions_are_not_traversed(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
