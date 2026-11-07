@@ -23,6 +23,15 @@ class DockerReviewerExecutorContractTests(unittest.TestCase):
                 command=ReviewerContainerCommand(argv=("/opt/yuki/reviewer",)),
             )
 
+    def test_container_uses_stdin_and_hardened_runtime_flags(self):
+        executor = self.executor()
+        argv = executor._argv("/tmp/reviewer.cid")
+        self.assertIn("-i", argv)
+        self.assertIn("--network=none", argv)
+        self.assertIn("--read-only", argv)
+        self.assertIn("--cap-drop=ALL", argv)
+        self.assertIn("--pull=never", argv)
+
     def test_request_contains_only_task_and_assigned_evidence(self):
         executor = self.executor()
         raw = executor._request(self.task, {"evidence://tests": b"test output"})
