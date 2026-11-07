@@ -150,6 +150,11 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
         return Capability("unavailable", f"Ollama endpoint probe failed ({type(exc).__name__}).")
 
 
+
+def recommended_worker_concurrency() -> int:
+    """Return a conservative local worker count from CPU and physical RAM."""
+    return _worker_recommendation(os.cpu_count() or 1, _total_memory_bytes())[0]
+
 def build_readiness_report(
     *,
     environ: dict[str, str] | None = None,
