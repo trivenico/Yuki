@@ -20,6 +20,9 @@ from automation.task_runtime import TaskRuntime
 from automation.worker_supervisor import WorkerSupervisor
 from automation.workflow_store import WorkflowRunStore
 from core.reasoning.execution_budget_store import ExecutionBudgetStore
+from automation.verification_evidence_store import VerificationEvidenceStore
+from automation.verification_workflow import VerificationWorkflow
+from automation.engineering_acceptance import EngineeringAcceptanceStore
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -36,6 +39,9 @@ class LocalWorkerRuntime:
     operator_actor_id: str
     approval_session_id: str
     budget_store: ExecutionBudgetStore
+    verification_evidence_store: VerificationEvidenceStore
+    verification_workflow: VerificationWorkflow
+    acceptance_store: EngineeringAcceptanceStore
 
 
 def build_local_worker_runtime(
@@ -81,6 +87,21 @@ def build_local_worker_runtime(
         authorize=authorize,
     )
     budget_store = ExecutionBudgetStore(database_path)
+    verification_evidence_store = VerificationEvidenceStore(root / "yuki_verification.sqlite3")
+    verification_workflow = VerificationWorkflow(
+        root / "yuki_artifacts.sqlite3",
+        verification_evidence_store,
+        reviewer_authorize=lambda actor_id, action, _artifact: (
+            actor_id == LOCAL_OPERATOR_ACTOR and action == "verification:submit"
+        ),
+    )
+    acceptance_store = EngineeringAcceptanceStore(
+        root / "yuki_acceptance.sqlite3",
+        verification_workflow,
+        authorize=lambda actor_id, action, _plan: (
+            actor_id == LOCAL_OPERATOR_ACTOR and action.startswith("acceptance:")
+        ),
+    )
 
     def budget_policy(kind: str, plan_id: str, subtask_id: str | None):
         if kind == "plan" and subtask_id is None:
@@ -118,6 +139,7 @@ def build_local_worker_runtime(
         budget_store=budget_store,
         budget_policy=budget_policy,
         budget_policy_version="local-v1",
+        acceptance_store=acceptance_store,
     )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
@@ -149,4 +171,7 @@ def build_local_worker_runtime(
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
         approval_session_id=token_urlsafe(32),
         budget_store=budget_store,
+        verification_evidence_store=verification_evidence_store,
+        verification_workflow=verification_workflow,
+        acceptance_store=acceptance_store,
     )
