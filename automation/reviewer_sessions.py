@@ -99,8 +99,10 @@ class ReviewerSessionAuthority:
             raise ValueError("invalid_reviewer_identity")
         if not isinstance(artifact_sha256, str) or not _SHA.fullmatch(artifact_sha256):
             raise ValueError("invalid_artifact_sha256")
+        if not isinstance(actions, (tuple, list, set, frozenset)):
+            raise ValueError("invalid_reviewer_session_actions")
         granted = tuple(sorted(set(actions)))
-        if not granted or any(action not in _ACTIONS for action in granted):
+        if not granted or any(not isinstance(action, str) or action not in _ACTIONS for action in granted):
             raise ValueError("invalid_reviewer_session_actions")
         for action in granted:
             try:
@@ -127,7 +129,7 @@ class ReviewerSessionAuthority:
 
     def validate(self, token: str, *, reviewer_agent_id: str,
                  artifact_sha256: str, action: str, operation_id: str) -> bool:
-        if action not in _ACTIONS or not isinstance(operation_id, str) or not _ID.fullmatch(operation_id):
+        if not isinstance(action, str) or action not in _ACTIONS or not isinstance(operation_id, str) or not _ID.fullmatch(operation_id):
             return False
         try:
             payload = self._decode(token)
@@ -142,10 +144,12 @@ class ReviewerSessionAuthority:
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
-                    "SELECT revoked,expires_at FROM reviewer_sessions WHERE session_id=?",
+                    "SELECT reviewer_agent_id,artifact_sha256,revoked,expires_at FROM reviewer_sessions WHERE session_id=?",
                     (payload.get("session_id"),)
                 ).fetchone()
-                if row is None or row[0] != 0 or row[1] != payload["expires_at"]:
+                if (row is None or row[0] != reviewer_agent_id
+                        or row[1] != artifact_sha256 or row[2] != 0
+                        or row[3] != payload["expires_at"]):
                     return False
                 db.execute(
                     "INSERT INTO reviewer_session_uses VALUES (?,?,?,?)",
