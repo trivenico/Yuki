@@ -6,7 +6,7 @@ from providers.dataset_artifact_manifest import DatasetManifestError
 from providers.training_experiment import (
     TrainingExperimentError,
     create_experiment_spec,
-    verify_experiment_spec,
+    verify_experiment_spec,\n    build_training_preflight,
 )
 
 
@@ -141,6 +141,59 @@ class TrainingExperimentTests(unittest.TestCase):
             make_spec(seed=True)
         with self.assertRaisesRegex(TrainingExperimentError, "invalid_hyperparameters"):
             make_spec(hyperparameters={"epochs": 1, "shell_command": "run me"})
+
+
+    def test_training_preflight_reports_fit_without_dispatching(self):
+        spec = make_spec()
+        worker = {
+            "worker_id": "gpu-worker-01", "online": True, "paired": True,
+            "enabled": True, "backends": ["transformers"],
+            "ram_available_bytes": 32 * 1024**3,
+            "storage_available_bytes": 100 * 1024**3,
+        }
+        report = build_training_preflight(
+            spec, worker=worker, backend="transformers",
+            estimated_peak_memory_bytes=24 * 1024**3,
+            required_storage_bytes=20 * 1024**3,
+            estimated_cost=2.5, budget_limit=5.0,
+        )
+        self.assertEqual(report["status"], "preflight_passed")
+        self.assertFalse(report["execution_dispatched"])
+        self.assertTrue(report["approval_required"])
+        self.assertTrue(report["estimates_are_advisory"])
+
+    def test_training_preflight_fails_closed_for_resource_and_trust_gaps(self):
+        worker = {
+            "worker_id": "gpu-worker-01", "online": False, "paired": False,
+            "enabled": False, "backends": ["cpu"],
+            "ram_available_bytes": 1024,
+            "storage_available_bytes": 1024,
+        }
+        report = build_training_preflight(
+            make_spec(), worker=worker, backend="transformers",
+            estimated_peak_memory_bytes=2048, required_storage_bytes=2048,
+            estimated_cost=10, budget_limit=1,
+        )
+        self.assertEqual(report["status"], "blocked")
+        self.assertEqual(
+            set(report["blockers"]),
+            {"worker_offline", "worker_not_trusted_or_disabled",
+             "backend_not_supported", "insufficient_memory",
+             "insufficient_storage", "budget_limit_exceeded"},
+        )
+
+    def test_training_preflight_rejects_malformed_worker_metadata(self):
+        worker = {
+            "worker_id": "gpu-worker-01", "online": True, "paired": True,
+            "enabled": True, "backends": ["transformers"],
+            "ram_available_bytes": True, "storage_available_bytes": 1024,
+        }
+        with self.assertRaisesRegex(TrainingExperimentError, "invalid_preflight_available_memory_bytes"):
+            build_training_preflight(
+                make_spec(), worker=worker, backend="transformers",
+                estimated_peak_memory_bytes=512, required_storage_bytes=512,
+                estimated_cost=0, budget_limit=1,
+            )
 
     def test_detects_spec_mutation(self):
         spec = make_spec()
