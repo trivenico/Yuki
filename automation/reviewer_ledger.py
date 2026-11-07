@@ -212,6 +212,66 @@ class ReviewerTaskLedger:
                                 "version": 0, "reused": False})
         return tuple(created)
 
+    def create_tasks_with_leases(self, *, actor_id: str, tasks: Iterable[ReviewTask],
+                                 lease_ttl_seconds: int = 300) -> tuple[dict, ...]:
+        """Persist assigned tasks and their initial leases in one SQLite transaction."""
+        actor = self._actor(actor_id)
+        if self.lease_authority is None:
+            raise ReviewerLedgerError("reviewer_lease_authority_required")
+        if self.lease_authority.database_path != self.database_path:
+            raise ReviewerLedgerError("reviewer_lease_database_must_match_ledger")
+        values = tuple(tasks)
+        if not values or len(values) > 100:
+            raise ValueError("review_tasks_must_contain_1_to_100_items")
+        if type(lease_ttl_seconds) is not int or not 30 <= lease_ttl_seconds <= 3600:
+            raise ValueError("invalid_reviewer_lease_ttl")
+        ids=set()
+        for task in values:
+            if not isinstance(task,ReviewTask):
+                raise TypeError("review_tasks_must_be_ReviewTask_values")
+            task.validate()
+            if task.task_id in ids:
+                raise ValueError("duplicate_review_task_id")
+            ids.add(task.task_id)
+            if not self._allowed(actor,"review:assign",task.artifact_sha256):
+                raise PermissionError("review_task_assignment_not_authorized")
+        created=[]
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for task in values:
+                payload=_json(_task_payload(task))
+                digest=hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                row=db.execute("SELECT task_json,task_digest,state,version,reviewer_agent_id FROM reviewer_tasks WHERE task_id=?",
+                               (task.task_id,)).fetchone()
+                if row is not None:
+                    if row["task_json"] != payload or row["task_digest"] != digest:
+                        raise ReviewerLedgerConflict("review_task_identity_conflict")
+                    lease_row=db.execute("SELECT artifact_sha256,reviewer_agent_id,generation,expires_at,token_nonce FROM reviewer_leases WHERE task_id=?",
+                                          (task.task_id,)).fetchone()
+                    if not lease_row or lease_row[0] != task.artifact_sha256 or lease_row[1] != task.reviewer_agent_id:
+                        raise ReviewerLedgerConflict("existing_review_task_lease_mismatch")
+                    created.append({"task_id":task.task_id,"state":row["state"],
+                                    "version":row["version"],"reused":True,
+                                    "lease_generation":lease_row[2],"lease_expires_at":lease_row[3]})
+                    continue
+                now=_now()
+                db.execute("""INSERT INTO reviewer_tasks
+                    (task_id,artifact_sha256,reviewer_agent_id,task_json,task_digest,state,created_at,updated_at,version)
+                    VALUES(?,?,?,?,?,'assigned',?,?,0)""",
+                    (task.task_id,task.artifact_sha256,task.reviewer_agent_id,payload,digest,now,now))
+                self._event(db,task.task_id,0,"assigned",actor,{"task_digest":digest},now)
+                lease=self.lease_authority.acquire_in_transaction(
+                    db,actor_id=actor,task_id=task.task_id,
+                    artifact_sha256=task.artifact_sha256,
+                    reviewer_agent_id=task.reviewer_agent_id,
+                    ttl_seconds=lease_ttl_seconds,
+                )
+                created.append({"task_id":task.task_id,"state":"assigned","version":0,
+                                "reused":False,"lease_token":lease.token,
+                                "lease_generation":lease.generation,
+                                "lease_expires_at":lease.expires_at})
+        return tuple(created)
+
     def abandon(self, *, actor_id: str, task_id: str, expected_version: int,
                 reason: str) -> dict:
         """Mark a claimed task abandoned after its lease has expired."""
