@@ -1,3 +1,4 @@
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -157,7 +158,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             lease_token=lease.token, lease_generation=lease.generation,
         )
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(ledger_path) as db:
+        with closing(sqlite3.connect(ledger_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?", (expired, task.task_id))
         orchestrator = ReviewerOrchestrator(
             ledger, sessions,
@@ -260,7 +261,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         first=self.ledger.claim_dispatches(
             actor_id="reviewer-a",worker_id="reviewer-a",
         )[0]
-        with sqlite3.connect(Path(self.temp.name) / "ledger.sqlite") as db:
+        with closing(sqlite3.connect(Path(self.temp.name) / "ledger.sqlite")) as db, db:
             db.execute("UPDATE reviewer_dispatch_outbox SET claim_expires_at=? WHERE dispatch_id=?",
                        ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),
                         first["dispatch_id"]))
@@ -283,7 +284,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
                 requirements_by_check={"acceptance_criteria": ("Check criteria.",)},
                 evidence_references_by_check={"acceptance_criteria": ()},
             )
-        with sqlite3.connect(Path(self.temp.name) / "ledger.sqlite") as db:
+        with closing(sqlite3.connect(Path(self.temp.name) / "ledger.sqlite")) as db, db:
             count = db.execute("SELECT COUNT(*) FROM reviewer_tasks").fetchone()[0]
             lease_count = db.execute("SELECT COUNT(*) FROM reviewer_leases").fetchone()[0]
         self.assertEqual(count, 0)
