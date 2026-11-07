@@ -91,13 +91,12 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
 
     def prepare(self, evidence):
         row = self.store.create(self.request)
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="worker_started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="test-runner", lease_token="lease-" + evidence.nonce,
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="runner_finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="test-runner", lease_token="lease-" + evidence.nonce,
+            expected_version=row.version,
         )
         return self.store.record_evidence(
             row.execution_id, expected_version=row.version, evidence=evidence,
@@ -151,13 +150,12 @@ class VerifiedExecutionLifecycleTests(unittest.TestCase):
             self.store.verify_and_finalize_evidence(
                 row.execution_id, expected_version=row.version, verifier=self.verifier, now=self.now,
             )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="test-runner", lease_token="lease-finalize",
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="test-runner", lease_token="lease-finalize",
+            expected_version=row.version,
         )
         row = self.store.record_evidence(
             row.execution_id, expected_version=row.version,
