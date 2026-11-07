@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -21,8 +22,8 @@ def _sha256(path: Path) -> str:
 
 def _backup_database(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(f"file:{source.resolve().as_posix()}?mode=ro", uri=True, timeout=10) as src:
-        with sqlite3.connect(destination, timeout=10) as dst:
+    with closing(sqlite3.connect(f"file:{source.resolve().as_posix()}?mode=ro", uri=True, timeout=10)) as src:
+        with closing(sqlite3.connect(destination, timeout=10)) as dst:
             src.backup(dst)
             result = dst.execute("PRAGMA integrity_check").fetchone()
             if not result or result[0] != "ok":
