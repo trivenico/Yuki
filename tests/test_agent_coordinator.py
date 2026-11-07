@@ -1194,19 +1194,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         waiting = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         waiting_by_id = {item.subtask_id: item for item in waiting.subtasks}
         self.assertEqual(waiting_by_id["first"].status, "succeeded")
-        self.assertEqual(acceptance.get(plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id)["state"], "awaiting_artifact")
+        acceptance_record = acceptance.get(plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id)
+        self.assertEqual(acceptance_record["state"], "awaiting_verification")
+        self.assertIsNotNone(acceptance_record["artifact_id"])
         self.assertIsNone(waiting_by_id["second"].task_id)
 
-        artifact_bytes = b"verified source artifact"
+        artifact_bytes = b"source complete"
         now = datetime.now(timezone.utc).isoformat()
-        artifact = verification.record_artifact(
-            plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id,
-            author_agent_id="research", content=artifact_bytes, created_at=now,
-        )
-        acceptance.attach_artifact(
-            plan_id=plan.plan_id, subtask_id="first", task_id=first.task_id,
-            artifact_id=artifact.artifact_id, actor_id="alice", created_at=now,
-        )
+        artifact = verification.get_status(acceptance_record["artifact_id"])["artifact"]
+        self.assertEqual(artifact["artifact_sha256"], sha256_artifact(artifact_bytes))
         names = ("acceptance_criteria", "tests", "security", "architecture", "claims_and_provenance")
         report = VerificationReport(
             artifact_sha256=sha256_artifact(artifact_bytes), author_agent_id="research",
