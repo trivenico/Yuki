@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.reviewer_contracts import ReviewTask
 from automation.reviewer_ledger import ReviewerTaskLedger
 from automation.reviewer_leases import ReviewerLeaseAuthority
 from automation.reviewer_sessions import ReviewerSessionAuthority
 from automation.reviewer_signing import HMACReviewerSigner
-from tests.test_reviewer_ledger import tasks
 
 
 class ReviewerLedgerRecoveryIntegrationTests(unittest.TestCase):
@@ -30,7 +30,13 @@ class ReviewerLedgerRecoveryIntegrationTests(unittest.TestCase):
                 signer_resolver=lambda *_: signer,
                 session_authority=sessions, lease_authority=leases,
             )
-            task = tasks()[0]
+            task = ReviewTask(
+                task_id="recovery-task", artifact_sha256="a" * 64,
+                author_agent_id="builder", reviewer_agent_id="security-reviewer",
+                check_name="security",
+                requirements=("Inspect authorization checks",),
+                evidence_references=("snapshot://artifact/source",),
+            )
             created = ledger.create_tasks_with_leases(
                 actor_id="supervisor", tasks=(task,), lease_ttl_seconds=30,
             )[0]
