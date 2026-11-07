@@ -816,11 +816,16 @@ class SpecialistAgentCoordinator:
                     ).fetchone()
                 if source is None or source["budget_allocation_state"] != "allocated" or not source["budget_id"]:
                     raise AgentPlanError("delegating subtask budget is not allocated.")
+                source_snapshot = self.budget_store.get_snapshot(source["budget_id"])
+                delegated_limits = {
+                    name: min(plan_limits[name], source_snapshot.limits[name])
+                    for name in source_snapshot.limits
+                }
                 root = self.budget_lifecycle.ensure_child_plan_budget(
                     parent_plan_id=hierarchy["parent_plan_id"],
                     parent_subtask_id=hierarchy["parent_subtask_id"],
                     child_plan_id=plan_id, parent_budget_id=source["budget_id"],
-                    limits=plan_limits, policy_version=self.budget_policy_version,
+                    limits=delegated_limits, policy_version=self.budget_policy_version,
                 )
             with self._connect() as db:
                 db.execute(
