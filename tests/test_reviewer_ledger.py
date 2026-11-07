@@ -10,6 +10,7 @@ from automation.reviewer_signing import HMACReviewerSigner
 from automation.reviewer_ledger import (
     ReviewerLedgerConflict, ReviewerTaskLedger,
 )
+from automation.reviewer_sessions import ReviewerSessionAuthority
 
 
 def tasks():
@@ -30,12 +31,22 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = str(Path(self.temp.name) / "review-ledger.sqlite")
         self.allowed = True
+        self.signer = HMACReviewerSigner(key_id="review-key-v1", key=b"z" * 32)
+        self.sessions = ReviewerSessionAuthority(
+            Path(self.temp.name) / "sessions.sqlite", secret=b"s" * 32,
+            authorize=lambda actor, action, digest: (
+                self.allowed and actor == "security-reviewer" and digest == "a" * 64
+            ),
+        )
+        self.session_token = self.sessions.issue(
+            reviewer_agent_id="security-reviewer", artifact_sha256="a" * 64
+        )
         self.ledger = ReviewerTaskLedger(
             self.path,
             authorize=lambda actor, action, digest: self.allowed and digest == "a" * 64,
             signer_resolver=lambda actor, key_id: self.signer if key_id in (None, "review-key-v1") else None,
+            session_authority=self.sessions,
         )
-        self.signer = HMACReviewerSigner(key_id="review-key-v1", key=b"z" * 32)
         self.task = tasks()[0]
 
     def tearDown(self):
@@ -53,14 +64,17 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
     def test_claim_requires_assigned_reviewer_and_version(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
         with self.assertRaises(PermissionError):
-            self.ledger.claim(actor_id="other-reviewer", task_id=self.task.task_id, expected_version=0)
+            self.ledger.claim(actor_id="other-reviewer", task_id=self.task.task_id, expected_version=0,
+                              session_token=self.session_token, operation_id="wrong-reviewer")
         claimed = self.ledger.claim(
             actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
+            session_token=self.session_token, operation_id="claim-task-1",
         )
         self.assertEqual(claimed["state"], "in_progress")
         with self.assertRaises(ReviewerLedgerConflict):
             self.ledger.claim(
                 actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
+                session_token=self.session_token, operation_id="claim-task-retry",
             )
 
     def test_submit_binds_result_and_is_idempotent(self):
@@ -78,7 +92,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         )
         first = self.ledger.submit(
             actor_id="security-reviewer", task_id=self.task.task_id,
-            expected_version=1, result=result,
+            expected_version=1, result=result, session_token=self.session_token,
+            operation_id="submit-task-1",
         )
         second = self.ledger.submit(
             actor_id="security-reviewer", task_id=self.task.task_id,
@@ -105,7 +120,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         with self.assertRaises(ReviewerLedgerConflict):
             self.ledger.submit(
                 actor_id="security-reviewer", task_id=self.task.task_id,
-                expected_version=1, result=different,
+                expected_version=1, result=different, session_token=self.session_token,
+                operation_id="submit-task-conflict",
             )
 
     def test_read_rejects_invalid_signature(self):
@@ -113,7 +129,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
         result = build_review_result(self.task, status="passed", summary="No findings.")
         self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
-                           expected_version=1, result=result)
+                           expected_version=1, result=result, session_token=self.session_token,
+                           operation_id="submit-task-signature")
         with sqlite3.connect(self.path) as db:
             db.execute("UPDATE reviewer_tasks SET signature_json=? WHERE task_id=?",
                        ('{"key_id":"review-key-v1","algorithm":"hmac-sha256","signature_hex":"' + "0" * 64 + '"}', self.task.task_id))
@@ -150,7 +167,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         with self.assertRaises(ReviewerLedgerConflict):
             self.ledger.submit(
                 actor_id="security-reviewer", task_id=self.task.task_id,
-                expected_version=0, result=result,
+                expected_version=0, result=result, session_token=self.session_token,
+                operation_id="submit-before-claim",
             )
 
 
