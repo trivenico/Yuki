@@ -25,6 +25,7 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
         self.store = VerificationEvidenceStore(
             self.root / "reports.sqlite3",
             execution_evidence_validator=self.executor.validate_evidence_reference,
+            reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64,
         )
 
     def tearDown(self):
@@ -83,6 +84,7 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
         failing_store = VerificationEvidenceStore(
             self.root / "failed-reports.sqlite3",
             execution_evidence_validator=failing.validate_evidence_reference,
+            reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64,
         )
         with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
             failing_store.record(self.report(
