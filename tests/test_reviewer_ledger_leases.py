@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -82,7 +83,7 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
             lease_generation=self.lease.generation,
         )
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
                        (expired, self.task.task_id))
         replacement = self.leases.recover(
@@ -108,7 +109,7 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
 
     def test_reassign_atomically_updates_task_and_lease_after_expiry(self):
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
                        (expired, self.task.task_id))
         result = self.ledger.reassign(
@@ -155,7 +156,7 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
             lease_generation=self.lease.generation,
         )
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
                        (expired,self.task.task_id))
         recovered = self.ledger.recover_in_progress(
@@ -166,7 +167,7 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
         self.assertEqual(recovered["state"],"assigned")
         self.assertEqual(recovered["version"],3)
         self.assertEqual(recovered["lease_generation"],2)
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             row=db.execute("SELECT state,reviewer_agent_id,version FROM reviewer_tasks WHERE task_id=?",
                            (self.task.task_id,)).fetchone()
         self.assertEqual(row,("assigned","reviewer-2",3))
@@ -187,13 +188,13 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
 
     def test_repeated_reassignment_history_is_replayable(self):
         expired=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",(expired,self.task.task_id))
         first=self.ledger.reassign(actor_id="supervisor",task_id=self.task.task_id,
             expected_version=0,replacement_reviewer_agent_id="reviewer-2")
         # Simulate the replacement lease expiring, then reassign again.
         expired=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.db_path) as db:
+        with closing(sqlite3.connect(self.db_path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",(expired,self.task.task_id))
         second=self.ledger.reassign(actor_id="supervisor",task_id=self.task.task_id,
             expected_version=1,replacement_reviewer_agent_id="reviewer-3")
