@@ -218,7 +218,7 @@ class ReviewerTaskLedger:
         actor = self._actor(actor_id)
         if self.lease_authority is None:
             raise ReviewerLedgerError("reviewer_lease_authority_required")
-        if self.lease_authority.database_path != self.database_path:
+        if Path(self.lease_authority.database_path).resolve() != Path(self.database_path).resolve():
             raise ReviewerLedgerError("reviewer_lease_database_must_match_ledger")
         values = tuple(tasks)
         if not values or len(values) > 100:
