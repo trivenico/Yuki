@@ -201,10 +201,11 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         self.assertEqual(len(records),1)
         self.assertEqual(records[0]["state"],"pending")
         claimed=self.ledger.claim_dispatches(
-            actor_id="coordinator",worker_id="reviewer-a",limit=5,
+            actor_id="reviewer-a",worker_id="reviewer-a",limit=5,
         )
         self.assertEqual(len(claimed),1)
         self.assertEqual(claimed[0]["task_id"],task.task_id)
+        self.assertEqual(claimed[0]["task"]["reviewer_agent_id"],"reviewer-a")
         receipt=self.ledger.complete_dispatch(
             actor_id="reviewer-a",dispatch_id=claimed[0]["dispatch_id"],
             claim_token=claimed[0]["claim_token"],
@@ -222,7 +223,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             evidence_references_by_check={"acceptance_criteria":()},
         )
         claimed=self.ledger.claim_dispatches(
-            actor_id="coordinator",worker_id="reviewer-a",max_attempts=1,
+            actor_id="reviewer-a",worker_id="reviewer-a",max_attempts=1,
         )[0]
         result=self.ledger.fail_dispatch(
             actor_id="reviewer-a",dispatch_id=claimed["dispatch_id"],
@@ -243,14 +244,14 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             evidence_references_by_check={"acceptance_criteria":()},
         )
         first=self.ledger.claim_dispatches(
-            actor_id="coordinator",worker_id="reviewer-a",
+            actor_id="reviewer-a",worker_id="reviewer-a",
         )[0]
         with sqlite3.connect(Path(self.temp.name) / "ledger.sqlite") as db:
             db.execute("UPDATE reviewer_dispatch_outbox SET claim_expires_at=? WHERE dispatch_id=?",
                        ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),
                         first["dispatch_id"]))
         second=self.ledger.claim_dispatches(
-            actor_id="coordinator",worker_id="reviewer-b",
+            actor_id="reviewer-a",worker_id="reviewer-a",
         )[0]
         self.assertNotEqual(first["claim_token"],second["claim_token"])
         with self.assertRaises(ReviewerLedgerConflict):
