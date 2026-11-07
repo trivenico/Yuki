@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 import shlex
+from uuid import uuid4
 
 from companion import DEFAULT_PERSONA
 from companion.memory import MemoryStore
@@ -37,6 +38,7 @@ from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
 from automation.local_worker_runtime import build_local_worker_runtime
+from automation.agent_coordinator import SubtaskSpec
 from automation.self_upgrade_pipeline import SelfUpgradeReviewStore
 
 
@@ -310,6 +312,59 @@ def main():
             print(f"Security lab: {config['security_lab_enabled']}; sandbox: {config['sandbox_enabled']}")
             print(f"Firewall: {config['firewall_enabled']} (dry-run={config['firewall_dry_run']}); Gmail: {config['gmail_enabled']}")
             print(f"Skills: {', '.join(agent.registry.names())}")
+        elif command == "/engineering status":
+            print("Yuki engineering runtime:")
+            print(f"- Specialists registered: {len(local_workers.coordinator.agents)}")
+            print(f"- Worker concurrency limit: {local_workers.supervisor.max_workers}")
+            print(f"- Budget store: connected ({workspace / 'yuki_tasks.sqlite3'})")
+            print(f"- Artifact store: connected ({workspace / 'yuki_artifacts.sqlite3'})")
+            print(f"- Acceptance store: connected ({workspace / 'yuki_acceptance.sqlite3'})")
+            print(f"- Verification evidence: connected ({workspace / 'yuki_verification.sqlite3'})")
+            print(f"- Verification executor: {'configured' if local_workers.verification_executor is not None else 'disabled (no trusted command allowlist)'}")
+            print("- Git workspace manager: not configured in terminal startup")
+            print("- Autonomous dispatch: disabled; plans require explicit operator action")
+        elif command == "/engineering agents":
+            try:
+                agents = local_workers.coordinator.list_agents(
+                    actor_id=local_workers.operator_actor_id
+                )
+                for item in agents:
+                    print(f"- {item['agent_id']}: {item['name']} | enabled={item['enabled']} | capabilities={', '.join(item['capabilities'])}")
+            except Exception as exc:
+                print(f"Yuki > Could not list specialists ({type(exc).__name__}).")
+        elif command.startswith("/engineering plan "):
+            payload = command[len("/engineering plan "):]
+            if "|" not in payload:
+                print("Yuki > Use /engineering plan ROLE | DESCRIPTION")
+                continue
+            role, description = (part.strip() for part in payload.split("|", 1))
+            if role not in local_workers.coordinator.agents or not description:
+                print("Yuki > Choose a registered specialist role and provide a description.")
+                continue
+            if not _confirm(
+                "engineering:create_plan",
+                f"Persist one approval-gated {role} specialist task? Description length: {len(description)} characters.",
+                "medium",
+            ):
+                print("Yuki > Engineering plan creation cancelled.")
+                continue
+            try:
+                plan = local_workers.coordinator.submit(
+                    actor_id=local_workers.operator_actor_id,
+                    idempotency_key="terminal-" + uuid4().hex,
+                    subtasks=(SubtaskSpec(
+                        subtask_id="task-1",
+                        description=description,
+                        required_capabilities=(role,),
+                        requires_approval=True,
+                    ),),
+                )
+                print(f"Yuki > Plan persisted: {plan.plan_id}")
+                for item in plan.subtasks:
+                    print(f"- {item.subtask_id}: specialist={item.agent_id}, status={item.status}, approval_required={item.requires_approval}")
+                print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
+            except Exception as exc:
+                print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
         elif command == "/skills":
             for skill in agent.available_skills():
                 print(f"- {skill['name']} [{skill['risk']}]: {skill['description']}")
