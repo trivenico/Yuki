@@ -789,16 +789,39 @@ class SpecialistAgentCoordinator:
                 raise KeyError("agent plan not found.")
             if plan["owner_id"] != actor_id.strip():
                 raise PermissionError("agent plan ownership mismatch.")
+            hierarchy = db.execute(
+                """SELECT parent_plan_id, parent_subtask_id FROM agent_plan_hierarchy
+                   WHERE child_plan_id=?""", (plan_id,),
+            ).fetchone()
             rows = [dict(row) for row in db.execute(
                 "SELECT subtask_id, agent_id, budget_id FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
                 (plan_id,),
             ).fetchall()]
         try:
             plan_limits = self.budget_policy("plan", plan_id, None)
-            root = self.budget_lifecycle.ensure_plan_budget(
-                plan_id=plan_id, limits=plan_limits,
-                policy_version=self.budget_policy_version,
-            )
+            if hierarchy is None:
+                root = self.budget_lifecycle.ensure_plan_budget(
+                    plan_id=plan_id, limits=plan_limits,
+                    policy_version=self.budget_policy_version,
+                )
+            else:
+                # Ensure the delegating plan and its task budgets exist before
+                # allocating the delegated team's envelope from its source task.
+                self.ensure_plan_budgets(actor_id=actor_id, plan_id=hierarchy["parent_plan_id"])
+                with self._connect() as db:
+                    source = db.execute(
+                        """SELECT budget_id, budget_allocation_state FROM agent_plan_subtasks
+                           WHERE plan_id=? AND subtask_id=?""",
+                        (hierarchy["parent_plan_id"], hierarchy["parent_subtask_id"]),
+                    ).fetchone()
+                if source is None or source["budget_allocation_state"] != "allocated" or not source["budget_id"]:
+                    raise AgentPlanError("delegating subtask budget is not allocated.")
+                root = self.budget_lifecycle.ensure_child_plan_budget(
+                    parent_plan_id=hierarchy["parent_plan_id"],
+                    parent_subtask_id=hierarchy["parent_subtask_id"],
+                    child_plan_id=plan_id, parent_budget_id=source["budget_id"],
+                    limits=plan_limits, policy_version=self.budget_policy_version,
+                )
             with self._connect() as db:
                 db.execute(
                     "UPDATE agent_plans SET budget_id=?, budget_allocation_state='allocated' WHERE plan_id=?",
