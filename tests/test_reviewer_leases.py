@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -47,7 +48,7 @@ class ReviewerLeaseAuthorityTests(unittest.TestCase):
             reviewer_agent_id="reviewer-1",
         )
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
                        (expired, "task-2"))
         recovered = self.authority.recover(
