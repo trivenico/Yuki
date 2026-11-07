@@ -5,7 +5,7 @@ claims isolation, or treats an uploaded evidence envelope as verified.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -70,7 +70,7 @@ class UpgradeExecutionStore:
             raise ValueError("database_path_required")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("""
@@ -457,6 +457,47 @@ class UpgradeExecutionStore:
                 VALUES (?, ?, 'queued', 'running', ?, 'worker_lease_claimed', ?)
             """, (execution_id, version, owner_id, now_text))
             return self._record(db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone())
+
+
+    def complete_execution(
+        self, execution_id: str, *, owner_id: str, lease_token: str,
+        expected_version: int, actor_id: str | None = None,
+        now: datetime | None = None,
+    ) -> UpgradeExecutionRecord:
+        """Complete a running execution only for its live lease owner."""
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            raise ValueError("now_must_be_timezone_aware")
+        current = instant.astimezone(timezone.utc)
+        now_text = current.isoformat()
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            lease = db.execute("SELECT * FROM upgrade_execution_leases WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["version"] != expected_version:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            if row["state"] != "running":
+                raise UpgradeExecutionTransitionError("execution_not_running")
+            if lease is None or lease["owner_id"] != owner_id or lease["lease_token"] != lease_token:
+                raise UpgradeExecutionConflict("lease_owner_or_token_mismatch")
+            if datetime.fromisoformat(lease["expires_at"]) <= current:
+                raise UpgradeExecutionConflict("lease_expired")
+            next_version = expected_version + 1
+            changed = db.execute("""
+                UPDATE upgrade_executions SET state='evidence_pending', version=?, updated_at=?
+                WHERE execution_id=? AND state='running' AND version=?
+            """, (next_version, now_text, execution_id, expected_version)).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("stale_execution_version")
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, 'running', 'evidence_pending', ?, 'worker_completed', ?)
+            """, (execution_id, next_version, actor_id or owner_id, now_text))
+            db.execute("DELETE FROM upgrade_execution_leases WHERE execution_id=?", (execution_id,))
+            updated = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            return self._record(updated)
 
     def renew_lease(
         self, execution_id: str, *, owner_id: str, lease_token: str,
