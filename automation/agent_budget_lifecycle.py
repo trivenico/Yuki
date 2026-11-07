@@ -82,6 +82,43 @@ class AgentBudgetLifecycle:
             parent_budget_id=None, policy_version=policy_version, limits=limits,
         )
 
+    def ensure_child_plan_budget(
+        self, *, parent_plan_id: str, parent_subtask_id: str,
+        child_plan_id: str, parent_budget_id: str,
+        limits: Mapping[str, int], policy_version: str,
+    ) -> ExecutionBudgetSnapshot:
+        """Allocate a delegated plan as a child of its delegating subtask budget.
+
+        The identity includes both sides of the delegation edge. Reusing a child
+        plan under a different parent therefore cannot silently re-parent its
+        immutable budget. Retries against the same edge are idempotent.
+        """
+        budget_id = self._identity(
+            "delegated-plan-budget", parent_plan_id, parent_subtask_id, child_plan_id,
+        )
+        task_id = self._task_identity(
+            "delegated-plan", parent_plan_id, parent_subtask_id, child_plan_id,
+        )
+        allocation_key = self._identity(
+            "delegated-plan-allocation", parent_plan_id, parent_subtask_id, child_plan_id,
+        )
+        try:
+            snapshot = self.store.allocate_child_snapshot(
+                parent_budget_id=parent_budget_id,
+                child_budget_id=budget_id,
+                task_id=task_id,
+                limits=limits,
+                policy_version=policy_version,
+                allocation_key=allocation_key,
+            )
+        except ExecutionBudgetStoreError as exc:
+            raise AgentBudgetAllocationError("delegated_plan_budget_allocation_failed") from exc
+        return self._verify(
+            snapshot, budget_id=budget_id, task_id=task_id,
+            parent_budget_id=parent_budget_id,
+            policy_version=policy_version, limits=limits,
+        )
+
     def ensure_subtask_budget(self, *, plan_id: str, subtask_id: str,
                               parent_budget_id: str, limits: Mapping[str, int],
                               policy_version: str) -> ExecutionBudgetSnapshot:
