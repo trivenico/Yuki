@@ -80,6 +80,8 @@ class ReviewerExecutionAdapter:
         expected_version: int,
         task: ReviewTask,
         executor: Callable[[ReviewTask, Mapping[str, bytes]], ReviewResult],
+        lease_token: str | None = None,
+        lease_generation: int | None = None,
     ) -> ReviewerExecutionOutcome:
         if not isinstance(provisioned_task, ProvisionedReviewerTask):
             raise TypeError("provisioned_reviewer_task_required")
@@ -99,6 +101,8 @@ class ReviewerExecutionAdapter:
             expected_version=expected_version,
             session_token=provisioned_task.session_token,
             operation_id="claim-" + uuid4().hex,
+            lease_token=lease_token,
+            lease_generation=lease_generation,
         )
         if claimed.get("state") != "in_progress":
             raise ReviewerExecutionError("review_task_claim_failed")
@@ -129,6 +133,8 @@ class ReviewerExecutionAdapter:
             result=result,
             session_token=provisioned_task.session_token,
             operation_id="submit-" + uuid4().hex,
+            lease_token=lease_token,
+            lease_generation=lease_generation,
         )
         if submitted.get("state") != "submitted":
             raise ReviewerExecutionError("review_result_submission_failed")
