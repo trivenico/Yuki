@@ -309,6 +309,24 @@ class DockerVerificationExecutor:
             and not stored["output_limited"]
         )
 
+    def list_for_artifact(self, artifact_sha256: str, *, limit: int = 20) -> tuple[dict, ...]:
+        """Return bounded execution receipt metadata for one exact artifact."""
+        if not isinstance(artifact_sha256, str) or not _SHA.fullmatch(artifact_sha256):
+            raise ValueError("artifact_sha256_required")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit_must_be_between_1_and_100")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT execution_id, command_id, argv_json, image, artifact_sha256,
+                          started_at, finished_at, exit_code, timed_out, output_limited,
+                          output_sha256, output_bytes, status
+                   FROM sandbox_verification_receipts
+                   WHERE artifact_sha256=?
+                   ORDER BY started_at DESC, execution_id LIMIT ?""",
+                (artifact_sha256, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
     def get(self, execution_id: str) -> dict | None:
         if not isinstance(execution_id, str) or not re.fullmatch(r"[a-f0-9]{32}", execution_id):
             raise ValueError("invalid_execution_id")
