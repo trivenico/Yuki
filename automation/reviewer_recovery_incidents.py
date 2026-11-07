@@ -1,6 +1,8 @@
 """Durable, authorization-gated recovery incident and attempt journal."""
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -52,7 +54,7 @@ class ReviewerRecoveryIncidentStore:
         self.default_max_attempts = default_max_attempts
         self.default_cooldown_seconds = default_cooldown_seconds
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS reviewer_recovery_incidents (
                 task_id TEXT PRIMARY KEY,
@@ -115,7 +117,7 @@ class ReviewerRecoveryIncidentStore:
         self._allowed(actor, "review:recovery:attempt", task)
         now = self._now()
         stamp = self._stamp(now)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)
@@ -165,7 +167,7 @@ class ReviewerRecoveryIncidentStore:
         self._allowed(actor, "review:recovery:record", task)
         now = self._now()
         stamp = self._stamp(now)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)).fetchone()
             if row is None:
@@ -189,7 +191,7 @@ class ReviewerRecoveryIncidentStore:
         actor = self._id(actor_id, "invalid_recovery_incident_actor")
         task = self._id(task_id, "invalid_recovery_incident_task")
         self._allowed(actor, "review:recovery:inspect", task)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute("SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)).fetchone()
             if row is None:
                 raise KeyError("recovery incident not found")
@@ -209,7 +211,7 @@ class ReviewerRecoveryIncidentStore:
             raise ValueError("invalid_recovery_incident_limit")
         # The authorization callback receives a reserved collection scope.
         self._allowed(actor, "review:recovery:list", "recovery-incidents")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             if state is None:
                 rows = db.execute(
                     "SELECT * FROM reviewer_recovery_incidents ORDER BY updated_at DESC LIMIT ?",
@@ -239,7 +241,7 @@ class ReviewerRecoveryIncidentStore:
             raise ValueError("invalid_recovery_incident_max_attempts")
         self._allowed(actor, "review:recovery:remediate", task)
         stamp = self._stamp(self._now())
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM reviewer_recovery_incidents WHERE task_id=?", (task,)
@@ -267,7 +269,7 @@ class ReviewerRecoveryIncidentStore:
         actor = self._id(actor_id, "invalid_recovery_incident_actor")
         task = self._id(task_id, "invalid_recovery_incident_task")
         self._allowed(actor, "review:recovery:inspect", task)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute("""SELECT event_type,reason_code,occurred_at,metadata_json
                 FROM reviewer_recovery_incident_events WHERE task_id=? ORDER BY event_id""",
                 (task,)).fetchall()
