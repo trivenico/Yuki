@@ -199,18 +199,23 @@ class ReviewerOrchestrator:
 
         # Mint credentials before persisting assignments. Tokens remain local
         # until create_tasks succeeds; failed batches never return credentials.
-        for task in tasks:
-            try:
+        try:
+            for task in tasks:
                 token = self.sessions.issue(
                     reviewer_agent_id=task.reviewer_agent_id,
                     artifact_sha256=artifact_sha256,
                     actions=("review:execute", "review:submit"),
                 )
-            except Exception as exc:
-                raise ReviewerOrchestrationError(
-                    "reviewer_session_provisioning_failed:" + task.reviewer_agent_id
-                ) from exc
-            tokens.append(token)
+                tokens.append(token)
+        except Exception as exc:
+            for token in tokens:
+                try:
+                    self.sessions.revoke_token(token)
+                except Exception:
+                    pass
+            raise ReviewerOrchestrationError(
+                "reviewer_session_provisioning_failed"
+            ) from exc
 
         try:
             created = self.ledger.create_tasks_with_leases(
