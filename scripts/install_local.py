@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import venv
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_DIR = ROOT / ".venv"
@@ -26,8 +25,8 @@ def main() -> int:
 
     print(f"Creating isolated environment: {ENV_DIR}")
     try:
-        venv.EnvBuilder(with_pip=True, clear=False).create(ENV_DIR)
-    except (OSError, subprocess.SubprocessError) as exc:
+        subprocess.run([args.python, "-m", "venv", str(ENV_DIR)], cwd=ROOT, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
         print(f"Environment creation failed ({type(exc).__name__}).")
         return 1
 
