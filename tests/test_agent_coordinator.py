@@ -482,6 +482,120 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
 
 
+    def test_delegated_budget_hierarchy_survives_coordinator_restart(self):
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+
+        budget_path = str(Path(self.tmp.name) / "hierarchical-budgets.sqlite3")
+        budget_store = ExecutionBudgetStore(budget_path)
+        limits = {
+            "max_model_turns": 20, "max_tool_calls": 20,
+            "max_duration_ms": 120_000, "max_transcript_chars": 20_000,
+        }
+        def policy(kind, _plan_id, _subtask_id):
+            if kind == "plan":
+                return dict(limits)
+            return {
+                "max_model_turns": 10, "max_tool_calls": 10,
+                "max_duration_ms": 60_000, "max_transcript_chars": 10_000,
+            }
+
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            budget_store=budget_store, budget_policy=policy,
+        )
+        parent = coordinator.submit(
+            actor_id="alice", idempotency_key="budget-hierarchy-parent",
+            subtasks=[SubtaskSpec(
+                "engineering-lead", "Coordinate engineering work", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        child = coordinator.submit_child_plan(
+            actor_id="alice", parent_plan_id=parent.plan_id,
+            parent_subtask_id="engineering-lead", idempotency_key="budget-hierarchy-child",
+            subtasks=[SubtaskSpec(
+                "research-task", "Gather technical evidence", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        parent_state = coordinator.ensure_plan_budgets(actor_id="alice", plan_id=parent.plan_id)
+        child_state = coordinator.ensure_plan_budgets(actor_id="alice", plan_id=child.plan_id)
+        with coordinator._connect() as db:
+            parent_subtask = db.execute(
+                "SELECT budget_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (parent.plan_id, "engineering-lead"),
+            ).fetchone()
+            child_plan = db.execute(
+                "SELECT budget_id FROM agent_plans WHERE plan_id=?", (child.plan_id,),
+            ).fetchone()
+        parent_task_budget = budget_store.get_snapshot(parent_subtask["budget_id"])
+        child_plan_budget = budget_store.get_snapshot(child_plan["budget_id"])
+        self.assertEqual(child_plan_budget.parent_budget_id, parent_task_budget.budget_id)
+        self.assertEqual(parent_state["state"], "allocated")
+        self.assertEqual(child_state["state"], "allocated")
+
+        restarted = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            budget_store=ExecutionBudgetStore(budget_path), budget_policy=policy,
+        )
+        restarted.ensure_plan_budgets(actor_id="alice", plan_id=child.plan_id)
+        with restarted._connect() as db:
+            recovered = db.execute(
+                "SELECT budget_id FROM agent_plans WHERE plan_id=?", (child.plan_id,),
+            ).fetchone()["budget_id"]
+        self.assertEqual(recovered, child_plan_budget.budget_id)
+
+    def test_delegated_budget_overspend_fails_closed_before_dispatch(self):
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+
+        budget_store = ExecutionBudgetStore(str(Path(self.tmp.name) / "small-budgets.sqlite3"))
+        def policy(kind, _plan_id, _subtask_id):
+            if kind == "plan":
+                return {
+                    "max_model_turns": 4, "max_tool_calls": 4,
+                    "max_duration_ms": 20_000, "max_transcript_chars": 4_000,
+                }
+            return {
+                "max_model_turns": 4, "max_tool_calls": 4,
+                "max_duration_ms": 20_000, "max_transcript_chars": 4_000,
+            }
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            budget_store=budget_store, budget_policy=policy,
+        )
+        parent = coordinator.submit(
+            actor_id="alice", idempotency_key="budget-overspend-parent",
+            subtasks=[SubtaskSpec(
+                "lead", "Delegate work", ("research",), required_permissions=("web:read",),
+            )],
+        )
+        child = coordinator.submit_child_plan(
+            actor_id="alice", parent_plan_id=parent.plan_id, parent_subtask_id="lead",
+            idempotency_key="budget-overspend-child",
+            subtasks=[SubtaskSpec(
+                "research-task", "Research", ("research",), required_permissions=("web:read",),
+            )],
+        )
+        coordinator.ensure_plan_budgets(actor_id="alice", plan_id=parent.plan_id)
+        with coordinator._connect() as db:
+            source_id = db.execute(
+                "SELECT budget_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id='lead'",
+                (parent.plan_id,),
+            ).fetchone()["budget_id"]
+        # Exhaust the source task's remaining allocation before child-plan
+        # preparation. The child plan must not receive a fresh root envelope.
+        budget_store.reserve(
+            budget_id=source_id, resource="model_turns", amount=1,
+            idempotency_key="consume-parent-envelope",
+        )
+        with self.assertRaises(Exception):
+            coordinator.advance(actor_id="alice", plan_id=child.plan_id)
+        with self.assertRaises(Exception):
+            coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        with self.store._connect() as db:
+            queued = db.execute("SELECT COUNT(*) FROM workflow_runs").fetchone()[0]
+        self.assertEqual(queued, 0)
+
     def test_parent_dispatch_waits_for_child_team_success(self):
         parent = self.coordinator.submit(
             actor_id="alice", idempotency_key="hierarchy-gated-parent",
