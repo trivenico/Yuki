@@ -1,8 +1,9 @@
-"""Supervise reviewer worker polling, concurrency, heartbeats, and shutdown.
+"""Supervise reviewer polling with optional durable cross-process slots.
 
-This service is intentionally process-local. Deploy exactly one supervisor per
-reviewer identity unless a shared concurrency authority is added. SQLite
-outbox claims remain the cross-process duplicate-dispatch guard.
+The executor pool is process-local; when a ReviewerWorkerRegistry is supplied,
+each execution must also reserve a shared per-reviewer slot. SQLite outbox
+claims remain the duplicate-dispatch guard, while task leases remain the
+authority for task-level fencing and recovery.
 """
 from __future__ import annotations
 
