@@ -95,10 +95,19 @@ def restore_backup(backup: Path, destination: Path) -> dict:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
             _verify_database(target)
-        # Re-check destination immediately before publication; never replace existing data.
-        if destination.exists():
-            raise FileExistsError("Restore destination appeared during restore; refusing to overwrite it.")
-        os.rename(staging, destination)
+        # Reserve the destination atomically. Unlike POSIX os.rename(), mkdir
+        # cannot replace an existing empty directory created by another process.
+        destination.mkdir()
+        try:
+            for child in staging.iterdir():
+                target = destination / child.name
+                if target.exists():
+                    raise FileExistsError("Restore destination changed during publication.")
+                os.rename(child, target)
+            staging.rmdir()
+        except Exception:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
