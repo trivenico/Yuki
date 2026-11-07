@@ -1,6 +1,6 @@
-from contextlib import closing
 """Integration tests for atomic ledger recovery and dispatch requeue."""
 from __future__ import annotations
+from contextlib import closing
 
 import sqlite3
 import tempfile
