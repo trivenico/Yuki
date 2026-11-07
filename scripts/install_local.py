@@ -18,7 +18,7 @@ def _selected_python_supported(executable: str) -> bool:
             cwd=ROOT, check=True, capture_output=True, text=True,
         )
         major, minor = (int(part) for part in result.stdout.strip().split(".", 1))
-        return (major, minor) >= (3, 10)
+        return (major, minor) >= (3, 11)
     except (OSError, subprocess.CalledProcessError, ValueError):
         return False
 
@@ -39,7 +39,7 @@ def main() -> int:
         env_dir = env_dir.resolve()
 
     if not _selected_python_supported(args.python):
-        print("The selected Python executable must be available and report Python 3.10 or newer.")
+        print("The selected Python executable must be available and report Python 3.11 or newer.")
         return 1
 
     print(f"Creating isolated environment: {env_dir}")
