@@ -29,11 +29,20 @@ class VerificationConflict(VerificationStoreError):
 class VerificationEvidenceStore:
     """SQLite-backed append-only report store with idempotent report creation."""
 
-    def __init__(self, database_path: str | Path, *, execution_evidence_validator: Callable[[str, str, str], bool] | None = None):
+    def __init__(
+        self,
+        database_path: str | Path,
+        *,
+        execution_evidence_validator: Callable[[str, str, str], bool] | None = None,
+        reviewer_authorizer: Callable[[str, str, str], bool] | None = None,
+    ):
         self.database_path = str(database_path)
         if execution_evidence_validator is not None and not callable(execution_evidence_validator):
             raise TypeError("execution_evidence_validator must be callable")
         self.execution_evidence_validator = execution_evidence_validator
+        if reviewer_authorizer is not None and not callable(reviewer_authorizer):
+            raise TypeError("reviewer_authorizer must be callable")
+        self.reviewer_authorizer = reviewer_authorizer
         if not self.database_path.strip():
             raise ValueError("database_path is required")
         self._initialize()
@@ -78,6 +87,17 @@ class VerificationEvidenceStore:
 
     def record(self, report: VerificationReport, *, required_checks: Iterable[str] | None = None) -> dict:
         """Persist a validated report; exact retries return the original record."""
+        if self.reviewer_authorizer is None:
+            raise VerificationStoreError("trusted_reviewer_authorizer_not_configured")
+        if self.reviewer_authorizer(
+            report.author_agent_id, "verification:submit", report.artifact_sha256,
+        ) is not True:
+            raise PermissionError("verification report author is not authorized")
+        for check in report.checks:
+            if self.reviewer_authorizer(
+                check.reviewer_agent_id, "verification:review", report.artifact_sha256,
+            ) is not True:
+                raise PermissionError("verification reviewer is not authorized")
         decision = evaluate_verification(
             report,
             **({"required_checks": required_checks} if required_checks is not None else {}),
