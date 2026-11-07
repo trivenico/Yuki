@@ -27,6 +27,14 @@ class ExecutionBudgetStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_url_safe_generated_ids_are_accepted(self):
+        snapshot = self.store.create_snapshot(
+            budget_id="_budget-token", task_id="-task-token", limits=self.limits,
+            policy_version="1",
+        )
+        self.assertEqual(snapshot.budget_id, "_budget-token")
+        self.assertEqual(snapshot.task_id, "-task-token")
+
     def test_snapshot_is_durable_and_digest_verified(self):
         loaded = ExecutionBudgetStore(self.path).get_snapshot("budget-1")
         self.assertEqual(loaded.limits, self.limits)
