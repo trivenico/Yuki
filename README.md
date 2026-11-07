@@ -43,18 +43,33 @@ your shell; do not put API keys in `config.yaml` or commit them. The configured
 default provider is OpenAI, so a missing key must be resolved before a real
 conversation can work.
 
-For the browser interface, install the optional server dependency and configure
-a bootstrap administrator before first launch:
+For the browser interface, use the guided local installer and launcher.
+They create an isolated `.venv`, install the pinned dependency ranges from
+`requirements.txt`, ask for the provider, and bootstrap the first administrator
+without writing credentials to `config.yaml`.
 
-```bash
-python -m pip install -r requirements-web.txt
-# Set YUKI_BOOTSTRAP_ADMIN_USERNAME and YUKI_BOOTSTRAP_ADMIN_PASSWORD
-python scripts/run_web.py
+**Windows PowerShell:**
+
+```powershell
+.\scripts\start_yuki.ps1
 ```
 
-The browser profile is loopback-only by default and intentionally exposes no
-tools. Open `http://127.0.0.1:8000`. Do not expose it publicly; see
+**macOS / Linux:**
+
+```bash
+chmod +x scripts/start_yuki.sh
+./scripts/start_yuki.sh
+```
+
+The launcher defaults to Ollama. Install and start Ollama separately, and
+download a model appropriate for your hardware before selecting it. Choose
+OpenAI if you have an API key; its entry is hidden and is not saved in the
+repository. The launcher starts the browser profile on loopback only, with
+tools disabled. Open `http://127.0.0.1:8000`. Do not expose it publicly; see
 [production-readiness gates](docs/PRODUCTION_READINESS_CURRENT.md).
+
+For manual setup, run `python scripts/install_local.py`, then
+`python scripts/launch_local.py` using the environment's Python interpreter.
 
 ## Evidence-based local model selection
 
