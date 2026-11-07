@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -98,6 +98,15 @@ class UpgradeExecutionStore:
                     reason_code TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     UNIQUE(execution_id, sequence),
+                    FOREIGN KEY(execution_id) REFERENCES upgrade_executions(execution_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS upgrade_execution_leases (
+                    execution_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    lease_token TEXT NOT NULL UNIQUE,
+                    expires_at TEXT NOT NULL,
                     FOREIGN KEY(execution_id) REFERENCES upgrade_executions(execution_id)
                 )
             """)
@@ -406,6 +415,102 @@ class UpgradeExecutionStore:
             """, (execution_id, expected_version + 1, actor_id, reason_code, now_recorded))
             updated = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
             return self._record(updated)
+
+
+    def claim_queued(
+        self, execution_id: str, *, owner_id: str, lease_token: str,
+        lease_seconds: int = 60, now: datetime | None = None,
+    ) -> UpgradeExecutionRecord:
+        """Atomically claim one queued execution and create its worker lease."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id_invalid")
+        if not isinstance(lease_token, str) or not lease_token.strip() or len(lease_token) > 256:
+            raise ValueError("lease_token_invalid")
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds_out_of_range")
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            raise ValueError("now_must_be_timezone_aware")
+        expires = instant.astimezone(timezone.utc) + timedelta(seconds=lease_seconds)
+        now_text = instant.astimezone(timezone.utc).isoformat()
+        expires_text = expires.isoformat()
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            if row["state"] != "queued":
+                raise UpgradeExecutionConflict("execution_not_queued")
+            version = row["version"] + 1
+            changed = db.execute("""
+                UPDATE upgrade_executions SET state='running', version=?, updated_at=?
+                WHERE execution_id=? AND state='queued' AND version=?
+            """, (version, now_text, execution_id, row["version"])).rowcount
+            if changed != 1:
+                raise UpgradeExecutionConflict("execution_claim_race")
+            db.execute("""
+                INSERT INTO upgrade_execution_leases(execution_id, owner_id, lease_token, expires_at)
+                VALUES (?, ?, ?, ?)
+            """, (execution_id, owner_id, lease_token, expires_text))
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, 'queued', 'running', ?, 'worker_lease_claimed', ?)
+            """, (execution_id, version, owner_id, now_text))
+            return self._record(db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone())
+
+    def renew_lease(
+        self, execution_id: str, *, owner_id: str, lease_token: str,
+        lease_seconds: int = 60, now: datetime | None = None,
+    ) -> str:
+        """Renew only the current owner's still-live lease; return its expiry."""
+        if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 5 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds_out_of_range")
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            raise ValueError("now_must_be_timezone_aware")
+        current = instant.astimezone(timezone.utc)
+        expiry = (current + __import__("datetime").timedelta(seconds=lease_seconds)).isoformat()
+        with self._transaction() as db:
+            lease = db.execute("SELECT * FROM upgrade_execution_leases WHERE execution_id=?", (execution_id,)).fetchone()
+            if lease is None or lease["owner_id"] != owner_id or lease["lease_token"] != lease_token:
+                raise UpgradeExecutionConflict("lease_owner_or_token_mismatch")
+            if datetime.fromisoformat(lease["expires_at"]) <= current:
+                raise UpgradeExecutionConflict("lease_expired")
+            row = db.execute("SELECT state FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None or row["state"] != "running":
+                raise UpgradeExecutionConflict("execution_not_running")
+            db.execute("UPDATE upgrade_execution_leases SET expires_at=? WHERE execution_id=?", (expiry, execution_id))
+        return expiry
+
+    def reject_expired_lease(
+        self, execution_id: str, *, now: datetime | None = None,
+        actor_id: str = "lease-reaper",
+    ) -> UpgradeExecutionRecord:
+        """Fail closed on an expired running worker; never silently re-run it."""
+        instant = now or datetime.now(timezone.utc)
+        if instant.tzinfo is None:
+            raise ValueError("now_must_be_timezone_aware")
+        now_text = instant.astimezone(timezone.utc).isoformat()
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None:
+                raise KeyError("execution_not_found")
+            lease = db.execute("SELECT * FROM upgrade_execution_leases WHERE execution_id=?", (execution_id,)).fetchone()
+            if row["state"] != "running" or lease is None:
+                raise UpgradeExecutionTransitionError("live_running_lease_required")
+            if datetime.fromisoformat(lease["expires_at"]) > instant.astimezone(timezone.utc):
+                raise UpgradeExecutionConflict("lease_not_expired")
+            version = row["version"] + 1
+            db.execute("""
+                UPDATE upgrade_executions SET state='rejected', version=?, updated_at=?
+                WHERE execution_id=? AND state='running' AND version=?
+            """, (version, now_text, execution_id, row["version"]))
+            db.execute("""
+                INSERT INTO upgrade_execution_events
+                (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
+                VALUES (?, ?, 'running', 'rejected', ?, 'worker_lease_expired', ?)
+            """, (execution_id, version, actor_id, now_text))
+            return self._record(db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone())
 
     def list_events(self, execution_id: str) -> list[dict[str, object]]:
         with self._connect() as db:
