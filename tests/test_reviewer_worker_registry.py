@@ -76,6 +76,20 @@ class ReviewerWorkerRegistryTests(unittest.TestCase):
             self.registry.register(actor_id="reviewer-b", worker_id="reviewer-b",
                                    instance_id="instance-a")
 
+    def test_global_concurrency_policy_cannot_drift_between_processes(self):
+        first = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
+                                       instance_id="instance-a")
+        second = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
+                                        instance_id="instance-b")
+        self.registry.claim_slot(actor_id="reviewer-a", worker_id="reviewer-a",
+                                 instance_id=first.instance_id, lease_token=first.lease_token,
+                                 max_concurrency=2)
+        with self.assertRaisesRegex(ReviewerWorkerRegistryConflict,
+                                    "reviewer_global_concurrency_configuration_mismatch"):
+            self.registry.claim_slot(actor_id="reviewer-a", worker_id="reviewer-a",
+                                     instance_id=second.instance_id, lease_token=second.lease_token,
+                                     max_concurrency=3)
+
     def test_expired_or_wrong_worker_token_cannot_claim_slot(self):
         reg = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
                                      instance_id="instance-a")
