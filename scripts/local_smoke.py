@@ -57,6 +57,12 @@ def run_smoke(workspace: str | Path) -> dict:
     if provider.calls != 1:
         raise RuntimeError(f"Expected one provider call, observed {provider.calls}.")
 
+    persisted_task = runtime.runtime.get(actor_id=LOCAL_OPERATOR_ACTOR, task_id=task.task_id)
+    execution = persisted_task.definition[0].get("execution", {})
+    budget_id = execution.get("budget_id")
+    if not isinstance(budget_id, str) or not budget_id:
+        raise RuntimeError("Dispatched task is missing its durable budget reference.")
+
     return {
         "result": "passed",
         "mode": "fake-provider-wiring-only",
@@ -64,9 +70,7 @@ def run_smoke(workspace: str | Path) -> dict:
         "task_id": task.task_id,
         "task_state": task.state,
         "provider_calls": provider.calls,
-        "budget_usage": runtime.budget_store.usage(
-            dispatched.subtasks[0].budget_id
-        ),
+        "budget_usage": runtime.budget_store.usage(budget_id),
     }
 
 
