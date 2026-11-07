@@ -93,7 +93,7 @@ class ReviewerWorkerRegistryTests(unittest.TestCase):
     def test_expired_or_wrong_worker_token_cannot_claim_slot(self):
         reg = self.registry.register(actor_id="reviewer-a", worker_id="reviewer-a",
                                      instance_id="instance-a")
-        with self.assertRaisesRegex(ReviewerWorkerRegistryConflict, "worker_lease_invalid"):
+        with self.assertRaisesRegex(ReviewerWorkerRegistryConflict, "worker_not_live_for_slot_claim"):
             self.registry.claim_slot(actor_id="reviewer-a", worker_id="reviewer-a",
                                      instance_id=reg.instance_id, lease_token="z" * 32,
                                      max_concurrency=1)
