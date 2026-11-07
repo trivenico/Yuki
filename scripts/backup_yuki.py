@@ -52,8 +52,9 @@ def create_backup(workspace: Path, output: Path) -> Path:
         for source in databases:
             relative = source.relative_to(workspace)
             target = output / "databases" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
-                prefix=target.name + ".", suffix=".tmp", dir=target.parent if target.parent.exists() else None,
+                prefix=target.name + ".", suffix=".tmp", dir=target.parent,
                 delete=False,
             ) as temporary:
                 temp_path = Path(temporary.name)
