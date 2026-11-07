@@ -55,6 +55,9 @@ def create_backup(workspace: Path, output: Path) -> Path:
     output = output.expanduser().resolve()
     if not workspace.is_dir():
         raise ValueError("Workspace directory does not exist.")
+    incomplete_marker = workspace / ".yuki-restore-incomplete"
+    if incomplete_marker.exists() or incomplete_marker.is_symlink():
+        raise ValueError("Workspace has an incomplete restore; inspect or recover it before backup.")
     if output == workspace or workspace in output.parents:
         raise ValueError("Backup output must be outside the live workspace.")
     databases = _discover_databases(workspace, output)
