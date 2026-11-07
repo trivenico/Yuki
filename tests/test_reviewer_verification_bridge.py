@@ -37,7 +37,13 @@ class ReviewerVerificationBridgeTests(unittest.TestCase):
                 digest == self.digest and action in {"verification:submit", "verification:review"}
             ),
         )
-        self.bridge = ReviewerVerificationBridge(self.ledger, self.store)
+        self.bridge = ReviewerVerificationBridge(
+            self.ledger, self.store,
+            evidence_reference_validator=lambda reference, digest: (
+                digest == self.digest and isinstance(reference, str)
+                and reference.startswith("snapshot://")
+            ),
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -76,6 +82,22 @@ class ReviewerVerificationBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ReviewerVerificationBridgeError, "digest_mismatch"):
             self.bridge.submit_report(
                 actor_id="auditor", artifact_sha256="c" * 64,
+                author_agent_id="builder", task_ids=(self.task.task_id,),
+                required_checks=("security",),
+            )
+
+    def test_evidence_reference_requires_trusted_validation(self):
+        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
+        result = build_review_result(self.task, status="passed", summary="Reviewed.")
+        self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
+                           expected_version=1, result=result)
+        bridge = ReviewerVerificationBridge(
+            self.ledger, self.store,
+            evidence_reference_validator=lambda reference, digest: False,
+        )
+        with self.assertRaisesRegex(ReviewerVerificationBridgeError, "evidence_reference_invalid"):
+            bridge.submit_report(
+                actor_id="auditor", artifact_sha256=self.digest,
                 author_agent_id="builder", task_ids=(self.task.task_id,),
                 required_checks=("security",),
             )
