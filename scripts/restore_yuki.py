@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -43,7 +44,7 @@ def _contains_symlink(root: Path, relative: Path) -> bool:
 
 def _verify_database(path: Path) -> None:
     try:
-        with sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=10) as db:
+        with closing(sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=10)) as db:
             result = db.execute("PRAGMA integrity_check").fetchone()
     except sqlite3.Error as exc:
         raise ValueError(f"Backup contains an unreadable SQLite database: {path.name}") from exc
