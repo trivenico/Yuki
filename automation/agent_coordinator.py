@@ -764,10 +764,44 @@ class SpecialistAgentCoordinator:
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
         by_id = {row["subtask_id"]: row for row in rows}
+        with self._connect() as hierarchy_db:
+            child_links = hierarchy_db.execute(
+                """SELECT parent_subtask_id, child_plan_id
+                   FROM agent_plan_hierarchy WHERE parent_plan_id=?
+                   ORDER BY parent_subtask_id, child_plan_id""",
+                (plan_id,),
+            ).fetchall()
+        children_by_subtask: dict[str, list[str]] = {}
+        for link in child_links:
+            children_by_subtask.setdefault(link["parent_subtask_id"], []).append(link["child_plan_id"])
+
+        # Advance child teams first. Each child remains an independently persisted
+        # plan; parent dispatch is gated on the refreshed durable child outcomes.
+        child_states: dict[str, tuple[str, ...]] = {}
+        for parent_subtask_id, child_plan_ids in children_by_subtask.items():
+            states: list[str] = []
+            for child_plan_id in child_plan_ids:
+                child_plan = self.advance(actor_id=actor_id, plan_id=child_plan_id)
+                states.extend(item.status for item in child_plan.subtasks)
+            child_states[parent_subtask_id] = tuple(states)
 
         for row in rows:
             if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
+            required_child_states = child_states.get(row["subtask_id"], ())
+            if required_child_states:
+                if any(state in {"failed", "cancelled", "blocked"} for state in required_child_states):
+                    self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                    self._append_plan_event(
+                        plan_id, actor_id=actor_id, kind="subtask.child_team_blocked",
+                        payload={"subtask_id": row["subtask_id"], "child_count": len(children_by_subtask[row["subtask_id"]])},
+                    )
+                    row["status"] = "blocked"
+                    continue
+                if any(state != "succeeded" for state in required_child_states):
+                    # Required child work is still pending or executing. Do not
+                    # dispatch the parent lead prematurely.
+                    continue
             dependencies = json.loads(row["dependencies_json"])
             dependency_states = []
             dependency_outputs: list[tuple[str, str, str, str]] = []
