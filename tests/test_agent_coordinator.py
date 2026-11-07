@@ -864,5 +864,31 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.subtasks[0].status, "blocked")
         self.assertIsNone(result.subtasks[0].task_id)
 
+    def test_dispatch_capacity_reservation_is_persisted_and_bound_to_task(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="capacity-reservation",
+            subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",))],
+        )
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        self.assertIsNotNone(task_id)
+        with sqlite3.connect(self.db_path) as db:
+            row = db.execute(
+                """SELECT agent_id, state, task_id FROM agent_dispatch_reservations
+                   WHERE plan_id=? AND subtask_id=?""",
+                (plan.plan_id, "collect"),
+            ).fetchone()
+        self.assertEqual(row, ("research", "enqueued", task_id))
+        # Repeated advancement must not create another reservation or task.
+        again = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(again.subtasks[0].task_id, task_id)
+        with sqlite3.connect(self.db_path) as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM agent_dispatch_reservations WHERE plan_id=?",
+                (plan.plan_id,),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
