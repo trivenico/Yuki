@@ -84,15 +84,32 @@ class LocalVerificationExecutorTests(unittest.TestCase):
         self.assertTrue(receipt.output_limited)
         self.assertLessEqual(receipt.output_bytes, 1024)
 
-    def test_configuration_rejects_shell_and_invalid_limits(self):
+    def test_configuration_rejects_invalid_ids_and_limits(self):
         with self.assertRaises(ValueError):
-            VerificationCommand("bad command", ("sh", "-c", "echo unsafe")).validate()
+            VerificationCommand("bad command", (self.script, "-c", "pass")).validate()
         with self.assertRaises(ValueError):
             VerificationCommand("valid", (self.script,), 0).validate()
         with self.assertRaises(ValueError):
             self.executor({
                 "valid": VerificationCommand("valid", (self.script,))
             }, cap=1)
+
+    def test_only_successful_execution_receipt_can_become_passed_check(self):
+        executor = self.executor({
+            "passing": VerificationCommand("passing", (self.script, "-c", "pass")),
+            "failing": VerificationCommand("failing", (self.script, "-c", "raise SystemExit(2)")),
+        })
+        passing = executor.run("passing")
+        failed = executor.run("failing")
+        passing_check = executor.to_verification_check(
+            passing, check_name="tests", reviewer_agent_id="reviewer-tests",
+        )
+        failed_check = executor.to_verification_check(
+            failed, check_name="tests", reviewer_agent_id="reviewer-tests",
+        )
+        self.assertEqual(passing_check.status, "passed")
+        self.assertEqual(passing_check.evidence_reference, executor.evidence_reference(passing))
+        self.assertEqual(failed_check.status, "failed")
 
 
 if __name__ == "__main__":
