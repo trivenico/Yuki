@@ -18,6 +18,77 @@ from urllib.request import Request, urlopen
 from dataclasses import asdict, dataclass
 from typing import Callable
 
+import ctypes
+import subprocess
+from pathlib import Path
+
+
+def _total_memory_bytes() -> int | None:
+    """Return physical RAM using platform facilities; never shell out for this value."""
+    try:
+        if sys.platform == "win32":
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullTotalPhys)
+            return None
+        if hasattr(os, "sysconf"):
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if isinstance(pages, int) and isinstance(page_size, int) and pages > 0 and page_size > 0:
+                return pages * page_size
+    except (AttributeError, OSError, ValueError):
+        return None
+    return None
+
+
+def _detect_gpu() -> Capability:
+    """Detect NVIDIA via its read-only CLI; report other accelerators as unknown."""
+    executable = shutil.which("nvidia-smi")
+    if executable:
+        try:
+            result = subprocess.run(
+                [executable, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=2, check=False,
+                shell=False,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                first = result.stdout.strip().splitlines()[0]
+                parts = [part.strip() for part in first.split(",", 1)]
+                if len(parts) == 2 and parts[0]:
+                    return Capability("detected", f"NVIDIA GPU detected: {parts[0]} ({parts[1]} MiB VRAM).")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        return Capability("possible", "Apple Silicon detected; unified-memory GPU capability not benchmarked.")
+    return Capability("unknown", "No supported GPU probe succeeded; CPU fallback remains available.")
+
+
+def _worker_recommendation(cpu_count: int, memory_bytes: int | None) -> tuple[int, str]:
+    cores = max(1, int(cpu_count or 1))
+    if memory_bytes is None:
+        return 1, "Memory could not be measured; use one worker conservatively."
+    gib = memory_bytes / (1024 ** 3)
+    if gib < 8:
+        return 1, "Under 8 GiB RAM: one active specialist worker; prefer small quantized models or remote inference."
+    if gib < 16:
+        return min(2, cores), "8–16 GiB RAM: at most two active workers; prefer 3B–7B quantized models."
+    if gib < 32:
+        return min(3, cores), "16–32 GiB RAM: at most three active workers; 7B–14B quantized models may fit depending on GPU/ context."
+    return min(4, cores), "32+ GiB RAM: at most four active workers; larger quantized models may fit, subject to VRAM and context."
+
 
 @dataclass(frozen=True)
 class Capability:
@@ -85,10 +156,27 @@ def build_readiness_report(
     executable_finder: Callable[[str], str | None] = shutil.which,
     module_finder: Callable[[str], object] = importlib.util.find_spec,
     ollama_probe: Callable[[str, float], Capability] = _probe_ollama,
+    workspace_path: str | os.PathLike | None = None,
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
+    memory_bytes = _total_memory_bytes()
+    cpu_count = os.cpu_count() or 1
+    workspace = Path(workspace_path or env.get("YUKI_WORKSPACE", Path.cwd())).expanduser()
+    try:
+        disk_free = shutil.disk_usage(workspace if workspace.exists() else workspace.parent).free
+        disk_capability = Capability("detected", f"{disk_free // (1024 ** 3)} GiB free at workspace volume.")
+    except OSError:
+        disk_free = None
+        disk_capability = Capability("unknown", "Workspace volume free space could not be measured.")
+    workers, worker_guidance = _worker_recommendation(cpu_count, memory_bytes)
     capabilities: dict[str, Capability] = {
+        "cpu": Capability("detected", f"{cpu_count} logical CPU(s); architecture {platform.machine() or 'unknown'}."),
+        "memory": (Capability("detected", f"{memory_bytes / (1024 ** 3):.1f} GiB physical RAM.") if memory_bytes else Capability("unknown", "Physical RAM could not be measured.")),
+        "gpu": _detect_gpu(),
+        "workspace_disk": disk_capability,
+        "recommended_worker_concurrency": Capability("recommended", f"{workers} active worker(s). {worker_guidance}"),
+        "local_model_guidance": Capability("advisory", worker_guidance + " Actual model fit depends on quantization, context length, runtime overhead, and accelerator memory."),
         "python_runtime": Capability("detected", sys.version.split()[0]),
         "ollama_cli": (
             Capability("detected", "Ollama executable is on PATH; server/model not verified.")
