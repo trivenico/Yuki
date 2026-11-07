@@ -64,8 +64,13 @@ class RealProviderAcceptanceTests(unittest.TestCase):
             )
         self.assertEqual(provider.calls, 0)
 
-    def test_empty_and_oversized_responses_fail(self):
-        for response in (" ", "x" * (MODULE.MAX_RESPONSE_CHARS + 1)):
+    def test_empty_oversized_and_nonconforming_responses_fail(self):
+        responses = (
+            " ",
+            "x" * (MODULE.MAX_RESPONSE_CHARS + 1),
+            "The answer is Yuki local provider acceptance passed.",
+        )
+        for response in responses:
             with self.subTest(response_length=len(response)):
                 provider = _Provider(response=response)
                 with self.assertRaises(RuntimeError):
