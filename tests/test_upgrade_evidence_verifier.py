@@ -64,7 +64,7 @@ class Ed25519EvidenceVerifierTests(unittest.TestCase):
             audience="yuki-upgrade-verifier",
             nonce="nonce-1",
             key_id="test-key-1",
-            signature="",
+            signature=base64.b64encode(bytes(64)).decode("ascii"),
         )
         values.update(overrides)
         unsigned = ExecutionEvidence(**values)
