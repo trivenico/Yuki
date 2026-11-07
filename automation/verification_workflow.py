@@ -66,7 +66,7 @@ class VerificationWorkflow:
                     artifact_sha256 TEXT NOT NULL,
                     byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
                     created_at TEXT NOT NULL,
-                    content BLOB NOT NULL,
+                    content BLOB,
                     UNIQUE(plan_id, subtask_id, artifact_id)
                 )
             """)
