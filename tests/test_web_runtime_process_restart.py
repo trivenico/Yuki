@@ -161,11 +161,39 @@ def _child(mode: str, workspace: str):
                 raise AssertionError("Approved memory did not reach the provider through the HTTP route.")
 
             other = auth.create_account("other-restart-owner", "another-secure-password")
+            other_session = auth.authenticate("other-restart-owner", "another-secure-password")
             other_context = runtime.app._companion_system_context(
                 other.user_id, "What is the Yuki restart acceptance marker?"
             )
             if MEMORY_TEXT in other_context:
                 raise AssertionError("Owner memory crossed an account boundary.")
+
+            # Enforce the same isolation guarantee through the authenticated
+            # HTTP route and the provider boundary for a second account.
+            _DeterministicProvider.seen_messages = []
+            status, other_conversation = asyncio.run(_asgi_request(
+                runtime, "POST", "/v1/conversations", {"title": "Isolation acceptance"},
+                token=other_session.token,
+            ))
+            if status != 201:
+                raise AssertionError("Second account conversation creation failed: " + str(status))
+            status, other_reply = asyncio.run(_asgi_request(
+                runtime, "POST",
+                "/v1/conversations/" + other_conversation["conversation_id"] + "/messages",
+                {"content": "What is the Yuki restart acceptance marker?",
+                 "request_id": "restart-isolation-request", "expected_version": 0},
+                token=other_session.token,
+            ))
+            if status != 200 or other_reply.get("status") != "completed":
+                raise AssertionError("Second account conversation request failed: " + str(status))
+            other_system_messages = [
+                message
+                for batch in _DeterministicProvider.seen_messages
+                for message in batch
+                if message.get("role") == "system"
+            ]
+            if any(MEMORY_TEXT in message.get("content", "") for message in other_system_messages):
+                raise AssertionError("Owner memory crossed the HTTP/provider boundary.")
             print("verified")
             return
         raise ValueError("Unknown child mode.")
