@@ -234,6 +234,22 @@ class SpecialistAgentCoordinator:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_parent ON agent_plan_hierarchy(parent_plan_id, parent_subtask_id)")
             db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_dispatch_reservations (
+                    plan_id TEXT NOT NULL,
+                    subtask_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('reserved', 'enqueued', 'released')),
+                    task_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(plan_id, subtask_id),
+                    UNIQUE(task_id),
+                    FOREIGN KEY(plan_id, subtask_id)
+                        REFERENCES agent_plan_subtasks(plan_id, subtask_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_dispatch_reservations_capacity ON agent_dispatch_reservations(agent_id, state)")
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     plan_id TEXT NOT NULL,
@@ -842,26 +858,72 @@ class SpecialistAgentCoordinator:
                     self._append_plan_event(plan_id, actor_id=actor_id, kind='subtask.input_contract_rejected', payload={'subtask_id': row['subtask_id'], 'agent_id': agent.agent_id, 'contract_version': contract.version, 'issue_codes': sorted({issue.code for issue in issues})})
                     row['status'] = 'blocked'
                     continue
+            # Reserve capacity in a short transaction, then enqueue only after
+            # releasing the SQLite write lock. The reservation bridges the crash
+            # window between durable task creation and binding the task to its plan.
+            now = datetime.now(timezone.utc).isoformat()
             with self._agent_lock:
-                # BEGIN IMMEDIATE serializes capacity admission across separate
-                # coordinator instances/processes sharing this SQLite database.
                 with self._connect() as capacity_db:
                     capacity_db.execute("BEGIN IMMEDIATE")
-                    if self._active_agent_task_count(agent.agent_id, db=capacity_db) >= agent.max_concurrency:
+                    reservation = capacity_db.execute(
+                        """SELECT state, task_id FROM agent_dispatch_reservations
+                           WHERE plan_id=? AND subtask_id=?""",
+                        (plan_id, row["subtask_id"]),
+                    ).fetchone()
+                    active = self._active_agent_task_count(agent.agent_id, db=capacity_db)
+                    reserved_other = capacity_db.execute(
+                        """SELECT COUNT(*) AS count FROM agent_dispatch_reservations
+                           WHERE agent_id=? AND state='reserved'
+                             AND NOT (plan_id=? AND subtask_id=?)""",
+                        (agent.agent_id, plan_id, row["subtask_id"]),
+                    ).fetchone()["count"]
+                    if reservation is None and active + reserved_other >= agent.max_concurrency:
                         continue
-                    task = self.runtime.enqueue(
-                        actor_id=actor_id,
-                        idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                        name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                        steps=[{
-                            "name": row["subtask_id"], "action": agent.action,
-                            "argument": argument,
-                            "requires_approval": bool(row["requires_approval"]),
-                        }],
+                    if reservation is None:
+                        capacity_db.execute(
+                            """INSERT INTO agent_dispatch_reservations(
+                                plan_id, subtask_id, agent_id, state, task_id, created_at, updated_at
+                            ) VALUES (?, ?, ?, 'reserved', NULL, ?, ?)""",
+                            (plan_id, row["subtask_id"], agent.agent_id, now, now),
+                        )
+                    elif reservation["state"] == "released":
+                        if active + reserved_other >= agent.max_concurrency:
+                            continue
+                        capacity_db.execute(
+                            """UPDATE agent_dispatch_reservations
+                               SET state='reserved', task_id=NULL, updated_at=?
+                               WHERE plan_id=? AND subtask_id=?""",
+                            (now, plan_id, row["subtask_id"]),
+                        )
+                    elif reservation["state"] == "enqueued" and reservation["task_id"]:
+                        row["task_id"] = reservation["task_id"]
+                        continue
+
+                # Runtime enqueue opens its own SQLite connection. The reservation
+                # is durable, so another coordinator cannot consume this slot.
+                task = self.runtime.enqueue(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                    steps=[{
+                        "name": row["subtask_id"], "action": agent.action,
+                        "argument": argument,
+                        "requires_approval": bool(row["requires_approval"]),
+                    }],
+                )
+                with self._connect() as binding_db:
+                    binding_db.execute("BEGIN IMMEDIATE")
+                    binding_db.execute(
+                        """UPDATE agent_plan_subtasks SET task_id=?, status=?
+                           WHERE plan_id=? AND subtask_id=? AND (task_id IS NULL OR task_id=?)""",
+                        (task.task_id, task.state, plan_id, row["subtask_id"], task.task_id),
                     )
-                    self._set_subtask(
-                        plan_id, row["subtask_id"], task_id=task.task_id,
-                        status=task.state, db=capacity_db,
+                    binding_db.execute(
+                        """UPDATE agent_dispatch_reservations
+                           SET state='enqueued', task_id=?, updated_at=?
+                           WHERE plan_id=? AND subtask_id=? AND agent_id=?""",
+                        (task.task_id, datetime.now(timezone.utc).isoformat(),
+                         plan_id, row["subtask_id"], agent.agent_id),
                     )
             if self.trace_store is not None:
                 try:
