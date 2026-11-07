@@ -261,6 +261,87 @@ class ReviewerTaskLedger:
         return {"task_id": task_id, "state": "submitted", "version": version,
                 "reused": False, "result_digest": digest}
 
+    @staticmethod
+    def _verify_integrity(row, events) -> None:
+        """Verify canonical payload digests and the complete lifecycle sequence."""
+        task_json = row["task_json"]
+        task_digest = hashlib.sha256(task_json.encode("utf-8")).hexdigest()
+        if task_digest != row["task_digest"]:
+            raise ReviewerLedgerError("review_task_integrity_mismatch")
+        try:
+            task_data = json.loads(task_json)
+            task = ReviewTask(
+                task_id=task_data["task_id"],
+                artifact_sha256=task_data["artifact_sha256"],
+                author_agent_id=task_data["author_agent_id"],
+                reviewer_agent_id=task_data["reviewer_agent_id"],
+                check_name=task_data["check_name"],
+                requirements=tuple(task_data["requirements"]),
+                evidence_references=tuple(task_data["evidence_references"]),
+            )
+            task.validate()
+        except Exception as exc:
+            raise ReviewerLedgerError("review_task_payload_invalid") from exc
+        if (task.task_id != row["task_id"] or task.artifact_sha256 != row["artifact_sha256"]
+                or task.reviewer_agent_id != row["reviewer_agent_id"]):
+            raise ReviewerLedgerError("review_task_row_binding_mismatch")
+
+        expected = [("assigned", None)]
+        if row["state"] in {"in_progress", "submitted"}:
+            expected.append(("claimed", task.reviewer_agent_id))
+        if row["state"] == "submitted":
+            expected.append(("submitted", task.reviewer_agent_id))
+        if row["state"] not in _STATES or row["version"] != len(expected) - 1:
+            raise ReviewerLedgerError("review_task_state_version_mismatch")
+        if len(events) != len(expected):
+            raise ReviewerLedgerError("review_task_event_history_incomplete")
+
+        result_digest = None
+        if row["state"] == "submitted":
+            if not row["result_json"] or not row["result_digest"]:
+                raise ReviewerLedgerError("review_result_missing")
+            result_digest = hashlib.sha256(row["result_json"].encode("utf-8")).hexdigest()
+            if result_digest != row["result_digest"]:
+                raise ReviewerLedgerError("review_result_integrity_mismatch")
+            try:
+                result_data = json.loads(row["result_json"])
+                from automation.reviewer_contracts import ReviewFinding
+                result = ReviewResult(
+                    task_id=result_data["task_id"],
+                    artifact_sha256=result_data["artifact_sha256"],
+                    reviewer_agent_id=result_data["reviewer_agent_id"],
+                    check_name=result_data["check_name"],
+                    status=result_data["status"],
+                    summary=result_data["summary"],
+                    findings=tuple(ReviewFinding(**item) for item in result_data["findings"]),
+                )
+                result.validate(task)
+            except Exception as exc:
+                raise ReviewerLedgerError("review_result_payload_invalid") from exc
+        elif row["result_json"] is not None or row["result_digest"] is not None:
+            raise ReviewerLedgerError("unexpected_review_result")
+
+        for index, (event, (event_type, expected_actor)) in enumerate(zip(events, expected)):
+            if event["sequence"] != index or event["event_type"] != event_type:
+                raise ReviewerLedgerError("review_event_sequence_mismatch")
+            if not isinstance(event["actor_id"], str) or not _ID.fullmatch(event["actor_id"]):
+                raise ReviewerLedgerError("review_event_actor_invalid")
+            if expected_actor is not None and event["actor_id"] != expected_actor:
+                raise ReviewerLedgerError("review_event_actor_mismatch")
+            try:
+                payload = json.loads(event["payload_json"])
+            except (TypeError, ValueError) as exc:
+                raise ReviewerLedgerError("review_event_payload_invalid") from exc
+            if index == 0 and payload != {"task_digest": task_digest}:
+                raise ReviewerLedgerError("review_assignment_event_mismatch")
+            if index == 1 and payload != {}:
+                raise ReviewerLedgerError("review_claim_event_mismatch")
+            if index == 2 and payload != {
+                "result_digest": result_digest,
+                "result_status": json.loads(row["result_json"])["status"],
+            }:
+                raise ReviewerLedgerError("review_submission_event_mismatch")
+
     def get(self, *, actor_id: str, task_id: str) -> dict:
         actor = self._actor(actor_id)
         with self._connect() as db:
@@ -274,6 +355,7 @@ class ReviewerTaskLedger:
                    FROM reviewer_task_events WHERE task_id=? ORDER BY sequence""",
                 (task_id,),
             ).fetchall()
+            self._verify_integrity(row, events)
         return {
             "task_id": row["task_id"],
             "artifact_sha256": row["artifact_sha256"],
