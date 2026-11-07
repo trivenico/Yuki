@@ -6,6 +6,7 @@ Every mutating/read operation requires a trusted authorization callback.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
