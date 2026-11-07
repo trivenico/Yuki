@@ -33,7 +33,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             actor == "alice" and (
                 action in {
                     "agent:plan", "agent:plan_without_approval", "agent:dispatch",
-                    "agent:read", "agent:cancel", "agent:recover", "agent:register", "agent:manage",
+                    "agent:read", "agent:cancel", "agent:recover", "agent:register", "agent:manage", "agent:delegate",
                 }
                 or action.startswith("agent:permission:")
             )
@@ -452,6 +452,68 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         dispatched = sum(item.task_id is not None for plan in results for item in plan.subtasks)
         self.assertEqual(dispatched, 1)
         self.assertEqual(sum(item.status == "pending" for plan in results for item in plan.subtasks), 1)
+
+    def test_child_team_plan_persists_parent_link_and_inherited_scope(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-parent",
+            subtasks=[SubtaskSpec(
+                "engineering-lead", "Coordinate engineering work", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        child = self.coordinator.submit_child_plan(
+            actor_id="alice", parent_plan_id=parent.plan_id,
+            parent_subtask_id="engineering-lead", idempotency_key="hierarchy-child",
+            subtasks=[SubtaskSpec(
+                "research-task", "Gather technical evidence", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        with sqlite3.connect(self.db_path) as db:
+            row = db.execute(
+                "SELECT parent_plan_id, parent_subtask_id, depth, created_by "
+                "FROM agent_plan_hierarchy WHERE child_plan_id=?", (child.plan_id,),
+            ).fetchone()
+        self.assertEqual(row, (parent.plan_id, "engineering-lead", 1, "alice"))
+        self.assertEqual(child.subtasks[0].required_permissions, ("web:read",))
+        self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
+
+    def test_child_team_cannot_escalate_parent_permissions(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-scope-parent",
+            subtasks=[SubtaskSpec(
+                "limited-lead", "Coordinate read-only work", ("research",),
+                required_permissions=("web:read",),
+            )],
+        )
+        with self.assertRaisesRegex(PermissionError, "cannot broaden"):
+            self.coordinator.submit_child_plan(
+                actor_id="alice", parent_plan_id=parent.plan_id,
+                parent_subtask_id="limited-lead", idempotency_key="hierarchy-scope-child",
+                subtasks=[SubtaskSpec(
+                    "write-task", "Attempt write access", ("write",),
+                    required_permissions=("artifact:write",),
+                )],
+            )
+
+    def test_child_team_rejects_dispatched_parent_and_wrong_owner(self):
+        parent = self.coordinator.submit(
+            actor_id="alice", idempotency_key="hierarchy-dispatched-parent",
+            subtasks=[SubtaskSpec("lead", "Lead", ("research",), requires_approval=False)],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
+        with self.assertRaisesRegex(AgentPlanError, "before parent task dispatch"):
+            self.coordinator.submit_child_plan(
+                actor_id="alice", parent_plan_id=parent.plan_id,
+                parent_subtask_id="lead", idempotency_key="hierarchy-too-late",
+                subtasks=[SubtaskSpec("work", "Work", ("research",))],
+            )
+        with self.assertRaises(PermissionError):
+            self.coordinator.submit_child_plan(
+                actor_id="mallory", parent_plan_id=parent.plan_id,
+                parent_subtask_id="lead", idempotency_key="hierarchy-wrong-owner",
+                subtasks=[SubtaskSpec("work2", "Work", ("research",))],
+            )
 
     def test_specialist_max_concurrency_defers_excess_dispatch_until_capacity_frees(self):
         specialist = SpecialistAgent(
