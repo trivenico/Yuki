@@ -66,8 +66,7 @@ class EngineeringAcceptanceStore:
                     from_state TEXT,
                     to_state TEXT NOT NULL,
                     artifact_id TEXT,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(plan_id, subtask_id, task_id, event_type, revision)
+                    created_at TEXT NOT NULL
                 )
             """)
 
