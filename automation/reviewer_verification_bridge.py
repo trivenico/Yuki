@@ -101,7 +101,7 @@ class ReviewerVerificationBridge:
             checks=tuple(checks),
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-        return self.evidence_store.record(report, required_checks=required)
+        return self.evidence_store.record(report)
 
 
 __all__ = ["ReviewerVerificationBridge", "ReviewerVerificationBridgeError"]
