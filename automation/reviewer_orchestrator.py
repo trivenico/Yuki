@@ -32,6 +32,7 @@ class ProvisionedReviewerTask:
     lease_token: str | None = None
     lease_generation: int | None = None
     review_task: ReviewTask | None = None
+    dispatch_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,7 @@ class ReviewerOrchestrator:
                     lease_token=receipt["lease_token"],
                     lease_generation=receipt["lease_generation"],
                     review_task=task,
+                    dispatch_id=receipt.get("dispatch_id"),
                 ))
         except Exception as exc:
             for token in tokens:
