@@ -57,6 +57,8 @@ class ReviewerVerificationBridge:
             record = self.ledger.get(actor_id=actor_id, task_id=task_id)
             if record["state"] != "submitted" or not isinstance(record.get("result"), dict):
                 raise ReviewerVerificationBridgeError("review_task_not_submitted")
+            if record.get("signature_verified") is not True or not isinstance(record.get("signature"), dict):
+                raise ReviewerVerificationBridgeError("review_result_signature_not_verified")
             task = record["task"]
             result = record["result"]
             if task["artifact_sha256"] != artifact_sha256:
