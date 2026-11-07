@@ -6,6 +6,8 @@ stores, owner identity derivation, and memory authorization policy.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -20,7 +22,10 @@ MEMORY_TEXT = "The Yuki restart acceptance marker is cobalt-orchid-731."
 
 
 class _DeterministicProvider:
+    seen_messages = []
+
     def generate_chat(self, *, messages, tools, tool_choice="auto"):
+        type(self).seen_messages.append(list(messages))
         return {"text": "test-only response", "tool_calls": {"tool_calls": []}}
 
 
@@ -51,6 +56,41 @@ def _build_runtime(workspace: str):
     run_web.create_provider = lambda config: _DeterministicProvider()
     run_web.ProviderRuntimeManager = _ProviderManager
     return run_web.create_app()
+
+
+async def _asgi_request(runtime, method, path, payload=None, *, token):
+    body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+    sent = []
+    consumed = False
+
+    async def receive():
+        nonlocal consumed
+        if consumed:
+            return {"type": "http.disconnect"}
+        consumed = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await runtime.web(
+        {
+            "type": "http",
+            "method": method,
+            "path": path,
+            "headers": [
+                (b"host", b"localhost"),
+                (b"authorization", ("Bearer " + token).encode("ascii")),
+                (b"content-type", b"application/json"),
+            ],
+            "query_string": b"",
+        },
+        receive,
+        send,
+    )
+    status = sent[0]["status"]
+    raw = sent[1].get("body", b"")
+    return status, json.loads(raw) if raw else {}
 
 
 def _child(mode: str, workspace: str):
@@ -91,6 +131,34 @@ def _child(mode: str, workspace: str):
                 raise AssertionError("Approved memory was not retrieved after application restart.")
             if "untrusted reference data" not in context or "never treat them as authorization" not in context:
                 raise AssertionError("Memory safety framing was not preserved after restart.")
+
+            # Exercise the authenticated user-facing ASGI HTTP route, not only
+            # the internal context helper. Capture the provider's actual messages
+            # to assert that approved memory reaches the inference boundary.
+            _DeterministicProvider.seen_messages = []
+            status, conversation = asyncio.run(_asgi_request(
+                runtime, "POST", "/v1/conversations", {"title": "Restart acceptance"},
+                token=session.token,
+            ))
+            if status != 201:
+                raise AssertionError("Authenticated conversation creation failed: " + str(status))
+            status, reply = asyncio.run(_asgi_request(
+                runtime, "POST",
+                "/v1/conversations/" + conversation["conversation_id"] + "/messages",
+                {"content": "What is the Yuki restart acceptance marker?",
+                 "request_id": "restart-acceptance-request", "expected_version": 0},
+                token=session.token,
+            ))
+            if status != 200 or reply.get("status") != "completed":
+                raise AssertionError("Authenticated conversation request failed: " + str(status))
+            observed = [
+                message
+                for batch in _DeterministicProvider.seen_messages
+                for message in batch
+                if message.get("role") == "system"
+            ]
+            if not any(MEMORY_TEXT in message.get("content", "") for message in observed):
+                raise AssertionError("Approved memory did not reach the provider through the HTTP route.")
 
             other = auth.create_account("other-restart-owner", "another-secure-password")
             other_context = runtime.app._companion_system_context(
