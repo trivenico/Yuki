@@ -39,8 +39,10 @@ scoped session, and invokes the atomic ledger/lease recovery transition.
 ## Boundaries
 
 This service provisions recovery credentials but does not itself execute the
-replacement reviewer. The caller must pass the returned task/session/lease to
-the existing host-controlled `ReviewerExecutionAdapter`. It does not create a
+replacement reviewer. The caller can pass the returned `ProvisionedReviewerTask` directly to the
+host-controlled `ReviewerExecutionAdapter`; the adapter now consumes its
+lease token and generation for both claim and submission when explicit
+credentials are not separately supplied. It does not create a
 background polling loop or automatic retry scheduler. Those require an
 explicitly configured host lifecycle and operational policy.
 
