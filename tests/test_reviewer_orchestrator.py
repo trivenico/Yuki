@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from automation.host_reviewer_signing import HostReviewerSigningKeyRegistry
-from automation.reviewer_ledger import ReviewerTaskLedger
+from automation.reviewer_ledger import ReviewerTaskLedger, ReviewerLedgerConflict
 from automation.reviewer_leases import ReviewerLeaseAuthority
 from automation.reviewer_team import ReviewerAssignment, ReviewerTeamPlan
 from automation.reviewer_workflow import build_review_tasks
@@ -25,6 +25,8 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             return self.allowed and digest == self.digest and action in {
                 "review:assign", "review:execute", "review:submit", "review:read",
                 "review:lease:acquire", "review:lease:recover",
+                "review:dispatch:claim", "review:dispatch:complete",
+                "review:dispatch:fail", "review:dispatch:read",
             }
         self.sessions = ReviewerSessionAuthority(
             root / "sessions.sqlite", secret=b"s" * 32,
@@ -184,6 +186,78 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         self.assertEqual(record["reviewer_agent_id"], "reviewer-b")
         self.assertEqual(record["task"]["reviewer_agent_id"], "reviewer-b")
         self.assertEqual(record["state"], "assigned")
+
+    def test_initial_assignment_creates_dispatch_and_worker_can_complete_claim(self):
+        batch=self.orchestrator.provision_batch(
+            coordinator_id="coordinator",artifact_sha256=self.digest,
+            author_agent_id="author",agents=(self.agents[0],),
+            requirements_by_check={"acceptance_criteria":("Check criteria.",)},
+            evidence_references_by_check={"acceptance_criteria":()},
+        )
+        task=batch.tasks[0]
+        records=self.ledger.list_dispatches(
+            actor_id="coordinator",artifact_sha256=self.digest,
+        )
+        self.assertEqual(len(records),1)
+        self.assertEqual(records[0]["state"],"pending")
+        claimed=self.ledger.claim_dispatches(
+            actor_id="coordinator",worker_id="reviewer-a",limit=5,
+        )
+        self.assertEqual(len(claimed),1)
+        self.assertEqual(claimed[0]["task_id"],task.task_id)
+        receipt=self.ledger.complete_dispatch(
+            actor_id="reviewer-a",dispatch_id=claimed[0]["dispatch_id"],
+            claim_token=claimed[0]["claim_token"],
+        )
+        self.assertEqual(receipt["state"],"delivered")
+        self.assertEqual(self.ledger.list_dispatches(
+            actor_id="coordinator",artifact_sha256=self.digest,
+        )[0]["state"],"delivered")
+
+    def test_dispatch_failure_uses_bounded_retry_then_dead_letters(self):
+        self.orchestrator.provision_batch(
+            coordinator_id="coordinator",artifact_sha256=self.digest,
+            author_agent_id="author",agents=(self.agents[0],),
+            requirements_by_check={"acceptance_criteria":("Check criteria.",)},
+            evidence_references_by_check={"acceptance_criteria":()},
+        )
+        claimed=self.ledger.claim_dispatches(
+            actor_id="coordinator",worker_id="reviewer-a",max_attempts=1,
+        )[0]
+        result=self.ledger.fail_dispatch(
+            actor_id="reviewer-a",dispatch_id=claimed["dispatch_id"],
+            claim_token=claimed["claim_token"],error_code="worker.unavailable",
+            max_attempts=1,base_backoff_seconds=1,
+        )
+        self.assertEqual(result["state"],"dead_letter")
+        self.assertEqual(result["attempts"],1)
+        self.assertEqual(self.ledger.list_dispatches(
+            actor_id="coordinator",artifact_sha256=self.digest,
+        )[0]["last_error"],"worker.unavailable")
+
+    def test_expired_dispatch_claim_is_reclaimed_without_reusing_token(self):
+        self.orchestrator.provision_batch(
+            coordinator_id="coordinator",artifact_sha256=self.digest,
+            author_agent_id="author",agents=(self.agents[0],),
+            requirements_by_check={"acceptance_criteria":("Check criteria.",)},
+            evidence_references_by_check={"acceptance_criteria":()},
+        )
+        first=self.ledger.claim_dispatches(
+            actor_id="coordinator",worker_id="reviewer-a",
+        )[0]
+        with sqlite3.connect(Path(self.temp.name) / "ledger.sqlite") as db:
+            db.execute("UPDATE reviewer_dispatch_outbox SET claim_expires_at=? WHERE dispatch_id=?",
+                       ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),
+                        first["dispatch_id"]))
+        second=self.ledger.claim_dispatches(
+            actor_id="coordinator",worker_id="reviewer-b",
+        )[0]
+        self.assertNotEqual(first["claim_token"],second["claim_token"])
+        with self.assertRaises(ReviewerLedgerConflict):
+            self.ledger.complete_dispatch(
+                actor_id="reviewer-a",dispatch_id=first["dispatch_id"],
+                claim_token=first["claim_token"],
+            )
 
     def test_initial_lease_failure_rolls_back_task_assignment(self):
         self.leases._authorize = lambda actor, action, digest: False
