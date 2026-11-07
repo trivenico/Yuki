@@ -1,3 +1,4 @@
+from contextlib import closing
 import tempfile
 import sqlite3
 import unittest
@@ -67,7 +68,7 @@ class ReviewerSessionAuthorityTests(unittest.TestCase):
 
     def test_persisted_session_claim_mismatch_is_rejected(self):
         payload = self.authority._decode(self.token)
-        with sqlite3.connect(self.authority.database_path) as db:
+        with closing(sqlite3.connect(self.authority.database_path)) as db, db:
             db.execute(
                 "UPDATE reviewer_sessions SET artifact_sha256=? WHERE session_id=?",
                 ("e" * 64, payload["session_id"]),
