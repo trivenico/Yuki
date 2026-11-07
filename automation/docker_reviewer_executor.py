@@ -137,7 +137,7 @@ class DockerReviewerExecutor:
 
     def _argv(self, cidfile: str) -> list[str]:
         return [
-            self.docker_binary, "run", "--rm", "--pull=never", "--init",
+            self.docker_binary, "run", "--rm", "--pull=never", "--init", "-i",
             "--cidfile", cidfile,
             "--network=none", "--read-only", "--user=65532:65532",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
