@@ -244,3 +244,32 @@ class LocalVerificationExecutor:
     def evidence_reference(receipt: VerificationExecution) -> str:
         """Stable machine-readable pointer to the durable execution receipt."""
         return "yuki-verification-execution://" + receipt.execution_id
+
+    @staticmethod
+    def to_verification_check(
+        receipt: VerificationExecution, *, check_name: str, reviewer_agent_id: str,
+    ):
+        """Convert an actual execution receipt into a conservative review check."""
+        from automation.independent_verification import VerificationCheck
+
+        if not isinstance(receipt, VerificationExecution):
+            raise TypeError("receipt must be a VerificationExecution")
+        if not isinstance(reviewer_agent_id, str) or not _NAME.fullmatch(reviewer_agent_id):
+            raise ValueError("invalid_reviewer_agent_id")
+        if not isinstance(check_name, str) or not _NAME.fullmatch(check_name):
+            raise ValueError("invalid_check_name")
+        status = "passed" if receipt.status == "passed" and receipt.exit_code == 0 else (
+            "blocked" if receipt.status in {"timed_out", "output_limited", "launch_failed"} else "failed"
+        )
+        summary = (
+            f"Allow-listed command {receipt.command_id} completed with status "
+            f"{receipt.status}, exit code {receipt.exit_code}, output bytes "
+            f"{receipt.output_bytes}, output SHA-256 {receipt.output_sha256}."
+        )
+        return VerificationCheck(
+            name=check_name,
+            reviewer_agent_id=reviewer_agent_id,
+            status=status,
+            evidence_reference=LocalVerificationExecutor.evidence_reference(receipt),
+            summary=summary,
+        )
