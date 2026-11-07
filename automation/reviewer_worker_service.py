@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Event, Thread
+from types import SimpleNamespace
 from typing import Callable
 
 from automation.reviewer_worker_registry import (
@@ -105,11 +106,18 @@ class ReviewerWorkerService:
         registration = self._registration
         if registration is None:
             raise ReviewerWorkerServiceError("worker_registry_not_registered")
-        slot = self.registry.claim_slot(
-            actor_id=self.registry_actor_id, worker_id=self.worker_id,
-            instance_id=registration.instance_id, lease_token=registration.lease_token,
-            max_concurrency=self.max_concurrency, slot_seconds=self.slot_lease_seconds,
-        )
+        try:
+            slot = self.registry.claim_slot(
+                actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                instance_id=registration.instance_id, lease_token=registration.lease_token,
+                max_concurrency=self.max_concurrency, slot_seconds=self.slot_lease_seconds,
+            )
+        except ReviewerWorkerRegistryConflict as exc:
+            if str(exc) == "reviewer_global_concurrency_limit_reached":
+                # Another process currently owns all globally configured slots.
+                # Treat this as backpressure, not a worker execution failure.
+                return SimpleNamespace(claimed=0, completed=0)
+            raise
         finished = Event()
         renewal_errors = []
 
