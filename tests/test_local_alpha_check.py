@@ -73,6 +73,25 @@ class LocalAlphaCheckTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("Dependency yaml", output)
 
+    def test_hybrid_requires_local_ollama_model(self):
+        result, output = self._run(
+            config={"provider": "hybrid", "ollama_model": ""},
+            environ={},
+            modules={"yaml": True, "uvicorn": True},
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("Hybrid local model", output)
+        self.assertIn("set ollama_model", output)
+
+    def test_hybrid_local_only_mode_does_not_require_cloud_key(self):
+        result, output = self._run(
+            config={"provider": "hybrid", "ollama_model": "test-model"},
+            environ={},
+            modules={"yaml": True, "uvicorn": True},
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("local-only mode", output)
+
 
 if __name__ == "__main__":
     unittest.main()
