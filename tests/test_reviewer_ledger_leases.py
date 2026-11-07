@@ -19,7 +19,7 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
         self.db_path = Path(self.temp.name) / "reviewer.sqlite"
         digest = "a" * 64
         self.sessions = ReviewerSessionAuthority(
-            self.db_path, secret=b"s" * 32,
+            Path(self.temp.name) / "sessions.sqlite", secret=b"s" * 32,
             authorize=lambda actor, action, artifact: (
                 actor == "reviewer-1" and artifact == digest
             ),
