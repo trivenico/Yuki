@@ -111,6 +111,9 @@ class BrowserRuntimeProcessRestartTests(unittest.TestCase):
             env = dict(os.environ)
             env.pop("YUKI_BOOTSTRAP_ADMIN_USERNAME", None)
             env.pop("YUKI_BOOTSTRAP_ADMIN_PASSWORD", None)
+            repo_root = str(Path(__file__).resolve().parents[1])
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = repo_root + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
             seed_env = dict(env)
             seed_env["YUKI_BOOTSTRAP_ADMIN_USERNAME"] = USERNAME
             seed_env["YUKI_BOOTSTRAP_ADMIN_PASSWORD"] = PASSWORD
