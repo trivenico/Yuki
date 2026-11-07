@@ -100,7 +100,7 @@ def print_help():
   /engineering plan ROLE | DESCRIPTION
   /engineering show PLAN_ID | plan-events PLAN_ID
   /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA
-  /engineering provenance ARTIFACT_ID
+  /engineering provenance ARTIFACT_ID | verify ARTIFACT_ID
   /engineering tasks [STATE] | task-events TASK_ID
   /engineering advance PLAN_ID | cancel PLAN_ID
   /engineering approve TASK_ID | cycle
@@ -344,7 +344,6 @@ def main():
             print(f"- Verification evidence: connected ({workspace / 'yuki_verification.sqlite3'})")
             print(f"- Git workspace manager: {'enabled' if git_workspace_manager else 'disabled'}")
             print(f"- Verification executor: {'configured' if local_workers.verification_executor is not None else 'disabled (no trusted command allowlist)'}")
-            print("- Git workspace manager: not configured in terminal startup")
             print("- Autonomous dispatch: disabled; plans require explicit operator action")
         elif command == "/engineering agents":
             try:
@@ -388,6 +387,34 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering verify "):
+            artifact_id = command[len("/engineering verify "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            if not _confirm(
+                "engineering:verify_snapshot",
+                f"Revalidate artifact {artifact_id}, its immutable bundle, and every file in its managed workspace. No repository code will execute.",
+                "medium",
+            ):
+                print("Yuki > Workspace verification cancelled.")
+                continue
+            try:
+                result = git_workspace_manager.verify_workspace(artifact_id)
+                print(
+                    f"Yuki > Workspace integrity: {result['integrity']}; "
+                    f"commit={result['source_commit']}; snapshot={result['snapshot_sha256']}"
+                )
+                print(
+                    f"- Files: {result['file_count']}; bytes: {result['total_bytes']}; "
+                    f"workspace: {result['workspace_path']}"
+                )
+                print("Yuki > This is a source-integrity check, not a test-suite or security-scan result.")
+            except Exception as exc:
+                print(f"Yuki > Workspace integrity verification failed ({type(exc).__name__}).")
         elif command.startswith("/engineering provenance "):
             artifact_id = command[len("/engineering provenance "):].strip()
             if not artifact_id:
