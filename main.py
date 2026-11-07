@@ -419,6 +419,7 @@ def main():
                     workspace / "yuki_sandbox_verification.sqlite3",
                     image=image,
                     expected_snapshot_sha256=provenance.snapshot_sha256,
+                    expected_artifact_sha256=provenance.artifact_sha256,
                     commands={
                         "unit-tests": SandboxCommand(
                             "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=300
