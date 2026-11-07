@@ -237,7 +237,7 @@ class UpgradeExecutionStore:
     ) -> UpgradeExecutionRecord:
         if to_state not in _STATES:
             raise UpgradeExecutionTransitionError("unknown_state")
-        if to_state in {"verifying", "verified_pass", "verified_fail"}:
+        if to_state in {"running", "evidence_pending", "verifying", "verified_pass", "verified_fail"}:
             raise UpgradeExecutionTransitionError("privileged_state_requires_verifier")
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
             raise ValueError("actor_id_invalid")
@@ -469,7 +469,7 @@ class UpgradeExecutionStore:
         if instant.tzinfo is None:
             raise ValueError("now_must_be_timezone_aware")
         current = instant.astimezone(timezone.utc)
-        expiry = (current + __import__("datetime").timedelta(seconds=lease_seconds)).isoformat()
+        expiry = (current + timedelta(seconds=lease_seconds)).isoformat()
         with self._transaction() as db:
             lease = db.execute("SELECT * FROM upgrade_execution_leases WHERE execution_id=?", (execution_id,)).fetchone()
             if lease is None or lease["owner_id"] != owner_id or lease["lease_token"] != lease_token:
