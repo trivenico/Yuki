@@ -362,20 +362,23 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             actor_id="alice", idempotency_key="dispatch-crash-window",
             subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",))],
         )
-        original_set = self.coordinator._set_subtask
+        original_enqueue = self.runtime.enqueue
         calls = {"count": 0}
 
-        def fail_once(plan_id, subtask_id, *, status, task_id=None):
-            if task_id is not None and calls["count"] == 0:
+        def enqueue_then_crash(**kwargs):
+            task = original_enqueue(**kwargs)
+            if calls["count"] == 0:
                 calls["count"] += 1
                 raise RuntimeError("simulated coordinator crash after task enqueue")
-            return original_set(plan_id, subtask_id, status=status, task_id=task_id)
+            return task
 
-        self.coordinator._set_subtask = fail_once
-        with self.assertRaisesRegex(RuntimeError, "simulated coordinator crash"):
-            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.runtime.enqueue = enqueue_then_crash
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated coordinator crash"):
+                self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        finally:
+            self.runtime.enqueue = original_enqueue
 
-        # A fresh coordinator retries the deterministic task idempotency key.
         restarted = SpecialistAgentCoordinator(
             self.runtime, self.db_path, (), authorize=self.agent_auth,
         )
@@ -469,7 +472,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 required_permissions=("web:read",),
             )],
         )
-        with sqlite3.connect(self.db_path) as db:
+        with self.coordinator._connect() as db:
             row = db.execute(
                 "SELECT parent_plan_id, parent_subtask_id, depth, created_by "
                 "FROM agent_plan_hierarchy WHERE child_plan_id=?", (child.plan_id,),
@@ -872,7 +875,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         task_id = dispatched.subtasks[0].task_id
         self.assertIsNotNone(task_id)
-        with sqlite3.connect(self.db_path) as db:
+        with self.coordinator._connect() as db:
             row = db.execute(
                 """SELECT agent_id, state, task_id FROM agent_dispatch_reservations
                    WHERE plan_id=? AND subtask_id=?""",
@@ -882,7 +885,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         # Repeated advancement must not create another reservation or task.
         again = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(again.subtasks[0].task_id, task_id)
-        with sqlite3.connect(self.db_path) as db:
+        with self.coordinator._connect() as db:
             count = db.execute(
                 "SELECT COUNT(*) FROM agent_dispatch_reservations WHERE plan_id=?",
                 (plan.plan_id,),
