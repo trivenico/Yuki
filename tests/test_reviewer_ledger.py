@@ -79,7 +79,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
 
     def test_submit_binds_result_and_is_idempotent(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
-        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
+        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
+                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
         result = build_review_result(
             self.task, status="failed", summary="A security issue needs remediation.",
             findings=(ReviewFinding(
@@ -97,7 +98,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
         )
         second = self.ledger.submit(
             actor_id="security-reviewer", task_id=self.task.task_id,
-            expected_version=1, result=result,
+            expected_version=1, result=result, session_token=self.session_token,
+            operation_id="submit-task-1-retry",
         )
         self.assertFalse(first["reused"])
         self.assertTrue(second["reused"])
@@ -110,11 +112,13 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
 
     def test_conflicting_second_submission_is_rejected(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
-        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
+        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
+                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
         result = build_review_result(self.task, status="passed", summary="No findings.")
         self.ledger.submit(
             actor_id="security-reviewer", task_id=self.task.task_id,
-            expected_version=1, result=result,
+            expected_version=1, result=result, session_token=self.session_token,
+            operation_id="submit-conflict-first",
         )
         different = build_review_result(self.task, status="failed", summary="Different result.")
         with self.assertRaises(ReviewerLedgerConflict):
@@ -126,7 +130,8 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
 
     def test_read_rejects_invalid_signature(self):
         self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
-        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0)
+        self.ledger.claim(actor_id="security-reviewer", task_id=self.task.task_id, expected_version=0,
+                           session_token=self.session_token, operation_id="claim-" + str(self.id()) if hasattr(self, "id") else "claim-task")
         result = build_review_result(self.task, status="passed", summary="No findings.")
         self.ledger.submit(actor_id="security-reviewer", task_id=self.task.task_id,
                            expected_version=1, result=result, session_token=self.session_token,
