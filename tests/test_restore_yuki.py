@@ -35,6 +35,39 @@ class RestoreYukiTests(unittest.TestCase):
             with sqlite3.connect(destination / "nested" / "memory.sqlite3") as db:
                 self.assertEqual(db.execute("SELECT value FROM memories").fetchone()[0], "restore me")
 
+    def test_restore_rejects_database_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, backup = self._backup(root)
+            manifest = json.loads((backup / "manifest.json").read_text())
+            entry = manifest["databases"][0]
+            linked = backup / entry["backup_path"]
+            original = linked.read_bytes()
+            outside = root / "outside.sqlite3"
+            outside.write_bytes(original)
+            linked.unlink()
+            try:
+                linked.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symbolic links are unavailable on this platform")
+            with self.assertRaisesRegex(ValueError, "must not be symbolic links"):
+                restore_backup(backup, root / "restored")
+
+    def test_restore_rejects_manifest_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, backup = self._backup(root)
+            manifest = backup / "manifest.json"
+            outside = root / "manifest-copy.json"
+            outside.write_bytes(manifest.read_bytes())
+            manifest.unlink()
+            try:
+                manifest.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symbolic links are unavailable on this platform")
+            with self.assertRaisesRegex(ValueError, "manifest must not be a symbolic link"):
+                restore_backup(backup, root / "restored")
+
     def test_restore_refuses_existing_destination(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
