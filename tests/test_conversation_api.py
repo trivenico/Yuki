@@ -336,7 +336,8 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 201)
         replacement_id = data["memory"]["memory_id"]
         self.assertNotEqual(replacement_id, memory_id)
-        self.assertEqual(data["memory"]["lifecycle_status"], "approved")
+        self.assertEqual(data["memory"]["lifecycle_status"], "pending_review")
+        self.assertFalse(data["memory"]["verified"])
 
         status, data, _ = self.request(
             "GET", f"/v1/memory/{memory_id}/history", token=self.issued.token,
