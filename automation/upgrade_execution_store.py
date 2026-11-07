@@ -224,7 +224,7 @@ class UpgradeExecutionStore:
             return self._record(row)
 
     def get(self, execution_id: str) -> UpgradeExecutionRecord | None:
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             row = db.execute(
                 "SELECT * FROM upgrade_executions WHERE execution_id=?",
                 (execution_id,),
