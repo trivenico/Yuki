@@ -36,6 +36,23 @@ class ReviewerWorkerRecoveryTests(unittest.TestCase):
             reason="reviewer_worker_lease_expired",
         )
 
+    def test_live_instance_prevents_recovery_when_historical_instance_expired(self):
+        registry = Mock()
+        registry.expire_stale.return_value = 0
+        registry.list_workers.return_value = (
+            Mock(state="expired"), Mock(state="running"),
+        )
+        ledger = Mock()
+        supervisor = ReviewerWorkerRecoverySupervisor(
+            registry, ledger, actor_id="recovery-controller",
+            worker_ids=("reviewer-a",),
+            replacement_resolver=lambda *_: "reviewer-b",
+        )
+        report = supervisor.run_once()
+        self.assertEqual(report.expired_worker_ids, ())
+        self.assertEqual(report.recovered_tasks, 0)
+        ledger.list_expired_in_progress.assert_not_called()
+
     def test_no_expired_worker_does_not_query_or_recover_tasks(self):
         registry = Mock()
         registry.expire_stale.return_value = 0
