@@ -233,6 +233,141 @@ class ReviewerTaskLedger:
                                 "version": 0, "reused": False})
         return tuple(created)
 
+    def claim_dispatches(self, *, actor_id: str, worker_id: str, limit: int = 10,
+                         claim_seconds: int = 60, max_attempts: int = 5) -> tuple[dict, ...]:
+        """Claim bounded ready outbox records with expiring, opaque claim tokens."""
+        actor=self._actor(actor_id)
+        worker=self._actor(worker_id)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid_dispatch_claim_limit")
+        if type(claim_seconds) is not int or not 10 <= claim_seconds <= 900:
+            raise ValueError("invalid_dispatch_claim_ttl")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("invalid_dispatch_max_attempts")
+        now_dt=datetime.now(timezone.utc)
+        now=now_dt.isoformat()
+        expiry=(now_dt + __import__("datetime").timedelta(seconds=claim_seconds)).isoformat()
+        claimed=[]
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            stale=db.execute("""SELECT dispatch_id,attempts FROM reviewer_dispatch_outbox
+                WHERE state='claimed' AND claim_expires_at<=?""",(now,)).fetchall()
+            for item in stale:
+                state="dead_letter" if item["attempts"] >= max_attempts else "pending"
+                db.execute("""UPDATE reviewer_dispatch_outbox SET state=?,claimed_by=NULL,
+                    claim_token_digest=NULL,claim_expires_at=NULL,
+                    available_at=?,last_error=?,updated_at=? WHERE dispatch_id=?""",
+                    (state,now,"dispatch_claim_expired",now,item["dispatch_id"]))
+            rows=db.execute("""SELECT * FROM reviewer_dispatch_outbox
+                WHERE state='pending' AND available_at<=?
+                ORDER BY available_at,created_at,dispatch_id LIMIT ?""",(now,limit)).fetchall()
+            for row in rows:
+                if not self._allowed(actor,"review:dispatch:claim",row["artifact_sha256"]):
+                    continue
+                raw=__import__("secrets").token_urlsafe(32)
+                digest=hashlib.sha256(raw.encode("utf-8")).hexdigest()
+                attempts=row["attempts"]+1
+                changed=db.execute("""UPDATE reviewer_dispatch_outbox SET state='claimed',
+                    attempts=?,claimed_by=?,claim_token_digest=?,claim_expires_at=?,updated_at=?
+                    WHERE dispatch_id=? AND state='pending'""",
+                    (attempts,worker,digest,expiry,now,row["dispatch_id"])).rowcount
+                if changed != 1:
+                    continue
+                claimed.append({
+                    "dispatch_id":row["dispatch_id"],"task_id":row["task_id"],
+                    "artifact_sha256":row["artifact_sha256"],
+                    "reviewer_agent_id":row["reviewer_agent_id"],
+                    "attempts":attempts,"claim_token":raw,"claim_expires_at":expiry,
+                })
+        return tuple(claimed)
+
+    def complete_dispatch(self, *, actor_id: str, dispatch_id: str,
+                          claim_token: str) -> dict:
+        """Mark a dispatch delivered only for its current unexpired claim."""
+        actor=self._actor(actor_id)
+        if not isinstance(dispatch_id,str) or not _ID.fullmatch(dispatch_id):
+            raise ValueError("invalid_dispatch_id")
+        if not isinstance(claim_token,str) or not 20 <= len(claim_token) <= 256:
+            raise ValueError("invalid_dispatch_claim_token")
+        token_digest=hashlib.sha256(claim_token.encode("utf-8")).hexdigest()
+        now=_now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT * FROM reviewer_dispatch_outbox WHERE dispatch_id=?",
+                           (dispatch_id,)).fetchone()
+            if row is None:
+                raise KeyError("review dispatch not found")
+            if not self._allowed(actor,"review:dispatch:complete",row["artifact_sha256"]):
+                raise PermissionError("review dispatch completion not authorized")
+            if (row["state"]!="claimed" or row["claimed_by"]!=actor
+                or row["claim_token_digest"]!=token_digest
+                or not row["claim_expires_at"]
+                or datetime.fromisoformat(row["claim_expires_at"])<=datetime.now(timezone.utc)):
+                raise ReviewerLedgerConflict("dispatch_claim_invalid_or_expired")
+            db.execute("""UPDATE reviewer_dispatch_outbox SET state='delivered',
+                claimed_by=NULL,claim_token_digest=NULL,claim_expires_at=NULL,
+                updated_at=? WHERE dispatch_id=?""",(now,dispatch_id))
+            return {"dispatch_id":dispatch_id,"task_id":row["task_id"],"state":"delivered"}
+
+    def fail_dispatch(self, *, actor_id: str, dispatch_id: str, claim_token: str,
+                      error_code: str, max_attempts: int = 5,
+                      base_backoff_seconds: int = 2) -> dict:
+        """Release a claimed dispatch with bounded exponential retry or dead-letter."""
+        actor=self._actor(actor_id)
+        if not isinstance(dispatch_id,str) or not _ID.fullmatch(dispatch_id):
+            raise ValueError("invalid_dispatch_id")
+        if not isinstance(claim_token,str) or not 20 <= len(claim_token) <= 256:
+            raise ValueError("invalid_dispatch_claim_token")
+        if not isinstance(error_code,str) or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,100}",error_code):
+            raise ValueError("invalid_dispatch_error_code")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("invalid_dispatch_max_attempts")
+        if type(base_backoff_seconds) is not int or not 1 <= base_backoff_seconds <= 300:
+            raise ValueError("invalid_dispatch_backoff")
+        token_digest=hashlib.sha256(claim_token.encode("utf-8")).hexdigest()
+        now_dt=datetime.now(timezone.utc)
+        now=now_dt.isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row=db.execute("SELECT * FROM reviewer_dispatch_outbox WHERE dispatch_id=?",
+                           (dispatch_id,)).fetchone()
+            if row is None:
+                raise KeyError("review dispatch not found")
+            if not self._allowed(actor,"review:dispatch:fail",row["artifact_sha256"]):
+                raise PermissionError("review dispatch failure not authorized")
+            if (row["state"]!="claimed" or row["claimed_by"]!=actor
+                or row["claim_token_digest"]!=token_digest
+                or not row["claim_expires_at"]
+                or datetime.fromisoformat(row["claim_expires_at"])<=now_dt):
+                raise ReviewerLedgerConflict("dispatch_claim_invalid_or_expired")
+            terminal=row["attempts"]>=max_attempts
+            delay=min(base_backoff_seconds * (2 ** max(0,row["attempts"]-1)),3600)
+            available=(now_dt + __import__("datetime").timedelta(seconds=delay)).isoformat()
+            state="dead_letter" if terminal else "pending"
+            db.execute("""UPDATE reviewer_dispatch_outbox SET state=?,available_at=?,
+                claimed_by=NULL,claim_token_digest=NULL,claim_expires_at=NULL,
+                last_error=?,updated_at=? WHERE dispatch_id=?""",
+                (state,available,error_code,now,dispatch_id))
+            return {"dispatch_id":dispatch_id,"task_id":row["task_id"],
+                    "state":state,"attempts":row["attempts"],
+                    "available_at":available,"last_error":error_code}
+
+    def list_dispatches(self, *, actor_id: str, artifact_sha256: str,
+                        limit: int = 100) -> tuple[dict, ...]:
+        actor=self._actor(actor_id)
+        if not isinstance(artifact_sha256,str) or not _SHA.fullmatch(artifact_sha256):
+            raise ValueError("invalid_artifact_sha256")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid_dispatch_list_limit")
+        if not self._allowed(actor,"review:dispatch:read",artifact_sha256):
+            raise PermissionError("review dispatch listing not authorized")
+        with self._connect() as db:
+            rows=db.execute("""SELECT dispatch_id,task_id,artifact_sha256,reviewer_agent_id,
+                state,attempts,available_at,claimed_by,claim_expires_at,last_error,created_at,updated_at
+                FROM reviewer_dispatch_outbox WHERE artifact_sha256=?
+                ORDER BY created_at,dispatch_id LIMIT ?""",(artifact_sha256,limit)).fetchall()
+        return tuple(dict(row) for row in rows)
+
     def create_tasks_with_leases(self, *, actor_id: str, tasks: Iterable[ReviewTask],
                                  lease_ttl_seconds: int = 300) -> tuple[dict, ...]:
         """Persist assigned tasks and their initial leases in one SQLite transaction."""
