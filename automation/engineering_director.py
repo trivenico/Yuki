@@ -66,7 +66,6 @@ class EngineeringDirector:
         classification = classify_task(goal, explicit_task_type=explicit_task_type)
         required = tuple(classification["required_capabilities"])
         tasks = []
-        previous = ()
         for index, capability in enumerate(required, 1):
             task_id = f"work-{index:02d}"
             description = (
@@ -95,10 +94,9 @@ class EngineeringDirector:
                     minimum_score=self.minimum_benchmark_score,
                 ))
             tasks.append(EngineeringTaskProposal(
-                task_id, description, (capability,), previous, criteria, eligible,
+                task_id, description, (capability,), (), criteria, eligible,
                 model_candidates,
             ))
-            previous = (task_id,)
         return EngineeringProposal(goal.strip(), classification, tuple(tasks))
 
     def submit_approved(
