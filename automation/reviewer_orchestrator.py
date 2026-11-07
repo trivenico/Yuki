@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
+from pathlib import Path
 from uuid import uuid4
 
 from automation.reviewer_contracts import ReviewTask
@@ -169,7 +170,7 @@ class ReviewerOrchestrator:
 
         if self.ledger.lease_authority is None:
             raise ReviewerOrchestrationError("reviewer_lease_authority_required")
-        if self.ledger.lease_authority.database_path != self.ledger.database_path:
+        if Path(self.ledger.lease_authority.database_path).resolve() != Path(self.ledger.database_path).resolve():
             raise ReviewerOrchestrationError("reviewer_lease_database_must_match_ledger")
         tasks = []
         tokens = []
