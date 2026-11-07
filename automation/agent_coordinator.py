@@ -1341,6 +1341,91 @@ class SpecialistAgentCoordinator:
                 raise PermissionError("agent plan ownership mismatch.")
             return self._read_plan(db, plan_id)
 
+    def get_plan_tree(self, *, actor_id: str, plan_id: str) -> dict:
+        """Return an owner-authorized, bounded hierarchy and aggregate progress.
+
+        This is a read-only snapshot of persisted coordinator state. It does not
+        advance plans, execute workers, or treat queued tasks as completed.
+        """
+        def build(current_plan_id: str, depth: int) -> dict:
+            if depth > 3:
+                raise AgentPlanError("agent plan hierarchy exceeds the supported depth.")
+            plan = self.get_plan(actor_id=actor_id, plan_id=current_plan_id)
+            with self._connect() as db:
+                links = db.execute(
+                    """SELECT parent_subtask_id, child_plan_id
+                       FROM agent_plan_hierarchy WHERE parent_plan_id=?
+                       ORDER BY parent_subtask_id, child_plan_id""",
+                    (current_plan_id,),
+                ).fetchall()
+            children: dict[str, list[dict]] = {}
+            for link in links:
+                children.setdefault(link["parent_subtask_id"], []).append(
+                    build(link["child_plan_id"], depth + 1)
+                )
+            subtasks = []
+            for item in plan.subtasks:
+                item_children = children.get(item.subtask_id, [])
+                subtasks.append({
+                    "subtask_id": item.subtask_id,
+                    "agent_id": item.agent_id,
+                    "status": item.status,
+                    "task_id": item.task_id,
+                    "children": item_children,
+                })
+            statuses = [item.status for item in plan.subtasks]
+            counts = {
+                state: statuses.count(state)
+                for state in sorted(set(statuses))
+            }
+            child_counts = {
+                "plans": sum(len(items) for items in children.values()),
+                "subtasks": sum(
+                    child["progress"]["total"]
+                    for items in children.values() for child in items
+                ),
+                "succeeded": sum(
+                    child["progress"]["succeeded"]
+                    for items in children.values() for child in items
+                ),
+                "failed": sum(
+                    child["progress"]["failed"]
+                    for items in children.values() for child in items
+                ),
+            }
+            own_failed = sum(counts.get(state, 0) for state in ("failed", "blocked", "cancelled"))
+            total = len(statuses)
+            succeeded = counts.get("succeeded", 0)
+            failed = own_failed
+            for items in children.values():
+                for child in items:
+                    failed += child["progress"]["failed"]
+            if failed:
+                aggregate_status = "failed"
+            elif total and succeeded == total and all(
+                child["status"] == "succeeded"
+                for items in children.values() for child in items
+            ):
+                aggregate_status = "succeeded"
+            else:
+                aggregate_status = "in_progress"
+            return {
+                "plan_id": plan.plan_id,
+                "status": aggregate_status,
+                "progress": {
+                    "total": total,
+                    "succeeded": succeeded,
+                    "failed": own_failed,
+                    "by_status": counts,
+                    "child_plans": child_counts["plans"],
+                    "child_subtasks": child_counts["subtasks"],
+                    "child_succeeded": child_counts["succeeded"],
+                    "child_failed": child_counts["failed"],
+                },
+                "subtasks": subtasks,
+            }
+        return build(plan_id, 0)
+
     @staticmethod
     def _read_plan(db: sqlite3.Connection, plan_id: str) -> AgentPlan:
         row = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
