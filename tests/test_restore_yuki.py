@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts.backup_yuki import create_backup
 from scripts.restore_yuki import restore_backup
@@ -62,6 +63,27 @@ class RestoreYukiTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "unsafe relative path"):
                 restore_backup(backup, root / "restored")
+
+
+    def test_restore_refuses_destination_created_during_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, backup = self._backup(root)
+            destination = root / "restored"
+            import scripts.restore_yuki as restore_module
+            original_copy = restore_module.shutil.copy2
+
+            def create_destination_during_copy(source, target):
+                result = original_copy(source, target)
+                destination.mkdir()
+                (destination / "keep.txt").write_text("do not overwrite", encoding="utf-8")
+                return result
+
+            with patch.object(restore_module.shutil, "copy2", side_effect=create_destination_during_copy):
+                with self.assertRaises(FileExistsError):
+                    restore_backup(backup, destination)
+            self.assertEqual((destination / "keep.txt").read_text(encoding="utf-8"), "do not overwrite")
+            self.assertEqual(list(root.glob(".restored.restore-*")), [])
 
     def test_restore_rejects_corrupt_manifest_format(self):
         with tempfile.TemporaryDirectory() as temporary:
