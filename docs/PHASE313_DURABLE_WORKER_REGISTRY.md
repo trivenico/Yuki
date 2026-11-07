@@ -14,7 +14,10 @@ signing keys.
 - Renew worker liveness with a heartbeat; expired leases cannot be revived.
 - Atomically reserve a specialist-wide concurrency slot under
   `BEGIN IMMEDIATE`, across processes sharing the same SQLite database.
-- Release a slot using the owning instance's lease.
+- Renew and release a slot using the owning instance's lease. Slot expiry is
+  capped at the worker lease expiry, so a reservation cannot outlive its owner.
+- Re-registration of an expired instance fences its previous bearer token,
+  clears orphaned slots, and cannot transfer an instance ID to another worker.
 - Mark a worker stopped and release its slots.
 - Expire stale instances and inspect worker state and active slot counts.
 
@@ -51,5 +54,6 @@ python -m unittest tests.test_reviewer_worker_registry -v
 ```
 
 Tests cover registration, heartbeat, shutdown, cross-instance concurrency
-enforcement, token validation, and fail-closed authorization. They have not
+enforcement, slot renewal, instance identity fencing, token validation, and
+fail-closed authorization. They have not
 been executed as part of this change unless CI reports otherwise.
