@@ -58,6 +58,7 @@ def build_local_worker_runtime(
     max_workers: int = 2,
     verification_commands: Mapping[str, VerificationCommand] | None = None,
     verification_workspace: str | Path | None = None,
+    verification_reviewer_authorizer=None,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -72,6 +73,8 @@ def build_local_worker_runtime(
         raise ValueError("provider_preferences and allow_cloud require provider_manager.")
     if type(allow_cloud) is not bool:
         raise ValueError("allow_cloud must be a boolean.")
+    if verification_reviewer_authorizer is not None and not callable(verification_reviewer_authorizer):
+        raise TypeError("verification_reviewer_authorizer must be callable.")
     root = Path(workspace).expanduser()
     root.mkdir(parents=True, exist_ok=True)
     if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
@@ -107,6 +110,7 @@ def build_local_worker_runtime(
             verification_executor.validate_evidence_reference
             if verification_executor is not None else None
         ),
+        reviewer_authorizer=verification_reviewer_authorizer,
     )
     verification_workflow = VerificationWorkflow(
         root / "yuki_artifacts.sqlite3",
