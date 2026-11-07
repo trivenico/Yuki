@@ -127,7 +127,7 @@ class SelfUpgradeReviewStore:
         if runner_attestation_verifier is not None and not callable(runner_attestation_verifier):
             raise TypeError("runner_attestation_verifier must be callable.")
         self.runner_attestation_verifier = runner_attestation_verifier
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS self_upgrade_reviews (
                     proposal_id TEXT PRIMARY KEY,
@@ -280,7 +280,7 @@ class SelfUpgradeReviewStore:
             raise ValueError("proposal_snapshot_digest_mismatch")
         paths = json.dumps(list(proposal.changed_paths), separators=(",", ":"))
         created_at = datetime.now(timezone.utc).isoformat()
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
@@ -320,7 +320,7 @@ class SelfUpgradeReviewStore:
     def load_snapshot(self, proposal_id: str) -> dict:
         if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
             raise ValueError("proposal_id_invalid")
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             row = connection.execute("""
                 SELECT r.content_digest, r.changed_paths, r.patch_bytes, s.content_digest AS snapshot_digest,
                        s.snapshot_json
@@ -388,7 +388,7 @@ class SelfUpgradeReviewStore:
             raise ValueError("proposal_id_invalid")
         if not isinstance(reviewer, str) or not reviewer.strip() or len(reviewer) > 200:
             raise ValueError("reviewer_invalid")
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             row = connection.execute(
                 "SELECT status, content_digest, reviewed_by FROM self_upgrade_reviews WHERE proposal_id = ?",
                 (proposal_id,),
@@ -417,7 +417,7 @@ class SelfUpgradeReviewStore:
             raise ValueError("review_note_invalid")
         status = "approved_for_isolated_testing" if decision == "approve" else "rejected"
         reviewed_at = datetime.now(timezone.utc).isoformat()
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM self_upgrade_reviews WHERE proposal_id = ?",
@@ -443,7 +443,7 @@ class SelfUpgradeReviewStore:
     def list(self, *, limit: int = 50) -> list[dict]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("limit_must_be_between_1_and_200")
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM self_upgrade_reviews ORDER BY created_at DESC LIMIT ?",
                 (limit,),
@@ -502,7 +502,7 @@ class SelfUpgradeReviewStore:
             raise ValueError("test_outcome_exit_code_mismatch")
         attestation_digest = hashlib.sha256(runner_attestation.encode("utf-8")).hexdigest()
         recorded_at = datetime.now(timezone.utc).isoformat()
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             proposal = connection.execute(
                 "SELECT content_digest, status FROM self_upgrade_reviews WHERE proposal_id = ?",
@@ -544,7 +544,7 @@ class SelfUpgradeReviewStore:
     def list_test_evidence(self, proposal_id: str) -> list[dict]:
         if not isinstance(proposal_id, str) or not re.fullmatch(r"upgrade_[0-9a-f]{24}", proposal_id):
             raise ValueError("proposal_id_invalid")
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM self_upgrade_test_evidence WHERE proposal_id = ? ORDER BY recorded_at",
                 (proposal_id,),
@@ -552,7 +552,7 @@ class SelfUpgradeReviewStore:
             return [dict(row) for row in rows]
 
     def status(self) -> dict:
-        with closing(self._connect()) as connection, connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT status, COUNT(*) AS total FROM self_upgrade_reviews GROUP BY status"
             ).fetchall()
