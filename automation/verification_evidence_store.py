@@ -83,7 +83,16 @@ class VerificationEvidenceStore:
             **({"required_checks": required_checks} if required_checks is not None else {}),
         )
         for check in report.checks:
-            if check.evidence_reference.startswith("yuki-verification-execution://"):
+            requires_execution_receipt = (
+                self.execution_evidence_validator is not None
+                and check.name in {"tests", "security"}
+            )
+            is_execution_reference = check.evidence_reference.startswith(
+                "yuki-verification-execution://"
+            )
+            if requires_execution_receipt and not is_execution_reference:
+                raise VerificationStoreError("execution_receipt_required_for_check")
+            if is_execution_reference:
                 if self.execution_evidence_validator is None:
                     raise VerificationStoreError("execution_receipt_validator_not_configured")
                 if self.execution_evidence_validator(
