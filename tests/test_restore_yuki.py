@@ -1,5 +1,6 @@
 """Tests for safe, verified Yuki SQLite backup restoration."""
 import hashlib
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -17,7 +18,7 @@ class RestoreYukiTests(unittest.TestCase):
         workspace.mkdir()
         database = workspace / "nested" / "memory.sqlite3"
         database.parent.mkdir()
-        with sqlite3.connect(database) as db:
+        with closing(sqlite3.connect(database)) as db, db:
             db.execute("CREATE TABLE memories (value TEXT)")
             db.execute("INSERT INTO memories VALUES ('restore me')")
         backup = root / "backup"
@@ -32,7 +33,7 @@ class RestoreYukiTests(unittest.TestCase):
             report = restore_backup(backup, destination)
             self.assertTrue(report["verified"])
             self.assertEqual(report["database_count"], 1)
-            with sqlite3.connect(destination / "nested" / "memory.sqlite3") as db:
+            with closing(sqlite3.connect(destination / "nested" / "memory.sqlite3")) as db, db:
                 self.assertEqual(db.execute("SELECT value FROM memories").fetchone()[0], "restore me")
 
     def test_restore_rejects_database_symlink(self):
