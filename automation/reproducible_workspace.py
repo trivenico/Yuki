@@ -175,6 +175,74 @@ class GitBackedWorkspaceManager:
                 )
         return provenance
 
+    def verify_workspace(self, artifact_id: str) -> dict:
+        """Revalidate artifact bytes, provenance digest, and materialized files."""
+        provenance = self.get_provenance(artifact_id)
+        bundle = self.verification_workflow.read_artifact(artifact_id)
+        if hashlib.sha256(bundle).hexdigest() != provenance.artifact_sha256:
+            raise ReproducibleWorkspaceError("artifact_digest_mismatch")
+        try:
+            payload = json.loads(bundle.decode("utf-8"))
+            if not isinstance(payload, dict) or set(payload) != {"format", "files"}:
+                raise ValueError("invalid_bundle_shape")
+            if payload["format"] != "yuki-source-bundle-v1" or not isinstance(payload["files"], list):
+                raise ValueError("invalid_bundle_format")
+            files: dict[str, bytes] = {}
+            for entry in payload["files"]:
+                if not isinstance(entry, dict) or set(entry) != {"path", "content_base64"}:
+                    raise ValueError("invalid_bundle_entry")
+                path = self.snapshot_reader.builder._validate_path(entry["path"])
+                if path in files or not isinstance(entry["content_base64"], str):
+                    raise ValueError("duplicate_or_invalid_bundle_path")
+                encoded = entry["content_base64"]
+                decoded = base64.b64decode(encoded, validate=True)
+                if base64.b64encode(decoded).decode("ascii") != encoded:
+                    raise ValueError("noncanonical_bundle_base64")
+                files[path] = decoded
+        except (UnicodeError, ValueError, TypeError, KeyError) as exc:
+            raise ReproducibleWorkspaceError("artifact_bundle_invalid") from exc
+
+        snapshot = self.snapshot_reader.builder.build(files)
+        if (
+            snapshot.snapshot_sha256 != provenance.snapshot_sha256
+            or len(snapshot.files) != provenance.file_count
+            or snapshot.total_bytes != provenance.total_bytes
+        ):
+            raise ReproducibleWorkspaceError("artifact_snapshot_provenance_mismatch")
+
+        root = Path(provenance.workspace_path)
+        try:
+            root_resolved = root.resolve(strict=True)
+            root_resolved.relative_to(self.workspace_root.resolve(strict=True))
+        except (OSError, ValueError) as exc:
+            raise ReproducibleWorkspaceError("workspace_path_outside_managed_root") from exc
+        if root.is_symlink() or not root_resolved.is_dir():
+            raise ReproducibleWorkspaceError("workspace_root_invalid")
+        actual: dict[str, bytes] = {}
+        for path in root_resolved.rglob("*"):
+            if path.is_symlink():
+                raise ReproducibleWorkspaceError("workspace_symlink_detected")
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise ReproducibleWorkspaceError("workspace_non_regular_entry_detected")
+            relative = path.relative_to(root_resolved).as_posix()
+            self.snapshot_reader.builder._validate_path(relative)
+            actual[relative] = path.read_bytes()
+        actual_snapshot = self.snapshot_reader.builder.build(actual)
+        if actual_snapshot.snapshot_sha256 != provenance.snapshot_sha256 or actual != files:
+            raise ReproducibleWorkspaceError("materialized_workspace_integrity_mismatch")
+        return {
+            "artifact_id": provenance.artifact_id,
+            "artifact_sha256": provenance.artifact_sha256,
+            "source_commit": provenance.source_commit,
+            "snapshot_sha256": provenance.snapshot_sha256,
+            "file_count": provenance.file_count,
+            "total_bytes": provenance.total_bytes,
+            "workspace_path": str(root_resolved),
+            "integrity": "passed",
+        }
+
     def get_provenance(self, artifact_id: str) -> WorkspaceProvenance:
         with self._connect() as db:
             row = db.execute(
