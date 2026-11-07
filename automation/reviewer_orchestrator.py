@@ -152,6 +152,10 @@ class ReviewerOrchestrator:
         except Exception as exc:
             raise ReviewerOrchestrationError("reviewer_team_planning_failed") from exc
 
+        if self.ledger.lease_authority is None:
+            raise ReviewerOrchestrationError("reviewer_lease_authority_required")
+        if self.ledger.lease_authority.database_path != self.ledger.database_path:
+            raise ReviewerOrchestrationError("reviewer_lease_database_must_match_ledger")
         tasks = []
         tokens = []
         for assignment in plan.assignments:
@@ -194,27 +198,38 @@ class ReviewerOrchestrator:
             tokens.append(token)
 
         try:
-            created = self.ledger.create_tasks(actor_id=coordinator_id, tasks=tuple(tasks))
+            created = self.ledger.create_tasks_with_leases(
+                actor_id=coordinator_id, tasks=tuple(tasks)
+            )
             if len(created) != len(tasks):
                 raise ReviewerOrchestrationError("review_task_persistence_incomplete")
-        except ReviewerOrchestrationError:
-            raise
+            provisioned = []
+            for task, token, receipt in zip(tasks, tokens, created):
+                if not isinstance(receipt.get("lease_token"), str):
+                    raise ReviewerOrchestrationError("existing_reviewer_task_requires_explicit_resume")
+                provisioned.append(ProvisionedReviewerTask(
+                    task_id=task.task_id,
+                    check_name=task.check_name,
+                    reviewer_agent_id=task.reviewer_agent_id,
+                    session_token=token,
+                    lease_token=receipt["lease_token"],
+                    lease_generation=receipt["lease_generation"],
+                ))
         except Exception as exc:
-            raise ReviewerOrchestrationError("review_task_persistence_failed") from exc
+            for token in tokens:
+                try:
+                    self.sessions.revoke_token(token)
+                except Exception:
+                    pass
+            if isinstance(exc, ReviewerOrchestrationError):
+                raise
+            raise ReviewerOrchestrationError("review_task_and_lease_persistence_failed") from exc
 
         return ReviewerBatch(
             artifact_sha256=artifact_sha256,
             author_agent_id=author_agent_id,
             plan=plan,
-            tasks=tuple(
-                ProvisionedReviewerTask(
-                    task_id=task.task_id,
-                    check_name=task.check_name,
-                    reviewer_agent_id=task.reviewer_agent_id,
-                    session_token=token,
-                )
-                for task, token in zip(tasks, tokens)
-            ),
+            tasks=tuple(provisioned),
         )
 
 
