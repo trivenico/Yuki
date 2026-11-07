@@ -59,6 +59,20 @@ def execute_reviewer_batch(
     outcomes = []
     failures = []
     for provisioned, task, version in validated:
+        try:
+            actor_id = actor_id_for_reviewer(provisioned.reviewer_agent_id)
+            if not isinstance(actor_id, str) or not actor_id.strip():
+                raise ValueError("reviewer_actor_identity_unavailable")
+            outcome = adapter.execute(
+                provisioned_task=provisioned,
+                actor_id=actor_id,
+                expected_version=version,
+                task=task,
+                executor=executor,
+            )
+            outcomes.append(outcome)
+        except Exception:
+            failures.append(provisioned.task_id)
     return ReviewerBatchExecution(tuple(outcomes), tuple(failures))
 
 
