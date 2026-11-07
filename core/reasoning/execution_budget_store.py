@@ -70,6 +70,16 @@ class ExecutionBudgetStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_execution_budget_parent
                     ON execution_budget_snapshots(parent_budget_id);
+                CREATE TABLE IF NOT EXISTS execution_budget_child_allocations (
+                    parent_budget_id TEXT NOT NULL REFERENCES execution_budget_snapshots(budget_id),
+                    child_budget_id TEXT NOT NULL UNIQUE REFERENCES execution_budget_snapshots(budget_id),
+                    allocation_key TEXT NOT NULL,
+                    limits_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY(parent_budget_id, allocation_key)
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_budget_allocations_parent
+                    ON execution_budget_child_allocations(parent_budget_id);
                 CREATE TABLE IF NOT EXISTS execution_budget_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     budget_id TEXT NOT NULL REFERENCES execution_budget_snapshots(budget_id),
@@ -135,7 +145,7 @@ class ExecutionBudgetStore:
         budget_id = self._id(budget_id, "budget_id")
         task_id = self._id(task_id, "task_id")
         if parent_budget_id is not None:
-            parent_budget_id = self._id(parent_budget_id, "parent_budget_id")
+            raise ExecutionBudgetStoreError("child_budgets_must_use_allocate_child_snapshot")
         if not isinstance(policy_version, str) or not policy_version.strip() or len(policy_version) > 64:
             raise ExecutionBudgetStoreError("policy_version_invalid")
         normalized = self._normalize_limits(limits)
@@ -165,6 +175,50 @@ class ExecutionBudgetStore:
             db.commit()
         return ExecutionBudgetSnapshot(budget_id, task_id, parent_budget_id,
                                         policy_version, normalized, digest, now)
+
+    def allocate_child_snapshot(self, *, parent_budget_id: str, child_budget_id: str,
+                                 task_id: str, limits: Mapping[str, int],
+                                 policy_version: str, allocation_key: str) -> ExecutionBudgetSnapshot:
+        """Atomically reserve parent capacity and create one immutable child snapshot."""
+        parent_budget_id = self._id(parent_budget_id, "parent_budget_id")
+        child_budget_id = self._id(child_budget_id, "child_budget_id")
+        task_id = self._id(task_id, "task_id")
+        allocation_key = self._id(allocation_key, "allocation_key")
+        if not isinstance(policy_version, str) or not policy_version.strip() or len(policy_version) > 64:
+            raise ExecutionBudgetStoreError("policy_version_invalid")
+        normalized = self._normalize_limits(limits)
+        encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        now = float(self.clock())
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute("SELECT limits_json FROM execution_budget_snapshots WHERE budget_id=?", (parent_budget_id,)).fetchone()
+            if parent is None:
+                db.rollback()
+                raise ExecutionBudgetStoreError("parent_budget_not_found")
+            old = db.execute("SELECT child_budget_id, limits_json FROM execution_budget_child_allocations WHERE parent_budget_id=? AND allocation_key=?", (parent_budget_id, allocation_key)).fetchone()
+            if old is not None:
+                if old["child_budget_id"] != child_budget_id or old["limits_json"] != encoded:
+                    db.rollback()
+                    raise ExecutionBudgetStoreError("allocation_key_conflict")
+                db.commit()
+                return self.get_snapshot(child_budget_id)
+            parent_limits = json.loads(parent["limits_json"])
+            allocations = db.execute("SELECT limits_json FROM execution_budget_child_allocations WHERE parent_budget_id=?", (parent_budget_id,)).fetchall()
+            for resource, limit_name in _RESOURCES.items():
+                spent = db.execute("SELECT COALESCE(SUM(amount),0) FROM execution_budget_events WHERE budget_id=? AND resource=?", (parent_budget_id, resource)).fetchone()[0]
+                allocated = sum(int(json.loads(row["limits_json"])[limit_name]) for row in allocations)
+                if int(spent) + allocated + normalized[limit_name] > parent_limits[limit_name]:
+                    db.rollback()
+                    raise ExecutionBudgetStoreError("parent_budget_exhausted:" + resource)
+            try:
+                db.execute("INSERT INTO execution_budget_snapshots (budget_id,task_id,parent_budget_id,policy_version,limits_json,digest,created_at) VALUES (?,?,?,?,?,?,?)", (child_budget_id,task_id,parent_budget_id,policy_version,encoded,digest,now))
+                db.execute("INSERT INTO execution_budget_child_allocations (parent_budget_id,child_budget_id,allocation_key,limits_json,created_at) VALUES (?,?,?,?,?)", (parent_budget_id,child_budget_id,allocation_key,encoded,now))
+            except sqlite3.IntegrityError as exc:
+                db.rollback()
+                raise ExecutionBudgetStoreError("budget_task_or_allocation_already_exists") from exc
+            db.commit()
+        return ExecutionBudgetSnapshot(child_budget_id,task_id,parent_budget_id,policy_version,normalized,digest,now)
 
     def get_snapshot(self, budget_id: str) -> ExecutionBudgetSnapshot:
         budget_id = self._id(budget_id, "budget_id")
@@ -234,7 +288,13 @@ class ExecutionBudgetStore:
                 "WHERE budget_id=? AND resource=?",
                 (budget_id,resource),
             ).fetchone()["total"]
-            if int(used) + amount > limit:
+            allocations = db.execute(
+                "SELECT limits_json FROM execution_budget_child_allocations WHERE parent_budget_id=?",
+                (budget_id,),
+            ).fetchall()
+            allocated = sum(int(json.loads(item["limits_json"])[_RESOURCES[resource]])
+                            for item in allocations)
+            if int(used) + allocated + amount > limit:
                 db.rollback()
                 raise ExecutionBudgetStoreError("budget_exhausted:" + resource)
             db.execute(
