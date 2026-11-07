@@ -306,14 +306,41 @@ class WorkflowRunStore:
         if not isinstance(definition, (list, tuple)) or not 1 <= len(definition) <= _MAX_STEPS:
             raise ValueError("definition must contain 1-20 steps.")
         from automation.workflow_engine import WorkflowEngine
-        validated = [WorkflowEngine._validate_step(i, step) for i, step in enumerate(definition)]
+        validated = []
+        execution_metadata = []
+        for index, step in enumerate(definition):
+            if not isinstance(step, dict):
+                validated.append(WorkflowEngine._validate_step(index, step))
+                execution_metadata.append(None)
+                continue
+            metadata = step.get("execution")
+            base_step = {key: value for key, value in step.items() if key != "execution"}
+            validated.append(WorkflowEngine._validate_step(index, base_step))
+            if metadata is not None:
+                if not isinstance(metadata, dict) or set(metadata) != {
+                    "budget_id", "task_identity", "policy_version",
+                }:
+                    raise ValueError("execution metadata has an invalid schema.")
+                if any(
+                    not isinstance(metadata.get(key), str)
+                    or not metadata[key].strip()
+                    or len(metadata[key]) > 128
+                    or any(ord(ch) < 33 for ch in metadata[key])
+                    for key in ("budget_id", "task_identity", "policy_version")
+                ):
+                    raise ValueError("execution metadata values must be bounded identifiers.")
+                metadata = dict(metadata)
+            execution_metadata.append(metadata)
         names = [step[0] for step in validated]
         if len(set(names)) != len(names):
             raise ValueError("workflow step names must be unique.")
-        canonical = [
-            {"name": name, "action": action, "argument": argument, "requires_approval": approval}
-            for name, action, argument, approval in validated
-        ]
+        canonical = []
+        for (name, action, argument, approval), metadata in zip(validated, execution_metadata):
+            item = {"name": name, "action": action, "argument": argument,
+                    "requires_approval": approval}
+            if metadata is not None:
+                item["execution"] = metadata
+            canonical.append(item)
         _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
         return canonical
 
