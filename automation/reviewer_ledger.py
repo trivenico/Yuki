@@ -16,6 +16,7 @@ import sqlite3
 from typing import Callable, Iterable
 
 from automation.reviewer_contracts import ReviewResult, ReviewTask
+from automation.reviewer_signing import HMACReviewerSigner, ReviewerSignature
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SHA = re.compile(r"^[a-f0-9]{64}$")
@@ -72,13 +73,17 @@ class ReviewerTaskLedger:
     """
 
     def __init__(self, database_path: str | Path, *,
-                 authorize: Callable[[str, str, str], bool]):
+                 authorize: Callable[[str, str, str], bool],
+                 signer_resolver: Callable[[str, str | None], HMACReviewerSigner | None]):
         if not callable(authorize):
             raise TypeError("trusted_reviewer_authorizer_required")
+        if not callable(signer_resolver):
+            raise TypeError("trusted_reviewer_signer_resolver_required")
         self.database_path = str(database_path)
         if not self.database_path.strip():
             raise ValueError("database_path_required")
         self.authorize = authorize
+        self.signer_resolver = signer_resolver
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -93,11 +98,15 @@ class ReviewerTaskLedger:
                     state TEXT NOT NULL CHECK(state IN ('assigned','in_progress','submitted')),
                     result_json TEXT,
                     result_digest TEXT,
+                    signature_json TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     version INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(reviewer_tasks)")}
+            if "signature_json" not in columns:
+                db.execute("ALTER TABLE reviewer_tasks ADD COLUMN signature_json TEXT")
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_reviewer_tasks_artifact
                 ON reviewer_tasks(artifact_sha256, created_at)
@@ -239,8 +248,14 @@ class ReviewerTaskLedger:
                 evidence_references=tuple(task_data["evidence_references"]),
             )
             result.validate(task)
-            payload = _json(_result_payload(result))
+            payload_data = _result_payload(result)
+            payload = _json(payload_data)
             digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            signer = self.signer_resolver(actor, None)
+            if not isinstance(signer, HMACReviewerSigner):
+                raise ReviewerLedgerError("reviewer_signing_key_unavailable")
+            signature = signer.sign(payload_data)
+            signature_json = _json(asdict(signature))
             if row["state"] == "submitted":
                 if row["result_json"] == payload and row["result_digest"] == digest:
                     return {"task_id": task_id, "state": "submitted",
@@ -253,8 +268,8 @@ class ReviewerTaskLedger:
             version = expected_version + 1
             db.execute(
                 """UPDATE reviewer_tasks SET state='submitted',result_json=?,
-                   result_digest=?,updated_at=?,version=? WHERE task_id=?""",
-                (payload, digest, now, version, task_id),
+                   result_digest=?,signature_json=?,updated_at=?,version=? WHERE task_id=?""",
+                (payload, digest, signature_json, now, version, task_id),
             )
             self._event(db, task_id, version, "submitted", actor,
                         {"result_digest": digest, "result_status": result.status}, now)
@@ -298,8 +313,8 @@ class ReviewerTaskLedger:
 
         result_digest = None
         if row["state"] == "submitted":
-            if not row["result_json"] or not row["result_digest"]:
-                raise ReviewerLedgerError("review_result_missing")
+            if not row["result_json"] or not row["result_digest"] or not row["signature_json"]:
+                raise ReviewerLedgerError("signed_review_result_missing")
             result_digest = hashlib.sha256(row["result_json"].encode("utf-8")).hexdigest()
             if result_digest != row["result_digest"]:
                 raise ReviewerLedgerError("review_result_integrity_mismatch")
@@ -316,9 +331,16 @@ class ReviewerTaskLedger:
                     findings=tuple(ReviewFinding(**item) for item in result_data["findings"]),
                 )
                 result.validate(task)
+                signature_data = json.loads(row["signature_json"])
+                signature = ReviewerSignature(**signature_data)
+                signer = self.signer_resolver(task.reviewer_agent_id, signature.key_id)
+                if not isinstance(signer, HMACReviewerSigner) or not signer.verify(result_data, signature):
+                    raise ReviewerLedgerError("review_result_signature_invalid")
+            except ReviewerLedgerError:
+                raise
             except Exception as exc:
                 raise ReviewerLedgerError("review_result_payload_invalid") from exc
-        elif row["result_json"] is not None or row["result_digest"] is not None:
+        elif row["result_json"] is not None or row["result_digest"] is not None or row["signature_json"] is not None:
             raise ReviewerLedgerError("unexpected_review_result")
 
         for index, (event, (event_type, expected_actor)) in enumerate(zip(events, expected)):
@@ -365,6 +387,8 @@ class ReviewerTaskLedger:
             "state": row["state"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "result_digest": row["result_digest"],
+            "signature": json.loads(row["signature_json"]) if row["signature_json"] else None,
+            "signature_verified": row["state"] == "submitted",
             "version": row["version"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
