@@ -219,6 +219,21 @@ class SpecialistAgentCoordinator:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN agent_identity_digest TEXT NOT NULL DEFAULT ""')
             db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
             db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_plan_hierarchy (
+                    child_plan_id TEXT PRIMARY KEY,
+                    parent_plan_id TEXT NOT NULL,
+                    parent_subtask_id TEXT NOT NULL,
+                    depth INTEGER NOT NULL CHECK(depth BETWEEN 1 AND 3),
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(parent_plan_id, parent_subtask_id, child_plan_id),
+                    FOREIGN KEY(child_plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE,
+                    FOREIGN KEY(parent_plan_id, parent_subtask_id)
+                        REFERENCES agent_plan_subtasks(plan_id, subtask_id) ON DELETE CASCADE
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_hierarchy_parent ON agent_plan_hierarchy(parent_plan_id, parent_subtask_id)")
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     plan_id TEXT NOT NULL,
@@ -1121,6 +1136,88 @@ class SpecialistAgentCoordinator:
                 "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
                 (task_id, status, plan_id, subtask_id),
             )
+
+    def submit_child_plan(
+        self, *, actor_id: str, parent_plan_id: str, parent_subtask_id: str,
+        idempotency_key: str, subtasks: Iterable[SubtaskSpec],
+    ) -> AgentPlan:
+        """Create a bounded child team plan without broadening parent permissions.
+
+        This persists hierarchy and inherited permission scope. It does not yet
+        make parent task completion depend on child-plan completion.
+        """
+        if not self._allowed(actor_id, "agent:delegate", parent_plan_id):
+            raise PermissionError("agent delegation is not authorized.")
+        if not isinstance(parent_plan_id, str) or not _ID.fullmatch(parent_plan_id):
+            raise AgentPlanError("parent plan ID is invalid.")
+        if not isinstance(parent_subtask_id, str) or not _ID.fullmatch(parent_subtask_id):
+            raise AgentPlanError("parent subtask ID is invalid.")
+        items = self._validate_subtasks(subtasks, self.max_subtasks)
+        with self._connect() as db:
+            parent = db.execute(
+                "SELECT owner_id FROM agent_plans WHERE plan_id=?", (parent_plan_id,)
+            ).fetchone()
+            if parent is None:
+                raise KeyError("parent agent plan not found.")
+            if parent["owner_id"] != actor_id.strip():
+                raise PermissionError("parent agent plan ownership mismatch.")
+            source = db.execute(
+                """SELECT permissions_json, task_id, status
+                   FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?""",
+                (parent_plan_id, parent_subtask_id),
+            ).fetchone()
+            if source is None:
+                raise KeyError("parent subtask not found.")
+            if source["task_id"] is not None or source["status"] != "pending":
+                raise AgentPlanError("child teams must be assigned before parent task dispatch.")
+            inherited_permissions = set(json.loads(source["permissions_json"]))
+            for item in items:
+                if not set(item.required_permissions).issubset(inherited_permissions):
+                    raise PermissionError("child plan cannot broaden its parent's permission scope.")
+            row = db.execute(
+                "SELECT depth FROM agent_plan_hierarchy WHERE child_plan_id=?",
+                (parent_plan_id,),
+            ).fetchone()
+            depth = (row["depth"] if row else 0) + 1
+            if depth > 3:
+                raise AgentPlanError("agent hierarchy depth limit of 3 exceeded.")
+        child = self.submit(
+            actor_id=actor_id,
+            idempotency_key=idempotency_key,
+            subtasks=items,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT parent_plan_id, parent_subtask_id, depth FROM agent_plan_hierarchy WHERE child_plan_id=?",
+                (child.plan_id,),
+            ).fetchone()
+            if existing is not None:
+                if (existing["parent_plan_id"], existing["parent_subtask_id"], existing["depth"]) != (
+                    parent_plan_id, parent_subtask_id, depth
+                ):
+                    raise WorkflowConflict("child plan is already attached to a different parent.")
+            else:
+                db.execute(
+                    """INSERT INTO agent_plan_hierarchy(
+                        child_plan_id, parent_plan_id, parent_subtask_id, depth, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)""",
+                    (child.plan_id, parent_plan_id, parent_subtask_id, depth, actor_id.strip(), now),
+                )
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM agent_plan_events WHERE plan_id=?",
+                    (parent_plan_id,),
+                ).fetchone()["next_sequence"]
+                db.execute(
+                    """INSERT INTO agent_plan_events(
+                        plan_id, sequence, actor_id, kind, payload_json, created_at
+                    ) VALUES (?, ?, ?, 'plan.child_created', ?, ?)""",
+                    (parent_plan_id, sequence, actor_id.strip(),
+                     json.dumps({"child_plan_id": child.plan_id, "parent_subtask_id": parent_subtask_id, "depth": depth},
+                                sort_keys=True, separators=(",", ":")), now),
+                )
+        return child
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):
