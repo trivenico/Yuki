@@ -106,9 +106,9 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
                 row.execution_id, expected_version=0, to_state="cancelled",
                 actor_id="operator", reason_code="cancel",
             )
-        pending = self.store.transition(
-            row.execution_id, expected_version=1, to_state="evidence_pending",
-            actor_id="runner", reason_code="execution_finished",
+        pending = self.store.complete_execution(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            expected_version=running.version,
         )
         self.assertEqual(pending.state, "evidence_pending")
         with self.assertRaises(UpgradeExecutionTransitionError):
