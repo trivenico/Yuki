@@ -194,6 +194,11 @@ class LocalVerificationExecutor:
             process.wait()
         for reader in readers:
             reader.join(timeout=2)
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
         finished = datetime.now(timezone.utc).isoformat()
         captured = bytes(output)
         exit_code = process.returncode
