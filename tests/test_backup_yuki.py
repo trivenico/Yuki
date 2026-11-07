@@ -60,6 +60,24 @@ class BackupYukiTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 create_backup(workspace, output)
 
+    def test_backup_refuses_database_symlink_to_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            outside = root / "private.db"
+            with sqlite3.connect(outside) as db:
+                db.execute("CREATE TABLE secrets (value TEXT)")
+                db.execute("INSERT INTO secrets VALUES ('must not be copied')")
+            link = workspace / "linked.db"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"Symlink creation is unavailable: {exc}")
+            with self.assertRaisesRegex(ValueError, "symbolic-link database"):
+                create_backup(workspace, root / "backup")
+            self.assertFalse((root / "backup").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
