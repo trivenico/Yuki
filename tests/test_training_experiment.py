@@ -2,6 +2,7 @@ import hashlib
 import unittest
 
 from providers.dataset_records import deduplicate_dataset_records, deterministic_dataset_split
+from providers.dataset_quality import assess_dataset_quality
 from providers.dataset_artifact_manifest import DatasetManifestError
 from providers.training_experiment import (
     TrainingExperimentError,
@@ -44,6 +45,13 @@ def split_manifest():
         {"prompt": f"prompt-{i}", "response": f"response-{i}"} for i in range(80)
     ])["records"]
     return {"schema_version": 1, **deterministic_dataset_split(records, seed="train-exp-1")}
+
+
+def clean_quality_report():
+    return assess_dataset_quality([
+        {"prompt": "Explain gravity", "response": "Mass attracts mass."},
+        {"prompt": "Explain photosynthesis", "response": "Plants convert light."},
+    ])
 
 
 def make_spec(**overrides):
@@ -157,6 +165,7 @@ class TrainingExperimentTests(unittest.TestCase):
             estimated_peak_memory_bytes=24 * 1024**3,
             required_storage_bytes=20 * 1024**3,
             estimated_cost=2.5, budget_limit=5.0,
+            quality_report=clean_quality_report(),
         )
         self.assertEqual(report["status"], "preflight_passed")
         self.assertFalse(report["execution_dispatched"])
@@ -174,6 +183,7 @@ class TrainingExperimentTests(unittest.TestCase):
             make_spec(), worker=worker, backend="transformers",
             estimated_peak_memory_bytes=2048, required_storage_bytes=2048,
             estimated_cost=10, budget_limit=1,
+            quality_report=clean_quality_report(),
         )
         self.assertEqual(report["status"], "blocked")
         self.assertEqual(
@@ -194,7 +204,42 @@ class TrainingExperimentTests(unittest.TestCase):
                 make_spec(), worker=worker, backend="transformers",
                 estimated_peak_memory_bytes=512, required_storage_bytes=512,
                 estimated_cost=0, budget_limit=1,
+                quality_report=clean_quality_report(),
             )
+
+
+    def test_training_preflight_blocks_dataset_quality_findings(self):
+        worker = {
+            "worker_id": "gpu-worker-01", "online": True, "paired": True,
+            "enabled": True, "backends": ["transformers"],
+            "ram_available_bytes": 32 * 1024**3,
+            "storage_available_bytes": 100 * 1024**3,
+        }
+        unsafe_report = assess_dataset_quality([
+            {"prompt": "Email me at person@example.com", "response": "Help."},
+        ])
+        with self.assertRaisesRegex(TrainingExperimentError, "dataset_quality_not_approved"):
+            build_training_preflight(
+                make_spec(), worker=worker, backend="transformers",
+                estimated_peak_memory_bytes=1024, required_storage_bytes=1024,
+                estimated_cost=0, budget_limit=1, quality_report=unsafe_report,
+            )
+
+    def test_training_preflight_binds_quality_report_digest(self):
+        report = clean_quality_report()
+        worker = {
+            "worker_id": "gpu-worker-01", "online": True, "paired": True,
+            "enabled": True, "backends": ["transformers"],
+            "ram_available_bytes": 32 * 1024**3,
+            "storage_available_bytes": 100 * 1024**3,
+        }
+        result = build_training_preflight(
+            make_spec(), worker=worker, backend="transformers",
+            estimated_peak_memory_bytes=1024, required_storage_bytes=1024,
+            estimated_cost=0, budget_limit=1, quality_report=report,
+        )
+        self.assertEqual(result["dataset_quality_content_sha256"], report["content_sha256"])
+        self.assertEqual(result["dataset_quality_status"], "passed")
 
     def test_detects_spec_mutation(self):
         spec = make_spec()
