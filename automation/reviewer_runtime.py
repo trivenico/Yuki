@@ -21,7 +21,7 @@ def build_isolated_reviewer_adapter(
     memory_limit: str = "1g",
     cpu_limit: str = "1",
     pids_limit: int = 64,
-) -> ReviewerExecutionAdapter:
+) -> tuple[ReviewerExecutionAdapter, DockerReviewerExecutor]:
     """Compose the host ledger/evidence boundary with a Docker-only executor.
 
     The caller must construct the ledger with trusted authorization, signing,
