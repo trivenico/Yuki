@@ -48,9 +48,11 @@ the old dispatch with its previous claim token.
 Run:
 
 ```bash
-python -m unittest tests.test_reviewer_worker_recovery tests.test_reviewer_ledger -v
+python -m unittest tests.test_reviewer_worker_recovery tests.test_reviewer_ledger_recovery tests.test_reviewer_ledger -v
 ```
 
-Tests cover eligible recovery, no-op behavior without an expired worker, and
-deferral when no replacement exists. Tests are authored, not claimed as
+Tests cover eligible recovery, no-op behavior without an expired worker,
+deferral when no replacement exists, concurrent recovery races, and an
+end-to-end ledger test that verifies lease-generation rotation, audit events,
+and dispatch requeue for the replacement reviewer. Tests are authored, not claimed as
 executed unless CI evidence confirms execution.
