@@ -11,6 +11,22 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_DIR = ROOT / ".venv"
 
 
+def _selected_python_supported(executable: str) -> bool:
+    """Check the interpreter that will create the venv, not this script's Python."""
+    try:
+        result = subprocess.run(
+            [
+                executable, "-c",
+                "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+            ],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        major, minor = (int(part) for part in result.stdout.strip().split(".", 1))
+        return (major, minor) >= (3, 10)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--python", default=sys.executable,
@@ -19,8 +35,8 @@ def main() -> int:
                         help="Create the environment but do not install packages")
     args = parser.parse_args()
 
-    if sys.version_info < (3, 10):
-        print("Yuki requires Python 3.10 or newer.")
+    if not _selected_python_supported(args.python):
+        print("The selected Python executable must be available and report Python 3.10 or newer.")
         return 1
 
     print(f"Creating isolated environment: {ENV_DIR}")
