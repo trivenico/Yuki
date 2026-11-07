@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
+from automation.reviewer_ledger import ReviewerLedgerConflict
 from automation.reviewer_worker_recovery import ReviewerWorkerRecoverySupervisor
 
 
@@ -48,6 +49,27 @@ class ReviewerWorkerRecoveryTests(unittest.TestCase):
         report = supervisor.run_once()
         self.assertEqual(report.recovered_tasks, 0)
         ledger.list_expired_in_progress.assert_not_called()
+
+    def test_concurrent_task_change_is_reported_as_deferred(self):
+        registry = Mock()
+        registry.expire_stale.return_value = 1
+        registry.list_workers.return_value = (Mock(state="expired"),)
+        ledger = Mock()
+        ledger.list_expired_in_progress.return_value = ({
+            "task_id": "task-a", "reviewer_agent_id": "reviewer-a",
+            "version": 4,
+        },)
+        ledger.recover_in_progress.side_effect = ReviewerLedgerConflict("stale_version")
+        supervisor = ReviewerWorkerRecoverySupervisor(
+            registry, ledger, actor_id="recovery-controller",
+            worker_ids=("reviewer-a",),
+            replacement_resolver=lambda *_: "reviewer-b",
+        )
+        report = supervisor.run_once()
+        self.assertEqual(report.recovered_tasks, 0)
+        self.assertEqual(report.deferred_tasks, 1)
+        self.assertEqual(report.outcomes[0].reason_code,
+                         "task_or_lease_changed_during_recovery")
 
     def test_missing_replacement_defers_without_mutating_task(self):
         registry = Mock()
