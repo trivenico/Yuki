@@ -19,35 +19,59 @@ SPEC.loader.exec_module(MODULE)
 
 
 class LocalAlphaCheckTests(unittest.TestCase):
-    def _run(self, *, api_key):
+    def _run(self, *, config, environ=None, modules=None):
         with tempfile.TemporaryDirectory() as tmp:
+            effective_config = {"provider": "openai", "workspace": tmp, **config}
             config_module = types.ModuleType("core.config")
-            config_module.load_config = lambda: {
-                "provider": "openai", "workspace": tmp,
-            }
+            config_module.load_config = lambda: effective_config
             output = io.StringIO()
-            env = dict(os.environ)
-            if api_key:
-                env["OPENAI_API_KEY"] = "test-key"
-            else:
-                env.pop("OPENAI_API_KEY", None)
-            with patch.dict(sys.modules, {"core.config": config_module}), \
-                 patch.object(MODULE.importlib.util, "find_spec", return_value=object()), \
-                 patch.object(MODULE.os, "access", return_value=True), \
-                 patch.dict(MODULE.os.environ, env, clear=True), \
+            env = dict(os.environ if environ is None else environ)
+            with patch.dict(sys.modules, {"core.config": config_module}), \\
+                 patch.object(
+                     MODULE.importlib.util,
+                     "find_spec",
+                     side_effect=lambda name: (
+                         None if modules is not None and name in modules and not modules[name]
+                         else object()
+                     ),
+                 ), \\
+                 patch.object(MODULE.os, "access", return_value=True), \\
+                 patch.dict(MODULE.os.environ, env, clear=True), \\
                  contextlib.redirect_stdout(output):
                 result = MODULE.main()
             return result, output.getvalue()
 
-    def test_openai_local_alpha_prerequisites_pass(self):
-        result, output = self._run(api_key=True)
+    def test_openai_local_alpha_prerequisites_pass_without_optional_requests(self):
+        result, output = self._run(
+            config={},
+            environ={"OPENAI_API_KEY": "test-key"},
+            modules={"yaml": True, "uvicorn": True, "requests": False},
+        )
         self.assertEqual(result, 0)
         self.assertIn("READY FOR A LOCAL SMOKE TEST", output)
+        self.assertNotIn("Dependency requests", output)
 
     def test_missing_cloud_key_fails_closed(self):
-        result, output = self._run(api_key=False)
+        result, output = self._run(config={}, environ={})
         self.assertEqual(result, 1)
         self.assertIn("OPENAI_API_KEY", output)
+
+    def test_unsupported_provider_fails_closed(self):
+        result, output = self._run(
+            config={"provider": "unknown"},
+            environ={"OPENAI_API_KEY": "test-key"},
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("unsupported provider: unknown", output)
+
+    def test_missing_required_yaml_dependency_fails(self):
+        result, output = self._run(
+            config={},
+            environ={"OPENAI_API_KEY": "test-key"},
+            modules={"yaml": False, "uvicorn": True},
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("Dependency yaml", output)
 
 
 if __name__ == "__main__":
