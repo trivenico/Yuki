@@ -6,6 +6,8 @@ by immutable sha256 digest and already present locally (no implicit image pulls)
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -129,7 +131,7 @@ class DockerVerificationExecutor:
         self.cpu_limit = cpu_limit
         self.pids_limit = pids_limit
         self.max_output_bytes = max_output_bytes
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS sandbox_verification_receipts (
                     execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL,
@@ -262,7 +264,7 @@ class DockerVerificationExecutor:
         ))
 
     def _persist(self, receipt: SandboxReceipt) -> SandboxReceipt:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT INTO sandbox_verification_receipts(
@@ -315,7 +317,7 @@ class DockerVerificationExecutor:
             raise ValueError("artifact_sha256_required")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit_must_be_between_1_and_100")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 """SELECT execution_id, command_id, argv_json, image, artifact_sha256,
                           started_at, finished_at, exit_code, timed_out, output_limited,
@@ -330,7 +332,7 @@ class DockerVerificationExecutor:
     def get(self, execution_id: str) -> dict | None:
         if not isinstance(execution_id, str) or not re.fullmatch(r"[a-f0-9]{32}", execution_id):
             raise ValueError("invalid_execution_id")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM sandbox_verification_receipts WHERE execution_id=?",
                 (execution_id,),
