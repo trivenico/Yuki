@@ -121,11 +121,17 @@ class ExecutionBudgetStoreTests(unittest.TestCase):
             allocation_key="research-team",
         )
         self.assertEqual(child.parent_budget_id, "budget-1")
+        second = self.store.allocate_child_snapshot(
+            parent_budget_id="budget-1", child_budget_id="child-2",
+            task_id="child-task-2", limits=child_limits, policy_version="1",
+            allocation_key="engineering-team",
+        )
+        self.assertEqual(second.parent_budget_id, "budget-1")
         with self.assertRaisesRegex(ExecutionBudgetStoreError, "parent_budget_exhausted"):
             self.store.allocate_child_snapshot(
-                parent_budget_id="budget-1", child_budget_id="child-2",
-                task_id="child-task-2", limits=child_limits, policy_version="1",
-                allocation_key="engineering-team",
+                parent_budget_id="budget-1", child_budget_id="child-3",
+                task_id="child-task-3", limits=child_limits, policy_version="1",
+                allocation_key="overflow-team",
             )
 
     def test_child_allocation_is_idempotent_but_not_mutable(self):
