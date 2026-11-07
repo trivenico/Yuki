@@ -6,6 +6,12 @@ from pathlib import Path
 from automation.independent_verification import VerificationCheck, VerificationReport, sha256_artifact
 from automation.verification_evidence_store import VerificationEvidenceStore, VerificationConflict
 
+def allow_test_reviewers(actor_id, action, artifact_sha256):
+    return actor_id.startswith(("implementation-", "reviewer-")) and action in {
+        "verification:submit", "verification:review"
+    } and len(artifact_sha256) == 64
+
+
 NAMES = ("acceptance_criteria", "tests", "security", "architecture", "claims_and_provenance")
 
 
@@ -23,10 +29,25 @@ def make_report(status="passed"):
 
 
 class VerificationEvidenceStoreTests(unittest.TestCase):
+    def test_fails_closed_without_trusted_reviewer_authorizer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VerificationEvidenceStore(Path(tmp) / "verification.sqlite3")
+            with self.assertRaisesRegex(Exception, "trusted_reviewer_authorizer_not_configured"):
+                store.record(make_report())
+
+    def test_rejects_unregistered_reviewer_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = VerificationEvidenceStore(
+                Path(tmp) / "verification.sqlite3",
+                reviewer_authorizer=lambda actor, action, digest: actor != "reviewer-security",
+            )
+            with self.assertRaises(PermissionError):
+                store.record(make_report())
+
     def test_record_and_read_survives_store_reopen(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "verification.sqlite3"
-            first = VerificationEvidenceStore(path)
+            first = VerificationEvidenceStore(path, reviewer_authorizer=allow_test_reviewers)
             result = first.record(make_report())
             second = VerificationEvidenceStore(path)
             stored = second.get(result["report_id"])
@@ -35,7 +56,7 @@ class VerificationEvidenceStoreTests(unittest.TestCase):
 
     def test_exact_retry_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store = VerificationEvidenceStore(Path(tmp) / "verification.sqlite3")
+            store = VerificationEvidenceStore(Path(tmp) / "verification.sqlite3", reviewer_authorizer=allow_test_reviewers)
             report = make_report()
             first = store.record(report)
             second = store.record(report)
