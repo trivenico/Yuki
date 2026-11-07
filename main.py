@@ -418,7 +418,7 @@ def main():
                     commit=commit_sha, plan_id=plan_id, subtask_id=subtask_id,
                     task_id=subtask.task_id, author_agent_id=subtask.agent_id,
                     created_at=datetime.now(timezone.utc).isoformat(),
-                    workspace_name=f"{plan_id}-{subtask_id}-{commit_sha[:12]}",
+                    workspace_name=f"snapshot-{commit_sha[:12]}-{uuid4().hex[:8]}",
                 )
                 print(
                     f"Yuki > Snapshot captured: artifact={provenance.artifact_id}; "
