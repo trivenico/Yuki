@@ -3,11 +3,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from automation.engineering_director import EngineeringDirector, EngineeringProposal
+from automation.agent_coordinator import SpecialistAgentCoordinator
 
 
 class EngineeringDirectorTests(unittest.TestCase):
     def setUp(self):
-        self.coordinator = Mock()
+        self.coordinator = object.__new__(SpecialistAgentCoordinator)
+        self.coordinator.submit = Mock()
         self.coordinator.agents = {
             "coding": SimpleNamespace(agent_id="coding", enabled=True, capabilities=frozenset({"coding"})),
             "testing": SimpleNamespace(agent_id="testing", enabled=True, capabilities=frozenset({"testing"})),
