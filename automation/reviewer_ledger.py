@@ -138,6 +138,27 @@ class ReviewerTaskLedger:
                     UNIQUE(task_id, sequence)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS reviewer_dispatch_outbox (
+                    dispatch_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL UNIQUE REFERENCES reviewer_tasks(task_id),
+                    artifact_sha256 TEXT NOT NULL,
+                    reviewer_agent_id TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('pending','claimed','delivered','dead_letter')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    available_at TEXT NOT NULL,
+                    claimed_by TEXT,
+                    claim_token_digest TEXT,
+                    claim_expires_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_reviewer_dispatch_ready
+                ON reviewer_dispatch_outbox(state,available_at,created_at)
+            """)
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
@@ -266,6 +287,15 @@ class ReviewerTaskLedger:
                     reviewer_agent_id=task.reviewer_agent_id,
                     ttl_seconds=lease_ttl_seconds,
                 )
+                dispatch_id = "dispatch-" + hashlib.sha256(
+                    (task.task_id + ":" + digest).encode("utf-8")
+                ).hexdigest()[:32]
+                db.execute("""INSERT INTO reviewer_dispatch_outbox
+                    (dispatch_id,task_id,artifact_sha256,reviewer_agent_id,state,
+                     attempts,available_at,created_at,updated_at)
+                    VALUES(?,?,?,?,'pending',0,?,?,?)""",
+                    (dispatch_id,task.task_id,task.artifact_sha256,
+                     task.reviewer_agent_id,now,now,now))
                 created.append({"task_id":task.task_id,"state":"assigned","version":0,
                                 "reused":False,"lease_token":lease.token,
                                 "lease_generation":lease.generation,
