@@ -27,7 +27,7 @@ class VerificationWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.evidence = VerificationEvidenceStore(root / "evidence.sqlite3")
+        self.evidence = VerificationEvidenceStore(root / "evidence.sqlite3", reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64)
         self.workflow = VerificationWorkflow(
             root / "workflow.sqlite3", self.evidence,
             reviewer_authorize=lambda actor, action, artifact: actor == "review-lead" and action == "verification:submit",
