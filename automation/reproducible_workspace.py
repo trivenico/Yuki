@@ -6,6 +6,8 @@ the exact snapshot into a fresh workspace. It does not execute project code.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import asdict, dataclass
 import base64
 import hashlib
@@ -67,7 +69,7 @@ class GitBackedWorkspaceManager:
             raise TypeError("verification_workflow_required")
         self.snapshot_reader = snapshot_reader
         self.verification_workflow = verification_workflow
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS reproducible_workspaces (
                     artifact_id TEXT PRIMARY KEY,
@@ -146,7 +148,7 @@ class GitBackedWorkspaceManager:
             file_count=len(git_snapshot.snapshot.files),
             total_bytes=git_snapshot.snapshot.total_bytes,
         )
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM reproducible_workspaces WHERE artifact_id=?",
@@ -244,7 +246,7 @@ class GitBackedWorkspaceManager:
         }
 
     def get_provenance(self, artifact_id: str) -> WorkspaceProvenance:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM reproducible_workspaces WHERE artifact_id=?",
                 (artifact_id,),
