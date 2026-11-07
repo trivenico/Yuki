@@ -482,6 +482,40 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertIsNone(self.coordinator.get_plan(actor_id="alice", plan_id=parent.plan_id).subtasks[0].task_id)
 
 
+    def test_budgeted_advance_persists_budget_identity_and_is_idempotent(self):
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+        budget_store = ExecutionBudgetStore(str(Path(self.tmp.name) / "dispatch-budgets.sqlite3"))
+        limits = {
+            "max_model_turns": 10, "max_tool_calls": 10,
+            "max_duration_ms": 60_000, "max_transcript_chars": 10_000,
+        }
+        def policy(kind, _plan_id, _subtask_id):
+            return dict(limits if kind == "plan" else {
+                "max_model_turns": 5, "max_tool_calls": 5,
+                "max_duration_ms": 30_000, "max_transcript_chars": 5_000,
+            })
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            budget_store=budget_store, budget_policy=policy,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="budgeted-dispatch",
+            subtasks=[SubtaskSpec("collect", "Collect evidence", ("research",), requires_approval=False)],
+        )
+        first = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = first.subtasks[0].task_id
+        self.assertIsNotNone(task_id)
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT definition_json FROM workflow_runs WHERE run_id=?", (task_id,),
+            ).fetchone()
+        definition = json.loads(row["definition_json"])
+        self.assertEqual(definition[0]["budget_id"], budget_store.get_snapshot(
+            definition[0]["budget_id"]
+        ).budget_id)
+        second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(second.subtasks[0].task_id, task_id)
+
     def test_delegated_budget_hierarchy_survives_coordinator_restart(self):
         from core.reasoning.execution_budget_store import ExecutionBudgetStore
 
