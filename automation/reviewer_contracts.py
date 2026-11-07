@@ -45,7 +45,7 @@ class ReviewTask:
                 raise ReviewContractError("invalid_" + name + "_agent_id")
         if self.author_agent_id == self.reviewer_agent_id:
             raise ReviewContractError("reviewer_must_differ_from_author")
-        if self.check_name not in REVIEWER_CAPABILITIES:
+        if not isinstance(self.check_name, str) or self.check_name not in REVIEWER_CAPABILITIES:
             raise ReviewContractError("unsupported_review_check")
         if not isinstance(self.requirements, tuple) or not 1 <= len(self.requirements) <= _MAX_REQUIREMENTS:
             raise ReviewContractError("review_requirements_invalid")
@@ -72,9 +72,9 @@ class ReviewFinding:
     def validate(self) -> None:
         if not isinstance(self.finding_id, str) or not _ID.fullmatch(self.finding_id):
             raise ReviewContractError("invalid_finding_id")
-        if self.severity not in _SEVERITIES:
+        if not isinstance(self.severity, str) or self.severity not in _SEVERITIES:
             raise ReviewContractError("invalid_finding_severity")
-        if self.state not in _FINDING_STATES:
+        if not isinstance(self.state, str) or self.state not in _FINDING_STATES:
             raise ReviewContractError("invalid_finding_state")
         for field, value, limit in (
             ("title", self.title, 200), ("detail", self.detail, 4000),
@@ -106,7 +106,7 @@ class ReviewResult:
             or self.check_name != task.check_name
         ):
             raise ReviewContractError("review_result_task_binding_mismatch")
-        if self.status not in _RESULT_STATUSES:
+        if not isinstance(self.status, str) or self.status not in _RESULT_STATUSES:
             raise ReviewContractError("invalid_review_result_status")
         if not isinstance(self.summary, str) or not self.summary.strip() or len(self.summary) > 2000:
             raise ReviewContractError("invalid_review_summary")
