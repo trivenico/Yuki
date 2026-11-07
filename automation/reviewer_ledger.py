@@ -423,6 +423,13 @@ class ReviewerTaskLedger:
         elif row["result_json"] is not None or row["result_digest"] is not None or row["signature_json"] is not None:
             raise ReviewerLedgerError("unexpected_review_result")
 
+        expected = [("assigned", None)]
+        if reassigned:
+            expected.append(("reassigned", None))
+        if row["state"] in {"in_progress", "submitted"}:
+            expected.append(("claimed", task.reviewer_agent_id))
+        if row["state"] == "submitted":
+            expected.append(("submitted", task.reviewer_agent_id))
         for index, (event, (event_type, expected_actor)) in enumerate(zip(events, expected)):
             if event["sequence"] != index or event["event_type"] != event_type:
                 raise ReviewerLedgerError("review_event_sequence_mismatch")
