@@ -81,8 +81,11 @@ class DockerVerificationExecutor:
         pids_limit: int = 128,
         max_output_bytes: int = 256_000,
     ):
-        root = Path(workspace).expanduser().resolve(strict=True)
-        if not root.is_dir() or root.is_symlink():
+        raw_root = Path(workspace).expanduser()
+        if raw_root.is_symlink():
+            raise ValueError("sandbox_workspace_must_be_real_directory")
+        root = raw_root.resolve(strict=True)
+        if not root.is_dir():
             raise ValueError("sandbox_workspace_must_be_real_directory")
         if not isinstance(image, str) or not _IMAGE.fullmatch(image):
             raise ValueError("sandbox_image_must_be_digest_pinned")
@@ -163,6 +166,7 @@ class DockerVerificationExecutor:
             self.docker_binary, "run", "--rm", "--pull=never", "--init",
             "--network=none", "--read-only", "--user=65532:65532",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
+            "--security-opt=seccomp=default",
             f"--pids-limit={self.pids_limit}", f"--memory={self.memory_limit}",
             f"--memory-swap={self.memory_limit}", f"--cpus={self.cpu_limit}",
             "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=64m",
