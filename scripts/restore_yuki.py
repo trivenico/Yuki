@@ -113,16 +113,21 @@ def restore_backup(backup: Path, destination: Path) -> dict:
         # Reserve the destination atomically. Unlike POSIX os.rename(), mkdir
         # cannot replace an existing empty directory created by another process.
         destination.mkdir()
-        try:
-            for child in staging.iterdir():
-                target = destination / child.name
-                if target.exists():
-                    raise FileExistsError("Restore destination changed during publication.")
-                os.rename(child, target)
-            staging.rmdir()
-        except Exception:
-            shutil.rmtree(destination, ignore_errors=True)
-            raise
+        incomplete_marker = destination / ".yuki-restore-incomplete"
+        # A marker makes interrupted publication detectable after a process or
+        # machine crash. Never recursively delete the destination on failure:
+        # another process may have written data there after reservation.
+        with incomplete_marker.open("x", encoding="utf-8") as marker:
+            marker.write("Restore publication did not finish; inspect before use.\\n")
+            marker.flush()
+            os.fsync(marker.fileno())
+        for child in staging.iterdir():
+            target = destination / child.name
+            if target.exists():
+                raise FileExistsError("Restore destination changed during publication.")
+            os.rename(child, target)
+        staging.rmdir()
+        incomplete_marker.unlink()
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
