@@ -138,8 +138,8 @@ class ReviewerExecutionAdapter:
             result=result,
             session_token=provisioned_task.session_token,
             operation_id="submit-" + uuid4().hex,
-            lease_token=lease_token,
-            lease_generation=lease_generation,
+            lease_token=effective_lease_token,
+            lease_generation=effective_lease_generation,
         )
         if submitted.get("state") != "submitted":
             raise ReviewerExecutionError("review_result_submission_failed")
