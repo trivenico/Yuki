@@ -33,6 +33,7 @@ class AgentTaskRouterTests(unittest.TestCase):
   self.assertEqual(result["specialist_candidates"],[])
   self.assertIn("vision",result["classification"]["required_capabilities"])
   self.assertIn("coding",result["classification"]["required_capabilities"])
+  self.assertEqual(result["reasoning_budget"]["profile"],"high")
  def test_ambiguous_request_is_not_auto_routed(self):
   result=recommend_task_route("Please help me",actor_id="owner",coordinator=self.coordinator)
   self.assertTrue(result["needs_clarification"])
