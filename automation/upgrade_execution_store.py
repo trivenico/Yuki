@@ -412,7 +412,7 @@ class UpgradeExecutionStore:
                 INSERT INTO upgrade_execution_events
                 (execution_id, sequence, from_state, to_state, actor_id, reason_code, created_at)
                 VALUES (?, ?, "verifying", ?, ?, ?, ?)
-            """, (execution_id, expected_version + 1, actor_id, reason_code, now_recorded))
+            """, (execution_id, expected_version + 1, to_state, actor_id, reason_code, now_recorded))
             updated = db.execute("SELECT * FROM upgrade_executions WHERE execution_id=?", (execution_id,)).fetchone()
             return self._record(updated)
 
