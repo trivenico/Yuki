@@ -97,9 +97,8 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_transitions_use_compare_and_swap_and_reject_invalid_edges(self):
         row = self.store.create(self.request)
-        running = self.store.transition(
-            row.execution_id, expected_version=0, to_state="running",
-            actor_id="runner-admission", reason_code="worker_claimed",
+        running = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
         )
         self.assertEqual(running.version, 1)
         with self.assertRaisesRegex(UpgradeExecutionConflict, "stale_execution_version"):
@@ -120,13 +119,12 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_evidence_is_bound_and_persisted_as_unverified(self):
         row = self.store.create(self.request)
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            expected_version=row.version,
         )
         stored = self.store.record_evidence(
             row.execution_id, expected_version=row.version,
@@ -140,13 +138,12 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_evidence_cannot_be_replayed_or_replaced(self):
         row = self.store.create(self.request)
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            expected_version=row.version,
         )
         stored = self.store.record_evidence(
             row.execution_id, expected_version=row.version, evidence=self.evidence(),
@@ -189,13 +186,12 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_recorded_evidence_cannot_be_replaced_at_database_boundary(self):
         row = self.store.create(self.request)
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            expected_version=row.version,
         )
         stored = self.store.record_evidence(
             row.execution_id, expected_version=row.version, evidence=self.evidence(),
@@ -210,13 +206,12 @@ class UpgradeExecutionStoreTests(unittest.TestCase):
 
     def test_evidence_for_another_snapshot_is_rejected(self):
         row = self.store.create(self.request)
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="running",
-            actor_id="runner", reason_code="started",
+        row = self.store.claim_queued(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
         )
-        row = self.store.transition(
-            row.execution_id, expected_version=row.version, to_state="evidence_pending",
-            actor_id="runner", reason_code="finished",
+        row = self.store.complete_execution(
+            row.execution_id, owner_id="worker-a", lease_token="token-a",
+            expected_version=row.version,
         )
         altered = self.evidence(snapshot_digest=digest("wrong snapshot"))
         with self.assertRaisesRegex(UpgradeExecutionConflict, "evidence_request_mismatch"):
