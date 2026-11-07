@@ -39,9 +39,10 @@ def execute_reviewer_batch(
     batch = tuple(items)
     if not batch or len(batch) > max_tasks:
         raise ValueError("reviewer_batch_size_out_of_range")
+    # Validate the complete batch before invoking any executor. A duplicate or
+    # malformed later item must not leave earlier tasks partially executed.
     seen = set()
-    outcomes = []
-    failures = []
+    validated = []
     for item in batch:
         if not isinstance(item, tuple) or len(item) != 3:
             raise TypeError("reviewer_batch_item_must_be_task_tuple")
@@ -53,20 +54,11 @@ def execute_reviewer_batch(
         seen.add(provisioned.task_id)
         if type(version) is not int or version < 1:
             raise ValueError("invalid_reviewer_task_version")
-        try:
-            actor_id = actor_id_for_reviewer(provisioned.reviewer_agent_id)
-            if not isinstance(actor_id, str) or not actor_id.strip():
-                raise ValueError("reviewer_actor_identity_unavailable")
-            outcome = adapter.execute(
-                provisioned_task=provisioned,
-                actor_id=actor_id,
-                expected_version=version,
-                task=task,
-                executor=executor,
-            )
-            outcomes.append(outcome)
-        except Exception:
-            failures.append(provisioned.task_id)
+        validated.append((provisioned, task, version))
+
+    outcomes = []
+    failures = []
+    for provisioned, task, version in validated:
     return ReviewerBatchExecution(tuple(outcomes), tuple(failures))
 
 
