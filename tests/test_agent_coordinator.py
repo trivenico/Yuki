@@ -1215,7 +1215,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         stored = evidence.record(report)
         verification.link_report(
-            artifact_id=artifact.artifact_id, report_id=stored["report_id"],
+            artifact_id=artifact["artifact_id"], report_id=stored["report_id"],
             reviewer_actor_id="alice", created_at=now,
         )
         acceptance.refresh_verification(
