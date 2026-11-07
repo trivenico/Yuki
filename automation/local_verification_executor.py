@@ -228,8 +228,11 @@ class LocalVerificationExecutor:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
-                """INSERT INTO verification_executions VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO verification_executions(
+                    execution_id, command_id, argv_json, workspace, started_at,
+                    finished_at, exit_code, timed_out, output_limited,
+                    output_sha256, output_bytes, output_excerpt, status, artifact_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     receipt.execution_id, receipt.command_id, receipt.artifact_sha256, receipt.argv_json,
                     receipt.workspace, receipt.started_at, receipt.finished_at,
@@ -259,10 +262,17 @@ class LocalVerificationExecutor:
             return False
         if stored is None:
             return False
-        expected_commands = {"tests": {"unit-tests"}, "security": {"security-scan"}}
-        allowed = expected_commands.get(check_name)
+        expected_commands = {"tests": "unit-tests", "security": "security-scan"}
+        expected_command = expected_commands.get(check_name)
+        if expected_command is None:
+            return False
+        configured = self.commands.get(expected_command)
+        if configured is None:
+            return False
         return bool(
-            allowed and stored["command_id"] in allowed
+            stored["command_id"] == expected_command
+            and json.loads(stored["argv_json"]) == list(configured.argv)
+            and stored["workspace"] == str(self.workspace)
             and stored["artifact_sha256"] == artifact_sha256
             and stored["status"] == "passed" and stored["exit_code"] == 0
             and not stored["timed_out"] and not stored["output_limited"]
