@@ -57,6 +57,14 @@ class ReviewerSessionAuthorityTests(unittest.TestCase):
             artifact_sha256=self.digest, action="review:execute", operation_id="task-1",
         ))
 
+    def test_revoke_token_revokes_session_without_external_session_id(self):
+        self.authority.revoke_token(self.token)
+        self.assertFalse(self.authority.validate(
+            self.token, reviewer_agent_id="reviewer-1",
+            artifact_sha256=self.digest, action="review:execute",
+            operation_id="after-token-revocation",
+        ))
+
     def test_persisted_session_claim_mismatch_is_rejected(self):
         payload = self.authority._decode(self.token)
         with sqlite3.connect(self.authority.database_path) as db:
