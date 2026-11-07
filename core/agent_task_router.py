@@ -36,7 +36,7 @@ def recommend_task_route(
     classification = classify_task(task_text, explicit_task_type=explicit_task_type)
     required = set(classification["required_capabilities"])
     primary_type = classification["task_type"]
-    effort_task_class = ("coding" if primary_type == "coding" else "research" if primary_type == "reasoning" else "conversation")
+    effort_task_class = ("coding" if primary_type == "coding" else "research" if primary_type in {"reasoning", "multi_capability"} else "conversation")
     reasoning_budget = resolve_reasoning_budget(task_class=effort_task_class, requested_effort=requested_effort, device_limits=device_limits)
     agents = coordinator.list_agents(actor_id=actor_id.strip())
     if not isinstance(agents, (list, tuple)):
