@@ -448,12 +448,23 @@ class YukiConversationAPI:
                     "conversation:" + conversation_id
                     + ":message:" + candidate["source"]["message_id"]
                 )
+                actor_id = memory_actor_id_for_owner(user.user_id)
                 record = await asyncio.to_thread(
                     self.memory_store.remember_candidate,
-                    actor_id=memory_actor_id_for_owner(user.user_id),
+                    actor_id=actor_id,
                     agent_id="assistant", candidate_id=candidate["candidate_id"],
                     content=candidate["content"], source=source, category=category,
                 )
+                # Candidate promotion proves the owner explicitly approved the
+                # proposal. Ensure it is also lifecycle-approved so retrieval
+                # policy can use it. Repeated idempotent approvals stay harmless.
+                if record.get("lifecycle_status") != "approved":
+                    record = await asyncio.to_thread(
+                        self.memory_store.transition_lifecycle,
+                        actor_id=actor_id, agent_id="assistant",
+                        memory_id=record["memory_id"], status="approved",
+                        reason="Owner approved memory candidate in conversation review.",
+                    )
                 return await self._respond(send, 201, {
                     "memory": {
                         "memory_id": record["memory_id"],
