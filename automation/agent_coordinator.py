@@ -688,21 +688,15 @@ class SpecialistAgentCoordinator:
                 self._trace_plan(plan_id, assignments)
             return self._read_plan(db, plan_id)
 
-    def _active_agent_task_count(self, agent_id: str) -> int:
-        """Count non-terminal tasks for a specialist across all persisted plans.
-
-        The caller holds _agent_lock. This protects concurrent dispatches made
-        through this coordinator instance; it is not a distributed semaphore
-        across multiple coordinator processes.
-        """
-        with self._connect() as db:
-            rows = db.execute(
-                """SELECT s.task_id, p.owner_id, s.status
-                   FROM agent_plan_subtasks AS s
-                   JOIN agent_plans AS p ON p.plan_id=s.plan_id
-                   WHERE s.agent_id=? AND s.task_id IS NOT NULL""",
-                (agent_id,),
-            ).fetchall()
+    def _active_agent_task_count(self, agent_id: str, *, db: sqlite3.Connection) -> int:
+        """Count non-terminal specialist tasks under the caller's SQLite write lock."""
+        rows = db.execute(
+            """SELECT s.task_id, p.owner_id, s.status
+               FROM agent_plan_subtasks AS s
+               JOIN agent_plans AS p ON p.plan_id=s.plan_id
+               WHERE s.agent_id=? AND s.task_id IS NOT NULL""",
+            (agent_id,),
+        ).fetchall()
         active = 0
         terminal = {"succeeded", "failed", "cancelled", "blocked"}
         for row in rows:
@@ -711,7 +705,7 @@ class SpecialistAgentCoordinator:
             try:
                 task = self.runtime.get(actor_id=row["owner_id"], task_id=row["task_id"])
             except Exception:
-                # Unknown task state must consume capacity, not free it.
+                # Unknown state consumes capacity; fail closed.
                 active += 1
                 continue
             if task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
@@ -834,21 +828,26 @@ class SpecialistAgentCoordinator:
                     row['status'] = 'blocked'
                     continue
             with self._agent_lock:
-                if self._active_agent_task_count(agent.agent_id) >= agent.max_concurrency:
-                    # Leave the subtask pending. A later advance() call retries
-                    # admission after another task reaches a terminal state.
-                    continue
-                task = self.runtime.enqueue(
-                    actor_id=actor_id,
-                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                    steps=[{
-                        "name": row["subtask_id"], "action": agent.action,
-                        "argument": argument,
-                        "requires_approval": bool(row["requires_approval"]),
-                    }],
-                )
-                self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+                # BEGIN IMMEDIATE serializes capacity admission across separate
+                # coordinator instances/processes sharing this SQLite database.
+                with self._connect() as capacity_db:
+                    capacity_db.execute("BEGIN IMMEDIATE")
+                    if self._active_agent_task_count(agent.agent_id, db=capacity_db) >= agent.max_concurrency:
+                        continue
+                    task = self.runtime.enqueue(
+                        actor_id=actor_id,
+                        idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                        name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                        steps=[{
+                            "name": row["subtask_id"], "action": agent.action,
+                            "argument": argument,
+                            "requires_approval": bool(row["requires_approval"]),
+                        }],
+                    )
+                    self._set_subtask(
+                        plan_id, row["subtask_id"], task_id=task.task_id,
+                        status=task.state, db=capacity_db,
+                    )
             if self.trace_store is not None:
                 try:
                     span_id = hashlib.sha256(
@@ -1102,18 +1101,26 @@ class SpecialistAgentCoordinator:
             "created_at": event["created_at"],
         } for event in events)
 
-    def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
-        with self._connect() as db:
-            if task_id is None:
-                db.execute(
-                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
-                    (status, plan_id, subtask_id),
+    def _set_subtask(
+        self, plan_id: str, subtask_id: str, *, status: str,
+        task_id: str | None = None, db: sqlite3.Connection | None = None,
+    ) -> None:
+        if db is None:
+            with self._connect() as connection:
+                self._set_subtask(
+                    plan_id, subtask_id, status=status, task_id=task_id, db=connection,
                 )
-            else:
-                db.execute(
-                    "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
-                    (task_id, status, plan_id, subtask_id),
-                )
+            return
+        if task_id is None:
+            db.execute(
+                "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
+                (status, plan_id, subtask_id),
+            )
+        else:
+            db.execute(
+                "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
+                (task_id, status, plan_id, subtask_id),
+            )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):
