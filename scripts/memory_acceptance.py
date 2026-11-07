@@ -85,7 +85,8 @@ def run_acceptance(*, store_factory=None):
         "result": "passed",
         "checks": [
             "sqlite_memory_write",
-            "persistence_after_separate_process_restart",\n            "persistence_after_store_reopen",
+            "persistence_after_separate_process_restart",
+            "persistence_after_store_reopen",
             "actor_scope_isolation",
             "authorized_memory_deletion",
         ],
