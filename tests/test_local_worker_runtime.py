@@ -13,10 +13,14 @@ from automation.local_worker_runtime import (
 
 
 class FakeProvider:
+    def __init__(self):
+        self.prompts = []
+
     def is_available(self):
         return True
 
     def generate(self, prompt):
+        self.prompts.append(prompt)
         return "bounded specialist output"
 
 
