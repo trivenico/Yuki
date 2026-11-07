@@ -81,6 +81,18 @@ class DockerVerificationExecutorTests(unittest.TestCase):
             ))
 
 
+    def test_lists_receipts_by_exact_artifact_digest(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
+        ), patch(
+            "automation.docker_verification_executor.subprocess.Popen",
+            side_effect=lambda argv, **kwargs: FakeProcess(argv),
+        ):
+            executor, _ = self._executor(Path(temp))
+            executor.run("unit-tests", artifact_sha256="b" * 64)
+            self.assertEqual(len(executor.list_for_artifact("b" * 64)), 1)
+            self.assertEqual(executor.list_for_artifact("c" * 64), ())
+
     def test_rejects_artifact_digest_mismatch_before_launch(self):
         with tempfile.TemporaryDirectory() as temp, patch(
             "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
