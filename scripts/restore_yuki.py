@@ -47,6 +47,8 @@ def restore_backup(backup: Path, destination: Path) -> dict:
     manifest_path = backup / "manifest.json"
     if not backup.is_dir() or not manifest_path.is_file():
         raise ValueError("Backup directory or manifest is missing.")
+    if manifest_path.is_symlink():
+        raise ValueError("Backup manifest must not be a symbolic link.")
     if destination.exists():
         raise FileExistsError("Restore destination already exists; refusing to overwrite it.")
     if destination == backup or backup in destination.parents or destination in backup.parents:
@@ -73,7 +75,10 @@ def restore_backup(backup: Path, destination: Path) -> dict:
         if relative in seen:
             raise ValueError("Backup manifest contains duplicate database paths.")
         seen.add(relative)
-        source = (backup / backup_relative).resolve()
+        candidate = backup / backup_relative
+        if candidate.is_symlink():
+            raise ValueError("Backup database files must not be symbolic links.")
+        source = candidate.resolve()
         if backup not in source.parents or not source.is_file():
             raise ValueError("Backup database path escapes the backup directory or is missing.")
         size = entry.get("size_bytes")
