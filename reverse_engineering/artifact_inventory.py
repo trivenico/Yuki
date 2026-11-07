@@ -6,6 +6,7 @@ untrusted manifests, follow symlinks, execute targets, or access the network.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 from pathlib import Path
@@ -172,10 +173,15 @@ def inventory_artifact_root(
 
     entries.sort(key=lambda item: item["path"].casefold())
     manifests = [item["path"] for item in entries if item["manifest"]]
+    inventory_identity = json.dumps(
+        entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    inventory_sha256 = hashlib.sha256(inventory_identity).hexdigest()
     payload = {
         "root_label": resolved_root.name or "authorized-root",
         "file_count": len(entries),
         "total_bytes": total_bytes,
+        "inventory_sha256": inventory_sha256,
         "manifest_paths": manifests,
         "skipped_symlinks": skipped_symlinks,
         "skipped_special_entries": skipped_special,
