@@ -516,6 +516,47 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(second.subtasks[0].task_id, task_id)
 
+    def test_reconciles_snapshot_created_before_coordinator_state_commit(self):
+        from core.reasoning.execution_budget_store import ExecutionBudgetStore
+        budget_path = str(Path(self.tmp.name) / "crash-window-budgets.sqlite3")
+        budget_store = ExecutionBudgetStore(budget_path)
+        limits = {
+            "max_model_turns": 10, "max_tool_calls": 10,
+            "max_duration_ms": 60_000, "max_transcript_chars": 10_000,
+        }
+        def policy(kind, _plan_id, _subtask_id):
+            return dict(limits if kind == "plan" else {
+                "max_model_turns": 4, "max_tool_calls": 4,
+                "max_duration_ms": 20_000, "max_transcript_chars": 4_000,
+            })
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents, authorize=self.agent_auth,
+            budget_store=budget_store, budget_policy=policy,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="crash-window-plan",
+            subtasks=[SubtaskSpec("recover-me", "Recover allocation", ("research",))],
+        )
+        # Simulate a process crash after the immutable root snapshot is written
+        # but before the coordinator DB records its budget ID/state.
+        root = coordinator.budget_lifecycle.ensure_plan_budget(
+            plan_id=plan.plan_id, limits=limits, policy_version=coordinator.budget_policy_version,
+        )
+        with coordinator._connect() as db:
+            db.execute(
+                "UPDATE agent_plans SET budget_id=NULL, budget_allocation_state='pending' WHERE plan_id=?",
+                (plan.plan_id,),
+            )
+        recovered = coordinator.ensure_plan_budgets(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered["state"], "allocated")
+        with coordinator._connect() as db:
+            persisted = db.execute(
+                "SELECT budget_id, budget_allocation_state FROM agent_plans WHERE plan_id=?",
+                (plan.plan_id,),
+            ).fetchone()
+        self.assertEqual(persisted["budget_id"], root.budget_id)
+        self.assertEqual(persisted["budget_allocation_state"], "allocated")
+
     def test_delegated_budget_hierarchy_survives_coordinator_restart(self):
         from core.reasoning.execution_budget_store import ExecutionBudgetStore
 
@@ -619,7 +660,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         # Exhaust the source task's remaining allocation before child-plan
         # preparation. The child plan must not receive a fresh root envelope.
         budget_store.reserve(
-            budget_id=source_id, resource="model_turns", amount=1,
+            budget_id=source_id, resource="model_turns", amount=4,
             idempotency_key="consume-parent-envelope",
         )
         with self.assertRaises(AgentPlanError):
