@@ -266,6 +266,34 @@ class DockerVerificationExecutor:
             )
         return receipt
 
+    def validate_evidence_reference(
+        self, reference: str, *, artifact_sha256: str, check_name: str,
+    ) -> bool:
+        prefix = "yuki-verification-execution://"
+        if not isinstance(reference, str) or not reference.startswith(prefix):
+            return False
+        expected_commands = {"tests": "unit-tests"}
+        expected_command = expected_commands.get(check_name)
+        if expected_command is None:
+            return False
+        try:
+            stored = self.get(reference[len(prefix):])
+        except ValueError:
+            return False
+        if stored is None:
+            return False
+        configured = self.commands.get(expected_command)
+        return bool(
+            configured is not None
+            and stored["command_id"] == expected_command
+            and stored["image"] == self.image
+            and stored["artifact_sha256"] == artifact_sha256
+            and stored["status"] == "passed"
+            and stored["exit_code"] == 0
+            and not stored["timed_out"]
+            and not stored["output_limited"]
+        )
+
     def get(self, execution_id: str) -> dict | None:
         if not isinstance(execution_id, str) or not re.fullmatch(r"[a-f0-9]{32}", execution_id):
             raise ValueError("invalid_execution_id")
