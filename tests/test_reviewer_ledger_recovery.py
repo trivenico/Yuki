@@ -1,3 +1,4 @@
+from contextlib import closing
 """Integration tests for atomic ledger recovery and dispatch requeue."""
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ class ReviewerLedgerRecoveryIntegrationTests(unittest.TestCase):
                 lease_token=created["lease_token"],
                 lease_generation=created["lease_generation"],
             )
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute(
                     "UPDATE reviewer_leases SET expires_at='2000-01-01T00:00:00+00:00' WHERE task_id=?",
                     (task.task_id,),
