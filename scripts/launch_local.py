@@ -16,6 +16,19 @@ def _prompt_secret(label: str) -> str:
     return getpass.getpass(label).strip()
 
 
+def _provider_ready(provider: str, model: str | None, environ: dict[str, str]) -> bool:
+    """Check local provider readiness without sending an inference request."""
+    from core.config import load_config
+    from providers.factory import create_provider
+
+    config = load_config()
+    config["provider"] = provider
+    if provider == "ollama":
+        config["ollama_model"] = model or ""
+    selected = create_provider(config, environ=environ)
+    return selected.is_available()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=("ollama", "openai"),
@@ -56,6 +69,18 @@ def main() -> int:
         if not env.get("OPENAI_API_KEY", "").strip():
             print("An OpenAI API key is required for this provider.")
             return 1
+
+    try:
+        ready = _provider_ready(provider, model if provider == "ollama" else None, env)
+    except Exception as exc:
+        print(f"Provider preflight failed ({type(exc).__name__}); check provider configuration.")
+        return 1
+    if not ready:
+        if provider == "ollama":
+            print("Ollama is not responding with the selected model. Start Ollama and install the model, then retry.")
+        else:
+            print("OpenAI credentials are not configured. Set OPENAI_API_KEY and retry.")
+        return 1
 
     username = input("Create the first Yuki administrator username: ").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,64}", username):
