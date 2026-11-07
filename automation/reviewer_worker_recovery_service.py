@@ -52,8 +52,8 @@ class ReviewerWorkerRecoveryService:
         max_backoff_seconds: float = 300.0,
         batch_limit: int = 100,
     ) -> None:
-        if not isinstance(supervisor, ReviewerWorkerRecoverySupervisor):
-            raise TypeError("reviewer_recovery_supervisor_required")
+        if not callable(getattr(supervisor, "run_once", None)):
+            raise TypeError("reviewer_recovery_supervisor_interface_required")
         if not callable(heartbeat_callback):
             raise TypeError("reviewer_recovery_heartbeat_callback_required")
         for value, name, low, high in (
