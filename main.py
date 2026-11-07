@@ -42,6 +42,7 @@ from automation.agent_coordinator import SubtaskSpec
 from automation.self_upgrade_pipeline import SelfUpgradeReviewStore
 from automation.git_repository_snapshot import GitRepositorySnapshotReader
 from automation.reproducible_workspace import GitBackedWorkspaceManager
+from automation.docker_verification_executor import DockerVerificationExecutor, SandboxCommand
 
 
 def _ask_approval(request):
@@ -101,6 +102,7 @@ def print_help():
   /engineering show PLAN_ID | plan-events PLAN_ID
   /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA
   /engineering provenance ARTIFACT_ID | verify ARTIFACT_ID
+  /engineering sandbox-verify ARTIFACT_ID
   /engineering tasks [STATE] | task-events TASK_ID
   /engineering advance PLAN_ID | cancel PLAN_ID
   /engineering approve TASK_ID | cycle
@@ -387,6 +389,57 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering sandbox-verify "):
+            artifact_id = command[len("/engineering sandbox-verify "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            image = os.environ.get("YUKI_VERIFICATION_IMAGE", "").strip()
+            if not image:
+                print("Yuki > Set YUKI_VERIFICATION_IMAGE to a locally available image pinned with @sha256:<64 hex>.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                integrity = git_workspace_manager.verify_workspace(artifact_id)
+                if integrity["integrity"] != "passed":
+                    print("Yuki > Workspace integrity did not pass; execution refused.")
+                    continue
+                if not _confirm(
+                    "engineering:sandbox_execution",
+                    f"Run the pinned unit-test profile in isolated Docker image {image} against artifact {artifact_id}; network disabled.",
+                    "high",
+                ):
+                    print("Yuki > Sandboxed test execution cancelled.")
+                    continue
+                sandbox = DockerVerificationExecutor(
+                    provenance.workspace_path,
+                    workspace / "yuki_sandbox_verification.sqlite3",
+                    image=image,
+                    expected_snapshot_sha256=provenance.snapshot_sha256,
+                    commands={
+                        "unit-tests": SandboxCommand(
+                            "unit-tests", ("python", "-m", "pytest", "-q"), timeout_seconds=300
+                        )
+                    },
+                )
+                receipt = sandbox.run(
+                    "unit-tests", artifact_sha256=provenance.artifact_sha256
+                )
+                print(
+                    f"Yuki > Sandboxed unit tests: {receipt.status}; "
+                    f"exit={receipt.exit_code}; image={receipt.image}"
+                )
+                print(
+                    f"- Execution: {receipt.execution_id}; output bytes={receipt.output_bytes}; "
+                    f"output SHA-256={receipt.output_sha256}"
+                )
+                if receipt.output_excerpt:
+                    print(receipt.output_excerpt[:2000])
+            except Exception as exc:
+                print(f"Yuki > Sandboxed verification failed safely ({type(exc).__name__}).")
         elif command.startswith("/engineering verify "):
             artifact_id = command[len("/engineering verify "):].strip()
             if not artifact_id:
