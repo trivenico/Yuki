@@ -1,4 +1,5 @@
 import tempfile
+import sqlite3
 import unittest
 from pathlib import Path
 
@@ -101,6 +102,24 @@ class ReviewerTaskLedgerTests(unittest.TestCase):
                 actor_id="security-reviewer", task_id=self.task.task_id,
                 expected_version=1, result=different,
             )
+
+    def test_read_detects_tampered_task_payload(self):
+        self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE reviewer_tasks SET task_json=? WHERE task_id=?",
+                       ('{"task_id":"forged"}', self.task.task_id))
+        from automation.reviewer_ledger import ReviewerLedgerError
+        with self.assertRaisesRegex(ReviewerLedgerError, "task_integrity_mismatch"):
+            self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
+
+    def test_read_detects_tampered_event_history(self):
+        self.ledger.create_tasks(actor_id="supervisor", tasks=(self.task,))
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE reviewer_task_events SET payload_json=? WHERE task_id=?",
+                       ('{}', self.task.task_id))
+        from automation.reviewer_ledger import ReviewerLedgerError
+        with self.assertRaisesRegex(ReviewerLedgerError, "assignment_event_mismatch"):
+            self.ledger.get(actor_id="auditor", task_id=self.task.task_id)
 
     def test_authorization_fails_closed(self):
         self.allowed = False
