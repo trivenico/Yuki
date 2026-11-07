@@ -6,6 +6,18 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Evidence-based local model selection
+
+Model discovery is not the same as model evaluation. To request a role-specific recommendation, provide a reviewed evidence file and run:
+
+```bash
+python scripts/select_model.py coding --profiles ./model-evidence.json
+```
+
+The evidence file contains two arrays: `capabilities` and `benchmarks`. Each capability record includes `model_id`, `model_digest`, `capabilities`, `evidence`, `verified`, and `runtime_status`. Each benchmark record includes `model_id`, `model_digest`, `capability`, `score` (0–1), `suite`, `suite_version`, `evaluated_on` (YYYY-MM-DD), and `evidence_reference` (HTTPS or file URI).
+
+Recommendations require an exact match to the installed Ollama digest, a reviewed runtime-compatible capability record, benchmark evidence for the requested role, and a conservative memory estimate. A missing or mismatched evidence record is not treated as a candidate. Selection never changes the active provider; activation remains a separate operator action.
+
 ## Local model inventory (read-only)
 
 If Ollama is installed and running locally, inspect models already present:
