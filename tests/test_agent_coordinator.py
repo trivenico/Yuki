@@ -431,6 +431,39 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.coordinator.recover_plan(actor_id="mallory", plan_id=plan.plan_id)
 
+    def test_specialist_max_concurrency_defers_excess_dispatch_until_capacity_frees(self):
+        specialist = SpecialistAgent(
+            "single-slot", "Single-slot research", frozenset({"research"}),
+            "emit", max_concurrency=1,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, [specialist], authorize=self.agent_auth,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="single-slot-capacity",
+            subtasks=[
+                SubtaskSpec("first", "First research task", ("research",), requires_approval=False),
+                SubtaskSpec("second", "Second research task", ("research",), requires_approval=False),
+            ],
+        )
+        first = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        by_id = {item.subtask_id: item for item in first.subtasks}
+        self.assertIsNotNone(by_id["first"].task_id)
+        self.assertIsNone(by_id["second"].task_id)
+        self.assertEqual(by_id["second"].status, "pending")
+
+        claimed = self.store.claim_next(worker_id="single-slot-worker")
+        self.store.transition(
+            claimed.run_id, expected_version=claimed.version, to_state="succeeded",
+            result={"ok": True, "output": "complete"},
+            expected_lease_owner="single-slot-worker", event_kind="task.completed",
+            event_actor_id="alice", event_payload={"state_version": claimed.version + 1},
+        )
+        second = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        by_id = {item.subtask_id: item for item in second.subtasks}
+        self.assertIsNotNone(by_id["second"].task_id)
+        self.assertEqual(by_id["second"].status, "queued")
+
     def test_plan_cancellation_cancels_dispatched_and_pending_subtasks(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-plan", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
