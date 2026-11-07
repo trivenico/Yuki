@@ -1161,7 +1161,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         from automation.verification_workflow import VerificationWorkflow
 
         root = Path(self.tmp.name)
-        evidence = VerificationEvidenceStore(root / "acceptance-evidence.sqlite3")
+        evidence = VerificationEvidenceStore(root / "acceptance-evidence.sqlite3", reviewer_authorizer=lambda actor, action, digest: actor.startswith(("research", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64)
         verification = VerificationWorkflow(
             root / "acceptance-artifacts.sqlite3", evidence,
             reviewer_authorize=lambda actor, action, artifact: actor == "alice" and action == "verification:submit",
