@@ -53,6 +53,20 @@ class RestoreYukiTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must not be symbolic links"):
                 restore_backup(backup, root / "restored")
 
+    def test_restore_rejects_symlinked_parent_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, backup = self._backup(root)
+            databases = backup / "databases"
+            outside = root / "outside"
+            databases.rename(outside)
+            try:
+                databases.symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Directory symbolic links are unavailable on this platform")
+            with self.assertRaisesRegex(ValueError, "paths must not contain symbolic links"):
+                restore_backup(backup, root / "restored")
+
     def test_restore_rejects_manifest_symlink(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
