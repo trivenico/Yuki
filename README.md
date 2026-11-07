@@ -6,6 +6,19 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Local hardware profile
+
+Run a read-only hardware and local-runtime profile:
+
+```bash
+python scripts/hardware_profile.py
+python scripts/hardware_profile.py --workspace ./yuki-workspace --json
+```
+
+The profile reports OS/architecture, CPU count, physical RAM when measurable, workspace-volume free space, NVIDIA GPU information when `nvidia-smi` is available, Ollama CLI/server/model configuration, and optional PyTorch/ONNX Runtime package discovery. It does not benchmark inference, download models, install drivers, or guarantee a model fits.
+
+The main local specialist runtime uses a conservative worker-count recommendation based on logical CPU count and physical RAM, bounded to 1–4 workers. This is a starting point, not a substitute for measuring model memory use; GPU VRAM, quantization, context length, and concurrent model residency can reduce safe concurrency.
+
 ## Local specialist-runtime smoke test
 
 After installing the project dependencies, run a deterministic wiring check:
