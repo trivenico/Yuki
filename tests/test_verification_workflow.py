@@ -1,3 +1,4 @@
+from contextlib import closing
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -112,7 +113,7 @@ class VerificationWorkflowTests(unittest.TestCase):
 
     def test_legacy_artifact_row_without_content_fails_closed(self):
         import sqlite3
-        with sqlite3.connect(self.workflow.database_path) as db:
+        with closing(sqlite3.connect(self.workflow.database_path)) as db, db:
             db.execute(
                 "UPDATE engineering_artifacts SET content=NULL WHERE artifact_id=?",
                 (self.artifact.artifact_id,),
