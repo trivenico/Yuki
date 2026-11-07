@@ -1,6 +1,8 @@
 """Durable host-controlled reviewer leases with fencing generations."""
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -54,7 +56,7 @@ class ReviewerLeaseAuthority:
         if not self.database_path.strip():
             raise ValueError("reviewer_lease_database_required")
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""CREATE TABLE IF NOT EXISTS reviewer_leases (
                 task_id TEXT PRIMARY KEY, artifact_sha256 TEXT NOT NULL,
                 reviewer_agent_id TEXT NOT NULL, generation INTEGER NOT NULL,
@@ -159,7 +161,7 @@ class ReviewerLeaseAuthority:
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=ttl_seconds)).isoformat()
         nonce = secrets.token_urlsafe(24)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_leases WHERE task_id=?", (task_id,)).fetchone()
             if row and row[1] != artifact_sha256:
@@ -192,7 +194,7 @@ class ReviewerLeaseAuthority:
                     or payload.get("generation") != generation
                     or datetime.fromisoformat(payload["expires_at"]) <= datetime.now(timezone.utc)):
                 return False
-            with self._connect() as db:
+            with closing(self._connect()) as db, db:
                 row = db.execute("SELECT artifact_sha256,reviewer_agent_id,generation,expires_at,token_nonce FROM reviewer_leases WHERE task_id=?",
                                  (task_id,)).fetchone()
             return bool(row and row == (artifact_sha256, reviewer_agent_id, generation,
@@ -217,7 +219,7 @@ class ReviewerLeaseAuthority:
         nonce = secrets.token_urlsafe(24)
         renewed = self._issue_token(task_id=task_id,digest=digest,reviewer=reviewer,
             generation=payload["generation"],expires=expires,nonce=nonce)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute("""UPDATE reviewer_leases SET expires_at=?,token_nonce=?,updated_at=?
                 WHERE task_id=? AND generation=? AND token_nonce=?""",
@@ -283,7 +285,7 @@ class ReviewerLeaseAuthority:
         self._validate(task_id, artifact_sha256, "history-reader")
         if not self._allowed(actor_id, "review:lease:audit", artifact_sha256):
             raise PermissionError("reviewer_lease_audit_not_authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute("""SELECT generation,event_type,actor_id,reviewer_agent_id,occurred_at,details_json
                 FROM reviewer_lease_events WHERE task_id=? ORDER BY event_id""",(task_id,)).fetchall()
         return tuple({"generation":r[0],"event_type":r[1],"actor_id":r[2],
