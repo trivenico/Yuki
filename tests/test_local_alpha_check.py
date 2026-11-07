@@ -90,11 +90,14 @@ class LocalAlphaCheckTests(unittest.TestCase):
         self.assertIn("set ollama_model", output)
 
     def test_hybrid_local_only_mode_does_not_require_cloud_key(self):
-        result, output = self._run(
-            config={"provider": "hybrid", "ollama_model": "test-model"},
-            environ={},
-            modules={"yaml": True, "uvicorn": True},
-        )
+        from providers.ollama import OllamaProvider
+        with patch.object(MODULE.shutil, "which", return_value="/usr/bin/ollama"), \
+             patch.object(OllamaProvider, "is_available", return_value=True):
+            result, output = self._run(
+                config={"provider": "hybrid", "ollama_model": "test-model"},
+                environ={},
+                modules={"yaml": True, "uvicorn": True},
+            )
         self.assertEqual(result, 0)
         self.assertIn("local-only mode", output)
 
