@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.parse import urlsplit
 
 from api.conversations import YukiConversationAPI
 from core.agent_execution_loop import AgentExecutionLoop
@@ -69,9 +70,10 @@ class MemoryHttpApiTests(unittest.TestCase):
             headers = [(b"host", b"localhost")]
             if token:
                 headers.append((b"authorization", ("Bearer " + token).encode()))
+            parsed = urlsplit(path)
             await self.api(
-                {"type": "http", "method": method, "path": path,
-                 "headers": headers, "query_string": b""},
+                {"type": "http", "method": method, "path": parsed.path,
+                 "headers": headers, "query_string": parsed.query.encode("ascii")},
                 receive, send,
             )
             status = sent[0]["status"]
