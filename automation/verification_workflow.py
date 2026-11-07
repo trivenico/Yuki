@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
@@ -55,7 +56,7 @@ class VerificationWorkflow:
             raise ValueError("database_path is required")
         self.evidence_store = evidence_store
         self.reviewer_authorize = reviewer_authorize
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS engineering_artifacts (
                     artifact_id TEXT PRIMARY KEY,
@@ -112,7 +113,7 @@ class VerificationWorkflow:
         ).hexdigest()
         record = ArtifactRecord(artifact_id, plan_id, subtask_id, task_id,
                                 author_agent_id, digest, len(content), created_at)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM engineering_artifacts WHERE artifact_id=?", (artifact_id,)
@@ -136,7 +137,7 @@ class VerificationWorkflow:
     def read_artifact(self, artifact_id: str) -> bytes:
         """Return exact immutable artifact bytes after rechecking their digest."""
         self._identifier(artifact_id, "artifact_id")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT content, artifact_sha256, byte_length FROM engineering_artifacts WHERE artifact_id=?",
                 (artifact_id,),
@@ -162,7 +163,7 @@ class VerificationWorkflow:
             raise ValueError("invalid_created_at")
         if self.reviewer_authorize(reviewer_actor_id, "verification:submit", artifact_id) is not True:
             raise PermissionError("verification reviewer is not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             artifact = db.execute(
                 "SELECT * FROM engineering_artifacts WHERE artifact_id=?", (artifact_id,)
             ).fetchone()
@@ -180,7 +181,7 @@ class VerificationWorkflow:
         reviewer_ids = {check["reviewer_agent_id"] for check in report["checks"]}
         if artifact["author_agent_id"] in reviewer_ids:
             raise VerificationWorkflowError("artifact_author_self_review")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT OR IGNORE INTO artifact_verification_links
@@ -196,7 +197,7 @@ class VerificationWorkflow:
 
     def get_status(self, artifact_id: str) -> dict:
         self._identifier(artifact_id, "artifact_id")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             artifact = db.execute(
                 "SELECT * FROM engineering_artifacts WHERE artifact_id=?", (artifact_id,)
             ).fetchone()
