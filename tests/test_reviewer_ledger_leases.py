@@ -146,6 +146,58 @@ class ReviewerLedgerLeaseTests(unittest.TestCase):
                 expected_version=0, replacement_reviewer_agent_id="reviewer-2",
             )
 
+
+    def test_recovers_expired_in_progress_task_atomically(self):
+        self.ledger.claim(
+            actor_id="reviewer-1", task_id=self.task.task_id,
+            expected_version=0, session_token=self.session,
+            operation_id="claim-for-recovery", lease_token=self.lease.token,
+            lease_generation=self.lease.generation,
+        )
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",
+                       (expired,self.task.task_id))
+        recovered = self.ledger.recover_in_progress(
+            actor_id="supervisor", task_id=self.task.task_id,
+            expected_version=1, replacement_reviewer_agent_id="reviewer-2",
+            reason="Worker heartbeat expired",
+        )
+        self.assertEqual(recovered["state"],"assigned")
+        self.assertEqual(recovered["version"],3)
+        self.assertEqual(recovered["lease_generation"],2)
+        with sqlite3.connect(self.db_path) as db:
+            row=db.execute("SELECT state,reviewer_agent_id,version FROM reviewer_tasks WHERE task_id=?",
+                           (self.task.task_id,)).fetchone()
+        self.assertEqual(row,("assigned","reviewer-2",3))
+        self.assertFalse(self.leases.validate(
+            self.lease.token,task_id=self.task.task_id,artifact_sha256="a"*64,
+            reviewer_agent_id="reviewer-1",generation=1,
+        ))
+        with self.assertRaises(PermissionError):
+            self.ledger.submit(
+                actor_id="reviewer-1",task_id=self.task.task_id,expected_version=1,
+                result=build_review_result(self.task,status="passed",summary="Late result"),
+                session_token=self.session,operation_id="late-submit",
+                lease_token=self.lease.token,lease_generation=1,
+            )
+
+    def test_repeated_reassignment_history_is_replayable(self):
+        expired=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",(expired,self.task.task_id))
+        first=self.ledger.reassign(actor_id="supervisor",task_id=self.task.task_id,
+            expected_version=0,replacement_reviewer_agent_id="reviewer-2")
+        # Simulate the replacement lease expiring, then reassign again.
+        expired=(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute("UPDATE reviewer_leases SET expires_at=? WHERE task_id=?",(expired,self.task.task_id))
+        second=self.ledger.reassign(actor_id="supervisor",task_id=self.task.task_id,
+            expected_version=1,replacement_reviewer_agent_id="reviewer-3")
+        self.assertEqual(second["version"],2)
+        self.assertEqual(second["lease_generation"],3)
+        self.assertEqual(first["lease_generation"],2)
+
     def test_lease_database_must_match_ledger_database(self):
         other = ReviewerLeaseAuthority(
             Path(self.temp.name) / "other.sqlite", secret=b"x" * 32,
