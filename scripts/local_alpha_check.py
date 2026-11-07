@@ -26,8 +26,8 @@ def main() -> int:
     print(f"Python: {sys.version.split()[0]}")
     failures = 0
 
-    failures += not check("Python version", sys.version_info >= (3, 10),
-                          "Python 3.10+ required")
+    failures += not check("Python version", sys.version_info >= (3, 11),
+                          "Python 3.11+ required")
     for module in ("yaml",):
         available = importlib.util.find_spec(module) is not None
         failures += not check("Dependency " + module, available,
