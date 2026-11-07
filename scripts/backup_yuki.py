@@ -28,7 +28,7 @@ def _backup_database(source: Path, destination: Path) -> None:
             result = dst.execute("PRAGMA integrity_check").fetchone()
             if not result or result[0] != "ok":
                 raise RuntimeError("SQLite backup integrity check failed.")
-    with destination.open("rb") as handle:
+    with destination.open("r+b") as handle:
         os.fsync(handle.fileno())
 
 
