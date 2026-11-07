@@ -6,6 +6,8 @@ when the combined output cap is exceeded.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -92,7 +94,7 @@ class LocalVerificationExecutor:
         self.database_path = str(database_path)
         if not self.database_path.strip():
             raise ValueError("database_path_required")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS verification_executions (
                     execution_id TEXT PRIMARY KEY,
@@ -111,7 +113,7 @@ class LocalVerificationExecutor:
                     status TEXT NOT NULL CHECK(status IN ('passed','failed','timed_out','output_limited','launch_failed'))
                 )
             """)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             columns = {row[1] for row in db.execute("PRAGMA table_info(verification_executions)")}
             if "artifact_sha256" not in columns:
                 db.execute("ALTER TABLE verification_executions ADD COLUMN artifact_sha256 TEXT")
@@ -230,7 +232,7 @@ class LocalVerificationExecutor:
         return receipt
 
     def _persist(self, receipt: VerificationExecution) -> None:
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT INTO verification_executions(
@@ -250,7 +252,7 @@ class LocalVerificationExecutor:
     def get(self, execution_id: str) -> dict | None:
         if not isinstance(execution_id, str) or not re.fullmatch(r"[a-f0-9]{32}", execution_id):
             raise ValueError("invalid_execution_id")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM verification_executions WHERE execution_id=?",
                 (execution_id,),
