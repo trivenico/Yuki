@@ -100,6 +100,7 @@ def print_help():
   /engineering plan ROLE | DESCRIPTION
   /engineering show PLAN_ID | plan-events PLAN_ID
   /engineering snapshot PLAN_ID SUBTASK_ID FULL_COMMIT_SHA
+  /engineering provenance ARTIFACT_ID
   /engineering tasks [STATE] | task-events TASK_ID
   /engineering advance PLAN_ID | cancel PLAN_ID
   /engineering approve TASK_ID | cycle
@@ -387,6 +388,26 @@ def main():
                 print("No specialist work was dispatched. Use the supervised workflow controls to approve and advance it.")
             except Exception as exc:
                 print(f"Yuki > Plan creation failed safely ({type(exc).__name__}).")
+        elif command.startswith("/engineering provenance "):
+            artifact_id = command[len("/engineering provenance "):].strip()
+            if not artifact_id:
+                print("Yuki > Provide an artifact ID.")
+                continue
+            if git_workspace_manager is None:
+                print("Yuki > Git-backed workspace manager is not configured.")
+                continue
+            try:
+                provenance = git_workspace_manager.get_provenance(artifact_id)
+                print(f"Yuki > Artifact: {provenance.artifact_id}")
+                print(f"- Artifact SHA-256: {provenance.artifact_sha256}")
+                print(f"- Source commit: {provenance.source_commit}")
+                print(f"- Snapshot SHA-256: {provenance.snapshot_sha256}")
+                print(f"- Dependency manifest SHA-256: {provenance.dependency_manifest_sha256}")
+                print(f"- Dependency files: {', '.join(provenance.dependency_files) or '(none)'}")
+                print(f"- Files: {provenance.file_count}; bytes: {provenance.total_bytes}")
+                print(f"- Workspace: {provenance.workspace_path}")
+            except Exception as exc:
+                print(f"Yuki > Provenance lookup failed safely ({type(exc).__name__}).")
         elif command.startswith("/engineering snapshot "):
             parts = command.split()
             if len(parts) != 5:
