@@ -78,13 +78,14 @@ class ReviewerExecutionAdapter:
         provisioned_task: ProvisionedReviewerTask,
         actor_id: str,
         expected_version: int,
-        task: ReviewTask,
-        executor: Callable[[ReviewTask, Mapping[str, bytes]], ReviewResult],
+        task: ReviewTask | None = None,
+        executor: Callable[[ReviewTask, Mapping[str, bytes]], ReviewResult] | None = None,
         lease_token: str | None = None,
         lease_generation: int | None = None,
     ) -> ReviewerExecutionOutcome:
         if not isinstance(provisioned_task, ProvisionedReviewerTask):
             raise TypeError("provisioned_reviewer_task_required")
+        task = task if task is not None else provisioned_task.review_task
         if not isinstance(task, ReviewTask):
             raise TypeError("review_task_required")
         task.validate()
