@@ -31,6 +31,16 @@ def _safe_relative_path(value: object) -> Path:
     return Path(*parsed.parts)
 
 
+def _contains_symlink(root: Path, relative: Path) -> bool:
+    """Return whether any path component below root is a symbolic link."""
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _verify_database(path: Path) -> None:
     try:
         with sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=10) as db:
@@ -76,8 +86,8 @@ def restore_backup(backup: Path, destination: Path) -> dict:
             raise ValueError("Backup manifest contains duplicate database paths.")
         seen.add(relative)
         candidate = backup / backup_relative
-        if candidate.is_symlink():
-            raise ValueError("Backup database files must not be symbolic links.")
+        if _contains_symlink(backup, backup_relative):
+            raise ValueError("Backup database paths must not contain symbolic links.")
         source = candidate.resolve()
         if backup not in source.parents or not source.is_file():
             raise ValueError("Backup database path escapes the backup directory or is missing.")
