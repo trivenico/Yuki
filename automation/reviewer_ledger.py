@@ -7,7 +7,8 @@ Every mutating/read operation requires a trusted authorization callback.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import secrets
 import hashlib
 import json
 from pathlib import Path
@@ -248,7 +249,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_dispatch_max_attempts")
         now_dt=datetime.now(timezone.utc)
         now=now_dt.isoformat()
-        expiry=(now_dt + __import__("datetime").timedelta(seconds=claim_seconds)).isoformat()
+        expiry=(now_dt + timedelta(seconds=claim_seconds)).isoformat()
         claimed=[]
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -266,7 +267,7 @@ class ReviewerTaskLedger:
             for row in rows:
                 if not self._allowed(actor,"review:dispatch:claim",row["artifact_sha256"]):
                     continue
-                raw=__import__("secrets").token_urlsafe(32)
+                raw=secrets.token_urlsafe(32)
                 digest=hashlib.sha256(raw.encode("utf-8")).hexdigest()
                 attempts=row["attempts"]+1
                 changed=db.execute("""UPDATE reviewer_dispatch_outbox SET state='claimed',
