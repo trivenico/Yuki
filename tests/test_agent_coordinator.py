@@ -622,9 +622,9 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             budget_id=source_id, resource="model_turns", amount=1,
             idempotency_key="consume-parent-envelope",
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(AgentPlanError):
             coordinator.advance(actor_id="alice", plan_id=child.plan_id)
-        with self.assertRaises(Exception):
+        with self.assertRaises(AgentPlanError):
             coordinator.advance(actor_id="alice", plan_id=parent.plan_id)
         with self.store._connect() as db:
             queued = db.execute("SELECT COUNT(*) FROM workflow_runs").fetchone()[0]
