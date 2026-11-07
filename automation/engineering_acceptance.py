@@ -185,7 +185,11 @@ class EngineeringAcceptanceStore:
         if row["artifact_id"] is None:
             raise EngineeringAcceptanceError("artifact_required_before_verification")
         status = self.verification_workflow.get_status(row["artifact_id"])
-        target = "accepted" if status["verified"] else "awaiting_verification"
+        target = (
+            "accepted" if status["verified"]
+            else "rejected" if status["reports"]
+            else "awaiting_verification"
+        )
         if target == row["state"]:
             return dict(row)
         with self._connect() as db:
