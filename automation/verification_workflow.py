@@ -17,7 +17,7 @@ from typing import Callable
 
 from automation.verification_evidence_store import VerificationEvidenceStore
 
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SHA = re.compile(r"^[a-f0-9]{64}$")
 
 
