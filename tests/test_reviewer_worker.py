@@ -52,13 +52,15 @@ class ReviewerWorkerTests(unittest.TestCase):
             task_id=task.task_id, state="submitted", result_status="passed",
             result_digest="b" * 64, blocked_by_host=False,
         )
+        resolver_contexts = []
         worker = ReviewerWorker(
             ledger, adapter, worker_id="reviewer-a",
-            credential_resolver=lambda _: provisioned,
+            credential_resolver=lambda context: (resolver_contexts.append(dict(context)) or provisioned),
             executor=lambda *_: None,
         )
         report = worker.run_once()
         self.assertEqual((report.claimed, report.completed, report.retried, report.deferred), (1, 1, 0, 0))
+        self.assertNotIn("claim_token", resolver_contexts[0])
         adapter.execute.assert_called_once()
         ledger.complete_dispatch.assert_called_once()
 
