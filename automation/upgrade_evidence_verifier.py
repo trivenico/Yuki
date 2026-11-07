@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -72,7 +73,7 @@ class Ed25519EvidenceVerifier:
         self._skew = timedelta(seconds=clock_skew_seconds)
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.database_path) as db:
+        with closing(sqlite3.connect(self.database_path)) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS consumed_evidence_nonces (
                     key_id TEXT NOT NULL,
@@ -121,7 +122,7 @@ class Ed25519EvidenceVerifier:
             raise EvidenceVerificationError("evidence_signature_invalid") from exc
 
         payload_digest = hashlib.sha256(payload).hexdigest()
-        with sqlite3.connect(self.database_path, timeout=10, isolation_level=None) as db:
+        with closing(sqlite3.connect(self.database_path, timeout=10, isolation_level=None)) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 db.execute(
