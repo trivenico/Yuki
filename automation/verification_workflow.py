@@ -66,9 +66,13 @@ class VerificationWorkflow:
                     artifact_sha256 TEXT NOT NULL,
                     byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
                     created_at TEXT NOT NULL,
+                    content BLOB NOT NULL,
                     UNIQUE(plan_id, subtask_id, artifact_id)
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(engineering_artifacts)")}
+            if "content" not in columns:
+                db.execute("ALTER TABLE engineering_artifacts ADD COLUMN content BLOB")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS artifact_verification_links (
                     artifact_id TEXT NOT NULL REFERENCES engineering_artifacts(artifact_id),
@@ -114,14 +118,37 @@ class VerificationWorkflow:
                 "SELECT * FROM engineering_artifacts WHERE artifact_id=?", (artifact_id,)
             ).fetchone()
             if existing is not None:
-                if dict(existing) != asdict(record):
+                if any(existing[key] != value for key, value in asdict(record).items()):
                     raise VerificationWorkflowError("artifact_identity_conflict")
+                if existing["content"] is not None and bytes(existing["content"]) != content:
+                    raise VerificationWorkflowError("artifact_content_conflict")
+                if existing["content"] is None:
+                    db.execute("UPDATE engineering_artifacts SET content=? WHERE artifact_id=?", (content, artifact_id))
             else:
                 db.execute(
-                    """INSERT INTO engineering_artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    tuple(asdict(record).values()),
+                    """INSERT INTO engineering_artifacts
+                       (artifact_id,plan_id,subtask_id,task_id,author_agent_id,artifact_sha256,byte_length,created_at,content)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (*tuple(asdict(record).values()), content),
                 )
         return record
+
+    def read_artifact(self, artifact_id: str) -> bytes:
+        """Return exact immutable artifact bytes after rechecking their digest."""
+        self._identifier(artifact_id, "artifact_id")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT content, artifact_sha256, byte_length FROM engineering_artifacts WHERE artifact_id=?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError("artifact not found")
+        if row["content"] is None:
+            raise VerificationWorkflowError("artifact_content_unavailable")
+        content = bytes(row["content"])
+        if len(content) != row["byte_length"] or hashlib.sha256(content).hexdigest() != row["artifact_sha256"]:
+            raise VerificationWorkflowError("artifact_content_integrity_mismatch")
+        return content
 
     def link_report(
         self, *, artifact_id: str, report_id: str, reviewer_actor_id: str,
