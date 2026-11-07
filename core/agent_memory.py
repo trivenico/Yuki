@@ -423,9 +423,9 @@ class AgentMemoryStore:
                     lifecycle_status,lifecycle_updated_at,lifecycle_reason)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (replacement_id, actor_id, agent_id, previous["category"],
-                 content.strip(), source.strip(), float(confidence), 1,
+                 content.strip(), source.strip(), float(confidence), 0,
                  previous["scope"], now, expires_at, None, None,
-                 "approved", now, reason.strip()),
+                 "pending_review", now, reason.strip()),
             )
             db.execute(
                 """INSERT INTO agent_memory_corrections
