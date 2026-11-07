@@ -6,6 +6,8 @@ Every mutating/read operation requires a trusted authorization callback.
 """
 from __future__ import annotations
 
+from contextlib import closing
+
 from dataclasses import asdict
 from datetime import datetime, timezone, timedelta
 import secrets
@@ -101,7 +103,7 @@ class ReviewerTaskLedger:
                 raise ValueError("reviewer_lease_and_ledger_must_share_database")
         self.lease_authority = lease_authority
         Path(self.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.execute("""
@@ -205,7 +207,7 @@ class ReviewerTaskLedger:
                 raise PermissionError("review task assignment is not authorized")
         now = _now()
         created = []
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             for task in values:
                 payload = _json(_task_payload(task))
@@ -251,7 +253,7 @@ class ReviewerTaskLedger:
         now=now_dt.isoformat()
         expiry=(now_dt + timedelta(seconds=claim_seconds)).isoformat()
         claimed=[]
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             stale=db.execute("""SELECT dispatch_id,attempts,artifact_sha256,reviewer_agent_id
                 FROM reviewer_dispatch_outbox
@@ -301,7 +303,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_dispatch_claim_token")
         token_digest=hashlib.sha256(claim_token.encode("utf-8")).hexdigest()
         now=_now()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row=db.execute("SELECT * FROM reviewer_dispatch_outbox WHERE dispatch_id=?",
                            (dispatch_id,)).fetchone()
@@ -337,7 +339,7 @@ class ReviewerTaskLedger:
         token_digest=hashlib.sha256(claim_token.encode("utf-8")).hexdigest()
         now_dt=datetime.now(timezone.utc)
         now=now_dt.isoformat()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row=db.execute("SELECT * FROM reviewer_dispatch_outbox WHERE dispatch_id=?",
                            (dispatch_id,)).fetchone()
@@ -371,7 +373,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_dispatch_list_limit")
         if not self._allowed(actor,"review:dispatch:read",artifact_sha256):
             raise PermissionError("review dispatch listing not authorized")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows=db.execute("""SELECT dispatch_id,task_id,artifact_sha256,reviewer_agent_id,
                 state,attempts,available_at,claimed_by,claim_expires_at,last_error,created_at,updated_at
                 FROM reviewer_dispatch_outbox WHERE artifact_sha256=?
@@ -402,7 +404,7 @@ class ReviewerTaskLedger:
             if not self._allowed(actor,"review:assign",task.artifact_sha256):
                 raise PermissionError("review_task_assignment_not_authorized")
         created=[]
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             for task in values:
                 payload=_json(_task_payload(task))
@@ -461,7 +463,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_reviewer_abandonment_reason")
         if self.lease_authority is None:
             raise ReviewerLedgerError("reviewer_lease_authority_required")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
@@ -493,7 +495,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_expected_version")
         if self.lease_authority is None:
             raise ReviewerLedgerError("reviewer_lease_authority_required")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
@@ -533,7 +535,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_reviewer_recovery_reason")
         if self.lease_authority is None:
             raise ReviewerLedgerError("reviewer_lease_authority_required")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
@@ -594,7 +596,7 @@ class ReviewerTaskLedger:
             raise ValueError("invalid_review_task_id")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("invalid_expected_version")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
@@ -630,7 +632,7 @@ class ReviewerTaskLedger:
             raise TypeError("review_result_required")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("invalid_expected_version")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
@@ -788,7 +790,7 @@ class ReviewerTaskLedger:
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("invalid_reviewer_recovery_limit")
         now = _now()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 """SELECT t.task_id,t.artifact_sha256,t.reviewer_agent_id,t.task_json,
                           t.version,l.expires_at,l.generation
@@ -810,7 +812,7 @@ class ReviewerTaskLedger:
 
     def get(self, *, actor_id: str, task_id: str) -> dict:
         actor = self._actor(actor_id)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute("SELECT * FROM reviewer_tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError("review task not found")
