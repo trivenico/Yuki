@@ -17,6 +17,7 @@ from automation.agent_memory_integration import build_memory_aware_handlers
 from core.agent_memory import AgentMemoryStore
 from evaluation.agent_experience import AgentExperienceStore
 from evaluation.agent_learning_pipeline import AgentLearningPipeline
+from core.reasoning.execution_budget_store import ExecutionBudgetStore, ExecutionBudgetStoreError
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -166,6 +167,7 @@ class SpecialistTaskWorker:
         learning_pipeline: AgentLearningPipeline | None = None,
         learning_actor_id: str | None = None,
         outcome_assessor: Callable[[TaskRecord], Mapping] | None = None,
+        budget_store: ExecutionBudgetStore | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -195,6 +197,9 @@ class SpecialistTaskWorker:
         self.runtime = runtime
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
+        if budget_store is not None and not isinstance(budget_store, ExecutionBudgetStore):
+            raise TypeError("budget_store must be an ExecutionBudgetStore.")
+        self.budget_store = budget_store
         self.handlers = validated
         self.memory_store = memory_store
         self.memory_actor_id = memory_actor_id.strip() if isinstance(memory_actor_id, str) else None
@@ -264,6 +269,7 @@ class SpecialistTaskWorker:
                 learning_pipeline=self.learning_pipeline,
                 learning_actor_id=self.learning_actor_id,
                 outcome_assessor=self.outcome_assessor,
+                budget_store=self.budget_store,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -299,6 +305,11 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
+            execution = claimed.definition[0].get("execution")
+            if self.budget_store is not None:
+                self._reserve_task_budget(claimed, execution, argument)
+            elif execution is not None:
+                raise ValueError("budget metadata cannot be executed without a configured budget store.")
             output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
@@ -337,6 +348,43 @@ class SpecialistTaskWorker:
             self._record_experience(agent_id, claimed.run_id, "failed", started_at)
             self._evaluate_learning(failed, agent_id, "failed")
             return failed
+
+    def _reserve_task_budget(self, claimed, execution, argument: str) -> None:
+        """Validate immutable budget binding and reserve usage before provider work."""
+        if not isinstance(execution, dict) or set(execution) != {
+            "budget_id", "task_identity", "policy_version",
+        }:
+            raise ValueError("required specialist budget metadata is missing or malformed.")
+        budget_id = execution.get("budget_id")
+        task_identity = execution.get("task_identity")
+        policy_version = execution.get("policy_version")
+        if (
+            not isinstance(budget_id, str) or not budget_id
+            or not isinstance(task_identity, str) or not task_identity
+            or not isinstance(policy_version, str) or not policy_version
+            or not isinstance(argument, str) or not argument.strip()
+        ):
+            raise ValueError("specialist budget metadata is invalid.")
+        snapshot = self.budget_store.get_snapshot(budget_id)
+        if (
+            snapshot.task_id != task_identity
+            or snapshot.policy_version != policy_version
+            or snapshot.parent_budget_id is None
+        ):
+            raise ValueError("specialist budget snapshot does not match task metadata.")
+        attempt_key = f"{claimed.run_id}:{claimed.attempts}"
+        # These reservations are durable and atomic. They are recorded before the
+        # handler/provider call; a crash after reservation conservatively consumes
+        # the attempted work allowance rather than risking unmetered replay.
+        self.budget_store.reserve(
+            budget_id=budget_id, resource="model_turns", amount=1,
+            idempotency_key=f"{attempt_key}:model-turn",
+        )
+        self.budget_store.reserve(
+            budget_id=budget_id, resource="transcript_chars",
+            amount=max(1, len(argument)),
+            idempotency_key=f"{attempt_key}:input-chars",
+        )
 
     def _record_experience(self, agent_id: str, task_id: str, outcome: str, started_at: float) -> None:
         """Best-effort metadata recording; telemetry must not change task outcome."""
