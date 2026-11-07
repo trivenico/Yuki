@@ -53,6 +53,11 @@ def create_app():
         except PermissionError as exc:
             if str(exc) != "Initial administrator already exists.":
                 raise
+        finally:
+            # Bootstrap credentials are single-use process inputs, not runtime
+            # configuration. Remove them immediately after the bootstrap attempt.
+            os.environ.pop("YUKI_BOOTSTRAP_ADMIN_USERNAME", None)
+            os.environ.pop("YUKI_BOOTSTRAP_ADMIN_PASSWORD", None)
 
     provider = create_provider(config)
     adapter = ProviderAgentAdapter(provider)
