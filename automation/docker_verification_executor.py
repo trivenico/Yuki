@@ -50,6 +50,7 @@ class SandboxCommand:
 class SandboxReceipt:
     execution_id: str
     command_id: str
+    argv_json: str
     image: str
     artifact_sha256: str
     workspace: str
@@ -128,6 +129,7 @@ class DockerVerificationExecutor:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS sandbox_verification_receipts (
                     execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL,
+                    argv_json TEXT NOT NULL DEFAULT '[]',
                     image TEXT NOT NULL, artifact_sha256 TEXT NOT NULL,
                     workspace TEXT NOT NULL, started_at TEXT NOT NULL,
                     finished_at TEXT NOT NULL, exit_code INTEGER,
@@ -138,6 +140,9 @@ class DockerVerificationExecutor:
                       ('passed','failed','timed_out','output_limited','launch_failed'))
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sandbox_verification_receipts)")}
+            if "argv_json" not in columns:
+                db.execute("ALTER TABLE sandbox_verification_receipts ADD COLUMN argv_json TEXT NOT NULL DEFAULT '[]'")
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
@@ -199,7 +204,7 @@ class DockerVerificationExecutor:
             )
         except OSError:
             return self._persist(SandboxReceipt(
-                execution_id, command_id, self.image, artifact_sha256,
+                execution_id, command_id, json.dumps(command.argv), self.image, artifact_sha256,
                 str(self.workspace), started, datetime.now(timezone.utc).isoformat(),
                 None, False, False, hashlib.sha256(b"").hexdigest(), 0, "", "launch_failed",
             ))
@@ -243,7 +248,7 @@ class DockerVerificationExecutor:
             )
         )
         return self._persist(SandboxReceipt(
-            execution_id, command_id, self.image, artifact_sha256,
+            execution_id, command_id, json.dumps(command.argv), self.image, artifact_sha256,
             str(self.workspace), started, datetime.now(timezone.utc).isoformat(),
             process.returncode, timed_out, limited.is_set(),
             hashlib.sha256(captured).hexdigest(), len(captured),
@@ -254,10 +259,13 @@ class DockerVerificationExecutor:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
-                """INSERT INTO sandbox_verification_receipts VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO sandbox_verification_receipts(
+                    execution_id, command_id, argv_json, image, artifact_sha256,
+                    workspace, started_at, finished_at, exit_code, timed_out,
+                    output_limited, output_sha256, output_bytes, output_excerpt, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    receipt.execution_id, receipt.command_id, receipt.image,
+                    receipt.execution_id, receipt.command_id, receipt.argv_json, receipt.image,
                     receipt.artifact_sha256, receipt.workspace, receipt.started_at,
                     receipt.finished_at, receipt.exit_code, int(receipt.timed_out),
                     int(receipt.output_limited), receipt.output_sha256,
@@ -286,6 +294,7 @@ class DockerVerificationExecutor:
         return bool(
             configured is not None
             and stored["command_id"] == expected_command
+            and json.loads(stored["argv_json"]) == list(configured.argv)
             and stored["image"] == self.image
             and stored["artifact_sha256"] == artifact_sha256
             and stored["status"] == "passed"
