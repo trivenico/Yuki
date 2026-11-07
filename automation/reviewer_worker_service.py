@@ -241,16 +241,18 @@ class ReviewerWorkerService:
                 stopped=True,
             )
         finally:
-            if self.registry is not None and self._registration is not None:
-                try:
-                    self.registry.stop(
-                        actor_id=self.registry_actor_id, worker_id=self.worker_id,
-                        instance_id=self._registration.instance_id,
-                        lease_token=self._registration.lease_token,
-                    )
-                finally:
-                    self._registration = None
-            self._running = False
+            try:
+                if self.registry is not None and self._registration is not None:
+                    try:
+                        self.registry.stop(
+                            actor_id=self.registry_actor_id, worker_id=self.worker_id,
+                            instance_id=self._registration.instance_id,
+                            lease_token=self._registration.lease_token,
+                        )
+                    finally:
+                        self._registration = None
+            finally:
+                self._running = False
 
 
 __all__ = [
