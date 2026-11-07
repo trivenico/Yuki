@@ -24,6 +24,7 @@ class ReviewerOrchestratorTests(unittest.TestCase):
         def allowed(actor, action, digest):
             return self.allowed and digest == self.digest and action in {
                 "review:assign", "review:execute", "review:submit", "review:read",
+                "review:lease:acquire", "review:lease:recover",
             }
         self.sessions = ReviewerSessionAuthority(
             root / "sessions.sqlite", secret=b"s" * 32,
@@ -46,9 +47,18 @@ class ReviewerOrchestratorTests(unittest.TestCase):
                 signer=HMACReviewerSigner(key_id=key_id, key=key),
                 active_for_signing=True,
             )
+        ledger_path = root / "ledger.sqlite"
+        self.leases = ReviewerLeaseAuthority(
+            ledger_path, secret=b"l" * 32,
+            authorize=lambda actor, action, digest: (
+                self.allowed and actor == "coordinator" and digest == self.digest
+                and action in {"review:lease:acquire", "review:lease:recover"}
+            ),
+        )
         self.ledger = ReviewerTaskLedger(
-            root / "ledger.sqlite", authorize=allowed,
+            ledger_path, authorize=allowed,
             signer_resolver=self.keys.resolve, session_authority=self.sessions,
+            lease_authority=self.leases,
         )
         self.orchestrator = ReviewerOrchestrator(
             self.ledger, self.sessions,
@@ -82,6 +92,13 @@ class ReviewerOrchestratorTests(unittest.TestCase):
             record = self.ledger.get(actor_id="coordinator", task_id=task.task_id)
             self.assertEqual(record["state"], "assigned")
             self.assertEqual(record["reviewer_agent_id"], task.reviewer_agent_id)
+            self.assertIsInstance(task.lease_token, str)
+            self.assertGreaterEqual(task.lease_generation, 1)
+            self.assertTrue(self.leases.validate(
+                task.lease_token, task_id=task.task_id,
+                artifact_sha256=self.digest, reviewer_agent_id=task.reviewer_agent_id,
+                generation=task.lease_generation,
+            ))
             self.assertTrue(self.sessions.validate(
                 task.session_token, reviewer_agent_id=task.reviewer_agent_id,
                 artifact_sha256=self.digest, action="review:execute",
