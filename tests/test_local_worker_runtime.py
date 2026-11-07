@@ -90,6 +90,41 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                     directory, FakeProvider(), provider_preferences={"research": ("ollama",)},
                 )
 
+    def test_local_runtime_shares_budget_store_and_enforces_provider_call_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            built = build_local_worker_runtime(directory, provider)
+            self.assertIs(built.supervisor.worker.budget_store, built.budget_store)
+            plan = built.coordinator.submit(
+                actor_id=LOCAL_OPERATOR_ACTOR,
+                idempotency_key="local-budget-enforcement",
+                subtasks=[SubtaskSpec(
+                    "budgeted-research", "Research this bounded request",
+                    ("research",), requires_approval=False,
+                )],
+            )
+            plan = built.coordinator.advance(
+                actor_id=LOCAL_OPERATOR_ACTOR, plan_id=plan.plan_id,
+            )
+            task_id = plan.subtasks[0].task_id
+            task = built.runtime.get(
+                actor_id=LOCAL_OPERATOR_ACTOR, task_id=task_id,
+            )
+            execution = task.steps[0]["execution"]
+            snapshot = built.budget_store.get_snapshot(execution["budget_id"])
+            self.assertEqual(snapshot.task_id, execution["task_identity"])
+            self.assertEqual(snapshot.policy_version, "local-v1")
+
+            result = built.supervisor.worker.run_once()
+            self.assertEqual(result.state, "succeeded")
+            usage = built.budget_store.usage(execution["budget_id"])
+            self.assertEqual(usage["model_turns"], 1)
+            self.assertEqual(
+                usage["transcript_chars"],
+                len("Research this bounded request"),
+            )
+            self.assertEqual(len(provider.prompts), 1)
+
     def test_operator_approval_is_allowed_and_session_is_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             first = build_local_worker_runtime(directory, FakeProvider())
