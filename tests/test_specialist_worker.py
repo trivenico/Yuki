@@ -420,10 +420,22 @@ class SpecialistWorkerTests(unittest.TestCase):
             ],
         )
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        # The specialist has two execution slots, so the third subtask must
+        # remain pending rather than being inserted into the runtime queue.
+        self.assertEqual(sum(s.task_id is not None for s in plan.subtasks), 2)
+        self.assertEqual(sum(s.status == "pending" for s in plan.subtasks), 1)
+        self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 2)
+
         results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently(
             max_workers=2, max_tasks=2,
         )
         self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.state == "succeeded" for result in results))
+
+        # Once capacity is released, another coordinator pass admits the
+        # deferred task; the queue never exceeds the specialist's limit.
+        plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(sum(s.task_id is not None for s in plan.subtasks), 3)
         self.assertEqual(sum(s.state == "queued" for s in self.store.list_runs()), 1)
         with self.assertRaises(ValueError):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_workers=17)
