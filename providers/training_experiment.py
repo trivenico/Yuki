@@ -232,3 +232,82 @@ def verify_experiment_spec(spec):
     if spec.get("activation_policy") != "manual_model_release_approval_required":
         raise TrainingExperimentError("invalid_activation_policy")
     return True
+
+def build_training_preflight(
+    spec,
+    *,
+    worker,
+    backend,
+    estimated_peak_memory_bytes,
+    required_storage_bytes,
+    estimated_cost,
+    budget_limit,
+):
+    """Create a fail-closed, non-executing resource-fit report for an experiment.
+
+    Memory and cost values are caller/backend estimates, not measurements or
+    guarantees. This function never dispatches a job or authorizes spending.
+    """
+    verify_experiment_spec(spec)
+    if not isinstance(worker, dict) or set(worker) != {
+        "worker_id", "online", "paired", "enabled", "backends",
+        "ram_available_bytes", "storage_available_bytes",
+    }:
+        raise TrainingExperimentError("invalid_preflight_worker")
+    _id(worker["worker_id"], "worker_id")
+    for field in ("online", "paired", "enabled"):
+        if type(worker[field]) is not bool:
+            raise TrainingExperimentError("invalid_preflight_worker_" + field)
+    if not isinstance(worker["backends"], (list, tuple)) or not worker["backends"]:
+        raise TrainingExperimentError("invalid_preflight_worker_backends")
+    if any(not isinstance(item, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", item)
+           for item in worker["backends"]):
+        raise TrainingExperimentError("invalid_preflight_worker_backends")
+    if not isinstance(backend, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", backend):
+        raise TrainingExperimentError("invalid_preflight_backend")
+
+    for field, value in (
+        ("estimated_peak_memory_bytes", estimated_peak_memory_bytes),
+        ("required_storage_bytes", required_storage_bytes),
+        ("available_memory_bytes", worker["ram_available_bytes"]),
+        ("available_storage_bytes", worker["storage_available_bytes"]),
+    ):
+        if type(value) is not int or not 0 <= value <= 2**60:
+            raise TrainingExperimentError("invalid_preflight_" + field)
+    if not isinstance(estimated_cost, (int, float)) or isinstance(estimated_cost, bool) or not math.isfinite(estimated_cost) or estimated_cost < 0:
+        raise TrainingExperimentError("invalid_preflight_estimated_cost")
+    if not isinstance(budget_limit, (int, float)) or isinstance(budget_limit, bool) or not math.isfinite(budget_limit) or budget_limit < 0:
+        raise TrainingExperimentError("invalid_preflight_budget_limit")
+
+    blockers = []
+    if not worker["online"]:
+        blockers.append("worker_offline")
+    if not worker["paired"] or not worker["enabled"]:
+        blockers.append("worker_not_trusted_or_disabled")
+    if backend not in worker["backends"]:
+        blockers.append("backend_not_supported")
+    if estimated_peak_memory_bytes > worker["ram_available_bytes"]:
+        blockers.append("insufficient_memory")
+    if required_storage_bytes > worker["storage_available_bytes"]:
+        blockers.append("insufficient_storage")
+    if estimated_cost > budget_limit:
+        blockers.append("budget_limit_exceeded")
+    return {
+        "schema_version": 1,
+        "experiment_id": spec["experiment_id"],
+        "experiment_sha256": spec["experiment_sha256"],
+        "worker_id": worker["worker_id"],
+        "backend": backend,
+        "estimated_peak_memory_bytes": estimated_peak_memory_bytes,
+        "available_memory_bytes": worker["ram_available_bytes"],
+        "required_storage_bytes": required_storage_bytes,
+        "available_storage_bytes": worker["storage_available_bytes"],
+        "estimated_cost": float(estimated_cost),
+        "budget_limit": float(budget_limit),
+        "estimates_are_advisory": True,
+        "execution_dispatched": False,
+        "approval_required": True,
+        "status": "blocked" if blockers else "preflight_passed",
+        "blockers": blockers,
+    }
+
