@@ -14,7 +14,8 @@ from uuid import uuid4
 from automation.reviewer_contracts import ReviewTask
 from automation.reviewer_ledger import ReviewerTaskLedger
 from automation.reviewer_sessions import ReviewerSessionAuthority
-from automation.reviewer_team import ReviewerTeamPlan, build_reviewer_team
+from automation.reviewer_team import ReviewerTeamPlan, REVIEWER_CAPABILITIES, build_reviewer_team
+from automation.reviewer_ledger import ReviewerLedgerConflict
 
 
 class ReviewerOrchestrationError(RuntimeError):
@@ -27,6 +28,18 @@ class ProvisionedReviewerTask:
     check_name: str
     reviewer_agent_id: str
     session_token: str
+    lease_token: str | None = None
+    lease_generation: int | None = None
+
+
+@dataclass(frozen=True)
+class ReviewerRecoveryOutcome:
+    task_id: str
+    state: str
+    previous_reviewer_agent_id: str
+    replacement_reviewer_agent_id: str | None
+    provisioned_task: ProvisionedReviewerTask | None
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -57,6 +70,55 @@ class ReviewerOrchestrator:
         self.sessions = session_authority
         self.authorize_coordinator = authorize_coordinator
 
+    def recover_expired_tasks(self, *, coordinator_id: str, agents: Iterable[object], limit: int = 50) -> tuple[ReviewerRecoveryOutcome, ...]:
+        """Recover expired in-progress tasks and provision replacement sessions."""
+        if self.ledger.lease_authority is None:
+            raise ReviewerOrchestrationError("reviewer_lease_authority_required")
+        if not isinstance(coordinator_id, str) or not coordinator_id.strip():
+            raise ReviewerOrchestrationError("coordinator_identity_required")
+        agent_values = tuple(agents)
+        try:
+            pending = self.ledger.list_expired_in_progress(actor_id=coordinator_id, limit=limit)
+        except Exception as exc:
+            raise ReviewerOrchestrationError("expired_reviewer_task_discovery_failed") from exc
+        outcomes = []
+        for item in pending:
+            digest, task, previous = item["artifact_sha256"], item["task"], item["reviewer_agent_id"]
+            check_name = task["check_name"]
+            capability = REVIEWER_CAPABILITIES.get(check_name)
+            candidates = []
+            for agent in agent_values:
+                agent_id = getattr(agent, "agent_id", None)
+                capabilities = getattr(agent, "capabilities", ())
+                if (isinstance(agent_id, str) and agent_id not in {previous, task.get("author_agent_id")} and
+                    getattr(agent, "enabled", False) is True and isinstance(capabilities, (set, frozenset, tuple, list)) and capability in capabilities):
+                    candidates.append(agent_id)
+            replacement = sorted(set(candidates))[0] if candidates else None
+            if replacement is None:
+                outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "blocked", previous, None, None, "no_independent_enabled_reviewer"))
+                continue
+            try:
+                if self.authorize_coordinator(coordinator_id, "review:orchestrate", digest) is not True:
+                    raise ReviewerOrchestrationError("coordinator_not_authorized")
+            except Exception as exc:
+                raise ReviewerOrchestrationError("coordinator_authorization_failed") from exc
+            session_token = None
+            try:
+                session_token = self.sessions.issue(reviewer_agent_id=replacement, artifact_sha256=digest, actions=("review:execute", "review:submit"))
+                recovered = self.ledger.recover_in_progress(actor_id=coordinator_id, task_id=item["task_id"], expected_version=item["version"], replacement_reviewer_agent_id=replacement, reason="Expired reviewer lease recovered by coordinator")
+            except ReviewerLedgerConflict:
+                if session_token is not None: self.sessions.revoke_token(session_token)
+                outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "superseded", previous, replacement, None, "task_changed_during_recovery"))
+                continue
+            except Exception as exc:
+                if session_token is not None:
+                    try: self.sessions.revoke_token(session_token)
+                    except Exception: pass
+                outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "blocked", previous, replacement, None, "recovery_or_session_provisioning_failed:" + type(exc).__name__))
+                continue
+            provisioned = ProvisionedReviewerTask(task_id=item["task_id"], check_name=check_name, reviewer_agent_id=replacement, session_token=session_token, lease_token=recovered["lease_token"], lease_generation=recovered["lease_generation"])
+            outcomes.append(ReviewerRecoveryOutcome(item["task_id"], "recovered", previous, replacement, provisioned, "expired_lease_recovered"))
+        return tuple(outcomes)
     def provision_batch(
         self,
         *,
@@ -158,5 +220,5 @@ class ReviewerOrchestrator:
 
 __all__ = [
     "ReviewerOrchestrator", "ReviewerOrchestrationError",
-    "ReviewerBatch", "ProvisionedReviewerTask",
+    "ReviewerBatch", "ProvisionedReviewerTask", "ReviewerRecoveryOutcome",
 ]
