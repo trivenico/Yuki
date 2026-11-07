@@ -24,7 +24,7 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
         )
         self.store = VerificationEvidenceStore(
             self.root / "reports.sqlite3",
-            execution_evidence_validator=self.executor.validate_evidence_reference,
+            execution_evidence_validator=lambda reference, digest, name: self.executor.validate_evidence_reference(reference, artifact_sha256=digest, check_name=name),
             reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64,
         )
 
@@ -83,7 +83,7 @@ class ExecutionReceiptEvidenceTests(unittest.TestCase):
         security = self.executor.run("security-scan", artifact_sha256=self.digest)
         failing_store = VerificationEvidenceStore(
             self.root / "failed-reports.sqlite3",
-            execution_evidence_validator=failing.validate_evidence_reference,
+            execution_evidence_validator=lambda reference, digest, name: failing.validate_evidence_reference(reference, artifact_sha256=digest, check_name=name),
             reviewer_authorizer=lambda actor, action, digest: actor.startswith(("builder", "implementation-", "reviewer-")) and action in {"verification:submit", "verification:review"} and len(digest) == 64,
         )
         with self.assertRaisesRegex(VerificationStoreError, "execution_receipt_invalid"):
