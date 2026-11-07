@@ -1162,6 +1162,31 @@ class SpecialistAgentCoordinator:
                         raise AgentPlanError(
                             "engineering acceptance registration failed; dependent dispatch is blocked."
                         ) from exc
+                    try:
+                        acceptance = self.acceptance_store.get(
+                            plan_id=plan_id, subtask_id=row["subtask_id"],
+                            task_id=row["task_id"],
+                        )
+                        if acceptance["state"] == "awaiting_artifact":
+                            result = task.result if isinstance(task.result, dict) else {}
+                            output = result.get("output")
+                            if not isinstance(output, str) or not output.strip():
+                                raise AgentPlanError("completed task has no bounded text artifact.")
+                            artifact = self.acceptance_store.verification_workflow.record_artifact(
+                                plan_id=plan_id, subtask_id=row["subtask_id"],
+                                task_id=row["task_id"], author_agent_id=row["agent_id"],
+                                content=output.encode("utf-8"),
+                                created_at=datetime.now(timezone.utc).isoformat(),
+                            )
+                            self.acceptance_store.attach_artifact(
+                                plan_id=plan_id, subtask_id=row["subtask_id"],
+                                task_id=row["task_id"], artifact_id=artifact.artifact_id,
+                                actor_id=actor_id, created_at=datetime.now(timezone.utc).isoformat(),
+                            )
+                    except Exception as exc:
+                        raise AgentPlanError(
+                            "artifact capture failed; dependent dispatch is blocked."
+                        ) from exc
                 contract = self.contracts.get(row['agent_id'])
                 if contract is not None:
                     output = task.result.get('output') if isinstance(task.result, dict) and 'output' in task.result else task.result
