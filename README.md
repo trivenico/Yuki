@@ -6,6 +6,19 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Local model inventory (read-only)
+
+If Ollama is installed and running locally, inspect models already present:
+
+```bash
+python scripts/models.py
+python scripts/models.py --json
+```
+
+The command reads only the loopback Ollama `/api/tags` endpoint. It never pulls, deletes, loads, or executes models. It estimates memory from parameter-size and quantization metadata when available, then compares that heuristic with detected physical RAM. The estimate includes a small fixed overhead but does not account precisely for context length, runtime allocation, GPU offload, or concurrent models.
+
+Model licenses are deliberately reported as unknown unless separately verified from authoritative model metadata. Role suitability is also unverified: this inventory does not benchmark coding, reasoning, or tool-use quality.
+
 ## Local hardware profile
 
 Run a read-only hardware and local-runtime profile:
