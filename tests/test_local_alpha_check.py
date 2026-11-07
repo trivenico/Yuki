@@ -26,7 +26,7 @@ class LocalAlphaCheckTests(unittest.TestCase):
             config_module.load_config = lambda: effective_config
             output = io.StringIO()
             env = dict(os.environ if environ is None else environ)
-            with patch.dict(sys.modules, {"core.config": config_module}), \\
+            with patch.dict(sys.modules, {"core.config": config_module}), \
                  patch.object(
                      MODULE.importlib.util,
                      "find_spec",
@@ -34,9 +34,9 @@ class LocalAlphaCheckTests(unittest.TestCase):
                          None if modules is not None and name in modules and not modules[name]
                          else object()
                      ),
-                 ), \\
-                 patch.object(MODULE.os, "access", return_value=True), \\
-                 patch.dict(MODULE.os.environ, env, clear=True), \\
+                 ), \
+                 patch.object(MODULE.os, "access", return_value=True), \
+                 patch.dict(MODULE.os.environ, env, clear=True), \
                  contextlib.redirect_stdout(output):
                 result = MODULE.main()
             return result, output.getvalue()
