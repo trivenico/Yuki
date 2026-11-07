@@ -1,6 +1,7 @@
 """Launcher preflight tests: provider failures must precede admin credential prompts."""
 import importlib.util
 from pathlib import Path
+import socket
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +20,18 @@ class _Provider:
 
 
 class LaunchLocalTests(unittest.TestCase):
+    def test_occupied_port_fails_before_provider_or_admin_setup(self):
+        with patch.object(MODULE, "_port_available", return_value=False):
+            with patch.object(MODULE, "_provider_ready", side_effect=AssertionError("provider must not run")):
+                with patch("builtins.input", side_effect=AssertionError("interactive setup must not run")):
+                    with patch("sys.argv", ["launch_local.py", "--provider", "ollama", "--model", "qwen2.5:7b"]):
+                        self.assertEqual(MODULE.main(), 1)
+
+    def test_port_probe_returns_false_when_bind_fails(self):
+        with patch.object(MODULE.socket, "socket") as socket_factory:
+            listener = socket_factory.return_value.__enter__.return_value
+            listener.bind.side_effect = OSError("address in use")
+            self.assertFalse(MODULE._port_available(8000))
     def test_unavailable_provider_fails_before_admin_setup(self):
         with patch.object(MODULE, "_provider_ready", return_value=False):
             with patch("builtins.input", side_effect=AssertionError("admin prompt must not run")):
