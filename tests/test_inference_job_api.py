@@ -55,6 +55,9 @@ class InferenceJobAPITests(unittest.TestCase):
         self.assertGreaterEqual(len(claimed["job"]["claim_token"]), 32)
         claim = {"claim_generation": claimed["job"]["claim_generation"],
                  "claim_token": claimed["job"]["claim_token"]}
+        status,renewed=self.request("POST",f"/v1/inference/jobs/{jid}/lease",claim,self.device.token)
+        self.assertEqual(status,200)
+        self.assertIsInstance(renewed["lease_expires_at"],str)
         status,forged=self.request("POST",f"/v1/inference/jobs/{jid}/complete",
             {**claim, "claim_token":"x"*43, "result_text":"forged"},self.device.token)
         self.assertEqual(status,409)
