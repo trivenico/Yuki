@@ -29,6 +29,104 @@ def _positive_int(value: Any) -> int | None:
     return value if type(value) is int and 0 < value <= 2**60 else None
 
 
+def _linux_cgroup_paths(
+    *, proc_cgroup: Path = Path("/proc/self/cgroup"),
+    cgroup_root: Path = Path("/sys/fs/cgroup"),
+) -> dict[str, Path]:
+    """Resolve process-relative cgroup v1/v2 directories without shell calls."""
+    paths: dict[str, Path] = {}
+    try:
+        lines = proc_cgroup.read_text(encoding="ascii").splitlines()[:32]
+    except OSError:
+        return paths
+    for line in lines:
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        controllers, relative = parts[1], parts[2].lstrip("/")
+        if ".." in Path(relative).parts:
+            continue
+        if not controllers:
+            paths["v2"] = cgroup_root / relative
+        else:
+            names = set(controllers.split(","))
+            for name in ("memory", "cpu", "cpuacct"):
+                if name in names:
+                    paths[name] = Path("/sys/fs/cgroup") / name / relative
+    # Common unified hierarchy mount and v1 controller mounts.
+    if not paths.get("v2") and (cgroup_root / "memory.max").exists():
+        paths["v2"] = cgroup_root
+    return paths
+
+
+def _read_cgroup_int(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="ascii").strip()
+        if raw == "max":
+            return None
+        value = int(raw)
+        return value if 0 < value <= 2**60 else None
+    except (OSError, ValueError):
+        return None
+
+
+def _effective_linux_memory(
+    total: int | None, available: int | None, *, paths: dict[str, Path] | None = None,
+) -> tuple[int | None, int | None]:
+    """Clamp host memory to the process cgroup limit and remaining budget."""
+    paths = paths if paths is not None else _linux_cgroup_paths()
+    v2 = paths.get("v2")
+    if v2:
+        limit = _read_cgroup_int(v2 / "memory.max")
+        usage = _read_cgroup_int(v2 / "memory.current")
+    else:
+        memory = paths.get("memory")
+        limit = _read_cgroup_int(memory / "memory.limit_in_bytes") if memory else None
+        usage = _read_cgroup_int(memory / "memory.usage_in_bytes") if memory else None
+    if limit is not None:
+        total = min(total, limit) if total is not None else limit
+        # Unknown usage must not be treated as zero: fail closed for
+        # schedulers rather than advertising the entire cgroup limit as free.
+        remaining = max(0, limit - usage) if usage is not None else 0
+        available = min(available, remaining) if available is not None else remaining
+    if total is not None and available is not None:
+        available = min(available, total)
+    return total, available
+
+
+def _clamp_cpu_quota(affinity: int, *, paths: dict[str, Path]) -> int:
+    effective = max(1, affinity)
+    v2 = paths.get("v2")
+    quota_path = v2 / "cpu.max" if v2 else None
+    if quota_path:
+        try:
+            quota, period = quota_path.read_text(encoding="ascii").split()[:2]
+            if quota != "max":
+                q, p = int(quota), int(period)
+                if q > 0 and p > 0:
+                    effective = min(effective, max(1, q // p))
+        except (OSError, ValueError):
+            pass
+    else:
+        cpu = paths.get("cpu")
+        if cpu:
+            quota = _read_cgroup_int(cpu / "cpu.cfs_quota_us")
+            period = _read_cgroup_int(cpu / "cpu.cfs_period_us")
+            if quota and period:
+                effective = min(effective, max(1, quota // period))
+    return effective
+
+
+def _effective_cpu_cores() -> int:
+    """Return an integer CPU capacity bounded by affinity and cgroup quota."""
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity = os.cpu_count() or 1
+    paths = _linux_cgroup_paths() if sys.platform.startswith("linux") else {}
+    return _clamp_cpu_quota(affinity, paths=paths)
+
+
 def _memory_bytes() -> tuple[int | None, int | None]:
     if os.name == "nt":
         try:
@@ -54,19 +152,23 @@ def _memory_bytes() -> tuple[int | None, int | None]:
             page = os.sysconf("SC_PAGE_SIZE")
             total = page * os.sysconf("SC_PHYS_PAGES")
             available = page * os.sysconf("SC_AVPHYS_PAGES")
-            return _positive_int(total), _positive_int(available)
+            total, available = _positive_int(total), _positive_int(available)
+            if sys.platform.startswith("linux"):
+                return _effective_linux_memory(total, available)
+            return total, available
         except (AttributeError, OSError, ValueError):
             pass
     return None, None
 
 
 def discover_capabilities() -> dict[str, Any]:
-    """Return conservative, privacy-minimal host capabilities."""
+    """Return conservative, privacy-minimal effective process capabilities."""
     total, available = _memory_bytes()
+    cpu_cores = _effective_cpu_cores()
     result: dict[str, Any] = {
         "os": platform.system()[:80],
         "architecture": platform.machine()[:80],
-        "cpu_cores": os.cpu_count() or 1,
+        "cpu_cores": cpu_cores,
     }
     if total is not None:
         result["ram_total_bytes"] = total
