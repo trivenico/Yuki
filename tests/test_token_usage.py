@@ -2,7 +2,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from core.token_usage import TokenUsageTracker
+from unittest.mock import patch
+from core.token_usage import TokenUsageTracker, create_best_effort_usage_tracker
 
 
 class TokenUsageTests(unittest.TestCase):
@@ -69,6 +70,11 @@ class TokenUsageTests(unittest.TestCase):
             loaded = TokenUsageTracker(path, session_id="persist")
             self.assertEqual(loaded.summary()["total_tokens"], 5)
             loaded.close()
+
+
+    def test_best_effort_factory_does_not_raise_when_storage_is_unavailable(self):
+        with patch("core.token_usage.TokenUsageTracker", side_effect=OSError("disk unavailable")):
+            self.assertIsNone(create_best_effort_usage_tracker("usage", session_id="owner"))
 
     def test_migrates_legacy_json_once_without_overwriting_it(self):
         with tempfile.TemporaryDirectory() as d:
