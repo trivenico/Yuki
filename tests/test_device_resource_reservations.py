@@ -106,7 +106,7 @@ class DeviceResourceReservationTests(unittest.TestCase):
     def test_renew_and_release_require_token_and_fence(self):
         reservation = self.reserve()
         with self.assertRaises(StaleReservation):
-            self.service.renew(reservation.reservation_id, "wrong-token",
+            self.service.renew(reservation.reservation_id, "wrong-token-value-that-is-long-enough",
                                fencing_token=reservation.fencing_token)
         extended = self.service.renew(
             reservation.reservation_id, reservation.token,
