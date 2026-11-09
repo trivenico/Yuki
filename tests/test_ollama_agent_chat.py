@@ -66,6 +66,28 @@ class OllamaAgentChatTests(unittest.TestCase):
         }]
         self.requests = []
 
+    def test_rejects_out_of_range_runtime_memory_options(self):
+        for option, value in (
+            ("num_ctx", 255), ("num_ctx", 32769),
+            ("num_predict", 0), ("num_batch", 15), ("num_thread", 257),
+        ):
+            with self.subTest(option=option, value=value), self.assertRaises(ValueError):
+                OllamaProvider(model="test-model", **{option: value})
+
+    def test_custom_memory_options_are_sent_to_chat_and_stream(self):
+        provider = OllamaProvider(
+            model="test-model", num_ctx=1024, num_predict=96,
+            num_batch=64, num_thread=2,
+        )
+        fake = FakeOpener({"message": {"content": "ok", "tool_calls": []}}, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            provider.generate_chat(messages=self.messages, tools=[])
+        payload = json.loads(self.requests[-1][0].data)
+        self.assertEqual(payload["options"], {
+            "num_ctx": 1024, "num_predict": 96,
+            "num_batch": 64, "num_thread": 2,
+        })
+
     def test_opener_disables_environment_proxies_and_redirects(self):
         opener = self.provider._opener()
         proxies = [
@@ -90,6 +112,7 @@ class OllamaAgentChatTests(unittest.TestCase):
         payload = json.loads(request.data)
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/chat")
         self.assertEqual(payload["messages"], self.messages)
+        self.assertEqual(payload["options"], {"num_ctx": 2048, "num_predict": 512, "num_batch": 128})
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["name"], "lookup")
         self.assertEqual(result["tool_calls"]["tool_calls"][0]["arguments"], {"key": "value"})
         self.assertEqual(timeout, self.provider.timeout)
