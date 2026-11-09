@@ -29,6 +29,7 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 17. Cloud provider endpoint validation now also rejects nonstandard HTTPS ports, preventing an allow-listed hostname from being used to send credentials to an unrelated service listening on a custom port.
 
 18. **Low-memory local inference controls.** Ollama chat, streamed chat and direct generation now receive bounded context, output, prompt-batch and CPU-thread settings. Configuration is validated in YAML/environment, defaults are conservative, and specialist worker recommendations are reduced to one worker for 8–16 GiB and at most two for 16–32 GiB. See `docs/LOW_MEMORY_LOCAL_RUNTIME.md`. This is operator-controlled memory reduction, not a measured hard cap; end-to-end process-tree RSS/VRAM benchmarking and adaptive memory control remain open.
+19. **Installed RAM overstated usable worker budget.** Readiness previously selected worker counts from physical RAM, ignoring current pressure and Linux container limits. It now reports available RAM separately, respects cgroup v1/v2 limits, and defaults specialist worker pools to the resulting conservative recommendation when callers omit `max_workers`. Explicit worker counts remain intentional overrides.
 
 ## Architecture and release observations
 
