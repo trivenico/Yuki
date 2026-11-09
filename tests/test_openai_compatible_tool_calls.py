@@ -55,6 +55,7 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             "test-model",
             environ={"OPENAI_API_KEY": "test-secret"},
         )
+        self.provider._resolve_public_host = lambda host, port: ("1.1.1.1",)
         self.tools = [{
             "type": "function",
             "function": {
