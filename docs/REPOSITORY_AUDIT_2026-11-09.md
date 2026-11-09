@@ -28,6 +28,8 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 16. **Concurrent authentication lockout race.** Failed-login counters were read before a write transaction, so parallel attempts could calculate from the same stale count and overwrite each other. Authentication now acquires an immediate SQLite write transaction before reading/updating the account, with a concurrent-failure regression test.
 17. Cloud provider endpoint validation now also rejects nonstandard HTTPS ports, preventing an allow-listed hostname from being used to send credentials to an unrelated service listening on a custom port.
 
+18. **Low-memory local inference controls.** Ollama chat, streamed chat and direct generation now receive bounded context, output, prompt-batch and CPU-thread settings. Configuration is validated in YAML/environment, defaults are conservative, and specialist worker recommendations are reduced to one worker for 8–16 GiB and at most two for 16–32 GiB. See `docs/LOW_MEMORY_LOCAL_RUNTIME.md`. This is operator-controlled memory reduction, not a measured hard cap; end-to-end process-tree RSS/VRAM benchmarking and adaptive memory control remain open.
+
 ## Architecture and release observations
 
 - The repository has no standard `pyproject.toml` or equivalent project-level lint/type-check configuration. Current core CI compiles Python and runs unittest on Python 3.11 across Ubuntu, Windows, and macOS; this is valuable but does not replace linting, type checking, coverage policy, or multi-version compatibility testing.
