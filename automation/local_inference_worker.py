@@ -1,4 +1,4 @@
-""""Explicit local Ollama worker with fenced, renewable job claims.
+"""Explicit local Ollama worker with fenced, renewable job claims.
 
 No listener or persistent background thread is created. The embedding
 application calls run_once explicitly; a temporary lease-renewal thread exists
