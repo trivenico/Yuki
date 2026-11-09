@@ -52,6 +52,7 @@ class HybridProviderTests(unittest.TestCase):
         router = HybridProvider(local)
         self.assertEqual(router.generate("private"), "local")
         self.assertEqual(router.last_usage, local.last_usage)
+        self.assertEqual(router.last_usage_provider, "fakeprovider")
 
     def test_hybrid_provider_propagates_cloud_usage_metadata(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
@@ -59,6 +60,7 @@ class HybridProviderTests(unittest.TestCase):
         router = HybridProvider(local, cloud, cloud_tasks={"cloud_task"})
         self.assertEqual(router.generate_for("cloud_task", "public"), "cloud")
         self.assertEqual(router.last_usage, cloud.last_usage)
+        self.assertEqual(router.last_usage_provider, "fakeprovider")
 
     def test_never_falls_back_to_cloud_when_local_is_unavailable(self):
         local, cloud = FakeProvider(available=False), FakeProvider()
