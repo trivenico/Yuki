@@ -1,6 +1,7 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
 from providers import MockProvider
+from core.token_usage import record_provider_usage
 
 
 class YukiAgent:
@@ -33,42 +34,13 @@ class YukiAgent:
     def _record_usage(self, prompt, response):
         if self.usage_tracker is None:
             return
-        try:
-            usage = getattr(self.provider, "last_usage", None)
-            if (
-                isinstance(usage, dict)
-                and type(usage.get("input_tokens")) is int and usage["input_tokens"] >= 0
-                and type(usage.get("output_tokens")) is int and usage["output_tokens"] >= 0
-                and type(usage.get("estimated")) is bool
-            ):
-                input_tokens = usage["input_tokens"]
-                output_tokens = usage["output_tokens"]
-                estimated = usage["estimated"]
-            else:
-                input_tokens = (len(prompt) + 3) // 4
-                output_tokens = (len(response) + 3) // 4
-                estimated = True
-            self.usage_tracker.record(
-                provider=str(
-                    getattr(self.provider, "last_usage_provider", None)
-                    or self.provider.__class__.__name__.lower()
-                ),
-                model=str(
-                    getattr(self.provider, "last_usage_model", None)
-                    or getattr(self.provider, "model", "")
-                ),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                estimated=estimated,
-            )
-            self.last_usage_error = None
-        except Exception as exc:
-            self.last_usage_error = type(exc).__name__
-            if self.on_usage_error is not None:
-                try:
-                    self.on_usage_error(exc)
-                except Exception:
-                    pass
+        error = record_provider_usage(self.usage_tracker, self.provider, prompt, response)
+        self.last_usage_error = type(error).__name__ if error is not None else None
+        if error is not None and self.on_usage_error is not None:
+            try:
+                self.on_usage_error(error)
+            except Exception:
+                pass
 
     def ask(self, prompt):
         if not isinstance(prompt, str) or not prompt.strip():
