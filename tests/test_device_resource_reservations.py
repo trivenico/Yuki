@@ -8,6 +8,7 @@ from pathlib import Path
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
 from core.device_agent import DeviceAgentService
+from core.distributed_model_scheduler import DistributedModelScheduler, ModelRequirements
 from core.device_resource_reservations import (
     CapacityUnavailable,
     DeviceResourceReservationService,
@@ -95,6 +96,59 @@ class AuthenticatedReservationTests(unittest.TestCase):
             source_sequence=2,
         )
         self.assertEqual(fresh_generation, 2)
+
+    def test_scheduler_reserves_capacity_before_reporting_placement(self):
+        scheduler = DistributedModelScheduler()
+        device_id = self.device.device.device_id
+        decision, reservation = scheduler.reserve_plan(
+            ModelRequirements("org/model", memory_bytes=400, cpu_cores=1,
+                              gpu_memory_bytes=100),
+            [{
+                "device_id": device_id,
+                "online": True,
+                "status": "idle",
+                "capabilities": {
+                    "cpu_cores": 2,
+                    "ram_available_bytes": 800,
+                    "gpus": [{"memory_available_bytes": 400}],
+                },
+            }],
+            reservation_service=self.service,
+            session_token=self.session.token,
+            task_id="scheduler-task",
+            idempotency_key="scheduler-idempotency",
+            reservation_secret="scheduler-reservation-secret-with-high-entropy",
+        )
+        self.assertEqual(decision.status, "reserved")
+        self.assertEqual(decision.device_id, device_id)
+        self.assertEqual(decision.reason, "capacity_reserved; dispatch_not_performed")
+        self.assertIsNotNone(reservation)
+        self.assertEqual(reservation.cpu_millicores, 1000)
+        self.assertEqual(reservation.memory_bytes, 400)
+        self.assertEqual(reservation.gpu_memory_bytes, 100)
+        self.assertEqual(reservation.status, "active")
+
+    def test_scheduler_does_not_report_placement_when_capacity_is_unavailable(self):
+        scheduler = DistributedModelScheduler()
+        device_id = self.device.device.device_id
+        decision, reservation = scheduler.reserve_plan(
+            ModelRequirements("org/model", memory_bytes=900, cpu_cores=1),
+            [{
+                "device_id": device_id,
+                "online": True,
+                "status": "idle",
+                "capabilities": {"cpu_cores": 2, "ram_available_bytes": 950},
+            }],
+            reservation_service=self.service,
+            session_token=self.session.token,
+            task_id="scheduler-overcapacity",
+            idempotency_key="scheduler-overcapacity",
+            reservation_secret="scheduler-overcapacity-secret-with-entropy",
+        )
+        self.assertEqual(decision.status, "unscheduled")
+        self.assertIsNone(decision.device_id)
+        self.assertIsNone(reservation)
+        self.assertEqual(decision.reason, "eligible_devices_have_no_reservable_capacity")
 
     def test_capacity_source_sequence_rejects_out_of_order_updates(self):
         first_generation = self.service.publish_capacity(
