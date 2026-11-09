@@ -248,3 +248,17 @@ class TokenUsageTracker:
 
     def __exit__(self, exc_type, exc, traceback):
         self.close()
+
+
+def create_best_effort_usage_tracker(path=None, *, session_id="default", **kwargs):
+    """Create durable metering when possible without making inference depend on it."""
+    import logging
+
+    try:
+        return TokenUsageTracker(path, session_id=session_id, **kwargs)
+    except Exception as exc:
+        logging.getLogger("yuki.usage").warning(
+            "Usage metering is unavailable (%s); inference remains enabled.",
+            type(exc).__name__,
+        )
+        return None
