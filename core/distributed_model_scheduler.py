@@ -116,8 +116,9 @@ class DistributedModelScheduler:
         if not decision.eligible_device_ids:
             return decision, None
         for device_id in decision.eligible_device_ids:
-            suffix = hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:16]
-            key = idempotency_key[:110] + "-" + suffix
+            key = hashlib.sha256(
+                (idempotency_key + ":" + device_id).encode("utf-8")
+            ).hexdigest()
             secret = hashlib.sha256((reservation_secret + ":" + device_id).encode("ascii")).hexdigest()
             try:
                 reservation = reservation_service.reserve(
