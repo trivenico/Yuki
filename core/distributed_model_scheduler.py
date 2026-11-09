@@ -7,8 +7,11 @@ share memory. One workload is placed on one eligible paired device.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+import hashlib
 import re
 from typing import Any, Iterable
+
+from core.device_resource_reservations import CapacityUnavailable
 
 
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
@@ -84,6 +87,58 @@ class DistributedModelScheduler:
         if type(value) is int and 0 <= value <= _MAX_MEMORY:
             return value
         return None
+
+    def reserve_plan(
+        self,
+        requirements: ModelRequirements,
+        devices: Iterable[dict[str, Any]],
+        *,
+        reservation_service: Any,
+        session_token: str,
+        task_id: str,
+        idempotency_key: str,
+        reservation_secret: str,
+        allowed_device_ids: Iterable[str] | None = None,
+    ):
+        """Reserve a candidate atomically before reporting placement; never dispatch."""
+        if not callable(getattr(reservation_service, "reserve", None)):
+            raise TypeError("reservation_service_must_support_reserve")
+        for name, value in (("session_token", session_token), ("task_id", task_id),
+                            ("idempotency_key", idempotency_key),
+                            ("reservation_secret", reservation_secret)):
+            if not isinstance(value, str) or not value:
+                raise ValueError("invalid_" + name)
+        if len(idempotency_key) > 128 or len(task_id) > 128:
+            raise ValueError("invalid_reservation_identity")
+        if not reservation_secret.isascii() or not 32 <= len(reservation_secret) <= 256:
+            raise ValueError("invalid_reservation_secret")
+        decision = self.plan(requirements, devices, allowed_device_ids=allowed_device_ids)
+        if not decision.eligible_device_ids:
+            return decision, None
+        for device_id in decision.eligible_device_ids:
+            suffix = hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:16]
+            key = idempotency_key[:110] + "-" + suffix
+            secret = hashlib.sha256((reservation_secret + ":" + device_id).encode("ascii")).hexdigest()
+            try:
+                reservation = reservation_service.reserve(
+                    session_token, device_id, task_id,
+                    memory_bytes=requirements.memory_bytes,
+                    cpu_millicores=requirements.cpu_cores * 1000,
+                    gpu_memory_bytes=requirements.gpu_memory_bytes,
+                    idempotency_key=key, reservation_secret=secret,
+                )
+            except CapacityUnavailable:
+                continue
+            return PlacementDecision(
+                decision.model_id, device_id, "reserved",
+                "capacity_reserved; dispatch_not_performed",
+                decision.eligible_device_ids, decision.rejected,
+            ), reservation
+        return PlacementDecision(
+            decision.model_id, None, "unscheduled",
+            "eligible_devices_have_no_reservable_capacity",
+            decision.eligible_device_ids, decision.rejected,
+        ), None
 
     def plan(
         self,
