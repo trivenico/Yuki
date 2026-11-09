@@ -76,7 +76,7 @@ class ResourceBudgetTests(unittest.TestCase):
 
     def test_parse_linux_meminfo(self):
         total, available = _parse_meminfo(
-            "MemTotal:       16384000 kB\\nMemAvailable:    8192000 kB\\n"
+            "MemTotal:       16384000 kB\nMemAvailable:    8192000 kB\n"
         )
         self.assertEqual(total, 16_777_216_000)
         self.assertEqual(available, 8_388_608_000)
