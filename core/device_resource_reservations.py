@@ -169,7 +169,10 @@ class DeviceResourceReservationService:
                 int(watermark["source_sequence"]) if watermark else 0,
                 int(current["source_sequence"]) if current else 0,
             )
-            if source_sequence is not None and source_sequence <= latest_sequence:
+            if source_sequence is not None and (
+                source_sequence < latest_sequence
+                or (current is not None and source_sequence <= int(current["source_sequence"]))
+            ):
                 return int(current["generation"]) if current else 0
             next_sequence = source_sequence if source_sequence is not None else latest_sequence + 1
             db.execute("""
