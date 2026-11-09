@@ -254,9 +254,9 @@ class ReservedPlacement:
 
     def to_dict(self) -> dict[str, Any]:
         reservation = self.reservation
-        return {
-            "decision": self.decision.to_dict(),
-            "reservation": {
+        serialized_reservation = None
+        if reservation is not None:
+            serialized_reservation = {
                 "reservation_id": reservation.reservation_id,
                 "device_id": reservation.device_id,
                 "task_id": reservation.task_id,
@@ -266,5 +266,8 @@ class ReservedPlacement:
                 "fencing_token": reservation.fencing_token,
                 "expires_at": reservation.expires_at,
                 "status": reservation.status,
-            },
+            }
+        return {
+            "decision": self.decision.to_dict(),
+            "reservation": serialized_reservation,
         }
