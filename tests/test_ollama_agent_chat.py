@@ -66,6 +66,16 @@ class OllamaAgentChatTests(unittest.TestCase):
         }]
         self.requests = []
 
+    def test_direct_generation_uses_configured_memory_options(self):
+        fake = FakeOpener({"response": "Generated text"}, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            result = self.provider.generate("A short prompt")
+        self.assertEqual(result, "Generated text")
+        payload = json.loads(self.requests[-1][0].data)
+        self.assertEqual(payload["options"], {
+            "num_ctx": 2048, "num_predict": 512, "num_batch": 128,
+        })
+
     def test_rejects_out_of_range_runtime_memory_options(self):
         for option, value in (
             ("num_ctx", 255), ("num_ctx", 32769),
