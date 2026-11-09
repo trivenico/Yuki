@@ -69,6 +69,10 @@ class InferenceJobAPITests(unittest.TestCase):
         self.assertEqual(status,200)
         status,view=self.request("GET",f"/v1/inference/jobs/{jid}",token=self.session.token)
         self.assertEqual(status,200); self.assertEqual(view["job"]["status"],"succeeded"); self.assertEqual(view["job"]["result_text"],"Hello back")
+        self.assertNotIn("claim_token",view["job"])
+        status,listed=self.request("GET","/v1/inference/jobs",token=self.session.token)
+        self.assertEqual(status,200)
+        self.assertNotIn("claim_token",listed["jobs"][0])
     def test_worker_credential_cannot_create_owner_job(self):
         status,_=self.request("POST","/v1/inference/jobs",{"model_id":"local/model","device_id":self.device.device.device_id,"input_text":"x"},self.device.token)
         self.assertEqual(status,401)
