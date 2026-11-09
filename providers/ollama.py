@@ -37,6 +37,7 @@ class OllamaProvider:
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout = timeout
+        self.last_usage = None
 
     def is_available(self):
         """Return true only when the local server responds and the model is installed."""
@@ -322,6 +323,7 @@ class OllamaProvider:
         text = body.get("response") if isinstance(body, dict) else None
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
+        self.last_usage = _normalize_ollama_usage(body)
         return text.strip()
 
 
