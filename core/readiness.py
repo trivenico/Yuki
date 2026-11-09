@@ -94,8 +94,8 @@ def _available_memory_bytes() -> int | None:
                  "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
             ):
                 try:
-                    limit_raw = open(limit_path, encoding="ascii").read().strip()
-                    current_raw = open(current_path, encoding="ascii").read().strip()
+                    limit_raw = Path(limit_path).read_text(encoding="ascii").strip()
+                    current_raw = Path(current_path).read_text(encoding="ascii").strip()
                     if limit_raw == "max" or not limit_raw.isdigit() or not current_raw.isdigit():
                         continue
                     limit, current = int(limit_raw), int(current_raw)
