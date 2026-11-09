@@ -53,16 +53,18 @@ class HybridProviderTests(unittest.TestCase):
         local.last_usage = {"input_tokens": 2, "output_tokens": 1, "estimated": False}
         router = HybridProvider(local)
         self.assertEqual(router.generate("private"), "local")
-        self.assertEqual(router.last_usage, local.last_usage)
+        self.assertEqual(router.last_usage, {"input_tokens": 2, "output_tokens": 1, "estimated": False})
         self.assertEqual(router.last_usage_provider, "fakeprovider")
+        self.assertIsNone(local.last_usage)
 
     def test_hybrid_provider_propagates_cloud_usage_metadata(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
         cloud.last_usage = {"input_tokens": 7, "output_tokens": 4, "estimated": False}
         router = HybridProvider(local, cloud, cloud_tasks={"cloud_task"})
         self.assertEqual(router.generate_for("cloud_task", "public"), "cloud")
-        self.assertEqual(router.last_usage, cloud.last_usage)
+        self.assertEqual(router.last_usage, {"input_tokens": 7, "output_tokens": 4, "estimated": False})
         self.assertEqual(router.last_usage_provider, "fakeprovider")
+        self.assertIsNone(cloud.last_usage)
 
 
     def test_hybrid_routers_serialize_calls_to_shared_underlying_provider(self):
