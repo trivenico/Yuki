@@ -14,7 +14,7 @@ import sqlite3
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
 
-_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}$")
 _MAX = 2**60
 
 
