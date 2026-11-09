@@ -15,10 +15,11 @@ class InferenceJob:
  def public_dict(self):
   d=asdict(self); d.pop("input_text"); d.pop("claim_token"); return d
 class InferenceJobService:
- def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=1000):
+ def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=None):
   if not isinstance(pairing,DevicePairingService): raise TypeError("pairing must be a DevicePairingService")
   if type(lease_seconds)!=int or not 15<=lease_seconds<=3600: raise ValueError("invalid_lease_seconds")
-  if type(max_jobs_per_owner)!=int or not 1<=max_jobs_per_owner<=100000: raise ValueError("invalid_max_jobs_per_owner")
+  if max_jobs_per_owner is not None and (type(max_jobs_per_owner)!=int or not 1<=max_jobs_per_owner<=100000):
+   raise ValueError("invalid_max_jobs_per_owner")
   self.database_path=str(Path(database_path).expanduser()); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner
   Path(self.database_path).parent.mkdir(parents=True,exist_ok=True)
   with self._connect() as db:
@@ -49,8 +50,9 @@ class InferenceJobService:
   now=_now(); stamp=_stamp(now); jid=uuid.uuid4().hex
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
-   count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
-   if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
+   if self.max_jobs_per_owner is not None:
+    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
+    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
    owned=self.pairing.owns_active_device(owner_id,device_id)
    if not owned: raise PermissionError("device_not_owned_or_paired")
    db.execute("INSERT INTO inference_jobs(job_id,owner_id,model_id,device_id,status,input_text,result_text,error_code,created_at,updated_at,lease_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
