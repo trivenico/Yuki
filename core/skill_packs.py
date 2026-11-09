@@ -194,9 +194,15 @@ def install_skill_pack(source: str | Path, directory: str | Path | None = None) 
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, target) if not target.exists() else (_ for _ in ()).throw(
-            FileExistsError(f"Skill pack '{pack['name']}' is already installed.")
-        )
+        # Hard-link publication is atomic and fails if another installer
+        # created the destination after the initial existence check. os.replace
+        # would silently overwrite that concurrent installation.
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            raise FileExistsError(
+                f"Skill pack '{pack['name']}' is already installed."
+            ) from None
     finally:
         try:
             os.unlink(temporary)
