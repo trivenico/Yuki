@@ -129,6 +129,11 @@ def load_config(path=None):
     database_pool_max = _bounded_int(raw.get("database_pool_max", 10), database_pool_min, 50)
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    openai_model_raw = os.environ.get("YUKI_OPENAI_MODEL", raw.get("openai_model", "gpt-4.1-mini"))
+    if (not isinstance(openai_model_raw, str) or not openai_model_raw.strip()
+            or len(openai_model_raw.strip()) > 120 or any(ord(char) < 32 for char in openai_model_raw)):
+        raise RuntimeError("openai_model must be non-empty text of at most 120 characters.")
+    openai_model = openai_model_raw.strip()
     language_behavior = str(raw.get("language_behavior", "auto_detect")).strip().lower()
     if language_behavior != "auto_detect": raise RuntimeError("language_behavior must be auto_detect.")
     voice_style = str(raw.get("voice_style", "natural_realistic_female")).strip().lower()
@@ -156,6 +161,7 @@ def load_config(path=None):
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "openai_model": openai_model,
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
