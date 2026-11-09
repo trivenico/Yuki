@@ -48,13 +48,17 @@ class DeviceAgentService:
         pairing: DevicePairingService,
         *,
         online_window_seconds: int = 90,
+        reservation_service=None,
     ):
         if not isinstance(pairing, DevicePairingService):
             raise TypeError("pairing must be a DevicePairingService")
         if isinstance(online_window_seconds, bool) or not isinstance(online_window_seconds, int) or not 15 <= online_window_seconds <= 3600:
             raise ValueError("online_window_seconds must be between 15 and 3600")
         self.database_path = str(Path(database_path).expanduser())
+        if reservation_service is not None and not callable(getattr(reservation_service, "advance_capacity_sequence", None)):
+            raise TypeError("reservation_service_must_support_capacity_watermarks")
         self.pairing = pairing
+        self.reservation_service = reservation_service
         self.online_window_seconds = online_window_seconds
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
@@ -144,6 +148,13 @@ class DeviceAgentService:
         if status not in _STATUSES:
             raise ValueError("invalid_status")
         safe_capabilities = self._validate_capabilities(capabilities)
+        # Advance the reservation watermark before accepting this heartbeat. If the
+        # heartbeat write subsequently fails, capacity remains conservatively blocked
+        # until a matching fresh snapshot is published.
+        if self.reservation_service is not None:
+            self.reservation_service.advance_capacity_sequence(
+                token, source_sequence=sequence
+            )
         now = _now()
         timestamp = _stamp(now)
         with self._connect() as db:
