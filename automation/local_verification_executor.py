@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import sqlite3
 import subprocess
 import threading
@@ -22,6 +23,31 @@ from typing import Mapping, Sequence
 from uuid import uuid4
 
 _NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    """Terminate the entire command tree, not only its direct parent."""
+    try:
+        if os.name == "nt":
+            # CREATE_NEW_PROCESS_GROUP does not make Popen.kill recursive.
+            # taskkill /T is the supported Windows process-tree termination path.
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False,
+                check=False,
+                timeout=5,
+                close_fds=True,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        try:
+            process.kill()
+        except OSError:
+            pass
 
 
 class VerificationExecutionError(RuntimeError):
@@ -153,6 +179,10 @@ class LocalVerificationExecutor:
                 stderr=subprocess.PIPE,
                 shell=False,
                 close_fds=True,
+                start_new_session=(os.name != "nt"),
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                ),
             )
         except OSError:
             finished = datetime.now(timezone.utc).isoformat()
@@ -176,10 +206,7 @@ class LocalVerificationExecutor:
                     if len(chunk) > remaining:
                         output_limited.set()
                 if output_limited.is_set():
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
+                    _terminate_process_tree(process)
 
         readers = [
             threading.Thread(target=drain, args=(process.stdout,), daemon=True),
@@ -192,7 +219,7 @@ class LocalVerificationExecutor:
             process.wait(timeout=command.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
-            process.kill()
+            _terminate_process_tree(process)
             process.wait()
         for reader in readers:
             reader.join(timeout=2)
