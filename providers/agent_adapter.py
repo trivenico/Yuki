@@ -145,8 +145,6 @@ class ProviderAgentAdapter:
             response = self.provider.generate_chat(
                 messages=normalized, tools=list(tools), tool_choice=tool_choice,
             )
-            if isinstance(response, Mapping):
-                self._record_usage(normalized, tools, response)
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")
@@ -156,5 +154,6 @@ class ProviderAgentAdapter:
         normalized_response = dict(response)
         normalized_response["text"] = text
         normalized_response["tool_calls"] = dict(calls)
+        self._record_usage(normalized, tools, normalized_response)
         return {"text": text, "tool_calls": dict(calls),
                 "finish_reason": response.get("finish_reason")}
