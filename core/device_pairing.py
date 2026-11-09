@@ -188,6 +188,18 @@ class DevicePairingService:
             """, (owner_id,)).fetchall()
             return [self._device(row) for row in rows]
 
+    def owns_active_device(self, owner_id: str, device_id: str) -> bool:
+        """Check exact owner/device binding without exposing device credentials."""
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM paired_devices WHERE owner_id=? AND device_id=? AND revoked_at IS NULL",
+                (owner_id, device_id),
+            ).fetchone()
+            return row is not None
+
     def revoke_device(self, owner_id: str, device_id: str) -> bool:
         owner_id = self._owner(owner_id)
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
