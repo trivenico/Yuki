@@ -69,6 +69,84 @@ class DeviceAgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
             self.heartbeat(capabilities={"gpus": [{} for _ in range(9)]})
 
+    def test_heartbeat_publishes_authenticated_resource_capacity(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append((token, capacity))
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-with-capacity.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        result = agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={
+                "cpu_millicores": 1750,
+                "ram_total_bytes": 10_000,
+                "ram_available_bytes": 7000,
+                "gpus": [{"memory_total_bytes": 4000, "memory_available_bytes": 2500}],
+            },
+        )
+        self.assertEqual(result.device_id, self.credential.device.device_id)
+        self.assertEqual(len(reservations.calls), 1)
+        self.assertEqual(reservations.calls[0][0], self.credential.token)
+        self.assertEqual(reservations.calls[0][1], {
+            "memory_bytes": 7000, "cpu_millicores": 1750, "gpu_memory_bytes": 2500,
+        })
+
+    def test_incomplete_capacity_does_not_publish_or_create_outbox(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append(capacity)
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-incomplete.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+        )
+        self.assertEqual(reservations.calls, [])
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
+
+    def test_failed_capacity_publish_is_durable_and_retryable(self):
+        class Reservations:
+            def __init__(self):
+                self.fail = True
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                if self.fail:
+                    raise RuntimeError("temporary ledger outage")
+                self.calls.append(capacity)
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-outbox.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        with self.assertRaisesRegex(RuntimeError, "temporary ledger outage"):
+            agent.heartbeat(
+                self.credential.token, sequence=1, status="idle",
+                capabilities={
+                    "cpu_cores": 4, "ram_total_bytes": 9000,
+                    "ram_available_bytes": 6000, "gpus": [],
+                },
+            )
+        self.assertEqual(agent.list_devices("owner-a")[0].sequence, 1)
+        reservations.fail = False
+        self.assertTrue(agent.retry_pending_capacity(self.credential.token))
+        self.assertEqual(reservations.calls[0], {
+            "memory_bytes": 6000, "cpu_millicores": 4000, "gpu_memory_bytes": 0,
+        })
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
+
     def test_serialized_report_has_only_declared_fields(self):
         result = heartbeat_to_dict(self.heartbeat())
         self.assertEqual(set(result), {
