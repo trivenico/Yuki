@@ -67,6 +67,13 @@ class InferenceMetricsStore:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_inference_metrics_model
                 ON inference_metrics(actor_id, model_digest, created_at)""")
+            # Enforce append-only semantics against accidental SQL mutations.
+            db.execute("""CREATE TRIGGER IF NOT EXISTS inference_metrics_no_update
+                BEFORE UPDATE ON inference_metrics
+                BEGIN SELECT RAISE(ABORT, 'inference_metrics_are_append_only'); END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS inference_metrics_no_delete
+                BEFORE DELETE ON inference_metrics
+                BEGIN SELECT RAISE(ABORT, 'inference_metrics_are_append_only'); END""")
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
