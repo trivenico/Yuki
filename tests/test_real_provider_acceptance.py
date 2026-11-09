@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "real_provider_acceptance.py"
 SPEC = importlib.util.spec_from_file_location("yuki_real_provider_acceptance", SCRIPT)
@@ -100,18 +102,26 @@ class RealProviderAcceptanceTests(unittest.TestCase):
 
     def test_actual_web_composition_root_and_authenticated_route(self):
         provider = _Provider()
-        result = MODULE.run_acceptance(
-            environ={"YUKI_RUN_REAL_PROVIDER_ACCEPTANCE": "1"},
-            config_loader=lambda: {
-                "provider": "ollama",
-                "storage_backend": "sqlite",
-                "ollama_base_url": "http://127.0.0.1:11434",
-                "ollama_model": "acceptance-test-model",
-                "database_pool_min": 1,
-                "database_pool_max": 2,
-            },
-            provider_factory=lambda config: provider,
-        )
+        with patch.dict(os.environ, {
+            "YUKI_BOOTSTRAP_ADMIN_USERNAME": "stale-user",
+            "YUKI_BOOTSTRAP_ADMIN_PASSWORD": "stale-secret",
+            "YUKI_WORKSPACE": "preexisting-workspace",
+        }):
+            result = MODULE.run_acceptance(
+                environ={"YUKI_RUN_REAL_PROVIDER_ACCEPTANCE": "1"},
+                config_loader=lambda: {
+                    "provider": "ollama",
+                    "storage_backend": "sqlite",
+                    "ollama_base_url": "http://127.0.0.1:11434",
+                    "ollama_model": "acceptance-test-model",
+                    "database_pool_min": 1,
+                    "database_pool_max": 2,
+                },
+                provider_factory=lambda config: provider,
+            )
+            self.assertNotIn("YUKI_BOOTSTRAP_ADMIN_USERNAME", os.environ)
+            self.assertNotIn("YUKI_BOOTSTRAP_ADMIN_PASSWORD", os.environ)
+            self.assertEqual(os.environ["YUKI_WORKSPACE"], "preexisting-workspace")
         self.assertEqual(result["result"], "passed")
         self.assertEqual(result["transport"], "authenticated_browser_asgi")
         self.assertGreater(provider.calls, 0)
