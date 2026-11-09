@@ -13,7 +13,6 @@ from threading import RLock
 from uuid import uuid4
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$")
-_TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$")
 _CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 
 
@@ -65,7 +64,7 @@ class AgentExperienceStore:
                evaluator, evidence_ref, quality_score=None, memory_useful=None):
         if not isinstance(agent_id, str) or not _CODE.fullmatch(agent_id):
             raise ValueError("invalid_agent_id")
-        if not isinstance(task_id, str) or not _TASK_ID.fullmatch(task_id):
+        if not isinstance(task_id, str) or not _ID.fullmatch(task_id):
             raise ValueError("invalid_task_id")
         if not isinstance(outcome, str) or outcome not in {"succeeded", "failed", "cancelled"}:
             raise ValueError("invalid_outcome")
