@@ -1,4 +1,4 @@
-import tempfile,unittest
+import tempfile,unittest,sqlite3
 from pathlib import Path
 from datetime import datetime,timedelta,timezone
 from core.device_pairing import DevicePairingService
@@ -35,6 +35,13 @@ class JobsTests(unittest.TestCase):
  def test_revocation(self):
   self.create(); self.pair.revoke_device("owner-a",self.dev.device.device_id)
   with self.assertRaises(PermissionError): self.jobs.claim_next(self.dev.token)
+ def test_database_connections_close_after_context_exit(self):
+  connection=self.jobs._connect()
+  with connection as db:
+   db.execute("SELECT 1").fetchone()
+  with self.assertRaises(sqlite3.ProgrammingError):
+   connection.connection.execute("SELECT 1")
+
  def test_validation(self):
   with self.assertRaisesRegex(ValueError,"invalid_input"): self.create(input_text=" ")
   j=self.create(); self.jobs.claim_next(self.dev.token)
