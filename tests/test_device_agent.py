@@ -59,6 +59,17 @@ class DeviceAgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
             self.heartbeat(capabilities={"ram_total_bytes": 100, "ram_available_bytes": 200})
 
+    def test_resource_capability_totals_are_bounded(self):
+        with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
+            self.heartbeat(capabilities={"cpu_cores": 4097})
+        with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
+            self.heartbeat(capabilities={
+                "gpus": [
+                    {"memory_available_bytes": 2**60},
+                    {"memory_available_bytes": 2**60},
+                ],
+            })
+
     def test_status_and_sequence_are_validated(self):
         with self.assertRaisesRegex(ValueError, "invalid_status"):
             self.heartbeat(status="execute")
