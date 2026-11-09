@@ -165,16 +165,17 @@ def plan_model_placement(
     host_budget = max(0, hardware.available_memory_bytes - policy.host_reserve_bytes)
     cpu_feasible = total_estimate <= host_budget
 
-    choices = []
+    cpu_choice = None
     if cpu_feasible:
-        choices.append({
+        cpu_choice = {
             "placement": "cpu",
             "estimated_host_memory_bytes": total_estimate,
             "estimated_gpu_memory_bytes": 0,
             "feasible": True,
             "reason": "host_memory_budget_satisfied",
-        })
+        }
 
+    gpu_choices = []
     if gpu_offload_ratio is not None:
         for gpu in hardware.gpus:
             gpu_estimate = int(total_estimate * gpu_offload_ratio)
@@ -182,7 +183,7 @@ def plan_model_placement(
             gpu_budget = max(0, gpu.free_memory_bytes - policy.gpu_reserve_bytes)
             if host_estimate <= host_budget and gpu_estimate <= gpu_budget:
                 placement = "gpu" if gpu_offload_ratio == 1 else "hybrid"
-                choices.append({
+                gpu_choices.append({
                     "placement": placement,
                     "gpu_name": gpu.name,
                     "gpu_vendor": gpu.vendor,
@@ -192,6 +193,10 @@ def plan_model_placement(
                     "feasible": True,
                     "reason": "host_and_gpu_memory_budgets_satisfied",
                 })
+
+    # An explicit offload request prefers a feasible accelerator plan; CPU
+    # remains the fallback when no supplied GPU has sufficient free memory.
+    choices = gpu_choices + ([cpu_choice] if cpu_choice is not None else [])
 
     return {
         "model_id": model.name,
