@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import math
+import os
+import stat
 import re
 import sqlite3
 from threading import RLock
@@ -19,6 +21,34 @@ _CODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _MAX_DURATION_MS = 7 * 24 * 60 * 60 * 1000
 _MAX_BYTES = 2 ** 60
+
+
+def _prepare_database_file(path: str) -> None:
+    """Create/validate a private regular SQLite file on POSIX systems.
+
+    Existing permissive files are rejected rather than silently chmod'ed.
+    Windows relies on the directory's inherited ACL; deployments on shared
+    Windows hosts must provision a private directory ACL explicitly.
+    """
+    if os.name != "posix":
+        return
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | nofollow, 0o600)
+    except FileExistsError:
+        fd = None
+    if fd is not None:
+        os.close(fd)
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except OSError as exc:
+        raise PermissionError("metrics_database_file_not_secure") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            raise PermissionError("metrics_database_file_permissions_too_open")
+    finally:
+        os.close(fd)
 
 
 def _optional_counter(value, name, *, maximum=_MAX_DURATION_MS):
@@ -39,6 +69,7 @@ class InferenceMetricsStore:
             raise TypeError("trusted_authorize_callback_required")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        _prepare_database_file(self.database_path)
         self.authorize = authorize
         self._lock = RLock()
         with self._connect() as db:
