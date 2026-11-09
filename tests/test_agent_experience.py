@@ -41,6 +41,12 @@ class AgentExperienceStoreTests(unittest.TestCase):
         self.assertFalse(summary["routing_changed"])
         self.assertFalse(summary["memory_written"])
 
+    def test_url_safe_task_ids_may_start_with_underscore_or_hyphen(self):
+        for task_id in ("_workflow_run_A1", "-workflow_run_b2"):
+            with self.subTest(task_id=task_id):
+                item = self.record(task_id=task_id, evidence_ref="workflow-task:" + task_id)
+                self.assertEqual(item["task_id"], task_id)
+
     def test_duplicate_task_record_is_rejected(self):
         self.record()
         with self.assertRaisesRegex(ValueError, "already_recorded"):
