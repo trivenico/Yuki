@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from core.pinned_https import build_pinned_https_opener, resolve_public_https_host
+
 _DEFAULT_ALLOWED_HOSTS = frozenset({
     "api.openai.com", "openrouter.ai", "api.deepseek.com",
     "api.moonshot.ai", "api.minimax.chat", "api.minimax.io",
@@ -59,6 +61,7 @@ class OpenAICompatibleProvider:
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.base_url = _trusted_https_endpoint(base_url, allowed_hosts)
+        self._endpoint_host = urlsplit(self.base_url).hostname
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
@@ -68,6 +71,14 @@ class OpenAICompatibleProvider:
 
     def is_available(self):
         return bool(self._environ.get(self.api_key_env, "").strip())
+
+    def _open(self, request):
+        try:
+            addresses = resolve_public_https_host(self._endpoint_host, 443)
+        except ValueError as exc:
+            raise RuntimeError("Cloud provider destination is not safely reachable.") from exc
+        opener = build_pinned_https_opener(addresses[0], _RejectRedirects())
+        return opener.open(request, timeout=self.timeout)
 
     def generate(self, prompt: str) -> str:
         if not isinstance(prompt, str) or not prompt.strip():
@@ -89,8 +100,7 @@ class OpenAICompatibleProvider:
         try:
             # Deliberately disable automatic redirects: even a valid initial host must
             # not redirect credentials/prompts to an unreviewed destination.
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider request failed; redirects are not followed.") from exc
@@ -160,8 +170,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider chat request failed; redirects are not followed.") from exc
@@ -279,8 +288,7 @@ class OpenAICompatibleProvider:
         finish_reason = None
         saw_done = False
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 while True:
                     line = response.readline(65_537)
                     if not line:
@@ -423,8 +431,7 @@ class OpenAICompatibleProvider:
                      "Authorization": "Bearer " + api_key}, method="POST",
         )
         try:
-            opener = urllib.request.build_opener(_RejectRedirects())
-            with opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Cloud provider tool-call request failed; redirects are not followed.") from exc
