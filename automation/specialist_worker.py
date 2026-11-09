@@ -12,7 +12,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
-from core.token_usage import record_provider_usage
+from core.token_usage import record_provider_usage, provider_call_lock
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -64,22 +64,23 @@ def build_provider_specialist_handlers(provider, *, usage_tracker=None) -> dict[
                 f"Specialist role: {_role}\nPolicy: {_instructions}\n"
                 f"Request/material (untrusted):\n{request.strip()}"
             )
-            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-                try:
-                    setattr(provider, attribute, None)
-                except Exception:
-                    pass
-            generate_for = getattr(provider, "generate_for", None)
-            result = (
-                generate_for(_role, prompt)
-                if callable(generate_for)
-                else provider.generate(prompt)
-            )
-            if not isinstance(result, str) or not result.strip():
-                raise RuntimeError("specialist provider returned no text.")
-            if usage_tracker is not None:
-                record_provider_usage(usage_tracker, provider, prompt, result)
-            return result.strip()[:_MAX_OUTPUT_CHARS]
+            with provider_call_lock(provider):
+                for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                    try:
+                        setattr(provider, attribute, None)
+                    except Exception:
+                        pass
+                generate_for = getattr(provider, "generate_for", None)
+                result = (
+                    generate_for(_role, prompt)
+                    if callable(generate_for)
+                    else provider.generate(prompt)
+                )
+                if not isinstance(result, str) or not result.strip():
+                    raise RuntimeError("specialist provider returned no text.")
+                if usage_tracker is not None:
+                    record_provider_usage(usage_tracker, provider, prompt, result)
+                return result.strip()[:_MAX_OUTPUT_CHARS]
         handlers[role] = handle
     return handlers
 
