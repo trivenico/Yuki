@@ -24,6 +24,8 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 14. The same numeric guard is applied at the local Hugging Face embedder boundary and the older hybrid semantic retriever, so invalid vectors are rejected before cache serialization or cosine scoring regardless of which retrieval stack is configured.
 10. **Verification process-tree leakage.** Local command timeout/output-cap handling previously killed only the direct child, potentially leaving descendants alive. Local verification now starts a dedicated process group/session and terminates the group on timeout/output overflow. Docker verification now assigns a unique container name and explicitly removes the daemon-side container on timeout/output overflow; killing the Docker CLI alone was not sufficient.
 
+15. **Docker snapshot memory exhaustion.** The verification executor previously read every workspace file into memory before applying the snapshot builder's limits. It now checks file count, per-file size and total size before allocation, uses bounded reads with race checks, and skips the builder's excluded cache/VCS directories before reading their contents. A regression test covers an oversized file.
+
 ## Architecture and release observations
 
 - The repository has no standard `pyproject.toml` or equivalent project-level lint/type-check configuration. Current core CI compiles Python and runs unittest on Python 3.11 across Ubuntu, Windows, and macOS; this is valuable but does not replace linting, type checking, coverage policy, or multi-version compatibility testing.
