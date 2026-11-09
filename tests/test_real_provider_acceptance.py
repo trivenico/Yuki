@@ -77,7 +77,7 @@ class RealProviderAcceptanceTests(unittest.TestCase):
                 await receive()
                 body = (b'{"conversation_id":"conversation-acceptance"}'
                         if scope["path"] == "/v1/conversations"
-                        else b'{"status":"completed","content":"Yuki local provider acceptance passed."}')
+                        else b'{"status":"completed","answer":"Yuki local provider acceptance passed."}')
                 await send({"type": "http.response.start", "status": 201 if scope["path"] == "/v1/conversations" else 200})
                 await send({"type": "http.response.body", "body": body})
             runtime.web = web
@@ -131,7 +131,7 @@ class RealProviderAcceptanceTests(unittest.TestCase):
                 await receive()
                 body = (b'{"conversation_id":"conversation-acceptance"}'
                         if scope["path"] == "/v1/conversations"
-                        else b'{"status":"failed","content":"no"}')
+                        else b'{"status":"failed","answer":"no"}')
                 await send({"type": "http.response.start", "status": 201 if scope["path"] == "/v1/conversations" else 200})
                 await send({"type": "http.response.body", "body": body})
             runtime.web = web
