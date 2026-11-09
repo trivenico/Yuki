@@ -145,15 +145,17 @@ class ProviderAgentAdapter:
             response = self.provider.generate_chat(
                 messages=normalized, tools=list(tools), tool_choice=tool_choice,
             )
-        if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage"}:
-            raise ValueError("provider returned an unsupported response envelope.")
-        text = response.get("text", "")
-        calls = response.get("tool_calls", {"tool_calls": []})
-        if not isinstance(text, str) or not isinstance(calls, Mapping):
-            raise ValueError("provider response fields are invalid.")
-        normalized_response = dict(response)
-        normalized_response["text"] = text
-        normalized_response["tool_calls"] = dict(calls)
-        self._record_usage(normalized, tools, normalized_response)
-        return {"text": text, "tool_calls": dict(calls),
-                "finish_reason": response.get("finish_reason")}
+            if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage"}:
+                raise ValueError("provider returned an unsupported response envelope.")
+            text = response.get("text", "")
+            calls = response.get("tool_calls", {"tool_calls": []})
+            if not isinstance(text, str) or not isinstance(calls, Mapping):
+                raise ValueError("provider response fields are invalid.")
+            normalized_response = dict(response)
+            normalized_response["text"] = text
+            normalized_response["tool_calls"] = dict(calls)
+            # Capture mutable provider usage metadata before another request can
+            # overwrite it on the shared adapter instance.
+            self._record_usage(normalized, tools, normalized_response)
+            return {"text": text, "tool_calls": dict(calls),
+                    "finish_reason": response.get("finish_reason")}
