@@ -1,4 +1,6 @@
 import hashlib
+import os
+import time
 import sys
 import tempfile
 import unittest
@@ -70,6 +72,33 @@ class LocalVerificationExecutorTests(unittest.TestCase):
         receipt = executor.run("slow-tests")
         self.assertEqual(receipt.status, "timed_out")
         self.assertTrue(receipt.timed_out)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group assertion")
+    def test_timeout_terminates_descendant_processes(self):
+        pid_file = self.root / "child.pid"
+        code = (
+            "import subprocess,sys,time,pathlib; "
+            "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+            "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+            "time.sleep(30)"
+        )
+        executor = self.executor({
+            "tree-timeout": VerificationCommand(
+                "tree-timeout", (self.script, "-c", code, str(pid_file)), 0.5
+            )
+        })
+        receipt = executor.run("tree-timeout")
+        self.assertEqual(receipt.status, "timed_out")
+        child_pid = int(pid_file.read_text())
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("descendant process survived verification timeout")
 
     def test_output_cap_terminates_command_and_records_truncation(self):
         executor = self.executor({
