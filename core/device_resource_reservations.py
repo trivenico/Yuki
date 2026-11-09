@@ -254,17 +254,28 @@ class DeviceResourceReservationService:
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT token_hash, fencing_token, status, expires_at "
+                "FROM resource_reservations WHERE reservation_id=?",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None
+                or not hmac.compare_digest(row["token_hash"], token_hash)
+                or row["fencing_token"] != fencing_token
+                or row["status"] != "active"
+                or row["expires_at"] <= now
+            ):
+                raise StaleReservation("reservation_expired_or_not_owned")
             if renew:
                 expiry = _stamp(datetime.fromisoformat(now) + timedelta(seconds=self.lease_seconds))
                 sql = """UPDATE resource_reservations SET expires_at=? WHERE
-                    reservation_id=? AND token_hash=? AND fencing_token=?
-                    AND status='active' AND expires_at>?"""
-                args = (expiry, reservation_id, token_hash, fencing_token, now)
+                    reservation_id=? AND fencing_token=? AND status='active' AND expires_at>?"""
+                args = (expiry, reservation_id, fencing_token, now)
             else:
                 sql = """UPDATE resource_reservations SET status='released' WHERE
-                    reservation_id=? AND token_hash=? AND fencing_token=?
-                    AND status='active' AND expires_at>?"""
-                args = (reservation_id, token_hash, fencing_token, now)
+                    reservation_id=? AND fencing_token=? AND status='active' AND expires_at>?"""
+                args = (reservation_id, fencing_token, now)
             if db.execute(sql, args).rowcount != 1:
                 raise StaleReservation("reservation_expired_or_not_owned")
         return expiry if renew else None
