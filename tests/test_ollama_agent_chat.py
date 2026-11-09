@@ -66,6 +66,20 @@ class OllamaAgentChatTests(unittest.TestCase):
         }]
         self.requests = []
 
+    def test_opener_disables_environment_proxies_and_redirects(self):
+        opener = self.provider._opener()
+        proxies = [
+            handler for handler in opener.handlers
+            if handler.__class__.__name__ == "ProxyHandler"
+        ]
+        redirects = [
+            handler for handler in opener.handlers
+            if handler.__class__.__name__ == "_NoRedirect"
+        ]
+        self.assertEqual(len(proxies), 1)
+        self.assertEqual(proxies[0].proxies, {})
+        self.assertEqual(len(redirects), 1)
+
     def test_preserves_roles_and_normalizes_tool_proposal_without_execution(self):
         fake = FakeOpener({"message": {"content": "", "tool_calls": [{
             "function": {"name": "lookup", "arguments": {"key": "value"}}
