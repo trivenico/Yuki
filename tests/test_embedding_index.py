@@ -1,3 +1,4 @@
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +73,12 @@ class PersistentEmbeddingIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "share_memory_database"):
             SemanticMemoryRetriever(self.store, self.embedder, vector_index=other)
 
+    def test_zero_and_float32_underflow_vectors_are_rejected(self):
+        memory = self.memories[0]
+        for vector in ([0.0, 0.0], [1e-50, 0.0]):
+            with self.subTest(vector=vector), self.assertRaisesRegex(ValueError, "nonzero"):
+                self.index.put_many(actor_id="owner", memories=[memory], vectors=[vector])
+
     def test_invalid_vector_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "finite"):
             self.index.put_many(actor_id="owner", memories=[self.memories[0]],
@@ -93,7 +100,7 @@ class PersistentEmbeddingIndexTests(unittest.TestCase):
                 (
                     "owner", memory["memory_id"], self.index.model_id,
                     self.index._digest(memory["content"]), 1,
-                    __import__("struct").pack("<f", 1_000_001.0),
+                    struct.pack("<f", 1_000_001.0),
                 ),
             )
         with self.assertRaisesRegex(ValueError, "out_of_range"):
