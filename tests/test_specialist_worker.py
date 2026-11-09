@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from threading import Barrier, Event, Lock, Thread
+from core.token_usage import TokenUsageTracker
 from pathlib import Path
 
 from automation.agent_coordinator import (
@@ -149,6 +150,19 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(handlers["coding"]("Review this"), "local result")
         self.assertEqual(len(cloud.prompts), 1)
         self.assertEqual(len(local.prompts), 1)
+
+
+    def test_provider_specialist_records_usage_without_storing_prompt(self):
+        tracker = TokenUsageTracker(session_id="specialist-test")
+        provider = FakeProvider(output="A bounded answer")
+        handlers = build_provider_specialist_handlers(provider, usage_tracker=tracker)
+        self.assertEqual(handlers["coding"]("private prompt"), "A bounded answer")
+        summary = tracker.summary()
+        self.assertEqual(summary["calls"], 1)
+        self.assertGreater(summary["input_tokens"], 0)
+        self.assertGreater(summary["output_tokens"], 0)
+        self.assertEqual(summary["estimated_events"], 1)
+        tracker.close()
 
     def test_provider_unavailable_fails_closed(self):
         handlers = build_provider_specialist_handlers(FakeProvider(available=False))

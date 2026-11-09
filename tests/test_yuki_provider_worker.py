@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from core.token_usage import TokenUsageTracker
 
 from yuki_agent_runtime import TaskStore
 from yuki_agent_worker import AgentWorker
@@ -49,6 +50,20 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
             "text": "Hello from the configured provider",
             "truncated": False,
         })
+
+
+    def test_provider_worker_records_usage_without_blocking_task_result(self):
+        tracker = TokenUsageTracker(session_id="provider-worker-test")
+        provider = FakeProvider("worker answer")
+        handlers = create_provider_handlers(FakeManager(provider), usage_tracker=tracker)
+        task = self.store.submit("model.generate", {"prompt": "worker prompt"}, approval_required=False)
+        outcome = AgentWorker(self.store, worker_id="provider-worker", handlers=handlers).run_once()
+        self.assertEqual(outcome.status, "succeeded")
+        summary = tracker.summary()
+        self.assertEqual(summary["calls"], 1)
+        self.assertGreater(summary["total_tokens"], 0)
+        self.assertEqual(summary["estimated_events"], 1)
+        tracker.close()
 
     def test_task_cannot_override_provider_or_endpoint(self):
         provider = FakeProvider()

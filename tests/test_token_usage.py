@@ -3,7 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from core.token_usage import TokenUsageTracker, create_best_effort_usage_tracker
+from core.token_usage import (
+    TokenUsageTracker, create_best_effort_usage_tracker, record_provider_usage,
+    provider_call_lock,
+)
 
 
 class TokenUsageTests(unittest.TestCase):
@@ -75,6 +78,60 @@ class TokenUsageTests(unittest.TestCase):
     def test_best_effort_factory_does_not_raise_when_storage_is_unavailable(self):
         with patch("core.token_usage.TokenUsageTracker", side_effect=OSError("disk unavailable")):
             self.assertIsNone(create_best_effort_usage_tracker("usage", session_id="owner"))
+
+
+
+    def test_provider_lock_is_shared_per_adapter_instance(self):
+        class Provider:
+            pass
+        provider = Provider()
+        self.assertIs(provider_call_lock(provider), provider_call_lock(provider))
+        self.assertIsNot(provider_call_lock(provider), provider_call_lock(Provider()))
+
+    def test_provider_lock_supports_unhashable_adapters(self):
+        class Provider:
+            __hash__ = None
+        provider = Provider()
+        self.assertIs(provider_call_lock(provider), provider_call_lock(provider))
+        self.assertIsNot(provider_call_lock(provider), provider_call_lock(Provider()))
+
+    def test_provider_lock_supports_slot_only_adapters_without_leaking_them(self):
+        class Provider:
+            __slots__ = ()
+        first, second = Provider(), Provider()
+        self.assertIs(provider_call_lock(first), provider_call_lock(second))
+
+    def test_shared_provider_recorder_uses_exact_metadata(self):
+        class Provider:
+            model = "local-model"
+            last_usage = {"input_tokens": 12, "output_tokens": 8, "estimated": False}
+        tracker = TokenUsageTracker(session_id="worker")
+        self.assertIsNone(record_provider_usage(tracker, Provider(), "prompt", "answer"))
+        summary = tracker.summary()
+        self.assertEqual(summary["total_tokens"], 20)
+        self.assertEqual(summary["exact_events"], 1)
+        tracker.close()
+
+    def test_shared_provider_recorder_marks_fallback_as_estimated(self):
+        class Provider:
+            model = "unknown"
+            last_usage = None
+        tracker = TokenUsageTracker(session_id="worker-estimate")
+        self.assertIsNone(record_provider_usage(tracker, Provider(), "12345678", "1234"))
+        summary = tracker.summary()
+        self.assertEqual(summary["input_tokens"], 2)
+        self.assertEqual(summary["output_tokens"], 1)
+        self.assertEqual(summary["estimated_events"], 1)
+        tracker.close()
+
+    def test_shared_provider_recorder_returns_storage_error_without_raising(self):
+        class Provider:
+            last_usage = None
+        class BrokenTracker:
+            def record(self, **kwargs):
+                raise OSError("disk full")
+        error = record_provider_usage(BrokenTracker(), Provider(), "prompt", "answer")
+        self.assertIsInstance(error, OSError)
 
     def test_migrates_legacy_json_once_without_overwriting_it(self):
         with tempfile.TemporaryDirectory() as d:

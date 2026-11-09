@@ -118,7 +118,9 @@ def main():
     )
     ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    local_workers = build_local_worker_runtime(workspace, ai.provider)
+    local_workers = build_local_worker_runtime(
+        workspace, ai.provider, usage_tracker=usage_tracker,
+    )
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)

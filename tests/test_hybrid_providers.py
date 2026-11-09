@@ -1,6 +1,8 @@
 import json
 import os
 import unittest
+import threading
+import time
 from unittest.mock import patch
 
 from providers.hybrid import HybridProvider
@@ -51,16 +53,61 @@ class HybridProviderTests(unittest.TestCase):
         local.last_usage = {"input_tokens": 2, "output_tokens": 1, "estimated": False}
         router = HybridProvider(local)
         self.assertEqual(router.generate("private"), "local")
-        self.assertEqual(router.last_usage, local.last_usage)
+        self.assertEqual(router.last_usage, {"input_tokens": 2, "output_tokens": 1, "estimated": False})
         self.assertEqual(router.last_usage_provider, "fakeprovider")
+        self.assertIsNone(local.last_usage)
 
     def test_hybrid_provider_propagates_cloud_usage_metadata(self):
         local, cloud = FakeProvider("local"), FakeProvider("cloud")
         cloud.last_usage = {"input_tokens": 7, "output_tokens": 4, "estimated": False}
         router = HybridProvider(local, cloud, cloud_tasks={"cloud_task"})
         self.assertEqual(router.generate_for("cloud_task", "public"), "cloud")
-        self.assertEqual(router.last_usage, cloud.last_usage)
+        self.assertEqual(router.last_usage, {"input_tokens": 7, "output_tokens": 4, "estimated": False})
         self.assertEqual(router.last_usage_provider, "fakeprovider")
+        self.assertIsNone(cloud.last_usage)
+
+
+    def test_hybrid_routers_serialize_calls_to_shared_underlying_provider(self):
+        class ConcurrentProvider(FakeProvider):
+            def __init__(self):
+                super().__init__()
+                self.active = 0
+                self.max_active = 0
+                self.guard = threading.Lock()
+                self.last_usage = None
+
+            def generate(self, prompt):
+                with self.guard:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                time.sleep(0.02)
+                self.last_usage = {
+                    "input_tokens": len(prompt), "output_tokens": len(prompt) + 1,
+                    "estimated": False,
+                }
+                with self.guard:
+                    self.active -= 1
+                return prompt
+
+        provider = ConcurrentProvider()
+        routers = [HybridProvider(provider), HybridProvider(provider)]
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def call(index):
+            barrier.wait()
+            answer = routers[index].generate("x" * (index + 2))
+            results[index] = (answer, routers[index].last_usage)
+
+        threads = [threading.Thread(target=call, args=(i,)) for i in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(provider.max_active, 1)
+        self.assertEqual(results[0][1]["input_tokens"], 2)
+        self.assertEqual(results[1][1]["input_tokens"], 3)
 
     def test_never_falls_back_to_cloud_when_local_is_unavailable(self):
         local, cloud = FakeProvider(available=False), FakeProvider()

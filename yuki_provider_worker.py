@@ -9,13 +9,17 @@ from __future__ import annotations
 from typing import Any
 
 from yuki_agent_worker import TaskContext
+from core.token_usage import record_provider_usage, provider_call_lock
 
 
 MAX_PROVIDER_PROMPT_CHARS = 12_000
 MAX_PROVIDER_RESPONSE_CHARS = 50_000
 
 
-def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PROVIDER_PROMPT_CHARS):
+def create_provider_handlers(
+    provider_manager, *, max_prompt_chars: int = MAX_PROVIDER_PROMPT_CHARS,
+    usage_tracker=None,
+):
     """Return the allowlisted model.generate handler using the selected provider.
 
     The selected adapter is resolved once at handler construction. To change
@@ -27,6 +31,8 @@ def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PR
         raise ValueError(f"max_prompt_chars must be between 1 and {MAX_PROVIDER_PROMPT_CHARS}")
     if not callable(getattr(provider_manager, "create_selected_adapter", None)):
         raise TypeError("provider_manager must expose create_selected_adapter()")
+    if usage_tracker is not None and not callable(getattr(usage_tracker, "record", None)):
+        raise TypeError("usage_tracker must expose record().")
     provider = provider_manager.create_selected_adapter()
     if provider is None or not callable(getattr(provider, "generate", None)) or not callable(
         getattr(provider, "is_available", None)
@@ -49,7 +55,15 @@ def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PR
         if forbidden.intersection(payload):
             raise ValueError("provider and tool configuration cannot be set in task payloads")
         context.check_cancelled()
-        response = provider.generate(prompt)
+        with provider_call_lock(provider):
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(provider, attribute, None)
+                except Exception:
+                    pass
+            response = provider.generate(prompt)
+            if usage_tracker is not None and isinstance(response, str):
+                record_provider_usage(usage_tracker, provider, prompt, response)
         context.check_cancelled()
         if not isinstance(response, str) or not response.strip():
             raise RuntimeError("provider returned an empty or invalid response")
