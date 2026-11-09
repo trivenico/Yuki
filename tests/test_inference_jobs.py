@@ -1,4 +1,5 @@
 import tempfile,unittest,sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime,timedelta,timezone
 from core.device_pairing import DevicePairingService
@@ -54,6 +55,16 @@ class JobsTests(unittest.TestCase):
   with self.assertRaises(PermissionError):
    self.jobs.renew_job_lease(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token)
   self.jobs.complete_job(self.dev.token,j.job_id,claim_generation=newer.claim_generation,claim_token=newer.claim_token,result_text="fresh")
+
+ def test_concurrent_claims_have_one_authoritative_generation(self):
+  self.create()
+  with ThreadPoolExecutor(max_workers=2) as pool:
+   claims=list(pool.map(lambda _: self.jobs.claim_next(self.dev.token),range(2)))
+  successful=[claim for claim in claims if claim is not None]
+  self.assertEqual(len(successful),1)
+  self.assertEqual(successful[0].claim_generation,1)
+  self.assertTrue(successful[0].claim_token)
+
  def test_current_claim_can_renew(self):
   j=self.create(); claim=self.jobs.claim_next(self.dev.token)
   expiry=self.jobs.renew_job_lease(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token)
