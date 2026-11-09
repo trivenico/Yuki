@@ -114,6 +114,17 @@ class SemanticMemoryRetrieverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dimensions_must_match"):
             retriever.search(actor_id="owner", agent_id="research", query="vehicle")
 
+    def test_embedding_overflow_is_rejected_before_cosine_scoring(self):
+        class OverflowEmbedder:
+            is_local = True
+            def encode(self, _text):
+                return [10**1000, 0.0]
+        retriever = SemanticMemoryRetriever(self.store, OverflowEmbedder())
+        with self.assertRaisesRegex(ValueError, "out_of_range|finite"):
+            retriever.search(
+                actor_id="owner", agent_id="research", query="vehicle"
+            )
+
     def test_semantic_retrieval_can_be_enabled_for_specialist_handlers(self):
         handler = build_memory_aware_handlers(
             {"research": lambda prompt: prompt}, self.store, actor_id="owner",
