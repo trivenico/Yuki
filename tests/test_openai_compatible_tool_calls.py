@@ -181,6 +181,17 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
                 self.provider.generate_with_tools("prompt", tools)
         self.assertEqual(self.requests, [])
 
+    def test_cloud_provider_rejects_private_dns_answers_before_sending_credentials(self):
+        provider = OpenAICompatibleProvider(
+            "test-model", environ={"OPENAI_API_KEY": "test-secret"}
+        )
+        provider._resolve_public_host = lambda host, port: (_ for _ in ()).throw(
+            ValueError("Non-public HTTPS destinations are blocked.")
+        )
+        with self.assertRaisesRegex(RuntimeError, "not safely reachable"):
+            provider.generate_chat(messages=[{"role": "user", "content": "hello"}], tools=[])
+        self.assertEqual(self.requests, [])
+
     def test_missing_credentials_fail_before_network(self):
         provider = OpenAICompatibleProvider("test-model", environ={})
         with self.assertRaises(RuntimeError):
