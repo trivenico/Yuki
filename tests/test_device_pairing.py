@@ -58,6 +58,31 @@ class DevicePairingServiceTests(unittest.TestCase):
         self.assertTrue(self.service.revoke_device("owner-1", credential.device.device_id))
         self.assertIsNone(self.service.authenticate_device(credential.token))
 
+    def test_exact_active_device_ownership_check(self):
+        credential = self.service.pair_device(
+            self.service.create_pairing_challenge("owner-1").code, "Node A"
+        )
+        self.assertTrue(self.service.owns_active_device(
+            "owner-1", credential.device.device_id
+        ))
+        self.assertFalse(self.service.owns_active_device(
+            "owner-2", credential.device.device_id
+        ))
+        self.assertFalse(self.service.owns_active_device(
+            "owner-1", "missing-device"
+        ))
+
+    def test_exact_active_device_ownership_rejects_revoked_device(self):
+        credential = self.service.pair_device(
+            self.service.create_pairing_challenge("owner-1").code, "Node A"
+        )
+        self.assertTrue(self.service.revoke_device(
+            "owner-1", credential.device.device_id
+        ))
+        self.assertFalse(self.service.owns_active_device(
+            "owner-1", credential.device.device_id
+        ))
+
     def test_device_listing_is_owner_scoped(self):
         first = self.service.pair_device(
             self.service.create_pairing_challenge("owner-1").code, "Node A"

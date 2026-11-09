@@ -6,7 +6,7 @@ import re, sqlite3, uuid
 from pathlib import Path
 from core.device_pairing import DevicePairingService
 _MODEL=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
-_DEVICE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_DEVICE=re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}$")
 def _now(): return datetime.now(timezone.utc)
 def _stamp(v): return v.astimezone(timezone.utc).isoformat()
 @dataclass(frozen=True)
@@ -27,7 +27,8 @@ class InferenceJobService:
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
  def _connect(self):
-  db=sqlite3.connect(self.database_path,timeout=5); db.row_factory=sqlite3.Row; db.execute("PRAGMA busy_timeout=5000"); return db
+  return _Connection(sqlite3.connect(self.database_path, timeout=5))
+
  @staticmethod
  def _job(row): return InferenceJob(**dict(row))
  def _device(self,token):
@@ -44,8 +45,8 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
-   owned=db.execute("SELECT 1 FROM paired_devices WHERE device_id=? AND owner_id=? AND revoked_at IS NULL",(device_id,owner_id)).fetchone()
-   if owned is None: raise PermissionError("device_not_owned_or_paired")
+   owned=self.pairing.owns_active_device(owner_id,device_id)
+   if not owned: raise PermissionError("device_not_owned_or_paired")
    db.execute("INSERT INTO inference_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
   return self._job(row)
@@ -53,7 +54,7 @@ class InferenceJobService:
   device=self._device(device_token); now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
-   db.execute("UPDATE inference_jobs SET status='queued',lease_expires_at=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
+   db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    if db.execute("UPDATE inference_jobs SET status='running',lease_expires_at=?,updated_at=? WHERE job_id=? AND status='queued'",(expiry,stamp,row["job_id"])).rowcount!=1: return None
@@ -87,3 +88,19 @@ class InferenceJobService:
   if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
   return [self._job(r) for r in rows]
+
+class _Connection:
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  self.connection.row_factory=sqlite3.Row
+  self.connection.execute("PRAGMA busy_timeout=5000")
+  self.connection.execute("PRAGMA foreign_keys=ON")
+  return self.connection
+ def __exit__(self, exc_type, exc, tb):
+  try:
+   if exc_type is None: self.connection.commit()
+   else: self.connection.rollback()
+  finally:
+   self.connection.close()
+  return False

@@ -1,4 +1,4 @@
-import tempfile,unittest
+import tempfile,unittest,sqlite3
 from pathlib import Path
 from datetime import datetime,timedelta,timezone
 from core.device_pairing import DevicePairingService
@@ -22,13 +22,26 @@ class JobsTests(unittest.TestCase):
   with self.assertRaises(LookupError): self.jobs.complete_job(self.other.token,j.job_id,result_text="bad")
  def test_cancel(self):
   j=self.create(); self.assertTrue(self.jobs.cancel_job("owner-a",j.job_id)); self.assertFalse(self.jobs.cancel_job("owner-a",j.job_id)); self.assertIsNone(self.jobs.claim_next(self.dev.token))
- def test_expired_lease_requeues(self):
+ def test_expired_lease_is_terminal_and_never_requeued(self):
   j=self.create(); self.jobs.claim_next(self.dev.token)
-  with self.jobs._connect() as db: db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
-  self.assertEqual(self.jobs.claim_next(self.dev.token).job_id,j.job_id)
+  with self.jobs._connect() as db:
+   db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
+    ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
+  self.assertIsNone(self.jobs.claim_next(self.dev.token))
+  stored=self.jobs.get_job("owner-a",j.job_id)
+  self.assertEqual(stored.status,"failed")
+  self.assertEqual(stored.error_code,"lease_expired")
+  self.assertIsNone(stored.lease_expires_at)
  def test_revocation(self):
   self.create(); self.pair.revoke_device("owner-a",self.dev.device.device_id)
   with self.assertRaises(PermissionError): self.jobs.claim_next(self.dev.token)
+ def test_database_connections_close_after_context_exit(self):
+  connection=self.jobs._connect()
+  with connection as db:
+   db.execute("SELECT 1").fetchone()
+  with self.assertRaises(sqlite3.ProgrammingError):
+   connection.connection.execute("SELECT 1")
+
  def test_validation(self):
   with self.assertRaisesRegex(ValueError,"invalid_input"): self.create(input_text=" ")
   j=self.create(); self.jobs.claim_next(self.dev.token)
