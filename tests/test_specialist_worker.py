@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
+from unittest.mock import patch
 
 from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
@@ -559,6 +560,19 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
+
+    def test_default_worker_pool_uses_hardware_recommendation(self):
+        self.create_task()
+        with patch(
+            "automation.specialist_worker.recommended_worker_concurrency",
+            return_value=1,
+        ) as recommendation:
+            results = self.worker({"code-review": lambda text: "ok " + text}).run_concurrently(
+                max_tasks=1,
+            )
+        recommendation.assert_called_once_with()
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].state, "succeeded")
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
