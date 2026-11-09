@@ -39,4 +39,10 @@ class JobsTests(unittest.TestCase):
   limited.create_job("owner-a",model_id="m",device_id=self.dev.device.device_id,input_text="1")
   with self.assertRaisesRegex(ValueError,"owner_job_limit"): limited.create_job("owner-a",model_id="m",device_id=self.dev.device.device_id,input_text="2")
   with self.assertRaises(PermissionError): self.jobs.create_job("owner-b",model_id="m",device_id=self.dev.device.device_id,input_text="bad")
+ def test_create_job_uses_pairing_service_database(self):
+  # The jobs DB is separate from the pairing DB; ownership must be checked
+  # through the pairing service rather than querying its private tables here.
+  job=self.create()
+  self.assertEqual(job.device_id,self.dev.device.device_id)
+
 if __name__=="__main__": unittest.main()
