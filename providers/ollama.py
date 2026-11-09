@@ -271,7 +271,7 @@ class OllamaProvider:
                             name, arguments = function["name"], function["arguments"]
                         except (TypeError, KeyError) as exc:
                             raise RuntimeError("Ollama returned malformed streamed tool-call data.") from exc
-                        if name not in names or not isinstance(arguments, dict):
+                        if not isinstance(name, str) or name not in names or not isinstance(arguments, dict):
                             raise RuntimeError("Ollama returned an unrecognized or malformed streamed tool call.")
                         normalized_calls.append({
                             "id": "ollama_" + str(len(normalized_calls) + 1),
