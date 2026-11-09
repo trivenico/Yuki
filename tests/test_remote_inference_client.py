@@ -20,6 +20,12 @@ class RemoteClientTests(unittest.TestCase):
   self.assertEqual(job.input_text,"hello"); self.assertEqual(opener.request.get_header("Authorization"),"Bearer "+"x"*32)
  def test_idle_claim(self):
   with patch("urllib.request.build_opener",return_value=FakeOpener(b'{"job":null}')): self.assertIsNone(self.client.claim_next())
+ def test_renew_lease_sends_claim_fencing(self):
+  opener=FakeOpener(b'{"lease_expires_at":"2030-01-01T00:02:00+00:00"}')
+  with patch("urllib.request.build_opener",return_value=opener):
+   expiry=self.client.renew_job_lease("x"*32,"a"*32,claim_generation=2,claim_token="c"*43)
+  self.assertEqual(expiry,"2030-01-01T00:02:00+00:00")
+  self.assertEqual(json.loads(opener.request.data),{"claim_generation":2,"claim_token":"c"*43})
  def test_complete_sends_claim_fencing_and_result(self):
   opener=FakeOpener(b'{"job":{"status":"succeeded"}}')
   with patch("urllib.request.build_opener",return_value=opener):
