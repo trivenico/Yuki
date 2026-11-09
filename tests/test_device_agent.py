@@ -86,6 +86,8 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls = []
             def publish_capacity(self, token, **capacity):
                 self.calls.append((token, capacity))
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -115,6 +117,8 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls = []
             def publish_capacity(self, token, **capacity):
                 self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
         reservations = Reservations()
         agent = DeviceAgentService(
             Path(self.temp.name) / "agent-zero-gpu.sqlite", self.pairing,
@@ -164,6 +168,8 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 if self.fail:
                     raise RuntimeError("temporary ledger outage")
                 self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
