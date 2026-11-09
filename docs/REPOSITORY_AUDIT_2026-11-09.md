@@ -26,6 +26,7 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 
 15. **Docker snapshot memory exhaustion.** The verification executor previously read every workspace file into memory before applying the snapshot builder's limits. It now checks file count, per-file size and total size before allocation, uses bounded reads with race checks, and skips the builder's excluded cache/VCS directories before reading their contents. A regression test covers an oversized file.
 16. **Concurrent authentication lockout race.** Failed-login counters were read before a write transaction, so parallel attempts could calculate from the same stale count and overwrite each other. Authentication now acquires an immediate SQLite write transaction before reading/updating the account, with a concurrent-failure regression test.
+17. Cloud provider endpoint validation now also rejects nonstandard HTTPS ports, preventing an allow-listed hostname from being used to send credentials to an unrelated service listening on a custom port.
 
 ## Architecture and release observations
 
