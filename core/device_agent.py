@@ -222,10 +222,34 @@ class DeviceAgentService:
                 WHERE device_agent_state.owner_id=excluded.owner_id
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
-        if self.reservation_service is not None:
-            # Capacity publications and incomplete-report watermarks are both
-            # delivered after the local heartbeat/outbox transaction commits.
-            self.retry_pending_capacity(token)
+            if self.reservation_service is not None:
+                # Serialize heartbeat acceptance against reservation admission.
+                # The local BEGIN IMMEDIATE lock orders heartbeats for this device;
+                # the reservation ledger transaction is the admission linearization
+                # point. It commits before this heartbeat is accepted locally, so a
+                # crash/failure can only leave the ledger conservatively ahead (and
+                # fail closed), never leave accepted newer telemetry behind stale
+                # allocatable capacity. The ledger never calls back into this DB.
+                if capacity is None:
+                    self.reservation_service.advance_capacity_sequence(
+                        token, source_sequence=sequence,
+                    )
+                else:
+                    memory_bytes, cpu_millicores, gpu_memory_bytes = capacity
+                    self.reservation_service.publish_capacity(
+                        token, memory_bytes=memory_bytes,
+                        cpu_millicores=cpu_millicores,
+                        gpu_memory_bytes=gpu_memory_bytes,
+                        source_sequence=sequence,
+                    )
+                db.execute(
+                    "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
+                    (device.device_id, device.owner_id),
+                )
+                db.execute(
+                    "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
+                    (device.device_id, device.owner_id),
+                )
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
 
