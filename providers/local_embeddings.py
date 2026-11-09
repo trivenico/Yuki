@@ -70,9 +70,15 @@ class HuggingFaceLocalEmbedder:
                 raise ValueError("embedding_model_returned_invalid_vector")
             values = []
             for value in vector:
-                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
                     raise ValueError("embedding_model_returned_non_finite_or_non_numeric_vector")
-                values.append(float(value))
+                try:
+                    normalized = float(value)
+                except (OverflowError, ValueError) as exc:
+                    raise ValueError("embedding_model_returned_non_finite_or_non_numeric_vector") from exc
+                if not math.isfinite(normalized) or abs(normalized) > 1_000_000.0:
+                    raise ValueError("embedding_model_returned_out_of_range_vector")
+                values.append(normalized)
             if dimension is None:
                 dimension = len(values)
             elif len(values) != dimension:
