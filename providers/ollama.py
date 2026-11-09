@@ -344,6 +344,7 @@ class OllamaProvider:
             "model": self.model,
             "prompt": prompt.strip()[:20000],
             "stream": False,
+            "options": dict(self.options),
         }).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + "/api/generate",
