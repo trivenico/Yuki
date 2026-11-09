@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -147,6 +148,43 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             membership.write_text("0::/outside/escape\n")
             mountinfo = root / "mountinfo"
             mountinfo.write_text(f"36 25 0:32 /tenant {mount} rw - cgroup2 cgroup rw\n")
+            paths = _linux_cgroup_paths(
+                proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
+            )
+        self.assertNotIn("v2", paths)
+
+
+    def test_mountinfo_decodes_escaped_hierarchy_root_and_mountpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mount = root / "cgroup mount"
+            mount.mkdir()
+            membership = root / "cgroup"
+            membership.write_text("0::/tenant space/service\n")
+            mountinfo = root / "mountinfo"
+            escaped_mount = str(mount).replace(" ", "\\\\040")
+            mountinfo.write_text(
+                f"36 25 0:32 /tenant\\\\040space {escaped_mount} rw - cgroup2 cgroup rw\n"
+            )
+            paths = _linux_cgroup_paths(
+                proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
+            )
+        self.assertEqual(paths["v2"], mount.resolve() / "service")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX symlink semantics required")
+    def test_mountinfo_rejects_symlink_escape_from_mount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mount = root / "cgroup2"
+            mount.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (mount / "tenant").mkdir()
+            (mount / "tenant" / "escape").symlink_to(outside, target_is_directory=True)
+            membership = root / "cgroup"
+            membership.write_text("0::/tenant/escape\n")
+            mountinfo = root / "mountinfo"
+            mountinfo.write_text(f"36 25 0:32 / {mount} rw - cgroup2 cgroup rw\n")
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
             )
