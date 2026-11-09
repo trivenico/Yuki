@@ -94,8 +94,32 @@ class DeviceAgentServiceTests(unittest.TestCase):
         self.assertEqual(len(reservations.calls), 1)
         self.assertEqual(reservations.calls[0][0], self.credential.token)
         self.assertEqual(reservations.calls[0][1], {
-            "memory_bytes": 7000, "cpu_millicores": 1750, "gpu_memory_bytes": 2500,
+            "memory_bytes": 7000, "cpu_millicores": 1750,
+            "gpu_memory_bytes": 2500, "source_sequence": 1,
         })
+
+    def test_explicit_empty_gpu_inventory_publishes_zero_gpu_capacity(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append(capacity)
+        reservations = Reservations()
+        agent = DeviceAgentService(
+            Path(self.temp.name) / "agent-zero-gpu.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        agent.heartbeat(
+            self.credential.token, sequence=3, status="idle",
+            capabilities={
+                "cpu_cores": 2, "ram_total_bytes": 8000,
+                "ram_available_bytes": 5000, "gpus": [],
+            },
+        )
+        self.assertEqual(reservations.calls, [{
+            "memory_bytes": 5000, "cpu_millicores": 2000,
+            "gpu_memory_bytes": 0, "source_sequence": 3,
+        }])
 
     def test_incomplete_capacity_does_not_publish_or_create_outbox(self):
         class Reservations:
@@ -143,7 +167,8 @@ class DeviceAgentServiceTests(unittest.TestCase):
         reservations.fail = False
         self.assertTrue(agent.retry_pending_capacity(self.credential.token))
         self.assertEqual(reservations.calls[0], {
-            "memory_bytes": 6000, "cpu_millicores": 4000, "gpu_memory_bytes": 0,
+            "memory_bytes": 6000, "cpu_millicores": 4000,
+            "gpu_memory_bytes": 0, "source_sequence": 1,
         })
         self.assertFalse(agent.retry_pending_capacity(self.credential.token))
 
