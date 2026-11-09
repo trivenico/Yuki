@@ -94,11 +94,17 @@ class SemanticMemoryRetriever:
             raise ValueError("embedding_must_be_a_bounded_numeric_sequence")
         vector = []
         for value in values:
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("embedding_values_must_be_finite_numeric_values")
-            vector.append(float(value))
+            try:
+                normalized = float(value)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("embedding_values_must_be_finite_numeric_values") from exc
+            if not math.isfinite(normalized) or abs(normalized) > SQLiteEmbeddingIndex.MAX_ABS_COMPONENT:
+                raise ValueError("embedding_values_out_of_range")
+            vector.append(normalized)
         norm = math.sqrt(sum(v*v for v in vector))
-        if norm == 0:
+        if norm <= 1e-12:
             raise ValueError("embedding_must_not_be_zero")
         return tuple(v/norm for v in vector)
 
