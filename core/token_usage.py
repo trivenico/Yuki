@@ -1,8 +1,8 @@
 """Durable local token-usage accounting without an artificial event quota.
 
 Usage thresholds are advisory alerts only; they never block model requests. Exact
-counts are recorded only when supplied by a provider. SQLite keeps event storage
-append-only and avoids rewriting an ever-growing JSON file on every call.
+counts are recorded only when supplied by a provider. SQLite stores each event;
+Python integer aggregation avoids SQLite SUM's signed-64-bit lifetime overflow.
 """
 from __future__ import annotations
 
@@ -12,6 +12,9 @@ import json
 from pathlib import Path
 import sqlite3
 import threading
+
+
+_MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
 @dataclass(frozen=True)
@@ -108,8 +111,11 @@ class TokenUsageTracker:
 
     @staticmethod
     def _count(value, label):
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > 10_000_000:
-            raise ValueError(f"{label} must be an integer from 0 to 10000000")
+        # SQLite INTEGER is signed 64-bit. This is a storage representation bound,
+        # not a product token allowance; cumulative totals use arbitrary-precision
+        # Python integers and can exceed this per-row storage range.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > _MAX_SQLITE_INTEGER:
+            raise ValueError(f"{label} must be a non-negative integer representable by SQLite INTEGER")
         return value
 
     @classmethod
@@ -149,18 +155,23 @@ class TokenUsageTracker:
 
     def summary(self):
         with self._lock:
-            row = self._db.execute("""
-                SELECT COUNT(*), COALESCE(SUM(input_tokens), 0),
-                       COALESCE(SUM(output_tokens), 0),
+            calls, exact_events, estimated_events = self._db.execute("""
+                SELECT COUNT(*),
                        COALESCE(SUM(CASE WHEN estimated = 0 THEN 1 ELSE 0 END), 0),
                        COALESCE(SUM(CASE WHEN estimated = 1 THEN 1 ELSE 0 END), 0)
                 FROM usage_events WHERE session_id = ?
             """, (self.session_id,)).fetchone()
+            total_input = total_output = 0
+            for input_count, output_count in self._db.execute("""
+                SELECT input_tokens, output_tokens FROM usage_events
+                WHERE session_id = ? ORDER BY id
+            """, (self.session_id,)):
+                total_input += input_count
+                total_output += output_count
             recent = self._db.execute("""
                 SELECT input_tokens, output_tokens FROM usage_events
                 WHERE session_id = ? ORDER BY id DESC LIMIT 2
             """, (self.session_id,)).fetchall()
-            calls, total_input, total_output, exact_events, estimated_events = row
             previous = sum(recent[1]) if len(recent) >= 2 else None
             current = sum(recent[0]) if recent else 0
             total = total_input + total_output
