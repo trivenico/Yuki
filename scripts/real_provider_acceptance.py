@@ -7,6 +7,7 @@ credentials, environment values, or raw exception messages.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -26,7 +27,6 @@ SUPPORTED_PROVIDERS = {"openai", "ollama"}
 
 
 async def _asgi_request(runtime, method, path, payload=None, *, token):
-    import asyncio
     body = json.dumps(payload).encode("utf-8") if payload is not None else b""
     sent = []
     consumed = False
@@ -125,7 +125,7 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
 
         try:
             session = runtime.app.auth.authenticate(username, password)
-            status, conversation = __import__("asyncio").run(_asgi_request(
+            status, conversation = asyncio.run(_asgi_request(
                 runtime, "POST", "/v1/conversations",
                 {"title": "Provider acceptance"}, token=session.token,
             ))
