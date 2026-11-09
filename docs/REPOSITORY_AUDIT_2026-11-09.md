@@ -25,6 +25,7 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 10. **Verification process-tree leakage.** Local command timeout/output-cap handling previously killed only the direct child, potentially leaving descendants alive. Local verification now starts a dedicated process group/session and terminates the group on timeout/output overflow. Docker verification now assigns a unique container name and explicitly removes the daemon-side container on timeout/output overflow; killing the Docker CLI alone was not sufficient.
 
 15. **Docker snapshot memory exhaustion.** The verification executor previously read every workspace file into memory before applying the snapshot builder's limits. It now checks file count, per-file size and total size before allocation, uses bounded reads with race checks, and skips the builder's excluded cache/VCS directories before reading their contents. A regression test covers an oversized file.
+16. **Concurrent authentication lockout race.** Failed-login counters were read before a write transaction, so parallel attempts could calculate from the same stale count and overwrite each other. Authentication now acquires an immediate SQLite write transaction before reading/updating the account, with a concurrent-failure regression test.
 
 ## Architecture and release observations
 
