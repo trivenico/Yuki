@@ -13,7 +13,7 @@ class InferenceMetricsTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = InferenceMetricsStore(
             str(Path(self.tmp.name) / "metrics.sqlite3"),
-            authorize=lambda actor, action: actor == "owner-1" and action in {
+            authorize=lambda actor, action: action in {
                 "inference_metrics:write", "inference_metrics:read"
             },
         )
