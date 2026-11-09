@@ -53,7 +53,7 @@ class InferenceJobService:
   device=self._device(device_token); now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
-   db.execute("UPDATE inference_jobs SET status='queued',lease_expires_at=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
+   db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    if db.execute("UPDATE inference_jobs SET status='running',lease_expires_at=?,updated_at=? WHERE job_id=? AND status='queued'",(expiry,stamp,row["job_id"])).rowcount!=1: return None
