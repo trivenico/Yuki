@@ -215,9 +215,9 @@ def remove_skill_pack(name: str, directory: str | Path | None = None) -> bool:
     if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise ValueError("Invalid skill pack name.")
     root = Path(directory).expanduser().resolve() if directory else installed_skill_directory()
-    target = (root / (name + ".json")).resolve()
-    if target.parent != root:
-        raise ValueError("Invalid skill pack path.")
+    target = root / (name + ".json")
+    if target.is_symlink():
+        raise ValueError("Refusing to remove a symlinked skill pack.")
     try:
         target.unlink()
         return True
