@@ -6,7 +6,7 @@ share memory. One workload is placed on one eligible paired device.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 import re
 from typing import Any, Iterable
 
@@ -23,6 +23,7 @@ class ModelRequirements:
     gpu_memory_bytes: int = 0
     cpu_cores: int = 1
     require_gpu: bool = False
+    cpu_millicores: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.model_id, str) or not _MODEL_ID.fullmatch(self.model_id):
@@ -33,6 +34,10 @@ class ModelRequirements:
                 raise ValueError("invalid_" + name)
         if type(self.cpu_cores) is not int or not 1 <= self.cpu_cores <= 4096:
             raise ValueError("invalid_cpu_cores")
+        if self.cpu_millicores is not None and (
+            type(self.cpu_millicores) is not int or not 1 <= self.cpu_millicores <= 4_096_000
+        ):
+            raise ValueError("invalid_cpu_millicores")
         if type(self.require_gpu) is not bool:
             raise ValueError("invalid_require_gpu")
         if self.require_gpu and self.gpu_memory_bytes == 0:
@@ -123,9 +128,15 @@ class DistributedModelScheduler:
                 reason = "offline"
             elif status != "idle":
                 reason = "device_not_idle"
-            cpu = self._nonnegative_int(caps.get("cpu_cores"))
-            ram = self._nonnegative_int(caps.get("ram_available_bytes"))
-            if reason is None and (cpu is None or cpu < requirements.cpu_cores):
+            required_cpu = requirements.cpu_millicores if requirements.cpu_millicores is not None else requirements.cpu_cores * 1000
+            cpu = self._nonnegative_int(caps.get("cpu_millicores"))
+            if cpu is None:
+                legacy_cores = self._nonnegative_int(caps.get("cpu_cores"))
+                cpu = legacy_cores * 1000 if legacy_cores is not None else None
+            ram = self._nonnegative_int(caps.get("memory_bytes"))
+            if ram is None:
+                ram = self._nonnegative_int(caps.get("ram_available_bytes"))
+            if reason is None and (cpu is None or cpu < required_cpu):
                 reason = "insufficient_or_unknown_cpu"
             if reason is None and (ram is None or ram < requirements.memory_bytes):
                 reason = "insufficient_or_unknown_ram"
@@ -165,3 +176,52 @@ class DistributedModelScheduler:
             "best_fit_single_device; dispatch_not_performed",
             eligible, tuple(sorted(rejected, key=lambda x: x["device_id"])),
         )
+
+    def reserve_placement(
+        self,
+        requirements: ModelRequirements,
+        devices: Iterable[dict[str, Any]],
+        *,
+        reservation_service: Any,
+        session_token: str,
+        task_id: str,
+        idempotency_key: str,
+        reservation_secret: str,
+        allowed_device_ids: Iterable[str] | None = None,
+    ) -> tuple[PlacementDecision, Any | None]:
+        """Reserve authoritative capacity before the caller admits a task."""
+        from core.device_resource_reservations import CapacityUnavailable
+
+        decision = self.plan(requirements, devices, allowed_device_ids=allowed_device_ids)
+        if decision.status != "planned":
+            return decision, None
+        cpu_millicores = requirements.cpu_millicores
+        if cpu_millicores is None:
+            cpu_millicores = requirements.cpu_cores * 1000
+        failures = []
+        for device_id in decision.eligible_device_ids:
+            try:
+                reservation = reservation_service.reserve(
+                    session_token, device_id, task_id,
+                    memory_bytes=requirements.memory_bytes,
+                    cpu_millicores=cpu_millicores,
+                    gpu_memory_bytes=requirements.gpu_memory_bytes,
+                    idempotency_key=idempotency_key,
+                    reservation_secret=reservation_secret,
+                )
+                return replace(
+                    decision, device_id=device_id, status="reserved",
+                    reason="authenticated_resources_reserved; dispatch_not_performed",
+                ), reservation
+            except CapacityUnavailable:
+                failures.append(device_id)
+        rejected = list(decision.rejected)
+        rejected.extend(
+            {"device_id": item, "reason": "reservation_capacity_unavailable"}
+            for item in failures
+        )
+        rejected.sort(key=lambda item: item["device_id"])
+        return replace(
+            decision, device_id=None, status="unscheduled",
+            reason="authoritative_capacity_unavailable", rejected=tuple(rejected),
+        ), None
