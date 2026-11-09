@@ -84,6 +84,27 @@ async def _asgi_request(runtime, method, path, payload=None, *, token):
     return response_start["status"], response_payload
 
 
+async def _run_authenticated_conversation(runtime, token):
+    """Keep both HTTP requests on one event loop, like a real ASGI server."""
+    create_status, conversation = await _asgi_request(
+        runtime, "POST", "/v1/conversations",
+        {"title": "Provider acceptance"}, token=token,
+    )
+    if create_status != 201 or not isinstance(conversation.get("conversation_id"), str):
+        raise RuntimeError("Authenticated conversation creation failed.")
+    message_status, reply = await _asgi_request(
+        runtime, "POST",
+        "/v1/conversations/" + conversation["conversation_id"] + "/messages",
+        {
+            "content": PROMPT,
+            "request_id": "real-provider-acceptance",
+            "expected_version": 0,
+        },
+        token=token,
+    )
+    return message_status, reply
+
+
 def _build_runtime(config, provider):
     import scripts.run_web as run_web
     # Exercise the production composition root while injecting only isolated
@@ -143,19 +164,9 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
 
         try:
             session = runtime.app.auth.authenticate(username, password)
-            status, conversation = asyncio.run(_asgi_request(
-                runtime, "POST", "/v1/conversations",
-                {"title": "Provider acceptance"}, token=session.token,
-            ))
-            if status != 201 or not isinstance(conversation.get("conversation_id"), str):
-                raise RuntimeError("Authenticated conversation creation failed.")
-
-            status, reply = asyncio.run(_asgi_request(
-                runtime, "POST",
-                "/v1/conversations/" + conversation["conversation_id"] + "/messages",
-                {"content": PROMPT, "request_id": "real-provider-acceptance", "expected_version": 0},
-                token=session.token,
-            ))
+            status, reply = asyncio.run(
+                _run_authenticated_conversation(runtime, session.token)
+            )
             response = reply.get("answer")
             if status != 200 or reply.get("status") != "completed":
                 raise RuntimeError("Authenticated browser conversation did not complete.")
