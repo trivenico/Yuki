@@ -164,6 +164,10 @@ class BuiltInAuthService:
         invalid = False
         issued = None
         with self._connect() as db:
+            # Serialize account lockout reads and writes across processes. Without
+            # an immediate transaction, parallel failures can all observe the
+            # same counter and overwrite one another, bypassing the threshold.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM auth_users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
             if row is None:
                 hashlib.pbkdf2_hmac("sha256", (password or "invalid").encode("utf-8"), b"yuki-auth-dummy-salt", self.password_iterations)
