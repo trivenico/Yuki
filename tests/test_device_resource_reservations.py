@@ -9,6 +9,7 @@ from core.device_resource_reservations import (
     DeviceResourceReservationService,
     ReservationConflict,
     StaleReservation,
+    ReservationConflict,
 )
 
 
@@ -136,7 +137,7 @@ class DeviceResourceReservationTests(unittest.TestCase):
 
     def test_duplicate_active_task_is_rejected(self):
         self.reserve()
-        with self.assertRaises(Exception):
+        with self.assertRaises(ReservationConflict):
             self.reserve(task="task-a", key="key-other")
 
     def test_validation_rejects_bool_and_bad_identifiers(self):
