@@ -21,6 +21,16 @@ class EffectiveContainerResourceTests(unittest.TestCase):
         self.assertEqual(total, 2 * 1024**3)
         self.assertEqual(available, 2 * 1024**3 - 512 * 1024**2)
 
+    def test_unknown_cgroup_usage_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "memory.max").write_text(str(2 * 1024**3))
+            total, available = _effective_linux_memory(
+                16 * 1024**3, 12 * 1024**3, paths={"v2": root}
+            )
+        self.assertEqual(total, 2 * 1024**3)
+        self.assertEqual(available, 0)
+
     def test_unlimited_or_missing_cgroup_limits_preserve_host_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
