@@ -65,9 +65,15 @@ def _build_runtime(config, provider):
     import scripts.run_web as run_web
     # Keep the production composition root and provider adapter/manager; inject
     # only the already-validated provider and isolated workspace configuration.
-    run_web.load_config = lambda: dict(config)
-    run_web.create_provider = lambda _config: provider
-    return run_web.create_app()
+    previous_loader = run_web.load_config
+    previous_factory = run_web.create_provider
+    try:
+        run_web.load_config = lambda: dict(config)
+        run_web.create_provider = lambda _config: provider
+        return run_web.create_app()
+    finally:
+        run_web.load_config = previous_loader
+        run_web.create_provider = previous_factory
 
 
 def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, runtime_factory=None):
@@ -132,7 +138,7 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
                 {"content": PROMPT, "request_id": "real-provider-acceptance", "expected_version": 0},
                 token=session.token,
             ))
-            response = reply.get("content") or reply.get("response") or reply.get("text")
+            response = reply.get("answer")
             if status != 200 or reply.get("status") != "completed":
                 raise RuntimeError("Authenticated browser conversation did not complete.")
             if not isinstance(response, str) or not response.strip():
