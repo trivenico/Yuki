@@ -34,9 +34,8 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
         self.auth.bootstrap_admin("owner.one", "A sufficiently secure password 1!")
         self.session = self.auth.authenticate("owner.one", "A sufficiently secure password 1!")
-        self.other_auth = BuiltInAuthService(str(root / "other.sqlite"), password_iterations=100_000)
-        self.other_auth.bootstrap_admin("owner.two", "Another sufficiently secure password 2!")
-        self.other_session = self.other_auth.authenticate("owner.two", "Another sufficiently secure password 2!")
+        self.auth.create_account("owner.two", "Another sufficiently secure password 2!")
+        self.other_session = self.auth.authenticate("owner.two", "Another sufficiently secure password 2!")
         self.pairing = DevicePairingService(root / "pairing.sqlite")
         challenge = self.pairing.create_pairing_challenge(self.session.user.user_id)
         self.device = self.pairing.pair_device(challenge.code, "Yuki test node")
@@ -53,7 +52,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         args = dict(memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100)
         args.update(overrides)
         return self.service.reserve(
-            self.session.token, self.device.device.device_id, task,
+            self.session.token, self.device.device_id, task,
             idempotency_key=key,
             reservation_secret=secret or f"reservation-secret-for-{key}-with-high-entropy",
             **args,
@@ -68,7 +67,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         other_device = self.pairing.pair_device(other_challenge.code, "Other node")
         with self.assertRaises(CapacityUnavailable):
             self.service.reserve(
-                self.session.token, other_device.device.device_id, "task",
+                self.session.token, other_device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="other-device",
                 reservation_secret="other-device-secret-with-enough-entropy",
             )
@@ -76,13 +75,13 @@ class AuthenticatedReservationTests(unittest.TestCase):
     def test_reservation_owner_is_derived_from_authenticated_session(self):
         with self.assertRaises(PermissionError):
             self.service.reserve(
-                "forged-session", self.device.device.device_id, "task",
+                "forged-session", self.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="forged",
                 reservation_secret="forged-session-secret-with-enough-entropy",
             )
         with self.assertRaises(CapacityUnavailable):
             self.service.reserve(
-                self.other_session.token, self.device.device.device_id, "task",
+                self.other_session.token, self.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross-owner",
                 reservation_secret="cross-owner-secret-with-enough-entropy",
             )
@@ -93,7 +92,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.service.publish_capacity(other_device.token, memory_bytes=10, cpu_millicores=10)
         with self.assertRaises(CapacityUnavailable):
             self.service.reserve(
-                self.session.token, other_device.device.device_id, "task",
+                self.session.token, other_device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross",
                 reservation_secret="cross-owner-secret-with-enough-entropy",
             )
@@ -189,7 +188,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve(task="different-task")
         with self.assertRaises(CapacityUnavailable):
             self.service.reserve(
-                self.other_session.token, self.device.device.device_id, "task-a",
+                self.other_session.token, self.device.device_id, "task-a",
                 memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100,
                 idempotency_key="key-a",
                 reservation_secret="reservation-secret-for-key-a-with-high-entropy",
