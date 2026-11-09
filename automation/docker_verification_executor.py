@@ -180,6 +180,10 @@ class DockerVerificationExecutor:
         from automation.repository_snapshot import RepositorySnapshotBuilder
 
         files = {}
+        total_bytes = 0
+        max_files = 10_000
+        max_file_bytes = 16_000_000
+        max_total_bytes = 256_000_000
         for path in self.workspace.rglob("*"):
             if path.is_symlink():
                 raise DockerVerificationError("sandbox_workspace_symlink_detected")
@@ -187,9 +191,30 @@ class DockerVerificationExecutor:
                 continue
             if not path.is_file():
                 raise DockerVerificationError("sandbox_workspace_non_regular_entry")
+            if len(files) >= max_files:
+                raise DockerVerificationError("sandbox_workspace_file_count_exceeded")
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                raise DockerVerificationError("sandbox_workspace_file_stat_failed") from exc
+            if size > max_file_bytes:
+                raise DockerVerificationError("sandbox_workspace_file_size_exceeded")
+            total_bytes += size
+            if total_bytes > max_total_bytes:
+                raise DockerVerificationError("sandbox_workspace_total_size_exceeded")
             relative = path.relative_to(self.workspace).as_posix()
-            files[relative] = path.read_bytes()
-        snapshot = RepositorySnapshotBuilder().build(files)
+            try:
+                content = path.read_bytes()
+            except OSError as exc:
+                raise DockerVerificationError("sandbox_workspace_file_read_failed") from exc
+            if len(content) != size:
+                raise DockerVerificationError("sandbox_workspace_changed_during_snapshot")
+            files[relative] = content
+        snapshot = RepositorySnapshotBuilder(
+            max_files=max_files,
+            max_file_bytes=max_file_bytes,
+            max_total_bytes=max_total_bytes,
+        ).build(files)
         if snapshot.snapshot_sha256 != self.expected_snapshot_sha256:
             raise DockerVerificationError("sandbox_workspace_snapshot_digest_mismatch")
 
