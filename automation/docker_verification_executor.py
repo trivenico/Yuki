@@ -27,6 +27,27 @@ _IMAGE = re.compile(r"^[A-Za-z0-9./:_-]+@sha256:[a-f0-9]{64}$")
 _SHA = re.compile(r"^[a-f0-9]{64}$")
 
 
+def _stop_docker_execution(docker_binary: str, container_name: str, process) -> None:
+    """Stop both the Docker CLI and its daemon-managed container."""
+    try:
+        process.kill()
+    except (OSError, AttributeError):
+        pass
+    try:
+        subprocess.run(
+            [docker_binary, "rm", "--force", container_name],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            shell=False,
+            close_fds=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 class DockerVerificationError(RuntimeError):
     pass
 
@@ -172,9 +193,10 @@ class DockerVerificationExecutor:
         if snapshot.snapshot_sha256 != self.expected_snapshot_sha256:
             raise DockerVerificationError("sandbox_workspace_snapshot_digest_mismatch")
 
-    def _docker_argv(self, command: SandboxCommand) -> list[str]:
+    def _docker_argv(self, command: SandboxCommand, container_name: str) -> list[str]:
         return [
             self.docker_binary, "run", "--rm", "--pull=never", "--init",
+            "--name", container_name,
             "--network=none", "--read-only", "--user=65532:65532",
             "--cap-drop=ALL", "--security-opt=no-new-privileges:true",
             "--security-opt=seccomp=default",
@@ -203,12 +225,15 @@ class DockerVerificationExecutor:
         output = bytearray()
         lock = threading.Lock()
         limited = threading.Event()
+        container_name = "yuki-verification-" + execution_id
         try:
             process = subprocess.Popen(
-                self._docker_argv(command), stdin=subprocess.DEVNULL,
+                self._docker_argv(command, container_name), stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 shell=False, close_fds=True,
                 env={key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "WINDIR", "TMP", "TEMP") if key in os.environ},
+                start_new_session=(os.name != "nt"),
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
             )
         except OSError:
             return self._persist(SandboxReceipt(
@@ -229,10 +254,7 @@ class DockerVerificationExecutor:
                     if len(chunk) > remaining:
                         limited.set()
                 if limited.is_set():
-                    try:
-                        process.kill()
-                    except OSError:
-                        pass
+                    _stop_docker_execution(self.docker_binary, container_name, process)
 
         readers = [
             threading.Thread(target=drain, args=(process.stdout,), daemon=True),
@@ -245,7 +267,7 @@ class DockerVerificationExecutor:
             process.wait(timeout=command.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
-            process.kill()
+            _stop_docker_execution(self.docker_binary, container_name, process)
             process.wait()
         for reader in readers:
             reader.join(timeout=2)
