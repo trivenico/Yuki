@@ -112,6 +112,35 @@ class YukiConversationAPI:
                 except PermissionError:
                     return await self._respond(send, 401, {"error": "device_authentication_required"})
 
+            renew_match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})/lease", path)
+            if method == "POST" and renew_match:
+                if self.inference_jobs is None:
+                    return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                _, token = await self._bearer_token(scope)
+                if token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                payload = await self._body(receive)
+                if (set(payload) != {"claim_generation", "claim_token"}
+                        or type(payload.get("claim_generation")) is not int
+                        or payload["claim_generation"] < 1
+                        or not isinstance(payload.get("claim_token"), str)
+                        or not 32 <= len(payload["claim_token"]) <= 128):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    expiry = await asyncio.to_thread(
+                        self.inference_jobs.renew_job_lease, token, renew_match.group(1),
+                        claim_generation=payload["claim_generation"], claim_token=payload["claim_token"],
+                    )
+                    return await self._respond(send, 200, {"lease_expires_at": expiry})
+                except PermissionError as exc:
+                    if str(exc) == "stale_or_invalid_claim":
+                        return await self._respond(send, 409, {"error": "claim_rejected"})
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                except LookupError:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                except ValueError:
+                    return await self._respond(send, 409, {"error": "job_not_completable"})
+
             complete_match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})/complete", path)
             if method == "POST" and complete_match:
                 if self.inference_jobs is None:
