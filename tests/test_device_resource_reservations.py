@@ -43,7 +43,9 @@ class DeviceResourceReservationTests(unittest.TestCase):
         args = dict(memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100)
         args.update(overrides)
         return self.service.reserve(
-            "owner-a", "device-a", task, idempotency_key=key, **args
+            "owner-a", "device-a", task, idempotency_key=key,
+            reservation_secret=f"reservation-secret-for-{key}-with-high-entropy",
+            **args
         )
 
     def test_reservation_accounts_for_all_resources(self):
@@ -130,6 +132,42 @@ class DeviceResourceReservationTests(unittest.TestCase):
         second = self.reserve(task="task-b", key="key-b")
         self.assertGreater(second.fencing_token, first.fencing_token)
 
+    def test_lost_response_retry_recovers_same_active_reservation(self):
+        first = self.reserve()
+        recovered = self.reserve()
+        self.assertEqual(recovered.reservation_id, first.reservation_id)
+        self.assertEqual(recovered.fencing_token, first.fencing_token)
+        self.assertEqual(recovered.token, first.token)
+        self.assertNotIn(first.token, repr(recovered))
+
+    def test_idempotency_recovery_requires_original_secret(self):
+        first = self.reserve()
+        with self.assertRaisesRegex(ReservationConflict, "reservation_secret_mismatch"):
+            self.service.reserve(
+                "owner-a", "device-a", "task-a",
+                memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100,
+                idempotency_key="key-a",
+                reservation_secret="different-secret-with-enough-entropy-123",
+            )
+        self.assertTrue(self.service.release(
+            first.reservation_id, first.token, fencing_token=first.fencing_token
+        ))
+
+    def test_expired_idempotent_reservation_is_not_recovered(self):
+        first = self.reserve()
+        self.clock.advance(31)
+        with self.assertRaises(StaleReservation):
+            self.reserve()
+        self.assertNotEqual(first.status, "expired")
+
+    def test_short_reservation_secret_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid_reservation_secret"):
+            self.service.reserve(
+                "owner-a", "device-a", "task-a", memory_bytes=1,
+                cpu_millicores=1, idempotency_key="short-secret",
+                reservation_secret="too-short",
+            )
+
     def test_idempotency_key_cannot_change_request(self):
         self.reserve()
         with self.assertRaises(ReservationConflict):
@@ -154,6 +192,7 @@ class DeviceResourceReservationTests(unittest.TestCase):
             self.service.reserve(
                 "owner-b", "device-a", "task-a", memory_bytes=1,
                 cpu_millicores=1, idempotency_key="key-b",
+                reservation_secret="owner-b-reservation-secret-with-high-entropy",
             )
 
 
