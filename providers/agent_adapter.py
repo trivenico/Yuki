@@ -29,32 +29,32 @@ class ProviderAgentAdapter:
     def _record_usage(self, messages, tools, response):
         """Record exact provider counts or explicitly marked character-based estimates.
 
-        Metering is best-effort telemetry: a storage failure is observable through
-        last_usage_error/callback but never turns a successful inference into failure.
+        Metering is best-effort telemetry: serialization or storage failures are
+        observable through last_usage_error/callback but never fail inference.
         """
         if self.usage_tracker is None:
             return
-        usage = response.get("usage") if isinstance(response, Mapping) else None
-        exact = (
-            isinstance(usage, Mapping)
-            and type(usage.get("input_tokens")) is int and usage["input_tokens"] >= 0
-            and type(usage.get("output_tokens")) is int and usage["output_tokens"] >= 0
-            and type(usage.get("estimated")) is bool
-        )
-        if exact:
-            input_tokens = usage["input_tokens"]
-            output_tokens = usage["output_tokens"]
-            estimated = usage["estimated"]
-        else:
-            input_chars = sum(len(item["content"]) for item in messages)
-            input_chars += len(json.dumps(list(tools), ensure_ascii=False, separators=(",", ":")))
-            output_text = response.get("text", "") if isinstance(response, Mapping) else ""
-            output_calls = response.get("tool_calls", {}) if isinstance(response, Mapping) else {}
-            output_chars = len(output_text) + len(json.dumps(output_calls, ensure_ascii=False, separators=(",", ":")))
-            input_tokens = (input_chars + 3) // 4
-            output_tokens = (output_chars + 3) // 4
-            estimated = True
         try:
+            usage = response.get("usage") if isinstance(response, Mapping) else None
+            exact = (
+                isinstance(usage, Mapping)
+                and type(usage.get("input_tokens")) is int and usage["input_tokens"] >= 0
+                and type(usage.get("output_tokens")) is int and usage["output_tokens"] >= 0
+                and type(usage.get("estimated")) is bool
+            )
+            if exact:
+                input_tokens = usage["input_tokens"]
+                output_tokens = usage["output_tokens"]
+                estimated = usage["estimated"]
+            else:
+                input_chars = sum(len(item["content"]) for item in messages)
+                input_chars += len(json.dumps(list(tools), ensure_ascii=False, separators=(",", ":")))
+                output_text = response.get("text", "") if isinstance(response, Mapping) else ""
+                output_calls = response.get("tool_calls", {}) if isinstance(response, Mapping) else {}
+                output_chars = len(output_text) + len(json.dumps(output_calls, ensure_ascii=False, separators=(",", ":")))
+                input_tokens = (input_chars + 3) // 4
+                output_tokens = (output_chars + 3) // 4
+                estimated = True
             self.usage_tracker.record(
                 provider=self.provider.__class__.__name__.lower(),
                 model=str(getattr(self.provider, "model", "")),
