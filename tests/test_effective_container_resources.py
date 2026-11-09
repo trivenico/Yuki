@@ -108,7 +108,7 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
             )
-        self.assertEqual(paths["v2"], mount / "user.slice/yuki.scope")
+        self.assertEqual(paths["v2"], mount.resolve() / "user.slice/yuki.scope")
 
     def test_mountinfo_resolves_non_root_cgroup2_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,7 +136,7 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=root, mountinfo=mountinfo
             )
-        self.assertEqual(paths["memory"], mount / "docker/container123")
+        self.assertEqual(paths["memory"], mount.resolve() / "docker/container123")
 
     def test_mountinfo_rejects_membership_outside_hierarchy_root(self):
         with tempfile.TemporaryDirectory() as tmp:
