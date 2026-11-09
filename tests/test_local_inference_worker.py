@@ -106,6 +106,7 @@ class LocalWorkerTests(unittest.TestCase):
     time.sleep(10.5)
     return {"text":"must not commit"}
   worker=LocalInferenceWorker(StaleClaimService(),self.device.token,{"local/model":SlowProvider()})
+  worker._renew_interval=1.0
   result=worker.run_once()
   self.assertEqual(result.error_code,"lease_lost")
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
