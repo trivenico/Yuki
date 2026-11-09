@@ -30,6 +30,14 @@ class FakeProcess:
         self.returncode = -9
 
 
+class TimeoutProcess(FakeProcess):
+    def wait(self, timeout=None):
+        if timeout is not None:
+            import subprocess
+            raise subprocess.TimeoutExpired(self.argv, timeout)
+        return self.returncode
+
+
 class DockerVerificationExecutorTests(unittest.TestCase):
     def _executor(self, base):
         workspace = base / "workspace"
@@ -80,6 +88,27 @@ class DockerVerificationExecutorTests(unittest.TestCase):
                 reference, artifact_sha256="b" * 64, check_name="security"
             ))
 
+
+    def test_timeout_removes_daemon_container_not_only_cli_process(self):
+        process = TimeoutProcess(["docker", "run"])
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
+        ), patch(
+            "automation.docker_verification_executor.subprocess.Popen", return_value=process
+        ) as popen, patch(
+            "automation.docker_verification_executor.subprocess.run"
+        ) as run:
+            executor, _ = self._executor(Path(temp))
+            receipt = executor.run("unit-tests", artifact_sha256="b" * 64)
+        self.assertEqual(receipt.status, "timed_out")
+        self.assertTrue(process.killed)
+        argv = popen.call_args.args[0]
+        container_name = argv[argv.index("--name") + 1]
+        run.assert_called_once()
+        self.assertEqual(
+            run.call_args.args[0],
+            ["/usr/bin/docker", "rm", "--force", container_name],
+        )
 
     def test_lists_receipts_by_exact_artifact_digest(self):
         with tempfile.TemporaryDirectory() as temp, patch(
