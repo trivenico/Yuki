@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
 from core.device_resource_reservations import (
     CapacityUnavailable,
     DeviceResourceReservationService,
@@ -57,6 +58,39 @@ class AuthenticatedReservationTests(unittest.TestCase):
             reservation_secret=secret or f"reservation-secret-for-{key}-with-high-entropy",
             **args,
         )
+
+    def test_complete_new_heartbeat_replaces_old_capacity_before_acceptance(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-complete-sync.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token, sequence=2, status="degraded",
+            capabilities={
+                "cpu_cores": 1,
+                "ram_total_bytes": 1000,
+                "ram_available_bytes": 100,
+                "gpus": [],
+            },
+        )
+        with self.assertRaisesRegex(CapacityUnavailable, "insufficient_unreserved_capacity"):
+            self.reserve(task="after-lower-heartbeat", key="after-lower-heartbeat",
+                         memory_bytes=101, cpu_millicores=1, gpu_memory_bytes=0)
+
+    def test_incomplete_new_heartbeat_blocks_old_capacity_before_acceptance(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-incomplete-sync.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token, sequence=2, status="degraded",
+            capabilities={"cpu_cores": 1, "ram_available_bytes": 100},
+        )
+        with self.assertRaisesRegex(CapacityUnavailable, "capacity_snapshot_superseded"):
+            self.reserve(task="after-incomplete-heartbeat", key="after-incomplete-heartbeat",
+                         memory_bytes=1, cpu_millicores=1, gpu_memory_bytes=0)
 
     def test_capacity_source_sequence_rejects_out_of_order_updates(self):
         first_generation = self.service.publish_capacity(
