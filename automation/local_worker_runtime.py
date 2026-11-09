@@ -43,6 +43,7 @@ def build_local_worker_runtime(
     provider_manager=None,
     provider_preferences=None,
     allow_cloud: bool = False,
+    usage_tracker=None,
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
 ) -> LocalWorkerRuntime:
@@ -101,9 +102,12 @@ def build_local_worker_runtime(
             {role: role for role in ("research", "coding", "testing", "reporting")},
             provider_preferences=provider_preferences,
             allow_cloud=allow_cloud,
+            usage_tracker=usage_tracker,
         )
     else:
-        handlers = build_provider_specialist_handlers(provider)
+        handlers = build_provider_specialist_handlers(
+            provider, usage_tracker=usage_tracker,
+        )
     worker = SpecialistTaskWorker(
         runtime,
         worker_id="yuki-local-worker",
