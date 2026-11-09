@@ -1,6 +1,8 @@
 """Explicit per-task hybrid routing with local-first privacy defaults."""
 from __future__ import annotations
 
+from core.token_usage import provider_call_lock
+
 
 class HybridProvider:
     """Route only explicitly named cloud tasks to cloud; all other work stays local.
@@ -55,32 +57,40 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
-            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-                try:
-                    setattr(self.cloud_provider, attribute, None)
-                except Exception:
-                    pass
-            result = self.cloud_provider.generate(prompt)
-            self.last_usage = getattr(self.cloud_provider, "last_usage", None)
-            self.last_usage_provider = getattr(
-                self.cloud_provider, "last_usage_provider", self.cloud_provider.__class__.__name__.lower()
-            )
-            self.last_usage_model = getattr(self.cloud_provider, "last_usage_model", getattr(self.cloud_provider, "model", ""))
-            return result
+            with provider_call_lock(self.cloud_provider):
+                for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                    try:
+                        setattr(self.cloud_provider, attribute, None)
+                    except Exception:
+                        pass
+                result = self.cloud_provider.generate(prompt)
+                self.last_usage = getattr(self.cloud_provider, "last_usage", None)
+                self.last_usage_provider = getattr(
+                    self.cloud_provider, "last_usage_provider", self.cloud_provider.__class__.__name__.lower()
+                )
+                self.last_usage_model = getattr(
+                    self.cloud_provider, "last_usage_model",
+                    getattr(self.cloud_provider, "model", ""),
+                )
+                return result
         try:
             if self.local_provider.is_available() is not True:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
-        for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-            try:
-                setattr(self.local_provider, attribute, None)
-            except Exception:
-                pass
-        result = self.local_provider.generate(prompt)
-        self.last_usage = getattr(self.local_provider, "last_usage", None)
-        self.last_usage_provider = getattr(
-            self.local_provider, "last_usage_provider", self.local_provider.__class__.__name__.lower()
-        )
-        self.last_usage_model = getattr(self.local_provider, "last_usage_model", getattr(self.local_provider, "model", ""))
-        return result
+        with provider_call_lock(self.local_provider):
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(self.local_provider, attribute, None)
+                except Exception:
+                    pass
+            result = self.local_provider.generate(prompt)
+            self.last_usage = getattr(self.local_provider, "last_usage", None)
+            self.last_usage_provider = getattr(
+                self.local_provider, "last_usage_provider", self.local_provider.__class__.__name__.lower()
+            )
+            self.last_usage_model = getattr(
+                self.local_provider, "last_usage_model",
+                getattr(self.local_provider, "model", ""),
+            )
+            return result
