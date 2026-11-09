@@ -319,7 +319,7 @@ def record_provider_usage(tracker, provider, prompt, response):
 
 _PROVIDER_LOCKS_GUARD = RLock()
 _PROVIDER_LOCKS = WeakKeyDictionary()
-_UNHASHABLE_PROVIDER_LOCKS = {}
+_UNHASHABLE_PROVIDER_LOCK = RLock()
 
 
 def provider_call_lock(provider):
@@ -337,9 +337,14 @@ def provider_call_lock(provider):
                 _PROVIDER_LOCKS[provider] = lock
             return lock
         except (TypeError, AttributeError):
-            key = id(provider)
-            entry = _UNHASHABLE_PROVIDER_LOCKS.get(key)
-            if entry is None or entry[0] is not provider:
-                entry = (provider, RLock())
-                _UNHASHABLE_PROVIDER_LOCKS[key] = entry
-            return entry[1]
+            # Avoid a process-lifetime strong-reference registry for unhashable
+            # adapters. Prefer an instance-attached lock; immutable/slot-only
+            # adapters safely share a conservative fallback lock.
+            try:
+                lock = getattr(provider, "_yuki_usage_call_lock", None)
+                if lock is None:
+                    lock = RLock()
+                    setattr(provider, "_yuki_usage_call_lock", lock)
+                return lock
+            except Exception:
+                return _UNHASHABLE_PROVIDER_LOCK
