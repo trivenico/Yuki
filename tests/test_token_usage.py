@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from core.token_usage import (
     TokenUsageTracker, create_best_effort_usage_tracker, record_provider_usage,
+    provider_call_lock,
 )
 
 
@@ -78,6 +79,20 @@ class TokenUsageTests(unittest.TestCase):
         with patch("core.token_usage.TokenUsageTracker", side_effect=OSError("disk unavailable")):
             self.assertIsNone(create_best_effort_usage_tracker("usage", session_id="owner"))
 
+
+
+    def test_provider_lock_is_shared_per_adapter_instance(self):
+        class Provider:
+            pass
+        provider = Provider()
+        self.assertIs(provider_call_lock(provider), provider_call_lock(provider))
+        self.assertIsNot(provider_call_lock(provider), provider_call_lock(Provider()))
+
+    def test_provider_lock_supports_unhashable_adapters(self):
+        class Provider:
+            __hash__ = None
+        provider = Provider()
+        self.assertIs(provider_call_lock(provider), provider_call_lock(provider))
 
     def test_shared_provider_recorder_uses_exact_metadata(self):
         class Provider:
