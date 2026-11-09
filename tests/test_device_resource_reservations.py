@@ -224,6 +224,35 @@ class AuthenticatedReservationTests(unittest.TestCase):
         with self.assertRaises(CapacityUnavailable):
             self.reserve(task="task-c", key="key-c", memory_bytes=1)
 
+    def test_large_active_reservation_totals_fail_closed_without_sqlite_overflow(self):
+        capacity = 2**60
+        self.service.publish_capacity(
+            self.device.token, memory_bytes=capacity,
+            cpu_millicores=capacity, gpu_memory_bytes=capacity,
+        )
+        now = self.service.clock()
+        expires = (now + timedelta(seconds=20)).isoformat(timespec="microseconds")
+        db = sqlite3.connect(self.service.path)
+        try:
+            for index in range(9):
+                db.execute(
+                    """INSERT INTO resource_reservations(
+                        reservation_id,owner_id,device_id,task_id,idempotency_key,
+                        memory_bytes,cpu_millicores,gpu_memory_bytes,fencing_token,
+                        token_hash,created_at,expires_at,status
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (f"{index:032x}", self.session.user.user_id,
+                     self.device.device.device_id, f"overflow-task-{index}",
+                     f"overflow-key-{index}", capacity, capacity, capacity,
+                     index + 1, "0" * 64, now.isoformat(), expires, "active"),
+                )
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(CapacityUnavailable):
+            self.reserve(task="overflow-check", key="overflow-check",
+                         memory_bytes=1, cpu_millicores=1, gpu_memory_bytes=1)
+
     def test_concurrent_reservations_cannot_overcommit(self):
         barrier = threading.Barrier(3)
         outcomes = []
