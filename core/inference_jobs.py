@@ -52,7 +52,7 @@ class InferenceJobService:
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
    owned=self.pairing.owns_active_device(owner_id,device_id)
    if not owned: raise PermissionError("device_not_owned_or_paired")
-   db.execute("INSERT INTO inference_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
+   db.execute("INSERT INTO inference_jobs(job_id,owner_id,model_id,device_id,status,input_text,result_text,error_code,created_at,updated_at,lease_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
   return self._job(row)
  def claim_next(self,device_token):
