@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 from core.device_agent_client import (
@@ -91,6 +92,7 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             (root / "cpu.max").write_text("150000 100000")
             self.assertEqual(_effective_cpu_millicores(affinity=8, paths={"v2": root}), 1500)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "mountinfo is a Linux kernel interface")
     def test_mountinfo_resolves_non_root_cgroup2_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -105,6 +107,7 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             )
         self.assertEqual(paths["v2"], (mount / "user.slice/yuki.scope").resolve())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "mountinfo is a Linux kernel interface")
     def test_mountinfo_resolves_v1_controller_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -119,6 +122,7 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             )
         self.assertEqual(paths["memory"], (mount / "docker/container123").resolve())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "mountinfo is a Linux kernel interface")
     def test_mountinfo_rejects_membership_outside_hierarchy_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
