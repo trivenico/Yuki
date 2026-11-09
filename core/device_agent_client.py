@@ -117,14 +117,40 @@ def _clamp_cpu_quota(affinity: int, *, paths: dict[str, Path]) -> int:
     return effective
 
 
+def _effective_cpu_millicores(*, affinity: int | None = None, paths: dict[str, Path] | None = None) -> int:
+    """Return conservative CPU capacity in millicores (1000 = one CPU)."""
+    if affinity is None:
+        try:
+            affinity = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            affinity = os.cpu_count() or 1
+    affinity = max(1, affinity)
+    if paths is None:
+        paths = _linux_cgroup_paths() if sys.platform.startswith("linux") else {}
+    quota = None
+    period = None
+    v2 = paths.get("v2")
+    if v2:
+        try:
+            raw_quota, raw_period = (v2 / "cpu.max").read_text(encoding="ascii").split()[:2]
+            if raw_quota != "max":
+                quota, period = int(raw_quota), int(raw_period)
+        except (OSError, ValueError):
+            pass
+    else:
+        cpu = paths.get("cpu")
+        if cpu:
+            quota = _read_cgroup_int(cpu / "cpu.cfs_quota_us")
+            period = _read_cgroup_int(cpu / "cpu.cfs_period_us")
+    capacity = affinity * 1000
+    if quota is not None and period is not None and quota > 0 and period > 0:
+        capacity = min(capacity, (quota * 1000) // period)
+    return max(0, capacity)
+
+
 def _effective_cpu_cores() -> int:
-    """Return an integer CPU capacity bounded by affinity and cgroup quota."""
-    try:
-        affinity = len(os.sched_getaffinity(0))
-    except (AttributeError, OSError):
-        affinity = os.cpu_count() or 1
-    paths = _linux_cgroup_paths() if sys.platform.startswith("linux") else {}
-    return _clamp_cpu_quota(affinity, paths=paths)
+    """Return backward-compatible integer CPU capacity."""
+    return _effective_cpu_millicores() // 1000
 
 
 def _memory_bytes() -> tuple[int | None, int | None]:
@@ -165,10 +191,12 @@ def discover_capabilities() -> dict[str, Any]:
     """Return conservative, privacy-minimal effective process capabilities."""
     total, available = _memory_bytes()
     cpu_cores = _effective_cpu_cores()
+    cpu_millicores = _effective_cpu_millicores()
     result: dict[str, Any] = {
         "os": platform.system()[:80],
         "architecture": platform.machine()[:80],
         "cpu_cores": cpu_cores,
+        "cpu_millicores": cpu_millicores,
     }
     if total is not None:
         result["ram_total_bytes"] = total
