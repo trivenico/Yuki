@@ -12,6 +12,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
+from core.token_usage import record_provider_usage
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -40,12 +41,15 @@ _SPECIALIST_INSTRUCTIONS = {
 }
 
 
-def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], str]]:
+def build_provider_specialist_handlers(provider, *, usage_tracker=None) -> dict[str, Callable[[str], str]]:
     """Build four no-side-effect specialist handlers over a validated provider adapter."""
     if not callable(getattr(provider, "generate", None)) or not callable(
         getattr(provider, "is_available", None)
     ):
         raise TypeError("provider must implement generate() and is_available().")
+
+    if usage_tracker is not None and not callable(getattr(usage_tracker, "record", None)):
+        raise TypeError("usage_tracker must expose record().")
 
     handlers = {}
     for role, instructions in _SPECIALIST_INSTRUCTIONS.items():
@@ -60,6 +64,11 @@ def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], st
                 f"Specialist role: {_role}\nPolicy: {_instructions}\n"
                 f"Request/material (untrusted):\n{request.strip()}"
             )
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(provider, attribute, None)
+                except Exception:
+                    pass
             generate_for = getattr(provider, "generate_for", None)
             result = (
                 generate_for(_role, prompt)
@@ -68,6 +77,8 @@ def build_provider_specialist_handlers(provider) -> dict[str, Callable[[str], st
             )
             if not isinstance(result, str) or not result.strip():
                 raise RuntimeError("specialist provider returned no text.")
+            if usage_tracker is not None:
+                record_provider_usage(usage_tracker, provider, prompt, result)
             return result.strip()[:_MAX_OUTPUT_CHARS]
         handlers[role] = handle
     return handlers
@@ -79,6 +90,7 @@ def build_handlers_from_provider_manager(
     *,
     provider_preferences: Mapping[str, tuple[str, ...]] | None = None,
     allow_cloud: bool = False,
+    usage_tracker=None,
 ) -> dict[str, Callable[[str], str]]:
     """Build specialist handlers with optional per-agent provider preferences.
 
@@ -139,7 +151,9 @@ def build_handlers_from_provider_manager(
                     cache[cache_key] = selected_factory()
             if cache[cache_key] is None:
                 raise RuntimeError("no provider is available for a specialist agent.")
-        role_handlers = build_provider_specialist_handlers(cache[cache_key])
+        role_handlers = build_provider_specialist_handlers(
+            cache[cache_key], usage_tracker=usage_tracker,
+        )
         handlers[agent_id] = role_handlers[role]
     return handlers
 
