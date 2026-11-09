@@ -111,6 +111,8 @@ class DeviceAgentService:
         if ("ram_available_bytes" in result and "ram_total_bytes" in result
                 and result["ram_available_bytes"] > result["ram_total_bytes"]):
             raise ValueError("invalid_capabilities")
+        if "cpu_cores" in result and result["cpu_cores"] > 4096:
+            raise ValueError("invalid_capabilities")
         if "cpu_millicores" in result and result["cpu_millicores"] > 4_096_000:
             raise ValueError("invalid_capabilities")
         gpus = value.get("gpus", [])
@@ -137,6 +139,8 @@ class DeviceAgentService:
                     and safe_gpu["memory_available_bytes"] > safe_gpu["memory_total_bytes"]):
                 raise ValueError("invalid_capabilities")
             safe_gpus.append(safe_gpu)
+        if sum(gpu.get("memory_available_bytes", 0) for gpu in safe_gpus) > 2**60:
+            raise ValueError("invalid_capabilities")
         if "gpus" in value:
             result["gpus"] = safe_gpus
         if len(json.dumps(result, separators=(",", ":"))) > 12_000:
