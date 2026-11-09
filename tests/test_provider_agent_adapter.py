@@ -123,6 +123,17 @@ class ProviderAgentAdapterTests(unittest.TestCase):
         self.assertEqual(result["text"], "hello")
         self.assertEqual(adapter.last_usage_error, "OSError")
 
+
+    def test_usage_estimation_failure_does_not_block_inference(self):
+        tracker = FakeUsageTracker()
+        adapter = ProviderAgentAdapter(FakeChatProvider(), usage_tracker=tracker)
+        result = adapter(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[{"not_json": object()}],
+        )
+        self.assertEqual(result["text"], "hello")
+        self.assertEqual(adapter.last_usage_error, "TypeError")
+
     def test_streaming_records_usage_once_and_hides_internal_metadata(self):
         class StreamingProvider(FakeChatProvider):
             def generate_chat_stream(self, *, messages, tools, tool_choice):
