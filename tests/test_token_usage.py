@@ -37,6 +37,21 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(summary["total_tokens"], 20_010)
         tracker.close()
 
+    def test_accepts_event_larger_than_old_ten_million_ceiling(self):
+        tracker = TokenUsageTracker(session_id="large-event")
+        result = tracker.record(provider="local", input_tokens=10_000_001, output_tokens=10_000_002)
+        self.assertEqual(result["summary"]["total_tokens"], 20_000_003)
+        tracker.close()
+
+    def test_cumulative_usage_exceeds_sqlite_signed_integer_without_overflow(self):
+        tracker = TokenUsageTracker(session_id="large-total")
+        per_event = (1 << 63) - 1
+        tracker.record(provider="local", input_tokens=per_event, output_tokens=0)
+        summary = tracker.record(provider="local", input_tokens=per_event, output_tokens=0)["summary"]
+        self.assertEqual(summary["input_tokens"], per_event * 2)
+        self.assertEqual(summary["total_tokens"], per_event * 2)
+        tracker.close()
+
     def test_rejects_invalid_counts_and_boolean_as_int(self):
         tracker = TokenUsageTracker()
         with self.assertRaises(ValueError):
