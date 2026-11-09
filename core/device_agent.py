@@ -206,7 +206,11 @@ class DeviceAgentService:
         cpu = capabilities.get("cpu_millicores")
         if cpu is None and "cpu_cores" in capabilities:
             cpu = capabilities["cpu_cores"] * 1000
-        gpus = capabilities.get("gpus", [])
+        # Absence of the GPU inventory is unknown, not proof of zero GPU
+        # memory. An explicit empty inventory is a valid zero-GPU report.
+        if "gpus" not in capabilities:
+            return None
+        gpus = capabilities["gpus"]
         if memory is None or cpu is None or not all(
             "memory_available_bytes" in gpu for gpu in gpus
         ):
