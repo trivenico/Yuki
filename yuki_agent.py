@@ -49,8 +49,12 @@ class YukiAgent:
                 output_tokens = (len(response) + 3) // 4
                 estimated = True
             self.usage_tracker.record(
-                provider=self.provider.__class__.__name__.lower(),
-                model=str(getattr(self.provider, "model", "")),
+                provider=str(getattr(
+                    self.provider, "last_usage_provider", self.provider.__class__.__name__.lower()
+                )),
+                model=str(getattr(
+                    self.provider, "last_usage_model", getattr(self.provider, "model", "")
+                )),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 estimated=estimated,
@@ -72,10 +76,11 @@ class YukiAgent:
                 return "Yuki: The AI provider is unavailable."
             # Clear any prior response metadata so an unsupported provider cannot
             # accidentally reuse the previous call's token counts.
-            try:
-                self.provider.last_usage = None
-            except Exception:
-                pass
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(self.provider, attribute, None)
+                except Exception:
+                    pass
             result = self.provider.generate(prompt.strip())
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
