@@ -29,31 +29,105 @@ def _positive_int(value: Any) -> int | None:
     return value if type(value) is int and 0 < value <= 2**60 else None
 
 
+def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path]]:
+    """Return cgroup mounts as (filesystem, controllers, hierarchy_root, mountpoint)."""
+    mounts: list[tuple[str, str, Path, Path]] = []
+    try:
+        lines = mountinfo.read_text(encoding="utf-8").splitlines()[:256]
+    except OSError:
+        return mounts
+    for line in lines:
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            if separator < 6 or len(fields) <= separator + 3:
+                continue
+            filesystem = fields[separator + 1]
+            if filesystem not in {"cgroup", "cgroup2"}:
+                continue
+            root = Path(fields[3])
+            mountpoint = Path(fields[4].replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\"))
+            controllers = set(fields[separator + 3].split(","))
+            controllers.update(fields[separator + 2].split(","))
+            mounts.append((filesystem, ",".join(sorted(controllers)), root, mountpoint))
+        except (ValueError, IndexError):
+            continue
+    return mounts
+
+
+def _resolve_cgroup_mount(membership: str, hierarchy_root: Path, mountpoint: Path) -> Path | None:
+    """Map a hierarchy membership into its mount without escaping the mount."""
+    try:
+        member = Path(membership)
+        relative_root = hierarchy_root
+        if not member.is_absolute():
+            return None
+        relative = member.relative_to(relative_root)
+        base = mountpoint.resolve()
+        candidate = (base / relative).resolve()
+        candidate.relative_to(base)
+        return candidate
+    except (ValueError, OSError, RuntimeError):
+        return None
+
+
 def _linux_cgroup_paths(
     *, proc_cgroup: Path = Path("/proc/self/cgroup"),
     cgroup_root: Path = Path("/sys/fs/cgroup"),
+    mountinfo: Path = Path("/proc/self/mountinfo"),
 ) -> dict[str, Path]:
-    """Resolve process-relative cgroup v1/v2 directories without shell calls."""
+    """Resolve process cgroup directories from membership and actual mount metadata."""
     paths: dict[str, Path] = {}
     try:
         lines = proc_cgroup.read_text(encoding="ascii").splitlines()[:32]
     except OSError:
         return paths
+    memberships: dict[str, str] = {}
     for line in lines:
         parts = line.split(":", 2)
         if len(parts) != 3:
             continue
-        controllers, relative = parts[1], parts[2].lstrip("/")
-        if ".." in Path(relative).parts:
+        controllers, relative = parts[1], parts[2]
+        if not relative.startswith("/") or ".." in Path(relative).parts:
             continue
         if not controllers:
-            paths["v2"] = cgroup_root / relative
+            memberships["v2"] = relative
         else:
-            names = set(controllers.split(","))
             for name in ("memory", "cpu", "cpuacct"):
-                if name in names:
-                    paths[name] = Path("/sys/fs/cgroup") / name / relative
-    # Common unified hierarchy mount and v1 controller mounts.
+                if name in controllers.split(","):
+                    memberships[name] = relative
+
+    mounts = _mountinfo_cgroup_mounts(mountinfo)
+    for filesystem, controllers, hierarchy_root, mountpoint in mounts:
+        if filesystem == "cgroup2" and "v2" in memberships:
+            resolved = _resolve_cgroup_mount(memberships["v2"], hierarchy_root, mountpoint)
+            if resolved is not None:
+                paths["v2"] = resolved
+        elif filesystem == "cgroup":
+            available = set(controllers.split(","))
+            for name in ("memory", "cpu", "cpuacct"):
+                if name in memberships and name in available:
+                    resolved = _resolve_cgroup_mount(memberships[name], hierarchy_root, mountpoint)
+                    if resolved is not None:
+                        paths[name] = resolved
+
+    # Compatibility fallback for systems where mountinfo is unavailable.
+    if not mounts:
+        for name in ("memory", "cpu", "cpuacct"):
+            if name in memberships:
+                candidate = Path("/sys/fs/cgroup") / name / memberships[name].lstrip("/")
+                try:
+                    candidate.resolve().relative_to(Path("/sys/fs/cgroup").resolve())
+                    paths[name] = candidate
+                except (ValueError, OSError, RuntimeError):
+                    pass
+        if "v2" in memberships:
+            candidate = cgroup_root / memberships["v2"].lstrip("/")
+            try:
+                candidate.resolve().relative_to(cgroup_root.resolve())
+                paths["v2"] = candidate
+            except (ValueError, OSError, RuntimeError):
+                pass
     if not paths.get("v2") and (cgroup_root / "memory.max").exists():
         paths["v2"] = cgroup_root
     return paths
