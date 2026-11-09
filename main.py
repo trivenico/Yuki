@@ -114,7 +114,7 @@ def main():
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
     usage_tracker = create_best_effort_usage_tracker(
-        workspace / "usage", session_id="personal-owner"
+        workspace / "usage.json", session_id="personal-owner"
     )
     ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
