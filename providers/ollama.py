@@ -16,7 +16,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
-    def __init__(self, base_url="http://127.0.0.1:11434", model="", timeout=45):
+    def __init__(
+        self, base_url="http://127.0.0.1:11434", model="", timeout=45,
+        *, num_ctx=2048, num_predict=512, num_batch=128, num_thread=0,
+    ):
         if not isinstance(base_url, str) or not base_url.strip():
             raise ValueError("Ollama base URL is required.")
         parsed = urlsplit(base_url.strip().rstrip("/"))
@@ -39,9 +42,26 @@ class OllamaProvider:
             raise ValueError("Configure a valid Ollama model name.")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 120:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
+        for name, value, minimum, maximum in (
+            ("num_ctx", num_ctx, 256, 32768),
+            ("num_predict", num_predict, 1, 8192),
+            ("num_batch", num_batch, 16, 2048),
+            ("num_thread", num_thread, 0, 256),
+        ):
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ValueError(f"{name} must be an integer from {minimum} to {maximum}.")
         self.base_url = base_url.strip().rstrip("/")
         self.model = model.strip()
         self.timeout = timeout
+        # Smaller context and prompt batches cap KV-cache and prompt-evaluation
+        # working memory on modest machines. Zero threads delegates to Ollama.
+        self.options = {
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
+            "num_batch": num_batch,
+        }
+        if num_thread:
+            self.options["num_thread"] = num_thread
 
     def _opener(self):
         # Ollama is explicitly local/configured. Never let ambient proxy
@@ -120,7 +140,7 @@ class OllamaProvider:
             normalized_tools.append({"type": "function", "function": {
                 "name": name, "description": description, "parameters": parameters,
             }})
-        payload_data = {"model": self.model, "messages": normalized_messages, "stream": False}
+        payload_data = {"model": self.model, "messages": normalized_messages, "stream": False, "options": dict(self.options)}
         if tool_choice != "none" and normalized_tools:
             payload_data["tools"] = normalized_tools
         payload = json.dumps(payload_data).encode("utf-8")
@@ -223,7 +243,7 @@ class OllamaProvider:
             normalized_tools.append({"type": "function", "function": {
                 "name": name, "description": description, "parameters": parameters,
             }})
-        payload_data = {"model": self.model, "messages": normalized_messages, "stream": True}
+        payload_data = {"model": self.model, "messages": normalized_messages, "stream": True, "options": dict(self.options)}
         if tool_choice != "none" and normalized_tools:
             payload_data["tools"] = normalized_tools
         payload = json.dumps(payload_data).encode("utf-8")
