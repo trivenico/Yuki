@@ -106,10 +106,7 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
         config["workspace"] = workspace
         username = "acceptance-" + secrets.token_hex(6)
         password = secrets.token_urlsafe(24)
-        previous = {
-            key: os.environ.get(key)
-            for key in ("YUKI_WORKSPACE", "YUKI_BOOTSTRAP_ADMIN_USERNAME", "YUKI_BOOTSTRAP_ADMIN_PASSWORD")
-        }
+        previous_workspace = os.environ.get("YUKI_WORKSPACE")
         try:
             os.environ["YUKI_WORKSPACE"] = workspace
             os.environ["YUKI_BOOTSTRAP_ADMIN_USERNAME"] = username
@@ -117,11 +114,14 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
             factory = runtime_factory or _build_runtime
             runtime = factory(config, provider)
         finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+            # Bootstrap credentials are one-shot inputs. Never restore them,
+            # even if a caller had stale values in its environment.
+            os.environ.pop("YUKI_BOOTSTRAP_ADMIN_USERNAME", None)
+            os.environ.pop("YUKI_BOOTSTRAP_ADMIN_PASSWORD", None)
+            if previous_workspace is None:
+                os.environ.pop("YUKI_WORKSPACE", None)
+            else:
+                os.environ["YUKI_WORKSPACE"] = previous_workspace
 
         try:
             session = runtime.app.auth.authenticate(username, password)
