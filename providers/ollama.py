@@ -8,6 +8,11 @@ import re
 from urllib.parse import urlsplit
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class OllamaProvider:
     """Talk to a local or HTTPS Ollama endpoint; never silently routes to cloud."""
 
@@ -38,6 +43,13 @@ class OllamaProvider:
         self.model = model.strip()
         self.timeout = timeout
 
+    def _opener(self):
+        # Ollama is explicitly local/configured. Never let ambient proxy
+        # environment variables silently route prompts to a third party.
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect()
+        )
+
     def is_available(self):
         """Return true only when the local server responds and the model is installed."""
         request = urllib.request.Request(
@@ -46,7 +58,7 @@ class OllamaProvider:
             method="GET",
         )
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout, 5)) as response:
+            with self._opener().open(request, timeout=min(self.timeout, 5)) as response:
                 raw = response.read(500_001)
         except (urllib.error.URLError, TimeoutError, OSError):
             return False
@@ -117,11 +129,8 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
-        class RejectRedirects(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
         try:
-            opener = urllib.request.build_opener(RejectRedirects())
+            opener = self._opener()
             with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -223,9 +232,6 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/x-ndjson"},
             method="POST",
         )
-        class RejectRedirects(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
         text_parts = []
         text_size = 0
         normalized_calls = []
@@ -233,7 +239,7 @@ class OllamaProvider:
         done = False
         usage_counts = None
         try:
-            opener = urllib.request.build_opener(RejectRedirects())
+            opener = self._opener()
             with opener.open(request, timeout=self.timeout) as response:
                 while True:
                     line = response.readline(65_537)
@@ -326,7 +332,7 @@ class OllamaProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self._opener().open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama request failed.") from exc
