@@ -65,6 +65,7 @@ class OpenAICompatibleProvider:
         # Injectable environment mapping keeps provider construction deterministic in
         # tests while production defaults to the real process environment.
         self._environ = os.environ if environ is None else environ
+        self.last_usage = None
 
     def is_available(self):
         return bool(self._environ.get(self.api_key_env, "").strip())
@@ -103,6 +104,7 @@ class OpenAICompatibleProvider:
             raise RuntimeError("Cloud provider returned an unsupported response.") from exc
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Cloud provider returned no text response.")
+        self.last_usage = _normalize_openai_usage(body.get("usage"))
         return text.strip()
 
     def generate_chat(self, *, messages, tools, tool_choice="auto") -> dict:
