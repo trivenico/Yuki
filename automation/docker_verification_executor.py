@@ -184,9 +184,17 @@ class DockerVerificationExecutor:
         max_files = 10_000
         max_file_bytes = 16_000_000
         max_total_bytes = 256_000_000
+        excluded_directories = {
+            ".git", ".hg", ".svn", ".venv", "venv", "__pycache__",
+            "node_modules", ".tox", ".mypy_cache", ".pytest_cache",
+        }
         for path in self.workspace.rglob("*"):
             if path.is_symlink():
                 raise DockerVerificationError("sandbox_workspace_symlink_detected")
+            relative = path.relative_to(self.workspace).as_posix()
+            parts = Path(relative).parts
+            if any(part in excluded_directories for part in parts[:-1]):
+                continue
             if path.is_dir():
                 continue
             if not path.is_file():
@@ -201,7 +209,6 @@ class DockerVerificationExecutor:
                 raise DockerVerificationError("sandbox_workspace_file_size_exceeded")
             if total_bytes + size > max_total_bytes:
                 raise DockerVerificationError("sandbox_workspace_total_size_exceeded")
-            relative = path.relative_to(self.workspace).as_posix()
             read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
             try:
                 with path.open("rb") as stream:
