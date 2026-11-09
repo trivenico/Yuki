@@ -70,9 +70,13 @@ class SQLiteEmbeddingIndex:
                 raise ValueError("embedding_vector_component_out_of_range")
             values.append(normalized)
         try:
-            return struct.pack(f"<{len(values)}f", *values)
+            packed = struct.pack(f"<{len(values)}f", *values)
         except (OverflowError, struct.error) as exc:
             raise ValueError("embedding_vector_cannot_be_packed") from exc
+        stored = struct.unpack(f"<{len(values)}f", packed)
+        if not any(stored):
+            raise ValueError("embedding_vector_must_be_nonzero_after_storage")
+        return packed
 
     @staticmethod
     def _unpack(blob: bytes, dimensions: int) -> list[float]:
