@@ -1,15 +1,12 @@
 """Restricted MCP Streamable HTTP client. No stdio subprocesses or implicit tool trust."""
 from __future__ import annotations
-import http.client
-import ipaddress
 import json
 import math
-import socket
-import ssl
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 from core.prompt_guard import scan_untrusted_text
+from core.pinned_https import PinnedHTTPSConnection as _PinnedHTTPSConnection, build_pinned_https_opener, resolve_public_https_host
 
 
 class MCPError(RuntimeError):
@@ -19,43 +16,6 @@ class MCPError(RuntimeError):
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
-
-
-class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPS connection pinned to the IP validated during endpoint setup."""
-
-    def __init__(self, host, *, pinned_ip, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, context=None):
-        super().__init__(host, timeout=timeout, context=context or ssl.create_default_context())
-        self._pinned_ip = pinned_ip
-
-    def connect(self):
-        raw_socket = socket.create_connection(
-            (self._pinned_ip, self.port),
-            self.timeout,
-            self.source_address,
-        )
-        try:
-            self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
-        except BaseException:
-            raw_socket.close()
-            raise
-
-
-class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
-    def __init__(self, pinned_ip):
-        super().__init__(context=ssl.create_default_context())
-        self._pinned_ip = pinned_ip
-
-    def https_open(self, request):
-        return self.do_open(
-            lambda host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, context=None,
-                   check_hostname=None: _PinnedHTTPSConnection(
-                       host, pinned_ip=self._pinned_ip, timeout=timeout, context=context
-                   ),
-            request,
-            context=self._context,
-            check_hostname=self._check_hostname,
-        )
 
 
 class MCPHTTPClient:
@@ -84,9 +44,8 @@ class MCPHTTPClient:
         self._request_id = 0
         # Disable environment proxies and pin the TCP destination to an IP
         # validated here; urllib must not perform a second DNS lookup.
-        self._opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _NoRedirect,
-            _PinnedHTTPSHandler(self._resolved_addresses[0]),
+        self._opener = build_pinned_https_opener(
+            self._resolved_addresses[0], _NoRedirect()
         )
 
     @staticmethod
@@ -109,14 +68,12 @@ class MCPHTTPClient:
         if not allowed or host not in allowed:
             raise MCPError("MCP host is not on the explicit allow-list.")
         try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
-            if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
-                raise MCPError("Non-public MCP destinations are blocked.")
-        except MCPError:
-            raise
-        except (OSError, ValueError, IndexError, TypeError) as exc:
+            addresses = resolve_public_https_host(host, 443)
+        except ValueError as exc:
+            if "Non-public" in str(exc):
+                raise MCPError("Non-public MCP destinations are blocked.") from exc
             raise MCPError("MCP host could not be safely resolved.") from exc
-        return endpoint.strip(), tuple(sorted(addresses, key=lambda value: (ipaddress.ip_address(value).version, value)))
+        return endpoint.strip(), addresses
 
     def _rpc(self, method, params=None, *, notification=False):
         self._request_id += 1
