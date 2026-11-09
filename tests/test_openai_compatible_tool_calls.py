@@ -239,5 +239,18 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 list(self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Find"}], tools=self.tools))
 
+    def test_native_sse_stream_rejects_non_string_tool_name(self):
+        chunk = {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "bad", "function": {"name": [], "arguments": "{}"}}
+        ]}, "finish_reason": "tool_calls"}]}
+        opener = FakeStreamOpener(
+            ["data: " + json.dumps(chunk) + "\n", "data: [DONE]\n"], self.requests
+        )
+        with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "unrecognized streamed tool call"):
+                list(self.provider.generate_chat_stream(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools
+                ))
+
 if __name__ == "__main__":
     unittest.main()
