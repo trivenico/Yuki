@@ -151,6 +151,14 @@ class OllamaAgentChatTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unrecognized"):
                 self.provider.generate_chat(messages=self.messages, tools=self.tools)
 
+    def test_rejects_non_string_tool_names(self):
+        fake = FakeOpener({"message": {"content": "", "tool_calls": [{
+            "function": {"name": [], "arguments": {}}
+        }]}}, self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=fake):
+            with self.assertRaisesRegex(RuntimeError, "unrecognized"):
+                self.provider.generate_chat(messages=self.messages, tools=self.tools)
+
     def test_rejects_malformed_tool_arguments(self):
         fake = FakeOpener({"message": {"content": "", "tool_calls": [{
             "function": {"name": "lookup", "arguments": "not-an-object"}
