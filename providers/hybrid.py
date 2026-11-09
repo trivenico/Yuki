@@ -57,40 +57,39 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
-            with provider_call_lock(self.cloud_provider):
-                for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-                    try:
-                        setattr(self.cloud_provider, attribute, None)
-                    except Exception:
-                        pass
-                result = self.cloud_provider.generate(prompt)
-                self.last_usage = getattr(self.cloud_provider, "last_usage", None)
-                self.last_usage_provider = getattr(
-                    self.cloud_provider, "last_usage_provider", self.cloud_provider.__class__.__name__.lower()
-                )
-                self.last_usage_model = getattr(
-                    self.cloud_provider, "last_usage_model",
-                    getattr(self.cloud_provider, "model", ""),
-                )
-                return result
+            return self._generate_from(self.cloud_provider, prompt)
         try:
             if self.local_provider.is_available() is not True:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
-        with provider_call_lock(self.local_provider):
-            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-                try:
-                    setattr(self.local_provider, attribute, None)
-                except Exception:
-                    pass
-            result = self.local_provider.generate(prompt)
-            self.last_usage = getattr(self.local_provider, "last_usage", None)
-            self.last_usage_provider = getattr(
-                self.local_provider, "last_usage_provider", self.local_provider.__class__.__name__.lower()
-            )
-            self.last_usage_model = getattr(
-                self.local_provider, "last_usage_model",
-                getattr(self.local_provider, "model", ""),
-            )
-            return result
+        return self._generate_from(self.local_provider, prompt)
+
+    def _generate_from(self, provider, prompt):
+        """Capture one provider's usage atomically, then clear mutable metadata.
+
+        Adapters may expose usage before generate() (for legacy adapters) or set
+        it during the call. Capture supports both contracts. Clearing after
+        capture prevents a later call from inheriting stale metadata. The
+        provider lock spans generation, capture, and cleanup across routers.
+        """
+        with provider_call_lock(provider):
+            self.last_usage = None
+            self.last_usage_provider = None
+            self.last_usage_model = None
+            try:
+                result = provider.generate(prompt)
+                self.last_usage = getattr(provider, "last_usage", None)
+                self.last_usage_provider = getattr(
+                    provider, "last_usage_provider", provider.__class__.__name__.lower()
+                )
+                self.last_usage_model = getattr(
+                    provider, "last_usage_model", getattr(provider, "model", "")
+                )
+                return result
+            finally:
+                for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                    try:
+                        setattr(provider, attribute, None)
+                    except Exception:
+                        pass
