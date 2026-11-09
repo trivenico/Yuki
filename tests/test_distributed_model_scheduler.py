@@ -95,5 +95,79 @@ class DistributedModelSchedulerTests(unittest.TestCase):
         self.assertNotIn("execution_id", result)
 
 
+    def test_fractional_cpu_requirements_use_millicores(self):
+        result = self.scheduler.plan(
+            ModelRequirements("org/model", 1000, cpu_millicores=1500),
+            [{
+                "device_id": "fractional", "online": True, "status": "idle",
+                "capabilities": {"cpu_millicores": 1750, "memory_bytes": 4000},
+            }],
+        )
+        self.assertEqual(result.device_id, "fractional")
+        rejected = self.scheduler.plan(
+            ModelRequirements("org/model", 1000, cpu_millicores=1800),
+            [{
+                "device_id": "fractional", "online": True, "status": "idle",
+                "capabilities": {"cpu_millicores": 1750, "memory_bytes": 4000},
+            }],
+        )
+        self.assertIsNone(rejected.device_id)
+
+    def test_reserve_placement_requires_authoritative_reservation(self):
+        class FakeReservations:
+            def __init__(self):
+                self.calls = []
+
+            def reserve(self, session, device_id, task_id, **kwargs):
+                self.calls.append((session, device_id, task_id, kwargs))
+                if device_id == "best-fit":
+                    from core.device_resource_reservations import CapacityUnavailable
+                    raise CapacityUnavailable("capacity_changed")
+                return {"device_id": device_id, "fencing_token": 7}
+
+        fake = FakeReservations()
+        devices = [
+            device("best-fit", ram=5000),
+            device("fallback", ram=6000),
+        ]
+        decision, reservation = self.scheduler.reserve_placement(
+            ModelRequirements("org/model", 4000, cpu_millicores=1500),
+            devices,
+            reservation_service=fake,
+            session_token="session",
+            task_id="task-1",
+            idempotency_key="idem-1",
+            reservation_secret="s" * 40,
+        )
+        self.assertEqual(decision.status, "reserved")
+        self.assertEqual(decision.device_id, "fallback")
+        self.assertEqual(reservation["fencing_token"], 7)
+        self.assertEqual([call[1] for call in fake.calls], ["best-fit", "fallback"])
+        self.assertEqual(fake.calls[1][3]["cpu_millicores"], 1500)
+
+    def test_reserve_placement_does_not_admit_without_reservation(self):
+        from core.device_resource_reservations import CapacityUnavailable
+
+        class UnavailableReservations:
+            def reserve(self, *args, **kwargs):
+                raise CapacityUnavailable("capacity_changed")
+
+        decision, reservation = self.scheduler.reserve_placement(
+            ModelRequirements("org/model", 1000),
+            [device("node-a")],
+            reservation_service=UnavailableReservations(),
+            session_token="session",
+            task_id="task-2",
+            idempotency_key="idem-2",
+            reservation_secret="s" * 40,
+        )
+        self.assertEqual(decision.status, "unscheduled")
+        self.assertIsNone(decision.device_id)
+        self.assertIsNone(reservation)
+        self.assertEqual(
+            decision.rejected[0]["reason"], "reservation_capacity_unavailable"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
