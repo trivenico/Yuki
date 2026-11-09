@@ -162,9 +162,10 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             membership = root / "cgroup"
             membership.write_text("0::/tenant space/service\n")
             mountinfo = root / "mountinfo"
-            escaped_mount = str(mount).replace(" ", "\\\\040")
+            escaped = chr(92) + "040"
+            escaped_mount = str(mount).replace(" ", escaped)
             mountinfo.write_text(
-                f"36 25 0:32 /tenant\\\\040space {escaped_mount} rw - cgroup2 cgroup rw\n"
+                f"36 25 0:32 /tenant{escaped}space {escaped_mount} rw - cgroup2 cgroup rw\n"
             )
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
