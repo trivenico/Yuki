@@ -59,7 +59,7 @@ class LocalInferenceWorker:
             return WorkerRun(True, job.job_id, "failed", "model_not_allowlisted")
         try:
             if not provider.is_available():
-                self.jobs.complete_job(self.device_token, job.job_id, error_code="model_unavailable")
+                self._complete(job, error_code="model_unavailable")
                 return WorkerRun(True, job.job_id, "failed", "model_unavailable")
             response = provider.generate_chat(
                 messages=[{"role": "user", "content": job.input_text}],
@@ -69,7 +69,7 @@ class LocalInferenceWorker:
                 raise ValueError("invalid_provider_response")
             output = response["text"]
             if len(output.encode("utf-8")) > self.max_output_bytes:
-                self.jobs.complete_job(self.device_token, job.job_id, error_code="output_too_large")
+                self._complete(job, error_code="output_too_large")
                 return WorkerRun(True, job.job_id, "failed", "output_too_large")
             self._complete(job, result_text=output)
             return WorkerRun(True, job.job_id, "succeeded")
