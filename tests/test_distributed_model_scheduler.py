@@ -133,6 +133,9 @@ class DistributedModelSchedulerTests(unittest.TestCase):
         )
         self.assertEqual(result.decision.status, "unscheduled")
         self.assertIsNone(result.reservation)
+        serialized = result.to_dict()
+        self.assertEqual(serialized["reservation"], None)
+        self.assertEqual(serialized["decision"]["status"], "unscheduled")
         self.assertEqual(
             {item["reason"] for item in result.decision.rejected},
             {"reservation_capacity_race"},
