@@ -1,8 +1,10 @@
 """Restricted MCP Streamable HTTP client. No stdio subprocesses or implicit tool trust."""
 from __future__ import annotations
+import http.client
 import ipaddress
 import json
 import socket
+import ssl
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -18,18 +20,60 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection pinned to the IP validated during endpoint setup."""
+
+    def __init__(self, host, *, pinned_ip, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, context=None):
+        super().__init__(host, timeout=timeout, context=context or ssl.create_default_context())
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        raw_socket = socket.create_connection(
+            (self._pinned_ip, self.port),
+            self.timeout,
+            self.source_address,
+        )
+        try:
+            self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+        except BaseException:
+            raw_socket.close()
+            raise
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip):
+        super().__init__(context=ssl.create_default_context())
+        self._pinned_ip = pinned_ip
+
+    def https_open(self, request):
+        return self.do_open(
+            lambda host, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, context=None,
+                   check_hostname=None: _PinnedHTTPSConnection(
+                       host, pinned_ip=self._pinned_ip, timeout=timeout, context=context
+                   ),
+            request,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
+
+
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None, timeout=10):
-        self.endpoint = self._validate_endpoint(endpoint, allowed_hosts)
+        self.endpoint, self._resolved_addresses = self._validate_endpoint(endpoint, allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
         self.timeout = timeout
         self.session_id = None
         self._request_id = 0
-        self._opener = urllib.request.build_opener(_NoRedirect)
+        # Disable environment proxies and pin the TCP destination to an IP
+        # validated here; urllib must not perform a second DNS lookup.
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _NoRedirect,
+            _PinnedHTTPSHandler(self._resolved_addresses[0]),
+        )
 
     @staticmethod
     def _validate_endpoint(endpoint, allowed_hosts):
@@ -48,7 +92,7 @@ class MCPHTTPClient:
                 raise MCPError("Non-public MCP destinations are blocked.")
         except OSError as exc:
             raise MCPError("MCP host could not be resolved.") from exc
-        return endpoint.strip()
+        return endpoint.strip(), tuple(sorted(addresses, key=lambda value: (ipaddress.ip_address(value).version, value)))
 
     def _rpc(self, method, params=None, *, notification=False):
         self._request_id += 1
