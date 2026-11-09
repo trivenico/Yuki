@@ -1,7 +1,7 @@
 """Core agent boundary for Yuki's provider-independent architecture."""
 
 from providers import MockProvider
-from core.token_usage import record_provider_usage
+from core.token_usage import record_provider_usage, provider_call_lock
 
 
 class YukiAgent:
@@ -50,15 +50,16 @@ class YukiAgent:
                 return "Yuki: The AI provider is unavailable."
             # Clear any prior response metadata so an unsupported provider cannot
             # accidentally reuse the previous call's token counts.
-            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-                try:
-                    setattr(self.provider, attribute, None)
-                except Exception:
-                    pass
-            result = self.provider.generate(prompt.strip())
-            if not isinstance(result, str):
-                return "Yuki: The provider returned an unsupported response."
-            self._record_usage(prompt.strip(), result)
-            return result
+            with provider_call_lock(self.provider):
+                for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                    try:
+                        setattr(self.provider, attribute, None)
+                    except Exception:
+                        pass
+                result = self.provider.generate(prompt.strip())
+                if not isinstance(result, str):
+                    return "Yuki: The provider returned an unsupported response."
+                self._record_usage(prompt.strip(), result)
+                return result
         except Exception:
             return "Yuki: The provider encountered an error."
