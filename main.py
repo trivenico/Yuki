@@ -25,7 +25,7 @@ from voice.wakeword import WakeWordDetector, WakeWordError
 from voice.speaker_verification import SpeakerVerifier, SpeakerVerificationError
 from providers.factory import create_provider
 from providers.hybrid import HybridProvider
-from core.token_usage import TokenUsageTracker
+from core.token_usage import create_best_effort_usage_tracker
 from yuki_agent import YukiAgent
 from core.task_agent import ApprovedTaskAgent
 from core.readiness import build_readiness_report
@@ -113,7 +113,9 @@ def main():
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     agent = build_agent(config)
-    usage_tracker = TokenUsageTracker(workspace / "usage", session_id="personal-owner")
+    usage_tracker = create_best_effort_usage_tracker(
+        workspace / "usage", session_id="personal-owner"
+    )
     ai = YukiAgent(create_provider(config), usage_tracker=usage_tracker)
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
     local_workers = build_local_worker_runtime(workspace, ai.provider)
