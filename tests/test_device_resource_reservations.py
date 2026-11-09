@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
 from core.device_resource_reservations import (
     CapacityUnavailable,
     DeviceResourceReservationService,
@@ -57,6 +58,43 @@ class AuthenticatedReservationTests(unittest.TestCase):
             reservation_secret=secret or f"reservation-secret-for-{key}-with-high-entropy",
             **args,
         )
+
+    def test_heartbeat_advances_reservation_watermark_before_capacity_refresh(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token,
+            sequence=2,
+            status="idle",
+            capabilities={"cpu_cores": 2, "ram_total_bytes": 1000,
+                          "ram_available_bytes": 800},
+        )
+        generation = self.service.publish_capacity(
+            self.device.token,
+            memory_bytes=2000,
+            cpu_millicores=2000,
+            gpu_memory_bytes=1000,
+            source_sequence=1,
+        )
+        self.assertEqual(generation, 1)
+        with self.assertRaises(CapacityUnavailable):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "stale-heartbeat",
+                memory_bytes=900, cpu_millicores=100,
+                idempotency_key="stale-heartbeat",
+                reservation_secret="stale-heartbeat-secret-with-enough-entropy",
+            )
+        fresh_generation = self.service.publish_capacity(
+            self.device.token,
+            memory_bytes=900,
+            cpu_millicores=1200,
+            gpu_memory_bytes=400,
+            source_sequence=2,
+        )
+        self.assertEqual(fresh_generation, 2)
 
     def test_capacity_source_sequence_rejects_out_of_order_updates(self):
         first_generation = self.service.publish_capacity(
