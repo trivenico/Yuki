@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import math
 import socket
 import ssl
 import urllib.error
@@ -62,6 +63,19 @@ class MCPHTTPClient:
     PROTOCOL_VERSION = "2025-03-26"
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None, timeout=10):
+        if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0.1 <= timeout <= 60:
+            raise ValueError("MCP timeout must be between 0.1 and 60 seconds.")
+        if not isinstance(allowed_tools, (list, tuple, set, frozenset)):
+            raise ValueError("MCP allowed_tools must be a collection of tool names.")
+        if any(
+            not isinstance(tool, str) or not tool or len(tool) > 128
+            or not tool[0].isalnum()
+            or any(not (char.isalnum() or char in "_.-") for char in tool)
+            for tool in allowed_tools
+        ):
+            raise ValueError("MCP allowed_tools contains an invalid tool name.")
+        if approver is not None and not callable(approver):
+            raise ValueError("MCP approver must be callable.")
         self.endpoint, self._resolved_addresses = self._validate_endpoint(endpoint, allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
@@ -79,10 +93,18 @@ class MCPHTTPClient:
     def _validate_endpoint(endpoint, allowed_hosts):
         if not isinstance(endpoint, str) or len(endpoint) > 2048:
             raise MCPError("MCP endpoint must be a bounded URL.")
-        parts = urlsplit(endpoint.strip())
-        host = (parts.hostname or "").lower().rstrip(".")
-        allowed = frozenset(str(h).lower().rstrip(".") for h in allowed_hosts)
-        if parts.scheme != "https" or not host or parts.username or parts.password or parts.port not in (None, 443):
+        try:
+            parts = urlsplit(endpoint.strip())
+            host = (parts.hostname or "").lower().rstrip(".")
+            port = parts.port
+        except ValueError as exc:
+            raise MCPError("MCP endpoint URL is malformed.") from exc
+        if not isinstance(allowed_hosts, (list, tuple, set, frozenset)) or not allowed_hosts:
+            raise MCPError("MCP hosts must be an explicit collection.")
+        if any(not isinstance(value, str) or not value.strip() for value in allowed_hosts):
+            raise MCPError("MCP host allow-list contains an invalid host.")
+        allowed = frozenset(value.strip().lower().rstrip(".") for value in allowed_hosts)
+        if parts.scheme != "https" or not host or parts.username or parts.password or port not in (None, 443):
             raise MCPError("Only HTTPS MCP endpoints on the default port are accepted.")
         if not allowed or host not in allowed:
             raise MCPError("MCP host is not on the explicit allow-list.")
@@ -90,8 +112,10 @@ class MCPHTTPClient:
             addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
                 raise MCPError("Non-public MCP destinations are blocked.")
-        except OSError as exc:
-            raise MCPError("MCP host could not be resolved.") from exc
+        except MCPError:
+            raise
+        except (OSError, ValueError, IndexError, TypeError) as exc:
+            raise MCPError("MCP host could not be safely resolved.") from exc
         return endpoint.strip(), tuple(sorted(addresses, key=lambda value: (ipaddress.ip_address(value).version, value)))
 
     def _rpc(self, method, params=None, *, notification=False):
