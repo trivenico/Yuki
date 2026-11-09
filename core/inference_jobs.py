@@ -6,7 +6,7 @@ import re, sqlite3, uuid
 from pathlib import Path
 from core.device_pairing import DevicePairingService
 _MODEL=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
-_DEVICE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_DEVICE=re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._:-]{0,127}$")
 def _now(): return datetime.now(timezone.utc)
 def _stamp(v): return v.astimezone(timezone.utc).isoformat()
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class InferenceJobService:
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
  def _connect(self):
-  db=sqlite3.connect(self.database_path,timeout=5); db.row_factory=sqlite3.Row; db.execute("PRAGMA busy_timeout=5000"); return db
+  return _Connection(sqlite3.connect(self.database_path,timeout=5))
  @staticmethod
  def _job(row): return InferenceJob(**dict(row))
  def _device(self,token):
@@ -87,3 +87,16 @@ class InferenceJobService:
   if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
   return [self._job(r) for r in rows]
+
+class _Connection:
+ def __init__(self,connection): self.connection=connection
+ def __enter__(self):
+  self.connection.row_factory=sqlite3.Row
+  self.connection.execute("PRAGMA busy_timeout=5000")
+  return self.connection
+ def __exit__(self,exc_type,exc,tb):
+  try:
+   if exc_type is None: self.connection.commit()
+   else: self.connection.rollback()
+  finally: self.connection.close()
+  return False
