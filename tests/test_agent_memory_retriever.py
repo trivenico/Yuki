@@ -100,6 +100,18 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertEqual(self.index.stats(actor_id="owner")["vector_count"], 0)
 
+    def test_embedding_values_outside_safe_numeric_range_are_rejected(self):
+        for vector in ([1e100, 0.0], [10**1000, 0.0], [1_000_001.0, 0.0]):
+            retriever = AgentMemoryRetriever(
+                self.store, embed=lambda _text, value=vector: value,
+                max_candidates=1,
+            )
+            self.add_memory("A staged deployment uses a gradual rollout.")
+            with self.subTest(vector=repr(vector)[:40]), self.assertRaises(ValueError):
+                retriever.retrieve(
+                    actor_id="owner", agent_id="research", query="deployment query"
+                )
+
     def test_invalid_query_and_minimum_relevance_are_rejected(self):
         with self.assertRaises(ValueError):
             self.retriever.retrieve(actor_id="owner", agent_id="research", query=" ")
