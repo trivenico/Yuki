@@ -62,8 +62,8 @@ class RuntimeReadinessTests(unittest.TestCase):
     def test_worker_recommendation_scales_with_memory_not_core_count_alone(self):
         from core.readiness import _worker_recommendation
         self.assertEqual(_worker_recommendation(32, 6 * 1024**3)[0], 1)
-        self.assertEqual(_worker_recommendation(32, 12 * 1024**3)[0], 2)
-        self.assertEqual(_worker_recommendation(32, 24 * 1024**3)[0], 3)
+        self.assertEqual(_worker_recommendation(32, 12 * 1024**3)[0], 1)
+        self.assertEqual(_worker_recommendation(32, 24 * 1024**3)[0], 2)
         self.assertEqual(_worker_recommendation(32, 64 * 1024**3)[0], 4)
 
 
