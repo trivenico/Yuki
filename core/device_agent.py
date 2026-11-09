@@ -48,14 +48,20 @@ class DeviceAgentService:
         pairing: DevicePairingService,
         *,
         online_window_seconds: int = 90,
+        reservation_service=None,
     ):
         if not isinstance(pairing, DevicePairingService):
             raise TypeError("pairing must be a DevicePairingService")
         if isinstance(online_window_seconds, bool) or not isinstance(online_window_seconds, int) or not 15 <= online_window_seconds <= 3600:
             raise ValueError("online_window_seconds must be between 15 and 3600")
         self.database_path = str(Path(database_path).expanduser())
+        if reservation_service is not None and not callable(
+            getattr(reservation_service, "publish_capacity", None)
+        ):
+            raise TypeError("reservation_service_must_publish_capacity")
         self.pairing = pairing
         self.online_window_seconds = online_window_seconds
+        self.reservation_service = reservation_service
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -79,7 +85,7 @@ class DeviceAgentService:
     def _validate_capabilities(value: Any) -> dict[str, Any]:
         if not isinstance(value, dict) or set(value) - {
             "os", "architecture", "cpu_cores", "ram_total_bytes",
-            "ram_available_bytes", "gpus", "storage_free_bytes",
+            "ram_available_bytes", "cpu_millicores", "gpus", "storage_free_bytes",
         }:
             raise ValueError("invalid_capabilities")
         result: dict[str, Any] = {}
@@ -89,7 +95,7 @@ class DeviceAgentService:
                 if not isinstance(item, str) or not _NAME.fullmatch(item):
                     raise ValueError("invalid_capabilities")
                 result[key] = item
-        for key in ("cpu_cores", "ram_total_bytes", "ram_available_bytes", "storage_free_bytes"):
+        for key in ("cpu_cores", "cpu_millicores", "ram_total_bytes", "ram_available_bytes", "storage_free_bytes"):
             item = value.get(key)
             if item is not None:
                 if type(item) is not int or item < 0 or item > 2**60:
@@ -97,6 +103,8 @@ class DeviceAgentService:
                 result[key] = item
         if ("ram_available_bytes" in result and "ram_total_bytes" in result
                 and result["ram_available_bytes"] > result["ram_total_bytes"]):
+            raise ValueError("invalid_capabilities")
+        if "cpu_millicores" in result and result["cpu_millicores"] > 4_096_000:
             raise ValueError("invalid_capabilities")
         gpus = value.get("gpus", [])
         if not isinstance(gpus, list) or len(gpus) > 8:
@@ -167,6 +175,24 @@ class DeviceAgentService:
                 WHERE device_agent_state.owner_id=excluded.owner_id
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
+        if self.reservation_service is not None:
+            memory_available = safe_capabilities.get("ram_available_bytes")
+            cpu_millicores = safe_capabilities.get("cpu_millicores")
+            if cpu_millicores is None and "cpu_cores" in safe_capabilities:
+                cpu_millicores = safe_capabilities["cpu_cores"] * 1000
+            gpus = safe_capabilities.get("gpus", [])
+            gpu_capacity_known = all("memory_available_bytes" in gpu for gpu in gpus)
+            gpu_memory_available = sum(
+                gpu["memory_available_bytes"] for gpu in gpus
+            ) if gpu_capacity_known else 0
+            # Incomplete reports must not refresh authoritative capacity with guesses.
+            if memory_available is not None and cpu_millicores is not None and gpu_capacity_known:
+                self.reservation_service.publish_capacity(
+                    token,
+                    memory_bytes=memory_available,
+                    cpu_millicores=cpu_millicores,
+                    gpu_memory_bytes=gpu_memory_available,
+                )
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
 
