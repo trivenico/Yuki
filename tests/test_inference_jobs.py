@@ -22,10 +22,6 @@ class JobsTests(unittest.TestCase):
   with self.assertRaises(LookupError): self.jobs.complete_job(self.other.token,j.job_id,result_text="bad")
  def test_cancel(self):
   j=self.create(); self.assertTrue(self.jobs.cancel_job("owner-a",j.job_id)); self.assertFalse(self.jobs.cancel_job("owner-a",j.job_id)); self.assertIsNone(self.jobs.claim_next(self.dev.token))
- def test_expired_lease_requeues(self):
-  j=self.create(); self.jobs.claim_next(self.dev.token)
-  with self.jobs._connect() as db: db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
-  self.assertEqual(self.jobs.claim_next(self.dev.token).job_id,j.job_id)
  def test_expired_lease_is_terminal_and_never_requeued(self):
   j=self.create(); self.jobs.claim_next(self.dev.token)
   with self.jobs._connect() as db:
