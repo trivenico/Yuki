@@ -28,6 +28,25 @@ class MCPNetworkPinningTests(unittest.TestCase):
                     "https://mcp.example.com/mcp", ["mcp.example.com"]
                 )
 
+    def test_client_rejects_unbounded_timeout_and_malformed_allowlists(self):
+        records = [(2, 1, 6, "", ("8.8.8.8", 443))]
+        for timeout in (0, -1, 61, True, float("nan"), float("inf")):
+            with self.subTest(timeout=timeout):
+                with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+                    with self.assertRaisesRegex(ValueError, "timeout"):
+                        MCPHTTPClient(
+                            "https://mcp.example.com/mcp",
+                            allowed_hosts=["mcp.example.com"],
+                            timeout=timeout,
+                        )
+        with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+            with self.assertRaisesRegex(ValueError, "allowed_tools"):
+                MCPHTTPClient(
+                    "https://mcp.example.com/mcp",
+                    allowed_hosts=["mcp.example.com"],
+                    allowed_tools=[{"not": "hashable"}],
+                )
+
     def test_connection_uses_pinned_ip_but_tls_hostname(self):
         raw_socket = MagicMock()
         tls_socket = MagicMock()
