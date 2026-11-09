@@ -62,11 +62,16 @@ class InferenceMetricsTests(unittest.TestCase):
 
     def test_database_rejects_direct_update_and_delete(self):
         self.record()
-        with sqlite3.connect(Path(self.tmp.name) / "metrics.sqlite3") as db:
+        # sqlite3.Connection's context manager commits/rolls back but does not
+        # close the connection. Close explicitly so Windows can remove the DB.
+        db = sqlite3.connect(Path(self.tmp.name) / "metrics.sqlite3")
+        try:
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("UPDATE inference_metrics SET outcome='failed'")
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("DELETE FROM inference_metrics")
+        finally:
+            db.close()
 
     def test_actor_authorization_is_required_for_read_and_write(self):
         denied = InferenceMetricsStore(
