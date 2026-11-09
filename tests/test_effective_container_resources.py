@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from core.device_agent_client import (
-    _effective_cpu_cores,
+    _clamp_cpu_quota,\n    _effective_cpu_cores,
     _effective_linux_memory,
     _linux_cgroup_paths,
 )
@@ -40,6 +40,18 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             )
         self.assertEqual(total, 1024**3)
         self.assertEqual(available, 1024**3 - 256 * 1024**2)
+
+    def test_v2_cpu_quota_caps_affinity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cpu.max").write_text("150000 100000")
+            self.assertEqual(_clamp_cpu_quota(8, paths={"v2": root}), 1)
+
+    def test_unlimited_cpu_quota_preserves_affinity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cpu.max").write_text("max 100000")
+            self.assertEqual(_clamp_cpu_quota(6, paths={"v2": root}), 6)
 
     def test_cgroup_path_resolution_reads_unified_membership(self):
         with tempfile.TemporaryDirectory() as tmp:
