@@ -55,10 +55,11 @@ class DeviceAgentService:
         if isinstance(online_window_seconds, bool) or not isinstance(online_window_seconds, int) or not 15 <= online_window_seconds <= 3600:
             raise ValueError("online_window_seconds must be between 15 and 3600")
         self.database_path = str(Path(database_path).expanduser())
-        if reservation_service is not None and not callable(
-            getattr(reservation_service, "publish_capacity", None)
+        if reservation_service is not None and not all(
+            callable(getattr(reservation_service, method, None))
+            for method in ("publish_capacity", "advance_capacity_sequence")
         ):
-            raise TypeError("reservation_service_must_publish_capacity")
+            raise TypeError("reservation_service_must_support_capacity_publication_and_watermarks")
         self.pairing = pairing
         self.online_window_seconds = online_window_seconds
         self.reservation_service = reservation_service
