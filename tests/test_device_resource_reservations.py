@@ -168,6 +168,15 @@ class DeviceResourceReservationTests(unittest.TestCase):
                 reservation_secret="too-short",
             )
 
+    def test_reservation_transition_rejects_non_ascii_token(self):
+        reservation = self.reserve()
+        with self.assertRaisesRegex(ValueError, "invalid_reservation_token"):
+            self.service.renew(
+                reservation.reservation_id,
+                reservation.token + "é",
+                fencing_token=reservation.fencing_token,
+            )
+
     def test_idempotency_key_cannot_change_request(self):
         self.reserve()
         with self.assertRaises(ReservationConflict):
