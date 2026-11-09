@@ -92,14 +92,8 @@ def _effective_linux_memory(
     return total, available
 
 
-def _effective_cpu_cores() -> int:
-    """Return an integer CPU capacity bounded by affinity and cgroup quota."""
-    try:
-        affinity = len(os.sched_getaffinity(0))
-    except (AttributeError, OSError):
-        affinity = os.cpu_count() or 1
+def _clamp_cpu_quota(affinity: int, *, paths: dict[str, Path]) -> int:
     effective = max(1, affinity)
-    paths = _linux_cgroup_paths() if sys.platform.startswith("linux") else {}
     v2 = paths.get("v2")
     quota_path = v2 / "cpu.max" if v2 else None
     if quota_path:
@@ -119,6 +113,16 @@ def _effective_cpu_cores() -> int:
             if quota and period:
                 effective = min(effective, max(1, quota // period))
     return effective
+
+
+def _effective_cpu_cores() -> int:
+    """Return an integer CPU capacity bounded by affinity and cgroup quota."""
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity = os.cpu_count() or 1
+    paths = _linux_cgroup_paths() if sys.platform.startswith("linux") else {}
+    return _clamp_cpu_quota(affinity, paths=paths)
 
 
 def _memory_bytes() -> tuple[int | None, int | None]:
