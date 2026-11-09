@@ -197,11 +197,14 @@ class AuthenticatedReservationTests(unittest.TestCase):
 
     def test_secrets_are_hashed_not_persisted(self):
         reservation = self.reserve()
-        with sqlite3.connect(self.service.path) as db:
+        db = sqlite3.connect(self.service.path)
+        try:
             stored = db.execute(
                 "SELECT token_hash FROM resource_reservations WHERE reservation_id=?",
                 (reservation.reservation_id,),
             ).fetchone()[0]
+        finally:
+            db.close()
         self.assertNotEqual(stored, reservation.token)
         self.assertEqual(len(stored), 64)
 
