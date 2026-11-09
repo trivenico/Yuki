@@ -141,6 +141,30 @@ class DistributedModelSchedulerTests(unittest.TestCase):
             {"reservation_capacity_race"},
         )
 
+    def test_reserve_plan_validates_credentials_before_reserving(self):
+        class MustNotReserve:
+            def reserve(self, *args, **kwargs):
+                raise AssertionError("reservation must not be attempted")
+
+        common = dict(
+            requirements=ModelRequirements("org/model", 1000),
+            devices=[device("a")],
+            reservation_service=MustNotReserve(),
+            session_token="session",
+            task_id="task-1",
+            idempotency_key="request-1",
+            reservation_secret="high-entropy-reservation-secret-value",
+        )
+        for field, value, error in (
+            ("task_id", "../task", "invalid_task_id"),
+            ("idempotency_key", "bad key", "invalid_idempotency_key"),
+            ("reservation_secret", "x" * 257, "invalid_reservation_secret"),
+        ):
+            args = dict(common)
+            args[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, error):
+                self.scheduler.reserve_plan(**args)
+
     def test_decision_is_plan_only_and_serializable(self):
         result = self.scheduler.plan(
             ModelRequirements("org/model", 1000), [device("a")]
