@@ -221,7 +221,11 @@ class OllamaAgentChatTests(unittest.TestCase):
             {"type": "text_delta", "text": "from Yuki"},
         ])
         self.assertEqual(events[-1]["response"]["text"], "Hello from Yuki")
-        self.assertTrue(json.loads(self.requests[0][0].data)["stream"])
+        stream_payload = json.loads(self.requests[0][0].data)
+        self.assertTrue(stream_payload["stream"])
+        self.assertEqual(stream_payload["options"], {
+            "num_ctx": 2048, "num_predict": 512, "num_batch": 128,
+        })
         self.assertEqual(self.requests[0][0].get_header("Accept"), "application/x-ndjson")
 
     def test_native_ndjson_stream_preserves_final_usage_counts(self):
