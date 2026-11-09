@@ -362,7 +362,7 @@ class OpenAICompatibleProvider:
             except (json.JSONDecodeError, TypeError) as exc:
                 raise RuntimeError("Cloud provider returned malformed streamed tool-call data.") from exc
             if (not isinstance(call_id, str) or not call_id or len(call_id) > 64
-                    or call_id in seen_ids or name not in names or not isinstance(arguments, dict)):
+                    or call_id in seen_ids or not isinstance(name, str)\n                    or name not in names or not isinstance(arguments, dict)):
                 raise RuntimeError("Cloud provider returned an unrecognized streamed tool call.")
             seen_ids.add(call_id)
             normalized_calls.append({"id": call_id, "name": name, "arguments": arguments})
