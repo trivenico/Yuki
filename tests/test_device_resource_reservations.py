@@ -81,6 +81,27 @@ class AuthenticatedReservationTests(unittest.TestCase):
         )
         self.assertEqual(newer_generation, first_generation + 1)
 
+    def test_incomplete_heartbeat_watermark_blocks_delayed_capacity_publish(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        self.service.advance_capacity_sequence(
+            self.device.token, source_sequence=11
+        )
+        stale_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=2000, cpu_millicores=2000,
+            gpu_memory_bytes=1000, source_sequence=10,
+        )
+        self.assertEqual(stale_generation, generation)
+        with self.assertRaises(CapacityUnavailable):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "watermark-check",
+                memory_bytes=950, cpu_millicores=100,
+                idempotency_key="watermark-check",
+                reservation_secret="watermark-check-secret-with-enough-entropy",
+            )
+
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
             self.service.publish_capacity("not-a-device-token", memory_bytes=1, cpu_millicores=1)
