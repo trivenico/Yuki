@@ -231,7 +231,8 @@ class DeviceResourceReservationService:
     def _transition(self, reservation_id: str, token: str, fencing_token: int, *, renew: bool):
         if not isinstance(reservation_id,str) or not re.fullmatch(r"[0-9a-f]{32}",reservation_id):
             raise ValueError("invalid_reservation_id")
-        if not isinstance(token,str) or not 20 <= len(token) <= 256:
+        if (not isinstance(token, str) or not 20 <= len(token) <= 256
+                or not token.isascii()):
             raise ValueError("invalid_reservation_token")
         if type(fencing_token) is not int or fencing_token < 1:
             raise ValueError("invalid_fencing_token")
