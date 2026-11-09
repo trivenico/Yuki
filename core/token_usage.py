@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+from threading import RLock
+from weakref import WeakKeyDictionary
 import threading
 
 
@@ -313,3 +315,31 @@ def record_provider_usage(tracker, provider, prompt, response):
             type(exc).__name__,
         )
         return exc
+
+
+_PROVIDER_LOCKS_GUARD = RLock()
+_PROVIDER_LOCKS = WeakKeyDictionary()
+_UNHASHABLE_PROVIDER_LOCKS = {}
+
+
+def provider_call_lock(provider):
+    """Return a shared per-provider lock for usage metadata and generation.
+
+    Adapters expose usage through mutable last_usage fields. Worker pools may
+    share one adapter across concurrent tasks, so generation and metadata
+    capture must be one critical section to prevent cross-request attribution.
+    """
+    with _PROVIDER_LOCKS_GUARD:
+        try:
+            lock = _PROVIDER_LOCKS.get(provider)
+            if lock is None:
+                lock = RLock()
+                _PROVIDER_LOCKS[provider] = lock
+            return lock
+        except (TypeError, AttributeError):
+            key = id(provider)
+            entry = _UNHASHABLE_PROVIDER_LOCKS.get(key)
+            if entry is None or entry[0] is not provider:
+                entry = (provider, RLock())
+                _UNHASHABLE_PROVIDER_LOCKS[key] = entry
+            return entry[1]
