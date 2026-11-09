@@ -1,13 +1,15 @@
-import tempfile, unittest
+import tempfile, unittest, time
 from pathlib import Path
+from threading import Event
+from dataclasses import replace
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
 from providers.ollama import OllamaProvider
 from automation.local_inference_worker import LocalInferenceWorker
 
 class FakeOllamaProvider(OllamaProvider):
- def __init__(self):
-  super().__init__(model="test-model",timeout=45)
+ def __init__(self, timeout=45):
+  super().__init__(model="test-model",timeout=timeout)
   self.available=True; self.response={"text":"local answer"}; self.error=None; self.calls=[]
  def is_available(self): return self.available
  def generate_chat(self,**kwargs):
@@ -45,13 +47,12 @@ class LocalWorkerTests(unittest.TestCase):
   self.provider.response={"text":"too long"}
   self.assertEqual(worker.run_once().error_code,"output_too_large")
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"failed")
- def test_lease_must_outlast_provider_timeout(self):
+ def test_long_provider_timeout_is_supported_by_lease_renewal(self):
   class SlowProvider(FakeOllamaProvider):
-   def __init__(self): super().__init__(); self.timeout=120
-  with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
-   LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+   def __init__(self): super().__init__(timeout=120)
+  worker=LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+  self.assertIsInstance(worker,LocalInferenceWorker)
  def test_stale_claim_token_cannot_complete_job(self):
-  from dataclasses import replace
   job=self.submit()
   class StaleClaimService:
    lease_seconds=self.jobs.lease_seconds
@@ -60,9 +61,72 @@ class LocalWorkerTests(unittest.TestCase):
     return replace(claimed,claim_token="z"*32) if claimed else None
    def complete_job(inner,*args,**kwargs):
     return self.jobs.complete_job(*args,**kwargs)
+   def renew_job_lease(inner,*args,**kwargs):
+    return self.jobs.renew_job_lease(*args,**kwargs)
   worker=LocalInferenceWorker(StaleClaimService(),self.device.token,{"local/model":self.provider})
   result=worker.run_once()
   self.assertEqual(result.status,"failed")
+  self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
+  self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
+
+ def test_long_inference_renews_claim(self):
+  root=Path(self.tmp.name)
+  pair=DevicePairingService(root/"pair-long.sqlite")
+  challenge=pair.create_pairing_challenge("owner")
+  device=pair.pair_device(challenge.code,"long-worker")
+  jobs=InferenceJobService(root/"jobs-long.sqlite",pair,lease_seconds=15)
+  jobs.create_job("owner",model_id="local/model",device_id=device.device.device_id,input_text="hello")
+  entered=Event()
+  class SlowProvider(FakeOllamaProvider):
+   def __init__(self): super().__init__(timeout=1)
+   def generate_chat(self,**kwargs):
+    entered.set()
+    time.sleep(5.5)
+    return {"text":"renewed answer"}
+  provider=SlowProvider()
+  worker=LocalInferenceWorker(jobs,device.token,{"local/model":provider})
+  result=worker.run_once()
+  self.assertTrue(entered.is_set())
+  self.assertEqual(result.status,"succeeded")
+  self.assertEqual(jobs.list_jobs("owner")[0].result_text,"renewed answer")
+
+ def test_lost_lease_prevents_result_commit(self):
+  job=self.submit()
+  class StaleClaimService:
+   lease_seconds=self.jobs.lease_seconds
+   def claim_next(inner, token):
+    claimed=self.jobs.claim_next(token)
+    return replace(claimed,claim_token="z"*32) if claimed else None
+   def complete_job(inner,*args,**kwargs):
+    return self.jobs.complete_job(*args,**kwargs)
+   def renew_job_lease(inner,*args,**kwargs):
+    return self.jobs.renew_job_lease(*args,**kwargs)
+  class SlowProvider(FakeOllamaProvider):
+   def generate_chat(inner,**kwargs):
+    time.sleep(10.5)
+    return {"text":"must not commit"}
+  worker=LocalInferenceWorker(StaleClaimService(),self.device.token,{"local/model":SlowProvider()})
+  worker._renew_interval=1.0
+  result=worker.run_once()
+  self.assertEqual(result.error_code,"lease_lost")
+  self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
+  self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
+
+ def test_unconfirmed_lease_renewal_prevents_result_commit(self):
+  job=self.submit()
+  class UnconfirmedRenewalService:
+   lease_seconds=self.jobs.lease_seconds
+   def claim_next(inner, token): return self.jobs.claim_next(token)
+   def complete_job(inner,*args,**kwargs): return self.jobs.complete_job(*args,**kwargs)
+   def renew_job_lease(inner,*args,**kwargs): return None
+  class SlowProvider(FakeOllamaProvider):
+   def generate_chat(inner,**kwargs):
+    time.sleep(1.2)
+    return {"text":"must not commit"}
+  worker=LocalInferenceWorker(UnconfirmedRenewalService(),self.device.token,{"local/model":SlowProvider()})
+  worker._renew_interval=1.0
+  result=worker.run_once()
+  self.assertEqual(result.error_code,"lease_lost")
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
   self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
 
