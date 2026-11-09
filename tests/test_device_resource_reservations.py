@@ -301,6 +301,33 @@ class AuthenticatedReservationTests(unittest.TestCase):
         with self.assertRaises(ReservationConflict):
             self.reserve(memory_bytes=401)
 
+    def test_expiry_recovery_marks_only_bounded_expired_batch(self):
+        first = self.reserve(task="expiry-a", key="expiry-a")
+        second = self.reserve(task="expiry-b", key="expiry-b")
+        self.clock.advance(31)
+        self.assertEqual(self.service.expire_stale_reservations(limit=1), 1)
+        db = sqlite3.connect(self.service.path)
+        try:
+            statuses = dict(db.execute(
+                "SELECT reservation_id,status FROM resource_reservations"
+            ).fetchall())
+        finally:
+            db.close()
+        self.assertEqual(statuses[first.reservation_id], "expired")
+        self.assertEqual(statuses[second.reservation_id], "active")
+        self.assertEqual(self.service.expire_stale_reservations(limit=10), 1)
+        self.assertEqual(self.service.expire_stale_reservations(limit=10), 0)
+        with self.assertRaises(StaleReservation):
+            self.service.renew(first.reservation_id, first.token,
+                               fencing_token=first.fencing_token)
+
+    def test_expiry_recovery_rejects_unbounded_or_invalid_batches(self):
+        for limit in (0, -1, 10_001, True, 1.5):
+            with self.subTest(limit=limit), self.assertRaisesRegex(
+                ValueError, "invalid_expiry_batch_limit"
+            ):
+                self.service.expire_stale_reservations(limit=limit)
+
     def test_expired_reservation_is_not_resurrected(self):
         first = self.reserve()
         self.clock.advance(31)
