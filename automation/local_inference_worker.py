@@ -7,7 +7,6 @@ configured allowlist; jobs cannot choose arbitrary endpoints or tools.
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Any
-from core.inference_jobs import InferenceJobService
 from providers.ollama import OllamaProvider
 
 @dataclass(frozen=True)
@@ -18,10 +17,12 @@ class WorkerRun:
     error_code: str | None = None
 
 class LocalInferenceWorker:
-    def __init__(self, jobs: InferenceJobService, device_token: str,
+    def __init__(self, jobs: Any, device_token: str,
                  providers: Mapping[str, OllamaProvider], *, max_output_bytes: int = 200_000):
-        if not isinstance(jobs, InferenceJobService):
-            raise TypeError("jobs must be an InferenceJobService")
+        if not callable(getattr(jobs, "claim_next", None)) or not callable(getattr(jobs, "complete_job", None)):
+            raise TypeError("jobs must provide claim_next and complete_job")
+        if type(getattr(jobs, "lease_seconds", None)) is not int:
+            raise TypeError("jobs must expose an integer lease_seconds")
         if not isinstance(device_token, str) or not 20 <= len(device_token) <= 256:
             raise ValueError("invalid_device_credential")
         if not isinstance(providers, Mapping) or not providers or len(providers) > 32:
@@ -43,9 +44,11 @@ class LocalInferenceWorker:
         self.providers, self.max_output_bytes = normalized, max_output_bytes
 
     def _complete(self, job, **result):
+        """Complete only with the credential returned by this exact claim."""
         return self.jobs.complete_job(
             self.device_token, job.job_id,
-            claim_generation=job.claim_generation, claim_token=job.claim_token,
+            claim_generation=job.claim_generation,
+            claim_token=job.claim_token,
             **result,
         )
 
