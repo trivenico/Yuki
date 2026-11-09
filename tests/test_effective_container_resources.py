@@ -94,6 +94,22 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             (root / "cpu.max").write_text("150000 100000")
             self.assertEqual(_effective_cpu_millicores(affinity=8, paths={"v2": root}), 1500)
 
+    def test_mountinfo_path_uses_posix_hierarchy_on_macos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mount = root / "cgroup2"
+            mount.mkdir()
+            membership = root / "cgroup"
+            membership.write_text("0::/tenant/user.slice/yuki.scope\\n")
+            mountinfo = root / "mountinfo"
+            mountinfo.write_text(
+                f"36 25 0:32 /tenant {mount} rw,nosuid - cgroup2 cgroup rw\\n"
+            )
+            paths = _linux_cgroup_paths(
+                proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
+            )
+        self.assertEqual(paths["v2"], mount / "user.slice/yuki.scope")
+
     def test_mountinfo_resolves_non_root_cgroup2_mount(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
