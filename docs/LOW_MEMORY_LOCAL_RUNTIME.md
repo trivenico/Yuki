@@ -55,7 +55,7 @@ On a 4 GB machine, a browser UI plus a local model may still be too tight; use a
 ## Yuki-side operating practices
 
 - Keep the default `LocalHashingEmbedder` for low-memory installations. The optional Hugging Face embedder loads a transformer into the Yuki process and can materially increase RAM use.
-- Keep specialist concurrency at one on machines below 8 GiB. Yuki's current hardware profile already recommends one worker below 8 GiB and caps local worker concurrency conservatively.
+- Keep specialist concurrency at one on machines below 8 GiB. Yuki's hardware profile uses currently available RAM (including Linux cgroup limits where present), not just installed RAM, to recommend a conservative worker count. The specialist worker pool now uses that recommendation automatically when no explicit worker count is supplied. An explicit `max_workers` remains an operator override.
 - Avoid running multiple Ollama models or multiple Yuki instances on the same laptop.
 - Keep the model store on SSD where possible; do not assume disk paging will provide interactive speed.
 - Keep context short by summarizing older conversation history and retrieving only relevant approved memories. Persistent memory storage is not a substitute for a bounded model context.
@@ -72,7 +72,7 @@ python scripts/models.py --json
 python scripts/local_alpha_check.py
 ```
 
-The inventory is read-only and estimates model weight memory heuristically. It does not prove that a model fits or benchmark inference.
+The inventory is read-only and reports physical RAM separately from currently available RAM. On Linux it also respects cgroup memory limits. Worker recommendations use available RAM, but they remain conservative heuristics; they do not prove that a model fits or benchmark inference.
 
 For a valid comparison, record at least:
 
