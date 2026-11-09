@@ -40,6 +40,8 @@ class YukiAgentUsageTests(unittest.TestCase):
         self.assertEqual(len(tracker.events), 1)
         self.assertEqual(tracker.events[0]["input_tokens"], 12)
         self.assertFalse(tracker.events[0]["estimated"])
+        self.assertEqual(tracker.events[0]["provider"], "fakeprovider")
+        self.assertEqual(tracker.events[0]["model"], "fake-model")
 
     def test_records_estimated_usage_when_provider_has_no_metadata(self):
         tracker = FakeUsageTracker()
