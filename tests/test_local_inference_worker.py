@@ -11,8 +11,9 @@ class LocalWorkerTests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup); root=Path(self.tmp.name)
   pair=DevicePairingService(root/"pair.sqlite"); c=pair.create_pairing_challenge("owner"); self.device=pair.pair_device(c.code,"worker")
   self.jobs=InferenceJobService(root/"jobs.sqlite",pair)
-  self.provider=Mock(spec=OllamaProvider); self.provider.timeout=45; self.provider.is_available.return_value=True
-  self.provider.generate_chat.return_value={"text":"local answer"}
+  self.provider=OllamaProvider(model="local/model", timeout=45)
+  self.provider.is_available=Mock(return_value=True)
+  self.provider.generate_chat=Mock(return_value={"text":"local answer"})
   self.worker=LocalInferenceWorker(self.jobs,self.device.token,{"local/model":self.provider})
  def submit(self,model="local/model",text="hello"):
   return self.jobs.create_job("owner",model_id=model,device_id=self.device.device.device_id,input_text=text)
