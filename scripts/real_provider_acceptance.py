@@ -86,17 +86,12 @@ async def _asgi_request(runtime, method, path, payload=None, *, token):
 
 def _build_runtime(config, provider):
     import scripts.run_web as run_web
-    # Keep the production composition root and provider adapter/manager; inject
-    # only the already-validated provider and isolated workspace configuration.
-    previous_loader = run_web.load_config
-    previous_factory = run_web.create_provider
-    try:
-        run_web.load_config = lambda: dict(config)
-        run_web.create_provider = lambda _config: provider
-        return run_web.create_app()
-    finally:
-        run_web.load_config = previous_loader
-        run_web.create_provider = previous_factory
+    # Exercise the production composition root while injecting only isolated
+    # configuration and the already-validated provider instance.
+    return run_web.create_app(
+        config_loader=lambda: dict(config),
+        provider_factory=lambda _config: provider,
+    )
 
 
 def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, runtime_factory=None):
