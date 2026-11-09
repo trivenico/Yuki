@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import re
 import secrets
 import sqlite3
@@ -147,7 +148,7 @@ class DeviceResourceReservationService:
 
     def reserve(self, owner_id: str, device_id: str, task_id: str, *,
                 memory_bytes: int, cpu_millicores: int, gpu_memory_bytes: int = 0,
-                idempotency_key: str) -> ResourceReservation:
+                idempotency_key: str, reservation_secret: str) -> ResourceReservation:
         owner_id = self._id(owner_id, "owner_id")
         device_id = self._id(device_id, "device_id")
         task_id = self._id(task_id, "task_id")
@@ -158,11 +159,16 @@ class DeviceResourceReservationService:
             if not _amount(value):
                 raise ValueError("invalid_" + name)
         requested = (memory_bytes,cpu_millicores,gpu_memory_bytes)
+        if (not isinstance(reservation_secret, str)
+                or len(reservation_secret) < 32
+                or len(reservation_secret) > 256
+                or not reservation_secret.isascii()):
+            raise ValueError("invalid_reservation_secret")
         now_dt = self.clock()
         now_s = _stamp(now_dt)
         now_dt = now_dt.astimezone(timezone.utc)
         expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
-        token = secrets.token_urlsafe(32)
+        token = reservation_secret
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -177,7 +183,16 @@ class DeviceResourceReservationService:
                         device_id,task_id,*requested)
                 if not same:
                     raise ReservationConflict("idempotency_key_reused")
-                raise ReservationConflict("reservation_already_exists; original token is not recoverable")
+                if not hmac.compare_digest(old["token_hash"], token_hash):
+                    raise ReservationConflict("reservation_secret_mismatch")
+                if old["status"] != "active" or old["expires_at"] <= now_s:
+                    raise StaleReservation("idempotent_reservation_is_no_longer_active")
+                return ResourceReservation(
+                    old["reservation_id"], old["owner_id"], old["device_id"],
+                    old["task_id"], old["memory_bytes"], old["cpu_millicores"],
+                    old["gpu_memory_bytes"], old["fencing_token"], old["expires_at"],
+                    old["status"], token,
+                )
             cap = db.execute("SELECT * FROM resource_capacity WHERE owner_id=? AND device_id=?",
                              (owner_id,device_id)).fetchone()
             if cap is None:
