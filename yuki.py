@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from yuki_agent import YukiAgent
-from core.token_usage import TokenUsageTracker
+from core.token_usage import create_best_effort_usage_tracker
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -414,7 +414,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 def main():
     providers = ProviderManager()
-    usage_tracker = TokenUsageTracker(_USAGE_DB, session_id="personal-owner")
+    usage_tracker = create_best_effort_usage_tracker(_USAGE_DB, session_id="personal-owner")
     agent = YukiAgent(provider=providers.create_selected_adapter(), usage_tracker=usage_tracker)
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
