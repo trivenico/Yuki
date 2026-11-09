@@ -17,6 +17,9 @@ The first pass reviewed the project layout, dependency manifests, CI workflows, 
 7. **Acceptance ASGI requests used an incomplete scope and assumed a single response-body event.** The helper now supplies a complete HTTP ASGI scope, includes content length, collects bounded response-body chunks, and validates JSON object responses. Both requests run on one event loop, matching normal ASGI server lifecycle more closely.
 8. **Environment example contained a duplicate setting.** Removed the repeated `YUKI_SANDBOX_ENABLED` line.
 
+9. **MCP DNS rebinding / proxy bypass risk.** Endpoint validation previously resolved and checked the host, then delegated the connection to urllib, which could resolve the name again or honour an ambient HTTPS proxy. The client now pins the TCP destination to a validated public IP, preserves the original hostname for TLS certificate verification/SNI, and disables environment proxy discovery. Unit tests cover mixed public/private DNS answers, IP pinning, and proxy bypass resistance.
+10. **Verification process-tree leakage.** Local command timeout/output-cap handling previously killed only the direct child, potentially leaving descendants alive. Local verification now starts a dedicated process group/session and terminates the group on timeout/output overflow. Docker verification now assigns a unique container name and explicitly removes the daemon-side container on timeout/output overflow; killing the Docker CLI alone was not sufficient.
+
 ## Architecture and release observations
 
 - The repository has no standard `pyproject.toml` or equivalent project-level lint/type-check configuration. Current core CI compiles Python and runs unittest on Python 3.11 across Ubuntu, Windows, and macOS; this is valuable but does not replace linting, type checking, coverage policy, or multi-version compatibility testing.
@@ -32,8 +35,8 @@ A change is considered verified only when the corresponding regression test and 
 
 ## Remaining audit queue
 
-1. Review MCP DNS pinning and outbound network policy; add adversarial DNS/redirect tests.
-2. Audit subprocess output bounds, timeouts, cancellation, and cleanup in Docker/local verification and security tooling.
+1. Continue reviewing MCP outbound policy and adversarial DNS/redirect/TLS edge cases.
+2. Extend process-tree cleanup review to all subprocess launchers and verify Windows Job Object semantics.
 3. Audit every SQLite store for transaction ownership, connection closure, migration atomicity, and multi-process contention.
 4. Audit authentication throttling, session lifecycle, public signup policy, and deployment trust-proxy assumptions.
 5. Review provider response limits, retry/backoff, timeout propagation, cancellation, token accounting, and model capability declarations.
