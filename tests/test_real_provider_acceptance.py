@@ -145,6 +145,33 @@ class RealProviderAcceptanceTests(unittest.TestCase):
                 runtime_factory=failed_factory,
             )
 
+    def test_nonconforming_provider_answer_fails_and_closes_runtime(self):
+        runtimes = []
+
+        def factory(config, provider):
+            runtime = _Runtime()
+            async def web(scope, receive, send):
+                await receive()
+                if scope["path"] == "/v1/conversations":
+                    status, body = 201, b'{"conversation_id":"conversation-acceptance"}'
+                else:
+                    status = 200
+                    body = b'{"status":"completed","answer":"plausible but incorrect"}'
+                await send({"type": "http.response.start", "status": status})
+                await send({"type": "http.response.body", "body": body})
+            runtime.web = web
+            runtimes.append(runtime)
+            return runtime
+
+        with self.assertRaisesRegex(RuntimeError, "exact-response"):
+            MODULE.run_acceptance(
+                environ={"YUKI_RUN_REAL_PROVIDER_ACCEPTANCE": "1"},
+                config_loader=lambda: {"provider": "ollama"},
+                provider_factory=lambda config: _Provider(),
+                runtime_factory=factory,
+            )
+        self.assertTrue(runtimes[0].closed)
+
     def test_runtime_is_closed_even_when_request_fails(self):
         runtimes = []
         def factory(config, provider):
