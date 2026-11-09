@@ -148,6 +148,17 @@ class DeviceAgentService:
         if status not in _STATUSES:
             raise ValueError("invalid_status")
         safe_capabilities = self._validate_capabilities(capabilities)
+        # Reject already-stale replays before touching the separate reservation
+        # database. The final transactional check below remains authoritative and
+        # closes the race with concurrent heartbeat submissions.
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT sequence FROM device_agent_state WHERE device_id=? AND owner_id=?",
+                (device.device_id, device.owner_id),
+            ).fetchone()
+        if row is not None and sequence <= row["sequence"]:
+            raise ValueError("stale_heartbeat")
+
         # Advance the reservation watermark before accepting this heartbeat. If the
         # heartbeat write subsequently fails, capacity remains conservatively blocked
         # until a matching fresh snapshot is published.
