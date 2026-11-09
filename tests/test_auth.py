@@ -1,4 +1,5 @@
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,23 @@ class BuiltInAuthServiceTests(unittest.TestCase):
                 self.auth.authenticate("alice.user", "wrong password")
         with self.assertRaises(AuthenticationError):
             self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+
+    def test_concurrent_failed_logins_cannot_bypass_lockout_counter(self):
+        password = "A sufficiently long password 3!"
+        self.auth.create_account("alice.user", password)
+
+        def fail_login(_):
+            try:
+                self.auth.authenticate("alice.user", "wrong password")
+            except AuthenticationError:
+                return "rejected"
+            return "unexpected_success"
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            results = list(executor.map(fail_login, range(3)))
+        self.assertEqual(results, ["rejected", "rejected", "rejected"])
+        with self.assertRaises(AuthenticationError):
+            self.auth.authenticate("alice.user", password)
 
     def test_disabled_account_sessions_are_rejected(self):
         user = self.auth.create_account("alice.user", "A sufficiently long password 3!")
