@@ -49,12 +49,14 @@ class YukiAgent:
                 output_tokens = (len(response) + 3) // 4
                 estimated = True
             self.usage_tracker.record(
-                provider=str(getattr(
-                    self.provider, "last_usage_provider", self.provider.__class__.__name__.lower()
-                )),
-                model=str(getattr(
-                    self.provider, "last_usage_model", getattr(self.provider, "model", "")
-                )),
+                provider=str(
+                    getattr(self.provider, "last_usage_provider", None)
+                    or self.provider.__class__.__name__.lower()
+                ),
+                model=str(
+                    getattr(self.provider, "last_usage_model", None)
+                    or getattr(self.provider, "model", "")
+                ),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 estimated=estimated,
