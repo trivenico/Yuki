@@ -146,7 +146,7 @@ class OllamaProvider:
                 name, arguments = function["name"], function["arguments"]
             except (TypeError, KeyError) as exc:
                 raise RuntimeError("Ollama returned malformed tool-call data.") from exc
-            if name not in names:
+            if not isinstance(name, str) or name not in names:
                 raise RuntimeError("Ollama returned an unrecognized tool name.")
             if not isinstance(arguments, dict):
                 raise RuntimeError("Ollama returned malformed tool arguments.")
