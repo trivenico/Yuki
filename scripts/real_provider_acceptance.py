@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 PROMPT = "Reply with exactly: Yuki local provider acceptance passed."
 EXPECTED_RESPONSE = "Yuki local provider acceptance passed."
 MAX_RESPONSE_CHARS = 4_000
-SUPPORTED_PROVIDERS = {"openai", "ollama", "gemini", "hybrid"}
+SUPPORTED_PROVIDERS = {"openai", "ollama"}
 
 
 async def _asgi_request(runtime, method, path, payload=None, *, token):
