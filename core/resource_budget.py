@@ -7,12 +7,70 @@ caller; absent telemetry is treated as unknown, never as unlimited capacity.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+import os
+from pathlib import Path
 
 from providers.ollama_model_inventory import InstalledModel, estimate_requirements
 
 _GIB = 1024 ** 3
 _MAX_MEMORY = 2 ** 60
+
+
+def _parse_meminfo(text: str) -> tuple[int, int]:
+    """Parse Linux MemTotal/MemAvailable values (kB) without trusting extras."""
+    if not isinstance(text, str) or len(text) > 100_000:
+        raise ValueError("invalid_meminfo")
+    values = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[0] in {"MemTotal:", "MemAvailable:"} and parts[2] == "kB":
+            try:
+                value = int(parts[1])
+            except ValueError:
+                continue
+            if value > 0:
+                values[parts[0]] = value * 1024
+    if "MemTotal:" not in values or "MemAvailable:" not in values:
+        raise ValueError("host_memory_telemetry_unavailable")
+    return values["MemTotal:"], values["MemAvailable:"]
+
+
+def detect_host_memory() -> dict:
+    """Return conservative host memory telemetry using OS-provided counters.
+
+    Linux cgroup v2 limits are applied to the physical MemAvailable value.
+    On other POSIX platforms, available pages are used as a conservative lower
+    bound. No subprocesses, network requests, or optional packages are needed.
+    """
+    if os.name == "posix" and Path("/proc/meminfo").is_file():
+        total, available = _parse_meminfo(Path("/proc/meminfo").read_text(encoding="ascii"))
+        source = "linux_proc_meminfo"
+        try:
+            limit_text = Path("/sys/fs/cgroup/memory.max").read_text(encoding="ascii").strip()
+            current_text = Path("/sys/fs/cgroup/memory.current").read_text(encoding="ascii").strip()
+            if limit_text != "max":
+                limit, current = int(limit_text), int(current_text)
+                if 0 < limit <= _MAX_MEMORY and 0 <= current <= _MAX_MEMORY:
+                    total = min(total, limit)
+                    available = min(available, max(0, limit - current))
+                    source = "linux_proc_meminfo_cgroup_v2"
+        except (OSError, ValueError):
+            pass
+        return {"total_memory_bytes": total, "available_memory_bytes": min(total, available), "source": source}
+
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        total_pages = int(os.sysconf("SC_PHYS_PAGES"))
+        available_pages = int(os.sysconf("SC_AVPHYS_PAGES"))
+        if page_size > 0 and total_pages > 0 and 0 <= available_pages <= total_pages:
+            return {
+                "total_memory_bytes": page_size * total_pages,
+                "available_memory_bytes": page_size * available_pages,
+                "source": "os_sysconf_conservative_available_pages",
+            }
+    except (AttributeError, OSError, ValueError):
+        pass
+    raise RuntimeError("host_memory_telemetry_unavailable")
 
 
 def _memory_bytes(value: int, field: str, *, allow_zero: bool = False) -> int:
