@@ -85,6 +85,12 @@ class DeviceAgentService:
                     cpu_millicores INTEGER NOT NULL, gpu_memory_bytes INTEGER NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS device_capacity_watermark_outbox (
+                    device_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL
+                )
+            """)
 
     def _connect(self):
         return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
@@ -186,12 +192,23 @@ class DeviceAgentService:
                         cpu_millicores=excluded.cpu_millicores,
                         gpu_memory_bytes=excluded.gpu_memory_bytes
                 """, (device.device_id, device.owner_id, sequence, *capacity))
+                db.execute(
+                    "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
+                    (device.device_id, device.owner_id),
+                )
             else:
-                # A newer incomplete heartbeat invalidates any older pending snapshot.
+                # A newer incomplete heartbeat invalidates older pending capacity
+                # and durably queues its sequence watermark in this same transaction.
                 db.execute(
                     "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
                     (device.device_id, device.owner_id),
                 )
+                db.execute("""
+                    INSERT INTO device_capacity_watermark_outbox(device_id,owner_id,sequence)
+                    VALUES(?,?,?)
+                    ON CONFLICT(device_id) DO UPDATE SET
+                        owner_id=excluded.owner_id, sequence=excluded.sequence
+                """, (device.device_id, device.owner_id, sequence))
             db.execute("""
                 INSERT INTO device_agent_state(
                     device_id,owner_id,status,sequence,reported_at,last_seen_at,capabilities_json
@@ -205,13 +222,9 @@ class DeviceAgentService:
                 WHERE device_agent_state.owner_id=excluded.owner_id
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
-            if capacity is None and self.reservation_service is not None:
-                # Advance the ledger watermark before committing local heartbeat state.
-                # If this fails, roll back the heartbeat rather than accept stale capacity.
-                self.reservation_service.advance_capacity_sequence(
-                    token, source_sequence=sequence
-                )
-        if self.reservation_service is not None and capacity is not None:
+        if self.reservation_service is not None:
+            # Capacity publications and incomplete-report watermarks are both
+            # delivered after the local heartbeat/outbox transaction commits.
             self.retry_pending_capacity(token)
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
@@ -242,12 +255,30 @@ class DeviceAgentService:
         if device is None:
             raise PermissionError("invalid_device_credential")
         with self._connect() as db:
-            row = db.execute("""
+            capacity_row = db.execute("""
                 SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
                 FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
             """, (device.device_id, device.owner_id)).fetchone()
-        if row is None:
+            watermark_row = db.execute("""
+                SELECT sequence FROM device_capacity_watermark_outbox
+                WHERE device_id=? AND owner_id=?
+            """, (device.device_id, device.owner_id)).fetchone()
+        if capacity_row is None and watermark_row is None:
             return False
+        if watermark_row is not None and (
+            capacity_row is None or watermark_row["sequence"] >= capacity_row["sequence"]
+        ):
+            sequence = watermark_row["sequence"]
+            self.reservation_service.advance_capacity_sequence(
+                token, source_sequence=sequence
+            )
+            with self._connect() as db:
+                db.execute("""
+                    DELETE FROM device_capacity_watermark_outbox
+                    WHERE device_id=? AND owner_id=? AND sequence=?
+                """, (device.device_id, device.owner_id, sequence))
+            return True
+        row = capacity_row
         self.reservation_service.publish_capacity(
             token, memory_bytes=row["memory_bytes"],
             cpu_millicores=row["cpu_millicores"],
