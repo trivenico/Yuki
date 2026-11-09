@@ -39,8 +39,6 @@ class LocalInferenceWorker:
                 raise ValueError("invalid_model_allowlist_entry")
             if not isinstance(provider, OllamaProvider):
                 raise TypeError("each provider must be an OllamaProvider")
-            if jobs.lease_seconds <= provider.timeout + 2:
-                raise ValueError("job lease must exceed Ollama timeout by at least 2 seconds")
             normalized[model_id] = provider
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= 256_000:
             raise ValueError("invalid_max_output_bytes")
@@ -99,9 +97,7 @@ class LocalInferenceWorker:
             provider_error = exc
         finally:
             stop.set()
-            renewal_thread.join(timeout=6.0)
-            if renewal_thread.is_alive():
-                lost.set()
+            renewal_thread.join()
 
         if lost.is_set():
             raise _LeaseLost()
