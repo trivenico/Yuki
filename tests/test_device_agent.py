@@ -193,6 +193,33 @@ class DeviceAgentServiceTests(unittest.TestCase):
         })
         self.assertFalse(agent.retry_pending_capacity(self.credential.token))
 
+    def test_incomplete_heartbeat_watermark_is_durable_and_retryable(self):
+        class Reservations:
+            def __init__(self):
+                self.fail = True
+                self.watermarks = []
+            def publish_capacity(self, token, **capacity):
+                pass
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                if self.fail:
+                    raise RuntimeError("temporary watermark outage")
+                self.watermarks.append(source_sequence)
+        reservations = Reservations()
+        agent = DeviceAgentService(
+            Path(self.temp.name) / "agent-watermark-outbox.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        with self.assertRaisesRegex(RuntimeError, "temporary watermark outage"):
+            agent.heartbeat(
+                self.credential.token, sequence=7, status="degraded",
+                capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+            )
+        self.assertEqual(agent.list_devices("owner-a")[0].sequence, 7)
+        reservations.fail = False
+        self.assertTrue(agent.retry_pending_capacity(self.credential.token))
+        self.assertEqual(reservations.watermarks, [7])
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
+
     def test_serialized_report_has_only_declared_fields(self):
         result = heartbeat_to_dict(self.heartbeat())
         self.assertEqual(set(result), {
