@@ -85,7 +85,9 @@ def _effective_linux_memory(
         usage = _read_cgroup_int(memory / "memory.usage_in_bytes") if memory else None
     if limit is not None:
         total = min(total, limit) if total is not None else limit
-        remaining = max(0, limit - (usage or 0))
+        # Unknown usage must not be treated as zero: fail closed for
+        # schedulers rather than advertising the entire cgroup limit as free.
+        remaining = max(0, limit - usage) if usage is not None else 0
         available = min(available, remaining) if available is not None else remaining
     if total is not None and available is not None:
         available = min(available, total)
