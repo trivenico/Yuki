@@ -42,6 +42,8 @@ class WakeWordDetector:
             raise WakeWordError("Load the enabled detector before listening.")
         if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 20:
             raise ValueError("Listen interval must be 1-20 seconds.")
+        if type(sample_rate) is not int or sample_rate not in {16000, 22050, 44100}:
+            raise ValueError("Unsupported sample rate.")
         try:
             import numpy as np
             import sounddevice as sd
