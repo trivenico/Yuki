@@ -47,6 +47,54 @@ class OpenAIModelConfigurationTests(unittest.TestCase):
         config = self._load("provider: openai\nworkspace: $WORKSPACE\n")
         self.assertEqual(config["openai_model"], "gpt-4.1-mini")
 
+    def test_ollama_memory_settings_are_loaded_and_passed_to_provider(self):
+        config = self._load(
+            "provider: ollama\nollama_model: tiny-model\n"
+            "ollama_num_ctx: 1024\nollama_num_predict: 128\n"
+            "ollama_num_batch: 64\nollama_num_thread: 2\n"
+            "workspace: $WORKSPACE\n"
+        )
+        self.assertEqual(
+            (config["ollama_num_ctx"], config["ollama_num_predict"],
+             config["ollama_num_batch"], config["ollama_num_thread"]),
+            (1024, 128, 64, 2),
+        )
+        provider = create_provider(config, environ={})
+        self.assertEqual(provider.options, {
+            "num_ctx": 1024, "num_predict": 128,
+            "num_batch": 64, "num_thread": 2,
+        })
+
+    def test_ollama_memory_settings_have_safe_defaults(self):
+        config = self._load(
+            "provider: ollama\nollama_model: tiny-model\nworkspace: $WORKSPACE\n"
+        )
+        self.assertEqual(
+            (config["ollama_num_ctx"], config["ollama_num_predict"],
+             config["ollama_num_batch"], config["ollama_num_thread"]),
+            (2048, 512, 128, 0),
+        )
+
+    def test_invalid_ollama_memory_settings_are_rejected(self):
+        for key, value in (
+            ("ollama_num_ctx", 255), ("ollama_num_ctx", 32769),
+            ("ollama_num_predict", 0), ("ollama_num_batch", 15),
+            ("ollama_num_thread", -1),
+        ):
+            with self.subTest(key=key, value=value):
+                with self.assertRaises(RuntimeError):
+                    self._load(
+                        f"provider: ollama\nollama_model: tiny-model\n{key}: {value}\n"
+                        "workspace: $WORKSPACE\n"
+                    )
+
+    def test_invalid_ollama_memory_environment_override_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, "YUKI_OLLAMA_NUM_CTX"):
+            self._load(
+                "provider: ollama\nollama_model: tiny-model\nworkspace: $WORKSPACE\n",
+                {"YUKI_OLLAMA_NUM_CTX": "not-an-integer"},
+            )
+
     def test_invalid_openai_model_fails_configuration(self):
         for value in ("", " " + "x" * 121):
             with self.subTest(value=value):
