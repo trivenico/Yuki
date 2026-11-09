@@ -226,5 +226,14 @@ class OllamaAgentChatTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unrecognized"):
                 list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
 
+    def test_native_ndjson_stream_rejects_non_string_tool_name(self):
+        chunk = {"message": {"content": "", "tool_calls": [{
+            "function": {"name": [], "arguments": {}}
+        }]}, "done": True, "done_reason": "tool_calls"}
+        opener = FakeNDJSONOpener([json.dumps(chunk) + "\n"], self.requests)
+        with patch("providers.ollama.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "unrecognized or malformed"):
+                list(self.provider.generate_chat_stream(messages=self.messages, tools=self.tools))
+
 if __name__ == "__main__":
     unittest.main()
