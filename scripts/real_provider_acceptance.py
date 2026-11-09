@@ -132,7 +132,7 @@ def run_acceptance(*, config_loader=None, provider_factory=None, environ=None, r
             if status != 201 or not isinstance(conversation.get("conversation_id"), str):
                 raise RuntimeError("Authenticated conversation creation failed.")
 
-            status, reply = __import__("asyncio").run(_asgi_request(
+            status, reply = asyncio.run(_asgi_request(
                 runtime, "POST",
                 "/v1/conversations/" + conversation["conversation_id"] + "/messages",
                 {"content": PROMPT, "request_id": "real-provider-acceptance", "expected_version": 0},
