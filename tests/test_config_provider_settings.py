@@ -40,7 +40,7 @@ class OpenAIModelConfigurationTests(unittest.TestCase):
         self.assertEqual(provider.model, "environment-model")
 
     def test_provider_defaults_to_real_openai_adapter(self):
-        config = self._load("workspace: $WORKSPACE\\n")
+        config = self._load("workspace: $WORKSPACE\n")
         self.assertEqual(config["provider"], "openai")
 
     def test_missing_model_uses_documented_default(self):
