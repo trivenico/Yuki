@@ -29,21 +29,6 @@ class InferenceJobService:
  def _connect(self):
   return _Connection(sqlite3.connect(self.database_path, timeout=5))
 
-class _Connection:
- def __init__(self, connection):
-  self.connection=connection
- def __enter__(self):
-  self.connection.row_factory=sqlite3.Row
-  self.connection.execute("PRAGMA busy_timeout=5000")
-  self.connection.execute("PRAGMA foreign_keys=ON")
-  return self.connection
- def __exit__(self, exc_type, exc, tb):
-  try:
-   if exc_type is None: self.connection.commit()
-   else: self.connection.rollback()
-  finally:
-   self.connection.close()
-  return False
  @staticmethod
  def _job(row): return InferenceJob(**dict(row))
  def _device(self,token):
@@ -103,3 +88,19 @@ class _Connection:
   if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
   return [self._job(r) for r in rows]
+
+class _Connection:
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  self.connection.row_factory=sqlite3.Row
+  self.connection.execute("PRAGMA busy_timeout=5000")
+  self.connection.execute("PRAGMA foreign_keys=ON")
+  return self.connection
+ def __exit__(self, exc_type, exc, tb):
+  try:
+   if exc_type is None: self.connection.commit()
+   else: self.connection.rollback()
+  finally:
+   self.connection.close()
+  return False
