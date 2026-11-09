@@ -90,6 +90,7 @@ class DeviceResourceReservationService:
                     gpu_memory_bytes INTEGER NOT NULL CHECK(gpu_memory_bytes>=0),
                     observed_at TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 1,
                     next_fence INTEGER NOT NULL DEFAULT 1,
+                    source_sequence INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(owner_id,device_id));
                 CREATE TABLE IF NOT EXISTS resource_reservations(
                     reservation_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
@@ -105,6 +106,11 @@ class DeviceResourceReservationService:
                 CREATE INDEX IF NOT EXISTS ix_active_resource_leases
                     ON resource_reservations(owner_id,device_id,status,expires_at);
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(resource_capacity)")}
+            if "source_sequence" not in columns:
+                db.execute(
+                    "ALTER TABLE resource_capacity ADD COLUMN source_sequence INTEGER NOT NULL DEFAULT 0"
+                )
 
     @contextmanager
     def _db(self):
@@ -129,7 +135,8 @@ class DeviceResourceReservationService:
         return value
 
     def publish_capacity(self, device_token: str, *, memory_bytes: int,
-                         cpu_millicores: int, gpu_memory_bytes: int = 0) -> int:
+                         cpu_millicores: int, gpu_memory_bytes: int = 0,
+                         source_sequence: int | None = None) -> int:
         """Publish capacity under the owner/device identity proven by a paired-device token."""
         device = self.pairing_service.authenticate_device(device_token)
         if device is None:
@@ -139,19 +146,37 @@ class DeviceResourceReservationService:
                             ("gpu_memory_bytes", gpu_memory_bytes)):
             if not _amount(value):
                 raise ValueError("invalid_" + name)
+        if source_sequence is not None and (
+            type(source_sequence) is not int or not 1 <= source_sequence <= 2**63 - 1
+        ):
+            raise ValueError("invalid_source_sequence")
         observed = _stamp(self.clock())
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT generation,source_sequence FROM resource_capacity WHERE owner_id=? AND device_id=?",
+                (device.owner_id, device.device_id),
+            ).fetchone()
+            if current is not None and source_sequence is not None and source_sequence <= current["source_sequence"]:
+                return int(current["generation"])
+            next_sequence = (
+                source_sequence if source_sequence is not None
+                else (int(current["source_sequence"]) + 1 if current is not None else 1)
+            )
             db.execute("""
-                INSERT INTO resource_capacity VALUES(?,?,?,?,?,?,1,1)
+                INSERT INTO resource_capacity(
+                    owner_id,device_id,memory_bytes,cpu_millicores,gpu_memory_bytes,
+                    observed_at,generation,next_fence,source_sequence
+                ) VALUES(?,?,?,?,?,?,1,1,?)
                 ON CONFLICT(owner_id,device_id) DO UPDATE SET
                   memory_bytes=excluded.memory_bytes,
                   cpu_millicores=excluded.cpu_millicores,
                   gpu_memory_bytes=excluded.gpu_memory_bytes,
                   observed_at=excluded.observed_at,
-                  generation=resource_capacity.generation+1
+                  generation=resource_capacity.generation+1,
+                  source_sequence=excluded.source_sequence
             """, (device.owner_id, device.device_id, memory_bytes,
-                  cpu_millicores, gpu_memory_bytes, observed))
+                  cpu_millicores, gpu_memory_bytes, observed, next_sequence))
             row = db.execute(
                 "SELECT generation FROM resource_capacity WHERE owner_id=? AND device_id=?",
                 (device.owner_id, device.device_id)).fetchone()
