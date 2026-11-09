@@ -37,6 +37,21 @@ class JobsTests(unittest.TestCase):
   self.create(); self.pair.revoke_device("owner-a",self.dev.device.device_id)
   with self.assertRaises(PermissionError): self.jobs.claim_next(self.dev.token)
 
+
+ def test_cancel_invalidates_active_claim(self):
+  j=self.create(); claim=self.jobs.claim_next(self.dev.token)
+  self.assertTrue(self.jobs.cancel_job("owner-a",j.job_id))
+  with self.assertRaises(ValueError):
+   self.jobs.complete_job(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token,result_text="late")
+ def test_expired_claim_cannot_complete(self):
+  j=self.create(); claim=self.jobs.claim_next(self.dev.token)
+  with self.jobs._connect() as db:
+   db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
+    ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
+  with self.assertRaises(ValueError):
+   self.jobs.complete_job(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token,result_text="late")
+  self.assertEqual(self.jobs.get_job("owner-a",j.job_id).status,"running")
+
  def test_claim_token_is_private_and_required(self):
   j=self.create(); claim=self.jobs.claim_next(self.dev.token)
   self.assertTrue(claim.claim_token)
