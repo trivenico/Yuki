@@ -237,7 +237,7 @@ class DeviceResourceReservationService:
         if type(fencing_token) is not int or fencing_token < 1:
             raise ValueError("invalid_fencing_token")
         now = _stamp(self.clock())
-        token_hash = hashlib.sha256(token.encode("ascii",errors="ignore")).hexdigest()
+        token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             if renew:
