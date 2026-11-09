@@ -24,6 +24,7 @@ class InferenceJobService:
   with self._connect() as db:
    db.execute("PRAGMA journal_mode=WAL")
    db.execute("""CREATE TABLE IF NOT EXISTS inference_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,model_id TEXT NOT NULL,device_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),input_text TEXT NOT NULL,result_text TEXT,error_code TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,lease_expires_at TEXT)""")
+   db.execute("BEGIN IMMEDIATE")
    columns={r["name"] for r in db.execute("PRAGMA table_info(inference_jobs)")}
    if "claim_generation" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0")
    if "claim_token_hash" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN claim_token_hash TEXT")
