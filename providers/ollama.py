@@ -162,7 +162,9 @@ class OllamaProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Ollama returned tool calls outside Yuki's protocol limits.") from exc
-        return {"text": content, "tool_calls": envelope, "finish_reason": "tool_calls" if calls else "stop"}
+        usage = _normalize_ollama_usage(body)
+        return {"text": content, "tool_calls": envelope,
+                "finish_reason": "tool_calls" if calls else "stop", "usage": usage}
 
 
     def generate_chat_stream(self, *, messages, tools, tool_choice="auto"):
@@ -222,6 +224,7 @@ class OllamaProvider:
         normalized_calls = []
         total_bytes = 0
         done = False
+        usage = None
         try:
             opener = urllib.request.build_opener(RejectRedirects())
             with opener.open(request, timeout=self.timeout) as response:
@@ -270,6 +273,7 @@ class OllamaProvider:
                     if chunk["done"]:
                         done = True
                         finish_reason = chunk.get("done_reason", "stop")
+                        usage = _normalize_ollama_usage(chunk)
                         break
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise RuntimeError("Local Ollama streaming request failed; redirects are not followed.") from exc
@@ -287,7 +291,7 @@ class OllamaProvider:
             raise RuntimeError("Ollama returned tool calls outside Yuki's protocol limits.") from exc
         yield {"type": "response", "response": {
             "text": "".join(text_parts), "tool_calls": envelope,
-            "finish_reason": finish_reason,
+            "finish_reason": finish_reason, "usage": usage,
         }}
 
     def generate(self, prompt: str) -> str:
@@ -319,3 +323,15 @@ class OllamaProvider:
         if not isinstance(text, str) or not text.strip():
             raise RuntimeError("Ollama returned no text response.")
         return text.strip()
+
+
+def _normalize_ollama_usage(payload):
+    """Return exact Ollama token counts when the server reports both counters."""
+    if not isinstance(payload, dict):
+        return None
+    prompt = payload.get("prompt_eval_count")
+    completion = payload.get("eval_count")
+    if (type(prompt) is not int or prompt < 0
+            or type(completion) is not int or completion < 0):
+        return None
+    return {"input_tokens": prompt, "output_tokens": completion, "estimated": False}
