@@ -18,6 +18,17 @@ def _bounded_int(value, minimum, maximum):
     return value
 
 
+def _env_bounded_int(env_name, raw, key, default, minimum, maximum):
+    value = raw.get(key, default)
+    raw_env = os.environ.get(env_name)
+    if raw_env is not None:
+        try:
+            value = int(raw_env.strip())
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"{env_name} must be an integer from {minimum} to {maximum}.") from exc
+    return _bounded_int(value, minimum, maximum)
+
+
 def _bool_setting(env_name, raw, key, default=False):
     value = os.environ.get(env_name)
     if value is not None:
@@ -129,21 +140,17 @@ def load_config(path=None):
     database_pool_max = _bounded_int(raw.get("database_pool_max", 10), database_pool_min, 50)
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
-    ollama_num_ctx = _bounded_int(
-        int(os.environ.get("YUKI_OLLAMA_NUM_CTX", raw.get("ollama_num_ctx", 2048))),
-        256, 32768,
+    ollama_num_ctx = _env_bounded_int(
+        "YUKI_OLLAMA_NUM_CTX", raw, "ollama_num_ctx", 2048, 256, 32768,
     )
-    ollama_num_predict = _bounded_int(
-        int(os.environ.get("YUKI_OLLAMA_NUM_PREDICT", raw.get("ollama_num_predict", 512))),
-        1, 8192,
+    ollama_num_predict = _env_bounded_int(
+        "YUKI_OLLAMA_NUM_PREDICT", raw, "ollama_num_predict", 512, 1, 8192,
     )
-    ollama_num_batch = _bounded_int(
-        int(os.environ.get("YUKI_OLLAMA_NUM_BATCH", raw.get("ollama_num_batch", 128))),
-        16, 2048,
+    ollama_num_batch = _env_bounded_int(
+        "YUKI_OLLAMA_NUM_BATCH", raw, "ollama_num_batch", 128, 16, 2048,
     )
-    ollama_num_thread = _bounded_int(
-        int(os.environ.get("YUKI_OLLAMA_NUM_THREAD", raw.get("ollama_num_thread", 0))),
-        0, 256,
+    ollama_num_thread = _env_bounded_int(
+        "YUKI_OLLAMA_NUM_THREAD", raw, "ollama_num_thread", 0, 0, 256,
     )
     openai_model_raw = os.environ.get("YUKI_OPENAI_MODEL", raw.get("openai_model", "gpt-4.1-mini"))
     if (not isinstance(openai_model_raw, str) or not openai_model_raw.strip()
