@@ -15,6 +15,7 @@ from uuid import uuid4
 from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.agent_memory_integration import build_memory_aware_handlers
 from core.agent_memory import AgentMemoryStore
+from core.readiness import recommended_worker_concurrency
 from evaluation.agent_experience import AgentExperienceStore
 from evaluation.agent_learning_pipeline import AgentLearningPipeline
 from core.reasoning.execution_budget_store import ExecutionBudgetStore, ExecutionBudgetStoreError
@@ -238,7 +239,7 @@ class SpecialistTaskWorker:
         self.last_learning_error_detail = None
 
     def run_concurrently(
-        self, *, max_workers: int = 4, max_tasks: int = 20,
+        self, *, max_workers: int | None = None, max_tasks: int = 20,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -246,6 +247,8 @@ class SpecialistTaskWorker:
         budget caps total claims, while each worker gets its own lease owner so
         completion and failure checks remain tied to the actual claimant.
         """
+        if max_workers is None:
+            max_workers = recommended_worker_concurrency()
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
