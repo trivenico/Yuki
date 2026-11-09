@@ -107,7 +107,8 @@ class YukiConversationAPI:
                     if job is None: return await self._respond(send, 200, {"job": None})
                     return await self._respond(send, 200, {"job": {
                         "job_id": job.job_id, "model_id": job.model_id,
-                        "input_text": job.input_text, "lease_expires_at": job.lease_expires_at}})
+                        "input_text": job.input_text, "lease_expires_at": job.lease_expires_at,
+                        "claim_generation": job.claim_generation, "claim_token": job.claim_token}})
                 except PermissionError:
                     return await self._respond(send, 401, {"error": "device_authentication_required"})
 
@@ -118,10 +119,18 @@ class YukiConversationAPI:
                 _, token = await self._bearer_token(scope)
                 if token is None: return await self._respond(send, 401, {"error": "device_authentication_required"})
                 payload = await self._body(receive)
-                if set(payload) not in ({"result_text"}, {"error_code"}):
+                required_claim = {"claim_generation", "claim_token"}
+                result_fields = set(payload) - required_claim
+                if (not required_claim.issubset(payload)
+                        or result_fields not in ({"result_text"}, {"error_code"})
+                        or type(payload.get("claim_generation")) is not int
+                        or payload["claim_generation"] < 1
+                        or not isinstance(payload.get("claim_token"), str)
+                        or not 32 <= len(payload["claim_token"]) <= 128):
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 try:
                     job = await asyncio.to_thread(self.inference_jobs.complete_job, token, complete_match.group(1),
+                        claim_generation=payload["claim_generation"], claim_token=payload["claim_token"],
                         result_text=payload.get("result_text"), error_code=payload.get("error_code"))
                     return await self._respond(send, 200, {"job": job.public_dict()})
                 except PermissionError: return await self._respond(send, 401, {"error": "device_authentication_required"})
