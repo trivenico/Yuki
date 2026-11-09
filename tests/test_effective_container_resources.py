@@ -70,7 +70,10 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             root = Path(tmp)
             membership = root / "cgroup"
             membership.write_text("0::/user.slice/yuki.scope\n")
-            paths = _linux_cgroup_paths(proc_cgroup=membership, cgroup_root=root / "unified")
+            paths = _linux_cgroup_paths(
+                proc_cgroup=membership, cgroup_root=root / "unified",
+                mountinfo=root / "missing-mountinfo",
+            )
         self.assertEqual(paths["v2"], root / "unified/user.slice/yuki.scope")
 
     def test_fractional_cpu_quota_is_reported_in_millicores(self):
@@ -97,9 +100,9 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             mount = root / "cgroup2"
             mount.mkdir()
             membership = root / "cgroup"
-            membership.write_text("0::/tenant/user.slice/yuki.scope\\n")
+            membership.write_text("0::/tenant/user.slice/yuki.scope\n")
             mountinfo = root / "mountinfo"
-            mountinfo.write_text(f"36 25 0:32 /tenant {mount} rw,nosuid - cgroup2 cgroup rw\\n")
+            mountinfo.write_text(f"36 25 0:32 /tenant {mount} rw,nosuid - cgroup2 cgroup rw\n")
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
             )
@@ -111,9 +114,9 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             mount = root / "memory"
             mount.mkdir()
             membership = root / "cgroup"
-            membership.write_text("5:memory:/docker/container123\\n")
+            membership.write_text("5:memory:/docker/container123\n")
             mountinfo = root / "mountinfo"
-            mountinfo.write_text(f"37 25 0:33 / {mount} rw - cgroup cgroup rw,memory\\n")
+            mountinfo.write_text(f"37 25 0:33 / {mount} rw - cgroup cgroup rw,memory\n")
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=root, mountinfo=mountinfo
             )
@@ -125,9 +128,9 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             mount = root / "cgroup2"
             mount.mkdir()
             membership = root / "cgroup"
-            membership.write_text("0::/outside/escape\\n")
+            membership.write_text("0::/outside/escape\n")
             mountinfo = root / "mountinfo"
-            mountinfo.write_text(f"36 25 0:32 /tenant {mount} rw - cgroup2 cgroup rw\\n")
+            mountinfo.write_text(f"36 25 0:32 /tenant {mount} rw - cgroup2 cgroup rw\n")
             paths = _linux_cgroup_paths(
                 proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
             )
