@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import re
@@ -96,11 +97,15 @@ class DeviceResourceReservationService:
                     ON resource_reservations(owner_id,device_id,status,expires_at);
             """)
 
+    @contextmanager
     def _db(self):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _id(value: object, label: str) -> str:
@@ -144,9 +149,9 @@ class DeviceResourceReservationService:
         requested = (memory_bytes,cpu_millicores,gpu_memory_bytes)
         if not all(_amount(v) for v in requested):
             raise ValueError("invalid_resource_request")
-        now = datetime.now(timezone.utc) if self.clock is None else self.clock()
-        now_dt = now.astimezone(timezone.utc)
+        now_dt = self.clock()
         now_s = _stamp(now_dt)
+        now_dt = now_dt.astimezone(timezone.utc)
         expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
@@ -182,8 +187,11 @@ class DeviceResourceReservationService:
             db.execute("UPDATE resource_capacity SET next_fence=next_fence+1 WHERE owner_id=? AND device_id=?",
                        (owner_id,device_id))
             rid = secrets.token_hex(16)
-            db.execute("""INSERT INTO resource_reservations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active')""",
-                (rid,owner_id,device_id,task_id,idempotency_key,*requested,fence,token_hash,now_s,expires))
+            try:
+                db.execute("""INSERT INTO resource_reservations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'active')""",
+                    (rid,owner_id,device_id,task_id,idempotency_key,*requested,fence,token_hash,now_s,expires))
+            except sqlite3.IntegrityError as exc:
+                raise ReservationConflict("active_reservation_conflict") from exc
         return ResourceReservation(rid,owner_id,device_id,task_id,*requested,fence,expires,"active",token)
 
     def renew(self, reservation_id: str, token: str, *, fencing_token: int) -> str:
