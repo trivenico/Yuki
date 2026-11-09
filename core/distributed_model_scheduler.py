@@ -244,7 +244,6 @@ class DistributedModelScheduler:
             tuple(sorted(rejected, key=lambda item: item["device_id"])),
         )
         return ReservedPlacement(exhausted, None)
-\n
 
 @dataclass(frozen=True)
 class ReservedPlacement:
