@@ -41,6 +41,10 @@ def create_provider(config=None, *, environ=None):
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        num_ctx=cfg.get("ollama_num_ctx", 2048),
+        num_predict=cfg.get("ollama_num_predict", 512),
+        num_batch=cfg.get("ollama_num_batch", 128),
+        num_thread=cfg.get("ollama_num_thread", 0),
     )
     if selected == "ollama":
         return local
