@@ -1,8 +1,8 @@
 """Durable local token-usage accounting without an artificial event quota.
 
 Usage thresholds are advisory alerts only; they never block model requests. Exact
-counts are recorded only when supplied by a provider. SQLite stores each event;
-Python integer aggregation avoids SQLite SUM's signed-64-bit lifetime overflow.
+counts are recorded only when supplied by a provider. SQLite stores append-only
+events; decimal-text aggregate counters avoid signed-64-bit lifetime overflow.
 """
 from __future__ import annotations
 
@@ -69,8 +69,40 @@ class TokenUsageTracker:
                 value TEXT NOT NULL
             )
         """)
+        self._db.execute("""
+            CREATE TABLE IF NOT EXISTS usage_totals (
+                session_id TEXT PRIMARY KEY,
+                input_tokens TEXT NOT NULL,
+                output_tokens TEXT NOT NULL
+            )
+        """)
         self._db.commit()
+        self._initialize_totals()
         self._migrate_legacy_json()
+
+    def _initialize_totals(self):
+        """Backfill aggregate counters once for databases created by earlier versions."""
+        with self._lock:
+            initialized = self._db.execute(
+                "SELECT value FROM usage_metadata WHERE key = 'usage_totals_initialized'"
+            ).fetchone()
+            if initialized:
+                return
+            totals = {}
+            for session_id, input_count, output_count in self._db.execute("""
+                SELECT session_id, input_tokens, output_tokens FROM usage_events ORDER BY id
+            """):
+                current = totals.setdefault(session_id, [0, 0])
+                current[0] += input_count
+                current[1] += output_count
+            with self._db:
+                self._db.executemany("""
+                    INSERT OR REPLACE INTO usage_totals(session_id, input_tokens, output_tokens)
+                    VALUES (?, ?, ?)
+                """, [(session, str(values[0]), str(values[1])) for session, values in totals.items()])
+                self._db.execute(
+                    "INSERT INTO usage_metadata(key, value) VALUES ('usage_totals_initialized', '1')"
+                )
 
     def _migrate_legacy_json(self):
         """Import the previous JSON-array format once, without modifying its source."""
@@ -89,6 +121,7 @@ class TokenUsageTracker:
             if not isinstance(raw, list):
                 raise RuntimeError("Legacy usage log has invalid structure.")
             rows = []
+            totals = {}
             for item in raw:
                 if not isinstance(item, dict):
                     raise RuntimeError("Legacy usage log contains an invalid event.")
@@ -99,21 +132,35 @@ class TokenUsageTracker:
                 self._validate_event(event)
                 rows.append((event.session_id, event.provider, event.model, event.input_tokens,
                              event.output_tokens, int(event.estimated), event.created_at))
+                current = totals.setdefault(event.session_id, [0, 0])
+                current[0] += event.input_tokens
+                current[1] += event.output_tokens
             with self._db:
                 self._db.executemany("""
                     INSERT INTO usage_events
                     (session_id, provider, model, input_tokens, output_tokens, estimated, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, rows)
+                for session, values in totals.items():
+                    current = self._db.execute("""
+                        SELECT input_tokens, output_tokens FROM usage_totals WHERE session_id = ?
+                    """, (session,)).fetchone()
+                    if current:
+                        values[0] += int(current[0])
+                        values[1] += int(current[1])
+                    self._db.execute("""
+                        INSERT OR REPLACE INTO usage_totals(session_id, input_tokens, output_tokens)
+                        VALUES (?, ?, ?)
+                    """, (session, str(values[0]), str(values[1])))
                 self._db.execute(
                     "INSERT INTO usage_metadata(key, value) VALUES ('legacy_json_imported', '1')"
                 )
 
     @staticmethod
     def _count(value, label):
-        # SQLite INTEGER is signed 64-bit. This is a storage representation bound,
-        # not a product token allowance; cumulative totals use arbitrary-precision
-        # Python integers and can exceed this per-row storage range.
+        # SQLite stores each event as a signed 64-bit INTEGER. This is a storage
+        # representation bound, not a product token allowance. Lifetime totals
+        # are arbitrary-precision decimal strings.
         if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > _MAX_SQLITE_INTEGER:
             raise ValueError(f"{label} must be a non-negative integer representable by SQLite INTEGER")
         return value
@@ -150,6 +197,14 @@ class TokenUsageTracker:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (event.session_id, event.provider, event.model, event.input_tokens,
                   event.output_tokens, int(event.estimated), event.created_at))
+            current = self._db.execute("""
+                SELECT input_tokens, output_tokens FROM usage_totals WHERE session_id = ?
+            """, (self.session_id,)).fetchone()
+            total_input, total_output = (int(current[0]), int(current[1])) if current else (0, 0)
+            self._db.execute("""
+                INSERT OR REPLACE INTO usage_totals(session_id, input_tokens, output_tokens)
+                VALUES (?, ?, ?)
+            """, (self.session_id, str(total_input + input_tokens), str(total_output + output_tokens)))
             result = {"event": asdict(event), "event_id": cursor.lastrowid, "summary": self.summary()}
         return result
 
@@ -161,13 +216,10 @@ class TokenUsageTracker:
                        COALESCE(SUM(CASE WHEN estimated = 1 THEN 1 ELSE 0 END), 0)
                 FROM usage_events WHERE session_id = ?
             """, (self.session_id,)).fetchone()
-            total_input = total_output = 0
-            for input_count, output_count in self._db.execute("""
-                SELECT input_tokens, output_tokens FROM usage_events
-                WHERE session_id = ? ORDER BY id
-            """, (self.session_id,)):
-                total_input += input_count
-                total_output += output_count
+            totals = self._db.execute("""
+                SELECT input_tokens, output_tokens FROM usage_totals WHERE session_id = ?
+            """, (self.session_id,)).fetchone()
+            total_input, total_output = (int(totals[0]), int(totals[1])) if totals else (0, 0)
             recent = self._db.execute("""
                 SELECT input_tokens, output_tokens FROM usage_events
                 WHERE session_id = ? ORDER BY id DESC LIMIT 2
