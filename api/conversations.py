@@ -37,6 +37,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         device_agent: Any | None = None,
+        inference_jobs: Any | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -56,6 +57,9 @@ class YukiConversationAPI:
         if device_agent is not None and not callable(getattr(device_agent, "heartbeat", None)):
             raise TypeError("device_agent must provide a heartbeat method")
         self.device_agent = device_agent
+        if inference_jobs is not None and not callable(getattr(inference_jobs, "create_job", None)):
+            raise TypeError("inference_jobs must provide create_job")
+        self.inference_jobs = inference_jobs
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -91,6 +95,47 @@ class YukiConversationAPI:
                     if code not in {"invalid_sequence", "invalid_status", "invalid_capabilities", "stale_heartbeat"}:
                         code = "invalid_device_heartbeat"
                     return await self._respond(send, 400, {"error": code})
+
+            if method == "POST" and path == "/v1/inference/claim":
+                if self.inference_jobs is None:
+                    return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                _, token = await self._bearer_token(scope)
+                if token is None:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+                try:
+                    job = await asyncio.to_thread(self.inference_jobs.claim_next, token)
+                    if job is None: return await self._respond(send, 200, {"job": None})
+                    return await self._respond(send, 200, {"job": {
+                        "job_id": job.job_id, "model_id": job.model_id,
+                        "input_text": job.input_text, "lease_expires_at": job.lease_expires_at,
+                        "claim_generation": job.claim_generation, "claim_token": job.claim_token}})
+                except PermissionError:
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
+
+            complete_match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})/complete", path)
+            if method == "POST" and complete_match:
+                if self.inference_jobs is None:
+                    return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                _, token = await self._bearer_token(scope)
+                if token is None: return await self._respond(send, 401, {"error": "device_authentication_required"})
+                payload = await self._body(receive)
+                required_claim = {"claim_generation", "claim_token"}
+                result_fields = set(payload) - required_claim
+                if (not required_claim.issubset(payload)
+                        or result_fields not in ({"result_text"}, {"error_code"})
+                        or type(payload.get("claim_generation")) is not int
+                        or payload["claim_generation"] < 1
+                        or not isinstance(payload.get("claim_token"), str)
+                        or not 32 <= len(payload["claim_token"]) <= 128):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    job = await asyncio.to_thread(self.inference_jobs.complete_job, token, complete_match.group(1),
+                        claim_generation=payload["claim_generation"], claim_token=payload["claim_token"],
+                        result_text=payload.get("result_text"), error_code=payload.get("error_code"))
+                    return await self._respond(send, 200, {"job": job.public_dict()})
+                except PermissionError: return await self._respond(send, 401, {"error": "device_authentication_required"})
+                except LookupError: return await self._respond(send, 404, {"error": "not_found"})
+                except ValueError: return await self._respond(send, 409, {"error": "job_not_completable"})
 
             if method == "POST" and path == "/v1/auth/login":
                 payload = await self._body(receive)
