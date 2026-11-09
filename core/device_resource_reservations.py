@@ -276,11 +276,15 @@ class DeviceResourceReservationService:
             age = now_dt - observed.astimezone(timezone.utc)
             if age < timedelta(0) or age > timedelta(seconds=self.capacity_max_age_seconds):
                 raise CapacityUnavailable("capacity_snapshot_stale")
-            used = db.execute("""SELECT COALESCE(SUM(memory_bytes),0),
-                COALESCE(SUM(cpu_millicores),0),COALESCE(SUM(gpu_memory_bytes),0)
+            # Aggregate in Python integers instead of SQLite SUM(INTEGER), which
+            # raises integer overflow when many individually valid reservations
+            # exceed SQLite's signed 64-bit aggregate range. Overflow must fail
+            # closed as capacity exhaustion, not escape as an operational error.
+            active = db.execute("""SELECT memory_bytes,cpu_millicores,gpu_memory_bytes
                 FROM resource_reservations WHERE owner_id=? AND device_id=?
                 AND status='active' AND expires_at>?""",
-                (owner_id, device_id, now_s)).fetchone()
+                (owner_id, device_id, now_s)).fetchall()
+            used = tuple(sum(int(row[index]) for row in active) for index in range(3))
             if any(used[i] + requested[i] > cap[key] for i, key in enumerate(
                     ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"))):
                 raise CapacityUnavailable("insufficient_unreserved_capacity")
