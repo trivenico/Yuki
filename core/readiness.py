@@ -84,9 +84,9 @@ def _worker_recommendation(cpu_count: int, memory_bytes: int | None) -> tuple[in
     if gib < 8:
         return 1, "Under 8 GiB RAM: one active specialist worker; prefer small quantized models or remote inference."
     if gib < 16:
-        return min(2, cores), "8–16 GiB RAM: at most two active workers; prefer 3B–7B quantized models."
+        return 1, "8–16 GiB RAM: one active worker; prefer a single 3B–7B quantized model and a bounded context."
     if gib < 32:
-        return min(3, cores), "16–32 GiB RAM: at most three active workers; 7B–14B quantized models may fit depending on GPU/ context."
+        return min(2, cores), "16–32 GiB RAM: at most two active workers; 7B–14B quantized models may fit depending on GPU/context."
     return min(4, cores), "32+ GiB RAM: at most four active workers; larger quantized models may fit, subject to VRAM and context."
 
 
