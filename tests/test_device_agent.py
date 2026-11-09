@@ -125,8 +125,11 @@ class DeviceAgentServiceTests(unittest.TestCase):
         class Reservations:
             def __init__(self):
                 self.calls = []
+                self.watermarks = []
             def publish_capacity(self, token, **capacity):
                 self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                self.watermarks.append(source_sequence)
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -138,6 +141,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
             capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
         )
         self.assertEqual(reservations.calls, [])
+        self.assertEqual(reservations.watermarks, [1])
         self.assertFalse(agent.retry_pending_capacity(self.credential.token))
 
     def test_failed_capacity_publish_is_durable_and_retryable(self):
