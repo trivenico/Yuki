@@ -1,7 +1,7 @@
 import unittest
 
 from core.resource_budget import (
-    GPUResource, HardwareSnapshot, ResourcePolicy, plan_model_placement,
+    GPUResource, HardwareSnapshot, ResourcePolicy, plan_model_placement, _parse_meminfo,
 )
 from providers.ollama_model_inventory import InstalledModel
 
@@ -64,6 +64,24 @@ class ResourceBudgetTests(unittest.TestCase):
                 self.model, HardwareSnapshot(8 * GIB, 6 * GIB),
                 gpu_offload_ratio=1.5,
             )
+
+    def test_explicit_gpu_request_prefers_gpu_when_cpu_also_fits(self):
+        hardware = HardwareSnapshot(
+            16 * GIB, 12 * GIB,
+            (GPUResource("GPU 0", 12 * GIB, "nvidia"),),
+        )
+        result = plan_model_placement(self.model, hardware, gpu_offload_ratio=1.0)
+        self.assertEqual(result["recommended_placement"], "gpu")
+        self.assertIn("cpu", [choice["placement"] for choice in result["choices"]])
+
+    def test_parse_linux_meminfo(self):
+        total, available = _parse_meminfo(
+            "MemTotal:       16384000 kB\\nMemAvailable:    8192000 kB\\n"
+        )
+        self.assertEqual(total, 16_777_216_000)
+        self.assertEqual(available, 8_388_608_000)
+        with self.assertRaises(ValueError):
+            _parse_meminfo("MemTotal: nope")
 
     def test_policy_reserves_are_validated(self):
         with self.assertRaises(ValueError):
