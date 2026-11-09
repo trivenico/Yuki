@@ -115,6 +115,32 @@ def _available_memory_bytes() -> int | None:
             import psutil
             return int(psutil.virtual_memory().available)
         except (ImportError, AttributeError, OSError, ValueError):
+            if platform.system() == "Darwin":
+                # vm_stat is available on stock macOS; use only immediately
+                # reclaimable/free page classes for a conservative estimate.
+                result = subprocess.run(
+                    ["/usr/bin/vm_stat"], capture_output=True, text=True,
+                    timeout=2, check=False, shell=False,
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.splitlines()
+                    header = lines[0].split() if lines else []
+                    try:
+                        page_size = int(header[header.index("of") + 1])
+                    except (ValueError, IndexError):
+                        return None
+                    pages = 0
+                    found = False
+                    for line in lines[1:]:
+                        label, separator, raw_value = line.partition(":")
+                        if separator and label.strip() in {
+                            "Pages free", "Pages inactive", "Pages speculative",
+                        }:
+                            token = raw_value.strip().rstrip(".")
+                            if token.isdigit():
+                                pages += int(token)
+                                found = True
+                    return pages * page_size if found else None
             return None
     except (AttributeError, OSError, ValueError):
         return None
