@@ -62,6 +62,7 @@ class OpenAICompatibleProvider:
             raise ValueError("Timeout must be between 1 and 120 seconds.")
         self.base_url = _trusted_https_endpoint(base_url, allowed_hosts)
         self._endpoint_host = urlsplit(self.base_url).hostname
+        self._resolve_public_host = resolve_public_https_host
         self.model = model.strip()
         self.api_key_env = api_key_env
         self.timeout = timeout
@@ -74,7 +75,7 @@ class OpenAICompatibleProvider:
 
     def _open(self, request):
         try:
-            addresses = resolve_public_https_host(self._endpoint_host, 443)
+            addresses = self._resolve_public_host(self._endpoint_host, 443)
         except ValueError as exc:
             raise RuntimeError("Cloud provider destination is not safely reachable.") from exc
         opener = build_pinned_https_opener(addresses[0], _RejectRedirects())
