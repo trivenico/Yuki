@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from core.token_usage import provider_call_lock
 from typing import Any, Callable, Mapping, Sequence
 
 
@@ -82,18 +83,19 @@ class ProviderAgentAdapter:
         self._validate_inputs(messages, tools, tool_choice)
         normalized_messages = [{"role": item["role"], "content": item["content"]} for item in messages]
         def tracked_stream():
-            final_response = None
-            for event in stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice):
-                if isinstance(event, Mapping) and event.get("type") == "response":
-                    response = event.get("response")
-                    if isinstance(response, Mapping):
-                        final_response = dict(response)
-                        safe_response = {key: value for key, value in response.items() if key != "usage"}
-                        yield {"type": "response", "response": safe_response}
-                        continue
-                yield event
-            if final_response is not None:
-                self._record_usage(normalized_messages, tools, final_response)
+            with provider_call_lock(self.provider):
+                final_response = None
+                for event in stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice):
+                    if isinstance(event, Mapping) and event.get("type") == "response":
+                        response = event.get("response")
+                        if isinstance(response, Mapping):
+                            final_response = dict(response)
+                            safe_response = {key: value for key, value in response.items() if key != "usage"}
+                            yield {"type": "response", "response": safe_response}
+                            continue
+                    yield event
+                if final_response is not None:
+                    self._record_usage(normalized_messages, tools, final_response)
         return tracked_stream()
 
     @staticmethod
@@ -139,9 +141,12 @@ class ProviderAgentAdapter:
             raise ValueError("tools must contain at most 32 definitions.")
         if tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
-        response = self.provider.generate_chat(
-            messages=normalized, tools=list(tools), tool_choice=tool_choice,
-        )
+        with provider_call_lock(self.provider):
+            response = self.provider.generate_chat(
+                messages=normalized, tools=list(tools), tool_choice=tool_choice,
+            )
+            if isinstance(response, Mapping):
+                self._record_usage(normalized, tools, response)
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")
@@ -151,6 +156,5 @@ class ProviderAgentAdapter:
         normalized_response = dict(response)
         normalized_response["text"] = text
         normalized_response["tool_calls"] = dict(calls)
-        self._record_usage(normalized, tools, normalized_response)
         return {"text": text, "tool_calls": dict(calls),
                 "finish_reason": response.get("finish_reason")}
