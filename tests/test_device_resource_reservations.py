@@ -9,7 +9,6 @@ from core.device_resource_reservations import (
     DeviceResourceReservationService,
     ReservationConflict,
     StaleReservation,
-    ReservationConflict,
 )
 
 
@@ -108,6 +107,7 @@ class DeviceResourceReservationTests(unittest.TestCase):
         with self.assertRaises(StaleReservation):
             self.service.renew(reservation.reservation_id, "wrong-token-value-that-is-long-enough",
                                fencing_token=reservation.fencing_token)
+        self.clock.advance(1)
         extended = self.service.renew(
             reservation.reservation_id, reservation.token,
             fencing_token=reservation.fencing_token,
