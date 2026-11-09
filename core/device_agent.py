@@ -77,6 +77,13 @@ class DeviceAgentService:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_device_agent_owner ON device_agent_state(owner_id,last_seen_at)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS device_capacity_outbox (
+                    device_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL, memory_bytes INTEGER NOT NULL,
+                    cpu_millicores INTEGER NOT NULL, gpu_memory_bytes INTEGER NOT NULL
+                )
+            """)
 
     def _connect(self):
         return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
@@ -154,6 +161,7 @@ class DeviceAgentService:
         safe_capabilities = self._validate_capabilities(capabilities)
         now = _now()
         timestamp = _stamp(now)
+        capacity = self._capacity_from_capabilities(safe_capabilities)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -162,6 +170,17 @@ class DeviceAgentService:
             ).fetchone()
             if row is not None and sequence <= row["sequence"]:
                 raise ValueError("stale_heartbeat")
+            if capacity is not None:
+                db.execute("""
+                    INSERT INTO device_capacity_outbox(
+                        device_id,owner_id,sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
+                    ) VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(device_id) DO UPDATE SET
+                        owner_id=excluded.owner_id, sequence=excluded.sequence,
+                        memory_bytes=excluded.memory_bytes,
+                        cpu_millicores=excluded.cpu_millicores,
+                        gpu_memory_bytes=excluded.gpu_memory_bytes
+                """, (device.device_id, device.owner_id, sequence, *capacity))
             db.execute("""
                 INSERT INTO device_agent_state(
                     device_id,owner_id,status,sequence,reported_at,last_seen_at,capabilities_json
@@ -176,25 +195,49 @@ class DeviceAgentService:
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
         if self.reservation_service is not None:
-            memory_available = safe_capabilities.get("ram_available_bytes")
-            cpu_millicores = safe_capabilities.get("cpu_millicores")
-            if cpu_millicores is None and "cpu_cores" in safe_capabilities:
-                cpu_millicores = safe_capabilities["cpu_cores"] * 1000
-            gpus = safe_capabilities.get("gpus", [])
-            gpu_capacity_known = all("memory_available_bytes" in gpu for gpu in gpus)
-            gpu_memory_available = sum(
-                gpu["memory_available_bytes"] for gpu in gpus
-            ) if gpu_capacity_known else 0
-            # Incomplete reports must not refresh authoritative capacity with guesses.
-            if memory_available is not None and cpu_millicores is not None and gpu_capacity_known:
-                self.reservation_service.publish_capacity(
-                    token,
-                    memory_bytes=memory_available,
-                    cpu_millicores=cpu_millicores,
-                    gpu_memory_bytes=gpu_memory_available,
-                )
+            self.retry_pending_capacity(token)
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
+
+
+    @staticmethod
+    def _capacity_from_capabilities(capabilities):
+        memory = capabilities.get("ram_available_bytes")
+        cpu = capabilities.get("cpu_millicores")
+        if cpu is None and "cpu_cores" in capabilities:
+            cpu = capabilities["cpu_cores"] * 1000
+        gpus = capabilities.get("gpus", [])
+        if memory is None or cpu is None or not all(
+            "memory_available_bytes" in gpu for gpu in gpus
+        ):
+            return None
+        return memory, cpu, sum(gpu["memory_available_bytes"] for gpu in gpus)
+
+    def retry_pending_capacity(self, token: str) -> bool:
+        """Publish the newest durable heartbeat capacity snapshot for this paired device."""
+        if self.reservation_service is None:
+            return False
+        device = self.pairing.authenticate_device(token)
+        if device is None:
+            raise PermissionError("invalid_device_credential")
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
+                FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
+            """, (device.device_id, device.owner_id)).fetchone()
+        if row is None:
+            return False
+        self.reservation_service.publish_capacity(
+            token, memory_bytes=row["memory_bytes"],
+            cpu_millicores=row["cpu_millicores"],
+            gpu_memory_bytes=row["gpu_memory_bytes"],
+        )
+        with self._connect() as db:
+            db.execute("""
+                DELETE FROM device_capacity_outbox
+                WHERE device_id=? AND owner_id=? AND sequence=?
+            """, (device.device_id, device.owner_id, row["sequence"]))
+        return True
 
     def list_devices(self, owner_id: str) -> list[DeviceHeartbeat]:
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
