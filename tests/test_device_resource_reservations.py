@@ -96,6 +96,44 @@ class AuthenticatedReservationTests(unittest.TestCase):
         )
         self.assertEqual(fresh_generation, 2)
 
+    def test_replayed_heartbeat_does_not_advance_reservation_watermark(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-replay.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token,
+            sequence=5,
+            status="idle",
+            capabilities={"cpu_cores": 2},
+        )
+        with self.assertRaisesRegex(ValueError, "stale_heartbeat"):
+            agent.heartbeat(
+                self.device.token,
+                sequence=4,
+                status="busy",
+                capabilities={"cpu_cores": 1},
+            )
+        generation = self.service.publish_capacity(
+            self.device.token,
+            memory_bytes=1200,
+            cpu_millicores=1600,
+            gpu_memory_bytes=600,
+            source_sequence=5,
+        )
+        self.assertEqual(generation, 2)
+        reservation = self.service.reserve(
+            self.session.token,
+            self.device.device.device_id,
+            "after-replay",
+            memory_bytes=900,
+            cpu_millicores=1000,
+            idempotency_key="after-replay",
+            reservation_secret="after-replay-secret-with-enough-entropy",
+        )
+        self.assertEqual(reservation.status, "active")
+
     def test_capacity_source_sequence_rejects_out_of_order_updates(self):
         first_generation = self.service.publish_capacity(
             self.device.token, memory_bytes=900, cpu_millicores=1200,
