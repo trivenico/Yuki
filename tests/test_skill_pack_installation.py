@@ -71,6 +71,21 @@ class SkillPackTests(unittest.TestCase):
             ["taste_helper.json"],
         )
 
+    def test_remove_refuses_symlink_without_deleting_target(self):
+        installed = self.root / "installed"
+        installed.mkdir()
+        real_pack = installed / "real_pack.json"
+        real_pack.write_text('{"name":"real"}', encoding="utf-8")
+        alias = installed / "taste_helper.json"
+        try:
+            alias.symlink_to(real_pack)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlinks are unavailable on this platform.")
+        with self.assertRaisesRegex(ValueError, "symlinked"):
+            remove_skill_pack("taste_helper", installed)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(real_pack.read_text(encoding="utf-8"), '{"name":"real"}')
+
     def test_rejects_unknown_fields_and_duplicate_json_keys(self):
         with self.assertRaises(ValueError):
             validate_skill_pack(self.manifest(extra="not allowed"))
