@@ -44,7 +44,7 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
-   owned=any(device.device_id==device_id for device in self.pairing.list_devices(owner_id))
+   owned=self.pairing.owns_active_device(owner_id,device_id)
    if not owned: raise PermissionError("device_not_owned_or_paired")
    db.execute("INSERT INTO inference_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
