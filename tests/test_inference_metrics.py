@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -115,6 +117,22 @@ class InferenceMetricsTests(unittest.TestCase):
         self.record()
         other = self.store.summary(actor_id="other-owner", model_digest=DIGEST)
         self.assertEqual(other["sample_count"], 0)
+
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file mode semantics required")
+    def test_database_file_is_created_private_and_permissive_existing_file_is_rejected(self):
+        database = Path(self.tmp.name) / "metrics.sqlite3"
+        mode = stat.S_IMODE(database.stat().st_mode)
+        self.assertEqual(mode & 0o077, 0)
+
+        unsafe_path = Path(self.tmp.name) / "unsafe.sqlite3"
+        unsafe_path.touch()
+        unsafe_path.chmod(0o644)
+        with self.assertRaises(PermissionError):
+            InferenceMetricsStore(
+                str(unsafe_path),
+                authorize=lambda actor, action: True,
+            )
 
 
 if __name__ == "__main__":
