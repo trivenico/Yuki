@@ -54,6 +54,45 @@ def _total_memory_bytes() -> int | None:
     return None
 
 
+def _available_memory_bytes() -> int | None:
+    """Return currently available physical RAM without installing dependencies."""
+    try:
+        if sys.platform == "win32":
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullAvailPhys)
+            return None
+        if sys.platform.startswith("linux"):
+            # MemAvailable accounts for reclaimable cache, unlike MemFree.
+            with open("/proc/meminfo", encoding="ascii") as info:
+                for line in info:
+                    if line.startswith("MemAvailable:"):
+                        fields = line.split()
+                        if len(fields) >= 2 and fields[1].isdigit():
+                            return int(fields[1]) * 1024
+            return None
+        try:
+            import psutil
+            return int(psutil.virtual_memory().available)
+        except (ImportError, AttributeError, OSError, ValueError):
+            return None
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
 def _detect_gpu() -> Capability:
     """Detect NVIDIA via its read-only CLI; report other accelerators as unknown."""
     executable = shutil.which("nvidia-smi")
@@ -151,9 +190,10 @@ def _probe_ollama(base_url: str, timeout: float = 1.0, opener: Callable | None =
 
 
 
-def recommended_worker_concurrency() -> int:
-    """Return a conservative local worker count from CPU and physical RAM."""
-    return _worker_recommendation(os.cpu_count() or 1, _total_memory_bytes())[0]
+def recommended_worker_concurrency(*, available_memory_bytes: int | None = None) -> int:
+    """Return a conservative worker count using currently available RAM."""
+    available = _available_memory_bytes() if available_memory_bytes is None else available_memory_bytes
+    return _worker_recommendation(os.cpu_count() or 1, available)[0]
 
 def build_readiness_report(
     *,
@@ -162,10 +202,13 @@ def build_readiness_report(
     module_finder: Callable[[str], object] = importlib.util.find_spec,
     ollama_probe: Callable[[str, float], Capability] = _probe_ollama,
     workspace_path: str | os.PathLike | None = None,
+    total_memory_probe: Callable[[], int | None] = _total_memory_bytes,
+    available_memory_probe: Callable[[], int | None] = _available_memory_bytes,
 ) -> ReadinessReport:
     """Build a deterministic, side-effect-free report of locally detectable features."""
     env = os.environ if environ is None else environ
-    memory_bytes = _total_memory_bytes()
+    memory_bytes = total_memory_probe()
+    available_memory_bytes = available_memory_probe()
     cpu_count = os.cpu_count() or 1
     workspace = Path(workspace_path or env.get("YUKI_WORKSPACE", Path.cwd())).expanduser()
     try:
@@ -174,10 +217,14 @@ def build_readiness_report(
     except OSError:
         disk_free = None
         disk_capability = Capability("unknown", "Workspace volume free space could not be measured.")
-    workers, worker_guidance = _worker_recommendation(cpu_count, memory_bytes)
+    workers, worker_guidance = _worker_recommendation(cpu_count, available_memory_bytes)
     capabilities: dict[str, Capability] = {
         "cpu": Capability("detected", f"{cpu_count} logical CPU(s); architecture {platform.machine() or 'unknown'}."),
         "memory": (Capability("detected", f"{memory_bytes / (1024 ** 3):.1f} GiB physical RAM.") if memory_bytes else Capability("unknown", "Physical RAM could not be measured.")),
+        "available_memory": (
+            Capability("detected", f"{available_memory_bytes / (1024 ** 3):.1f} GiB currently available RAM.")
+            if available_memory_bytes else Capability("unknown", "Available physical RAM could not be measured; worker guidance defaults to one.")
+        ),
         "gpu": _detect_gpu(),
         "workspace_disk": disk_capability,
         "recommended_worker_concurrency": Capability("recommended", f"{workers} active worker(s). {worker_guidance}"),
