@@ -43,17 +43,26 @@ class LocalInferenceWorker:
         self.jobs, self.device_token = jobs, device_token
         self.providers, self.max_output_bytes = normalized, max_output_bytes
 
+    def _complete(self, job, **result):
+        """Complete only with the credential returned by this exact claim."""
+        return self.jobs.complete_job(
+            self.device_token, job.job_id,
+            claim_generation=job.claim_generation,
+            claim_token=job.claim_token,
+            **result,
+        )
+
     def run_once(self) -> WorkerRun:
         job = self.jobs.claim_next(self.device_token)
         if job is None:
             return WorkerRun(False, None, "idle")
         provider = self.providers.get(job.model_id)
         if provider is None:
-            self.jobs.complete_job(self.device_token, job.job_id, error_code="model_not_allowlisted")
+            self._complete(job, error_code="model_not_allowlisted")
             return WorkerRun(True, job.job_id, "failed", "model_not_allowlisted")
         try:
             if not provider.is_available():
-                self.jobs.complete_job(self.device_token, job.job_id, error_code="model_unavailable")
+                self._complete(job, error_code="model_unavailable")
                 return WorkerRun(True, job.job_id, "failed", "model_unavailable")
             response = provider.generate_chat(
                 messages=[{"role": "user", "content": job.input_text}],
@@ -63,15 +72,15 @@ class LocalInferenceWorker:
                 raise ValueError("invalid_provider_response")
             output = response["text"]
             if len(output.encode("utf-8")) > self.max_output_bytes:
-                self.jobs.complete_job(self.device_token, job.job_id, error_code="output_too_large")
+                self._complete(job, error_code="output_too_large")
                 return WorkerRun(True, job.job_id, "failed", "output_too_large")
-            self.jobs.complete_job(self.device_token, job.job_id, result_text=output)
+            self._complete(job, result_text=output)
             return WorkerRun(True, job.job_id, "succeeded")
         except Exception:
             # Do not expose endpoint details, credentials, prompts or exception text
             # through persisted job state. The host may log a sanitized traceback.
             try:
-                self.jobs.complete_job(self.device_token, job.job_id, error_code="inference_failed")
+                self._complete(job, error_code="inference_failed")
             except (LookupError, ValueError, PermissionError):
                 pass
             return WorkerRun(True, job.job_id, "failed", "inference_failed")
