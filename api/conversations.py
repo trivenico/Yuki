@@ -193,6 +193,32 @@ class YukiConversationAPI:
                 )
                 return await self._respond(send, 200 if revoked else 404, {"revoked": revoked})
 
+            if method == "POST" and path == "/v1/inference/jobs":
+                if self.inference_jobs is None: return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                payload = await self._body(receive)
+                if set(payload) != {"model_id", "device_id", "input_text"}: return await self._respond(send, 400, {"error": "invalid_request"})
+                try:
+                    job = await asyncio.to_thread(self.inference_jobs.create_job, user.user_id,
+                        model_id=payload["model_id"], device_id=payload["device_id"], input_text=payload["input_text"])
+                    return await self._respond(send, 201, {"job": job.public_dict()})
+                except PermissionError: return await self._respond(send, 403, {"error": "device_not_owned_or_paired"})
+                except ValueError: return await self._respond(send, 400, {"error": "invalid_job_request"})
+
+            if method == "GET" and path == "/v1/inference/jobs":
+                if self.inference_jobs is None: return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                jobs = await asyncio.to_thread(self.inference_jobs.list_jobs, user.user_id, limit=100)
+                return await self._respond(send, 200, {"jobs": [j.public_dict() for j in jobs]})
+
+            job_match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})", path)
+            if job_match and method == "GET":
+                if self.inference_jobs is None: return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                job = await asyncio.to_thread(self.inference_jobs.get_job, user.user_id, job_match.group(1))
+                return await self._respond(send, 200 if job else 404, {"job": job.public_dict()} if job else {"error": "not_found"})
+            if job_match and method == "DELETE":
+                if self.inference_jobs is None: return await self._respond(send, 503, {"error": "inference_jobs_unavailable"})
+                cancelled = await asyncio.to_thread(self.inference_jobs.cancel_job, user.user_id, job_match.group(1))
+                return await self._respond(send, 200 if cancelled else 404, {"cancelled": cancelled})
+
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
