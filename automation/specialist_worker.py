@@ -322,7 +322,14 @@ class SpecialistTaskWorker:
             self.last_experience_error_code = None
             self.last_experience_error_type = None
         except Exception as exc:
-            self.last_experience_error_code = "experience_recording_failed"
+            # Expose only a bounded, machine-readable validation code for safe
+            # diagnostics; never persist arbitrary exception text or provider data.
+            safe_code = str(exc)
+            self.last_experience_error_code = (
+                safe_code if isinstance(exc, ValueError)
+                and re.fullmatch(r"[a-z0-9_]{1,80}", safe_code)
+                else "experience_recording_failed"
+            )
             self.last_experience_error_type = type(exc).__name__
 
     @staticmethod
