@@ -29,6 +29,9 @@ class HybridProvider:
         self.local_provider = local_provider
         self.cloud_provider = cloud_provider
         self.cloud_tasks = frozenset(normalized)
+        self.last_usage = None
+        self.last_usage_provider = None
+        self.last_usage_model = None
 
     def is_available(self):
         try:
@@ -52,10 +55,22 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
-            return self.cloud_provider.generate(prompt)
+            result = self.cloud_provider.generate(prompt)
+            self.last_usage = getattr(self.cloud_provider, "last_usage", None)
+            self.last_usage_provider = getattr(
+                self.cloud_provider, "last_usage_provider", self.cloud_provider.__class__.__name__.lower()
+            )
+            self.last_usage_model = getattr(self.cloud_provider, "last_usage_model", getattr(self.cloud_provider, "model", ""))
+            return result
         try:
             if self.local_provider.is_available() is not True:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
-        return self.local_provider.generate(prompt)
+        result = self.local_provider.generate(prompt)
+        self.last_usage = getattr(self.local_provider, "last_usage", None)
+        self.last_usage_provider = getattr(
+            self.local_provider, "last_usage_provider", self.local_provider.__class__.__name__.lower()
+        )
+        self.last_usage_model = getattr(self.local_provider, "last_usage_model", getattr(self.local_provider, "model", ""))
+        return result
