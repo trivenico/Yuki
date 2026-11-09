@@ -54,6 +54,7 @@ def build_conversation_runtime(
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     device_agent: Any | None = None,
+    inference_jobs: Any | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -65,13 +66,15 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if inference_jobs is not None and not callable(getattr(inference_jobs, "create_job", None)):
+        raise TypeError("inference_jobs must provide create_job")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
-            device_agent=device_agent,
+            device_agent=device_agent, inference_jobs=inference_jobs,
         )
         return ConversationRuntime(app, store)
     except Exception:
