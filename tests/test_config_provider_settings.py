@@ -39,6 +39,10 @@ class OpenAIModelConfigurationTests(unittest.TestCase):
         provider = create_provider(config, environ={"YUKI_OPENAI_MODEL": "environment-model"})
         self.assertEqual(provider.model, "environment-model")
 
+    def test_provider_defaults_to_real_openai_adapter(self):
+        config = self._load("workspace: $WORKSPACE\\n")
+        self.assertEqual(config["provider"], "openai")
+
     def test_missing_model_uses_documented_default(self):
         config = self._load("provider: openai\nworkspace: $WORKSPACE\n")
         self.assertEqual(config["openai_model"], "gpt-4.1-mini")
