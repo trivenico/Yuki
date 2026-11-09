@@ -18,7 +18,8 @@ class FakeProvider:
     model = "fake-model"
 
     def __init__(self, usage=None):
-        self.last_usage = usage
+        self.usage = usage
+        self.last_usage = None
         self.calls = 0
 
     def is_available(self):
@@ -26,6 +27,7 @@ class FakeProvider:
 
     def generate(self, prompt):
         self.calls += 1
+        self.last_usage = self.usage
         return "generated response"
 
 
@@ -48,7 +50,8 @@ class YukiAgentUsageTests(unittest.TestCase):
 
     def test_clears_stale_metadata_before_each_generation(self):
         tracker = FakeUsageTracker()
-        provider = FakeProvider({"input_tokens": 99, "output_tokens": 99, "estimated": False})
+        provider = FakeProvider(usage=None)
+        provider.last_usage = {"input_tokens": 99, "output_tokens": 99, "estimated": False}
         agent = YukiAgent(provider, usage_tracker=tracker)
         agent.ask("first")
         self.assertTrue(tracker.events[0]["estimated"])
