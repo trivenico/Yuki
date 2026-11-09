@@ -5,6 +5,7 @@ from pathlib import Path
 from core.device_agent_client import (
     _clamp_cpu_quota,
     _effective_cpu_cores,
+    _effective_cpu_millicores,
     _effective_linux_memory,
     _linux_cgroup_paths,
 )
@@ -71,6 +72,24 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             membership.write_text("0::/user.slice/yuki.scope\n")
             paths = _linux_cgroup_paths(proc_cgroup=membership, cgroup_root=root / "unified")
         self.assertEqual(paths["v2"], root / "unified/user.slice/yuki.scope")
+
+    def test_fractional_cpu_quota_is_reported_in_millicores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cpu.max").write_text("50000 100000")
+            self.assertEqual(_effective_cpu_millicores(affinity=8, paths={"v2": root}), 500)
+
+    def test_cpu_quota_preserves_quarter_core_capacity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cpu.max").write_text("25000 100000")
+            self.assertEqual(_effective_cpu_millicores(affinity=8, paths={"v2": root}), 250)
+
+    def test_cpu_quota_preserves_one_and_a_half_cores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "cpu.max").write_text("150000 100000")
+            self.assertEqual(_effective_cpu_millicores(affinity=8, paths={"v2": root}), 1500)
 
 
 if __name__ == "__main__":
