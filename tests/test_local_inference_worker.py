@@ -112,6 +112,24 @@ class LocalWorkerTests(unittest.TestCase):
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
   self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
 
+ def test_unconfirmed_lease_renewal_prevents_result_commit(self):
+  job=self.submit()
+  class UnconfirmedRenewalService:
+   lease_seconds=self.jobs.lease_seconds
+   def claim_next(inner, token): return self.jobs.claim_next(token)
+   def complete_job(inner,*args,**kwargs): return self.jobs.complete_job(*args,**kwargs)
+   def renew_job_lease(inner,*args,**kwargs): return None
+  class SlowProvider(FakeOllamaProvider):
+   def generate_chat(inner,**kwargs):
+    time.sleep(1.2)
+    return {"text":"must not commit"}
+  worker=LocalInferenceWorker(UnconfirmedRenewalService(),self.device.token,{"local/model":SlowProvider()})
+  worker._renew_interval=1.0
+  result=worker.run_once()
+  self.assertEqual(result.error_code,"lease_lost")
+  self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
+  self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
+
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
   with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
