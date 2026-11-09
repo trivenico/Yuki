@@ -26,6 +26,16 @@ class JobsTests(unittest.TestCase):
   j=self.create(); self.jobs.claim_next(self.dev.token)
   with self.jobs._connect() as db: db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
   self.assertEqual(self.jobs.claim_next(self.dev.token).job_id,j.job_id)
+ def test_expired_lease_is_terminal_and_never_requeued(self):
+  j=self.create(); self.jobs.claim_next(self.dev.token)
+  with self.jobs._connect() as db:
+   db.execute("UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
+    ((datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat(),j.job_id))
+  self.assertIsNone(self.jobs.claim_next(self.dev.token))
+  stored=self.jobs.get_job("owner-a",j.job_id)
+  self.assertEqual(stored.status,"failed")
+  self.assertEqual(stored.error_code,"lease_expired")
+  self.assertIsNone(stored.lease_expires_at)
  def test_revocation(self):
   self.create(); self.pair.revoke_device("owner-a",self.dev.device.device_id)
   with self.assertRaises(PermissionError): self.jobs.claim_next(self.dev.token)
