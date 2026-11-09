@@ -181,6 +181,12 @@ class DeviceAgentService:
                         cpu_millicores=excluded.cpu_millicores,
                         gpu_memory_bytes=excluded.gpu_memory_bytes
                 """, (device.device_id, device.owner_id, sequence, *capacity))
+            else:
+                # A newer incomplete heartbeat invalidates any older pending snapshot.
+                db.execute(
+                    "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
+                    (device.device_id, device.owner_id),
+                )
             db.execute("""
                 INSERT INTO device_agent_state(
                     device_id,owner_id,status,sequence,reported_at,last_seen_at,capabilities_json
@@ -195,7 +201,12 @@ class DeviceAgentService:
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
         if self.reservation_service is not None:
-            self.retry_pending_capacity(token)
+            if capacity is None:
+                self.reservation_service.advance_capacity_sequence(
+                    token, source_sequence=sequence
+                )
+            else:
+                self.retry_pending_capacity(token)
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
 
