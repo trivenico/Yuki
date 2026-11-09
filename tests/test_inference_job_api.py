@@ -74,10 +74,11 @@ class InferenceJobAPITests(unittest.TestCase):
         self.assertEqual(status,401)
     def test_foreign_device_cannot_complete_claimed_job(self):
         job=self.jobs.create_job(self.owner.user_id,model_id="local/model",device_id=self.device.device.device_id,input_text="hello")
-        self.jobs.claim_next(self.device.token)
+        claim=self.jobs.claim_next(self.device.token)
         challenge=self.pairing.create_pairing_challenge("another-owner")
         other=self.pairing.pair_device(challenge.code,"Foreign")
-        status,_=self.request("POST",f"/v1/inference/jobs/{job.job_id}/complete",{"result_text":"forged"},other.token)
+        status,_=self.request("POST",f"/v1/inference/jobs/{job.job_id}/complete",
+            {"claim_generation":claim.claim_generation,"claim_token":claim.claim_token,"result_text":"forged"},other.token)
         self.assertEqual(status,404)
     def test_unconfigured_routes_fail_closed(self):
         self.app.inference_jobs=None
