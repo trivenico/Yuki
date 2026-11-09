@@ -3,7 +3,8 @@ import unittest
 from pathlib import Path
 
 from core.device_agent_client import (
-    _clamp_cpu_quota,\n    _effective_cpu_cores,
+    _clamp_cpu_quota,
+    _effective_cpu_cores,
     _effective_linux_memory,
     _linux_cgroup_paths,
 )
