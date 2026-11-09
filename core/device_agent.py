@@ -137,7 +137,7 @@ class DeviceAgentService:
                     and safe_gpu["memory_available_bytes"] > safe_gpu["memory_total_bytes"]):
                 raise ValueError("invalid_capabilities")
             safe_gpus.append(safe_gpu)
-        if gpus:
+        if "gpus" in value:
             result["gpus"] = safe_gpus
         if len(json.dumps(result, separators=(",", ":"))) > 12_000:
             raise ValueError("invalid_capabilities")
@@ -235,6 +235,7 @@ class DeviceAgentService:
             token, memory_bytes=row["memory_bytes"],
             cpu_millicores=row["cpu_millicores"],
             gpu_memory_bytes=row["gpu_memory_bytes"],
+            source_sequence=row["sequence"],
         )
         with self._connect() as db:
             db.execute("""
