@@ -49,7 +49,14 @@ class InferenceJobAPITests(unittest.TestCase):
         self.assertEqual(status,201); jid=data["job"]["job_id"]; self.assertNotIn("input_text",data["job"])
         status,claimed=self.request("POST","/v1/inference/claim",token=self.device.token)
         self.assertEqual(status,200); self.assertEqual(claimed["job"]["job_id"],jid)
-        status,done=self.request("POST",f"/v1/inference/jobs/{jid}/complete",{"result_text":"Hello back"},self.device.token)
+        self.assertIsInstance(claimed["job"]["claim_generation"], int)
+        self.assertGreaterEqual(claimed["job"]["claim_generation"], 1)
+        self.assertIsInstance(claimed["job"]["claim_token"], str)
+        self.assertGreaterEqual(len(claimed["job"]["claim_token"]), 32)
+        claim = {"claim_generation": claimed["job"]["claim_generation"],
+                 "claim_token": claimed["job"]["claim_token"]}
+        status,done=self.request("POST",f"/v1/inference/jobs/{jid}/complete",
+            {**claim, "result_text":"Hello back"},self.device.token)
         self.assertEqual(status,200)
         status,view=self.request("GET",f"/v1/inference/jobs/{jid}",token=self.session.token)
         self.assertEqual(status,200); self.assertEqual(view["job"]["status"],"succeeded"); self.assertEqual(view["job"]["result_text"],"Hello back")
