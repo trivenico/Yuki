@@ -53,6 +53,30 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(capabilities["recommended_worker_concurrency"].status, "recommended")
         self.assertIn("active worker", capabilities["recommended_worker_concurrency"].detail)
 
+    def test_worker_guidance_uses_available_not_installed_memory(self):
+        report = build_readiness_report(
+            environ={},
+            executable_finder=lambda name: None,
+            module_finder=lambda name: None,
+            total_memory_probe=lambda: 64 * 1024**3,
+            available_memory_probe=lambda: 4 * 1024**3,
+        )
+        capabilities = report.capabilities
+        self.assertIn("64.0 GiB physical RAM", capabilities["memory"].detail)
+        self.assertIn("4.0 GiB currently available RAM", capabilities["available_memory"].detail)
+        self.assertIn("one active worker", capabilities["recommended_worker_concurrency"].detail)
+
+    def test_worker_guidance_defaults_to_one_when_available_memory_is_unknown(self):
+        report = build_readiness_report(
+            environ={},
+            executable_finder=lambda name: None,
+            module_finder=lambda name: None,
+            total_memory_probe=lambda: 64 * 1024**3,
+            available_memory_probe=lambda: None,
+        )
+        self.assertIn("one active worker", report.capabilities["recommended_worker_concurrency"].detail)
+        self.assertEqual(report.capabilities["available_memory"].status, "unknown")
+
     def test_worker_recommendation_is_conservative_without_memory_measurement(self):
         from core.readiness import _worker_recommendation
         workers, guidance = _worker_recommendation(32, None)
