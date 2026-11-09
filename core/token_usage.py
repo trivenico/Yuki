@@ -262,3 +262,54 @@ def create_best_effort_usage_tracker(path=None, *, session_id="default", **kwarg
             type(exc).__name__,
         )
         return None
+
+
+def record_provider_usage(tracker, provider, prompt, response):
+    """Record one successful provider call without making telemetry a hard dependency.
+
+    Provider-reported counts are exact only when both counters are valid integers.
+    Unknown usage falls back to a clearly marked character estimate. The helper
+    never stores prompts or completions, only aggregate token counts and metadata.
+    Returns the exception (if any) so callers can surface telemetry health safely.
+    """
+    if tracker is None:
+        return None
+    try:
+        usage = getattr(provider, "last_usage", None)
+        exact = (
+            isinstance(usage, dict)
+            and type(usage.get("input_tokens")) is int and usage["input_tokens"] >= 0
+            and type(usage.get("output_tokens")) is int and usage["output_tokens"] >= 0
+            and type(usage.get("estimated")) is bool
+        )
+        if exact:
+            input_tokens = usage["input_tokens"]
+            output_tokens = usage["output_tokens"]
+            estimated = usage["estimated"]
+        else:
+            input_tokens = (len(prompt) + 3) // 4
+            output_tokens = (len(response) + 3) // 4
+            estimated = True
+        provider_name = (
+            getattr(provider, "last_usage_provider", None)
+            or provider.__class__.__name__.lower()
+        )
+        model_name = (
+            getattr(provider, "last_usage_model", None)
+            or getattr(provider, "model", "")
+        )
+        tracker.record(
+            provider=str(provider_name),
+            model=str(model_name),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated=estimated,
+        )
+        return None
+    except Exception as exc:
+        import logging
+        logging.getLogger("yuki.usage").warning(
+            "Usage event could not be recorded (%s); inference remains successful.",
+            type(exc).__name__,
+        )
+        return exc
