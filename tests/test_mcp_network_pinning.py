@@ -10,7 +10,7 @@ class MCPNetworkPinningTests(unittest.TestCase):
             (2, 1, 6, "", ("8.8.8.8", 443)),
             (2, 1, 6, "", ("1.1.1.1", 443)),
         ]
-        with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+        with patch("core.pinned_https.socket.getaddrinfo", return_value=records):
             endpoint, addresses = MCPHTTPClient._validate_endpoint(
                 "https://mcp.example.com/mcp", ["mcp.example.com"]
             )
@@ -22,7 +22,7 @@ class MCPNetworkPinningTests(unittest.TestCase):
             (2, 1, 6, "", ("8.8.8.8", 443)),
             (2, 1, 6, "", ("127.0.0.1", 443)),
         ]
-        with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+        with patch("core.pinned_https.socket.getaddrinfo", return_value=records):
             with self.assertRaisesRegex(MCPError, "Non-public"):
                 MCPHTTPClient._validate_endpoint(
                     "https://mcp.example.com/mcp", ["mcp.example.com"]
@@ -32,14 +32,14 @@ class MCPNetworkPinningTests(unittest.TestCase):
         records = [(2, 1, 6, "", ("8.8.8.8", 443))]
         for timeout in (0, -1, 61, True, float("nan"), float("inf")):
             with self.subTest(timeout=timeout):
-                with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+                with patch("core.pinned_https.socket.getaddrinfo", return_value=records):
                     with self.assertRaisesRegex(ValueError, "timeout"):
                         MCPHTTPClient(
                             "https://mcp.example.com/mcp",
                             allowed_hosts=["mcp.example.com"],
                             timeout=timeout,
                         )
-        with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+        with patch("core.pinned_https.socket.getaddrinfo", return_value=records):
             with self.assertRaisesRegex(ValueError, "allowed_tools"):
                 MCPHTTPClient(
                     "https://mcp.example.com/mcp",
@@ -52,7 +52,7 @@ class MCPNetworkPinningTests(unittest.TestCase):
         tls_socket = MagicMock()
         context = MagicMock()
         context.wrap_socket.return_value = tls_socket
-        with patch("core.mcp_client.socket.create_connection", return_value=raw_socket) as connect:
+        with patch("core.pinned_https.socket.create_connection", return_value=raw_socket) as connect:
             connection = _PinnedHTTPSConnection(
                 "mcp.example.com", pinned_ip="8.8.8.8", context=context
             )
@@ -63,7 +63,7 @@ class MCPNetworkPinningTests(unittest.TestCase):
 
     def test_client_disables_environment_proxy_handlers(self):
         records = [(2, 1, 6, "", ("8.8.8.8", 443))]
-        with patch("core.mcp_client.socket.getaddrinfo", return_value=records):
+        with patch("core.pinned_https.socket.getaddrinfo", return_value=records):
             client = MCPHTTPClient(
                 "https://mcp.example.com/mcp", allowed_hosts=["mcp.example.com"]
             )
