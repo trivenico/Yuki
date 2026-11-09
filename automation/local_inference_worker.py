@@ -75,10 +75,12 @@ class LocalInferenceWorker:
         def renew():
             while not stop.wait(self._renew_interval):
                 try:
-                    self.jobs.renew_job_lease(
+                    renewed_until = self.jobs.renew_job_lease(
                         self.device_token, job.job_id,
                         claim_generation=generation, claim_token=token,
                     )
+                    if not isinstance(renewed_until, str) or not renewed_until:
+                        raise RuntimeError("lease_renewal_not_confirmed")
                 except Exception:
                     # Any inability to prove ownership means no result may commit.
                     lost.set()
