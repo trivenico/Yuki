@@ -5,6 +5,13 @@ provider: openai
 openai_model: gpt-4.1-mini
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
+# Conservative local-inference defaults for laptops. Lower num_ctx first if RAM
+# is constrained; Ollama's KV cache grows with context length.
+ollama_num_ctx: 2048
+ollama_num_predict: 512
+ollama_num_batch: 128
+# 0 lets Ollama choose its CPU thread count; set 1-4 on low-core/low-power PCs.
+ollama_num_thread: 0
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect
