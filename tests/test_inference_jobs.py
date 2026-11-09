@@ -97,6 +97,12 @@ class JobsTests(unittest.TestCase):
   j=self.create(); claim=self.jobs.claim_next(self.dev.token)
   with self.assertRaisesRegex(ValueError,"provide_exactly"): self.jobs.complete_job(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token)
   with self.assertRaisesRegex(ValueError,"invalid_error_code"): self.jobs.complete_job(self.dev.token,j.job_id,claim_generation=claim.claim_generation,claim_token=claim.claim_token,error_code="shell:bad")
+ def test_default_has_no_per_owner_pending_job_quota(self):
+  self.assertIsNone(self.jobs.max_jobs_per_owner)
+  first=self.create(input_text="first")
+  second=self.create(input_text="second")
+  self.assertNotEqual(first.job_id,second.job_id)
+
  def test_job_limit_and_owner_device(self):
   limited=InferenceJobService(Path(self.tmp.name)/"limited.sqlite",self.pair,max_jobs_per_owner=1)
   limited.create_job("owner-a",model_id="m",device_id=self.dev.device.device_id,input_text="1")
