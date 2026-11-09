@@ -104,6 +104,12 @@ class DeviceResourceReservationService:
         db.execute("PRAGMA busy_timeout=10000")
         try:
             yield db
+            if db.in_transaction:
+                db.commit()
+        except BaseException:
+            if db.in_transaction:
+                db.rollback()
+            raise
         finally:
             db.close()
 
@@ -146,9 +152,12 @@ class DeviceResourceReservationService:
         device_id = self._id(device_id, "device_id")
         task_id = self._id(task_id, "task_id")
         idempotency_key = self._id(idempotency_key, "idempotency_key")
+        for name, value in (("memory_bytes", memory_bytes),
+                            ("cpu_millicores", cpu_millicores),
+                            ("gpu_memory_bytes", gpu_memory_bytes)):
+            if not _amount(value):
+                raise ValueError("invalid_" + name)
         requested = (memory_bytes,cpu_millicores,gpu_memory_bytes)
-        if not all(_amount(v) for v in requested):
-            raise ValueError("invalid_resource_request")
         now_dt = self.clock()
         now_s = _stamp(now_dt)
         now_dt = now_dt.astimezone(timezone.utc)
