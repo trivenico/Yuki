@@ -93,9 +93,12 @@ class AgentMemoryRetriever:
         for value in values:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("embedding_values_must_be_numeric")
-            value = float(value)
-            if not math.isfinite(value):
-                raise ValueError("embedding_values_must_be_finite")
+            try:
+                value = float(value)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("embedding_values_must_be_finite") from exc
+            if not math.isfinite(value) or abs(value) > SQLiteEmbeddingIndex.MAX_ABS_COMPONENT:
+                raise ValueError("embedding_values_out_of_range")
             vector.append(value)
         if math.sqrt(sum(value * value for value in vector)) <= 1e-12:
             raise ValueError("zero_embedding_vector")
