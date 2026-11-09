@@ -92,6 +92,10 @@ class DeviceResourceReservationService:
                     next_fence INTEGER NOT NULL DEFAULT 1,
                     source_sequence INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(owner_id,device_id));
+                CREATE TABLE IF NOT EXISTS resource_capacity_watermarks(
+                    owner_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    source_sequence INTEGER NOT NULL,
+                    PRIMARY KEY(owner_id,device_id));
                 CREATE TABLE IF NOT EXISTS resource_reservations(
                     reservation_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
                     device_id TEXT NOT NULL, task_id TEXT NOT NULL,
@@ -153,16 +157,21 @@ class DeviceResourceReservationService:
         observed = _stamp(self.clock())
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
+            watermark = db.execute(
+                "SELECT source_sequence FROM resource_capacity_watermarks WHERE owner_id=? AND device_id=?",
+                (device.owner_id, device.device_id),
+            ).fetchone()
             current = db.execute(
                 "SELECT generation,source_sequence FROM resource_capacity WHERE owner_id=? AND device_id=?",
                 (device.owner_id, device.device_id),
             ).fetchone()
-            if current is not None and source_sequence is not None and source_sequence <= current["source_sequence"]:
-                return int(current["generation"])
-            next_sequence = (
-                source_sequence if source_sequence is not None
-                else (int(current["source_sequence"]) + 1 if current is not None else 1)
+            latest_sequence = max(
+                int(watermark["source_sequence"]) if watermark else 0,
+                int(current["source_sequence"]) if current else 0,
             )
+            if source_sequence is not None and source_sequence <= latest_sequence:
+                return int(current["generation"]) if current else 0
+            next_sequence = source_sequence if source_sequence is not None else latest_sequence + 1
             db.execute("""
                 INSERT INTO resource_capacity(
                     owner_id,device_id,memory_bytes,cpu_millicores,gpu_memory_bytes,
@@ -177,10 +186,32 @@ class DeviceResourceReservationService:
                   source_sequence=excluded.source_sequence
             """, (device.owner_id, device.device_id, memory_bytes,
                   cpu_millicores, gpu_memory_bytes, observed, next_sequence))
+            db.execute("""
+                INSERT INTO resource_capacity_watermarks(owner_id,device_id,source_sequence)
+                VALUES(?,?,?)
+                ON CONFLICT(owner_id,device_id) DO UPDATE SET
+                    source_sequence=MAX(resource_capacity_watermarks.source_sequence,excluded.source_sequence)
+            """, (device.owner_id, device.device_id, next_sequence))
             row = db.execute(
                 "SELECT generation FROM resource_capacity WHERE owner_id=? AND device_id=?",
                 (device.owner_id, device.device_id)).fetchone()
             return int(row["generation"])
+
+    def advance_capacity_sequence(self, device_token: str, *, source_sequence: int) -> None:
+        """Record a heartbeat watermark without refreshing an incomplete capacity snapshot."""
+        device = self.pairing_service.authenticate_device(device_token)
+        if device is None:
+            raise PermissionError("authenticated_paired_device_required")
+        if type(source_sequence) is not int or not 1 <= source_sequence <= 2**63 - 1:
+            raise ValueError("invalid_source_sequence")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("""
+                INSERT INTO resource_capacity_watermarks(owner_id,device_id,source_sequence)
+                VALUES(?,?,?)
+                ON CONFLICT(owner_id,device_id) DO UPDATE SET
+                    source_sequence=MAX(resource_capacity_watermarks.source_sequence,excluded.source_sequence)
+            """, (device.owner_id, device.device_id, source_sequence))
 
     def reserve(self, session_token: str, device_id: str, task_id: str, *,
                 memory_bytes: int, cpu_millicores: int, gpu_memory_bytes: int = 0,
