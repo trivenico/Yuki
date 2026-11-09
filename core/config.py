@@ -129,6 +129,22 @@ def load_config(path=None):
     database_pool_max = _bounded_int(raw.get("database_pool_max", 10), database_pool_min, 50)
     model = os.environ.get("YUKI_OLLAMA_MODEL", str(raw.get("ollama_model", ""))).strip()
     if len(model) > 120: raise RuntimeError("ollama_model is too long.")
+    ollama_num_ctx = _bounded_int(
+        int(os.environ.get("YUKI_OLLAMA_NUM_CTX", raw.get("ollama_num_ctx", 2048))),
+        256, 32768,
+    )
+    ollama_num_predict = _bounded_int(
+        int(os.environ.get("YUKI_OLLAMA_NUM_PREDICT", raw.get("ollama_num_predict", 512))),
+        1, 8192,
+    )
+    ollama_num_batch = _bounded_int(
+        int(os.environ.get("YUKI_OLLAMA_NUM_BATCH", raw.get("ollama_num_batch", 128))),
+        16, 2048,
+    )
+    ollama_num_thread = _bounded_int(
+        int(os.environ.get("YUKI_OLLAMA_NUM_THREAD", raw.get("ollama_num_thread", 0))),
+        0, 256,
+    )
     openai_model_raw = os.environ.get("YUKI_OPENAI_MODEL", raw.get("openai_model", "gpt-4.1-mini"))
     if (not isinstance(openai_model_raw, str) or not openai_model_raw.strip()
             or len(openai_model_raw.strip()) > 120 or any(ord(char) < 32 for char in openai_model_raw)):
@@ -163,6 +179,10 @@ def load_config(path=None):
         "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "openai"))).strip().lower(),
         "openai_model": openai_model,
         "ollama_base_url": base_url, "ollama_model": model,
+        "ollama_num_ctx": ollama_num_ctx,
+        "ollama_num_predict": ollama_num_predict,
+        "ollama_num_batch": ollama_num_batch,
+        "ollama_num_thread": ollama_num_thread,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
         "max_agent_steps": _bounded_int(raw.get("max_agent_steps", 3), 1, 5),
