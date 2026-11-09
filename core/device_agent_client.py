@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
 
@@ -45,7 +45,7 @@ def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path
             filesystem = fields[separator + 1]
             if filesystem not in {"cgroup", "cgroup2"}:
                 continue
-            root = Path(fields[3])
+            root = PurePosixPath(fields[3])
             mountpoint = Path(fields[4].replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\"))
             controllers = set(fields[separator + 3].split(","))
             controllers.update(fields[separator + 2].split(","))
@@ -58,13 +58,13 @@ def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path
 def _resolve_cgroup_mount(membership: str, hierarchy_root: Path, mountpoint: Path) -> Path | None:
     """Map a hierarchy membership into its mount without escaping the mount."""
     try:
-        member = Path(membership)
+        member = PurePosixPath(membership)
         relative_root = hierarchy_root
         if not member.is_absolute():
             return None
         relative = member.relative_to(relative_root)
         base = mountpoint.resolve()
-        candidate = (base / relative).resolve()
+        candidate = (base.joinpath(*relative.parts)).resolve()
         candidate.relative_to(base)
         return candidate
     except (ValueError, OSError, RuntimeError):
