@@ -11,6 +11,7 @@ from typing import Sequence
 
 
 class SQLiteEmbeddingIndex:
+    MAX_ABS_COMPONENT = 1_000_000.0
     """Cache vectors by actor, memory, content digest, and model identity.
 
     The authoritative memory store still controls which records are visible.
@@ -59,10 +60,19 @@ class SQLiteEmbeddingIndex:
             raise ValueError("embedding_dimension_out_of_range")
         values = []
         for value in vector:
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("embedding_vector_must_be_finite")
-            values.append(float(value))
-        return struct.pack(f"<{len(values)}f", *values)
+            try:
+                normalized = float(value)
+            except (OverflowError, ValueError) as exc:
+                raise ValueError("embedding_vector_must_be_finite") from exc
+            if not math.isfinite(normalized) or abs(normalized) > SQLiteEmbeddingIndex.MAX_ABS_COMPONENT:
+                raise ValueError("embedding_vector_component_out_of_range")
+            values.append(normalized)
+        try:
+            return struct.pack(f"<{len(values)}f", *values)
+        except (OverflowError, struct.error) as exc:
+            raise ValueError("embedding_vector_cannot_be_packed") from exc
 
     @staticmethod
     def _unpack(blob: bytes, dimensions: int) -> list[float]:
@@ -71,8 +81,11 @@ class SQLiteEmbeddingIndex:
         if not isinstance(blob, bytes) or len(blob) != dimensions * 4:
             raise ValueError("stored_embedding_blob_invalid")
         vector = list(struct.unpack(f"<{dimensions}f", blob))
-        if not all(math.isfinite(value) for value in vector):
-            raise ValueError("stored_embedding_contains_non_finite_values")
+        if not all(
+            math.isfinite(value) and abs(value) <= SQLiteEmbeddingIndex.MAX_ABS_COMPONENT
+            for value in vector
+        ):
+            raise ValueError("stored_embedding_contains_out_of_range_values")
         return vector
 
     def get_many(self, *, actor_id: str, memories: list[dict]) -> dict[str, list[float]]:
