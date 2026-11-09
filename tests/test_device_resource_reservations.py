@@ -58,6 +58,29 @@ class AuthenticatedReservationTests(unittest.TestCase):
             **args,
         )
 
+    def test_capacity_source_sequence_rejects_out_of_order_updates(self):
+        first_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        stale_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=100, cpu_millicores=100,
+            gpu_memory_bytes=0, source_sequence=9,
+        )
+        self.assertEqual(stale_generation, first_generation)
+        with self.assertRaises(CapacityUnavailable):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "sequence-check",
+                memory_bytes=950, cpu_millicores=100,
+                idempotency_key="sequence-check",
+                reservation_secret="sequence-check-secret-with-enough-entropy",
+            )
+        newer_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=1100, cpu_millicores=1400,
+            gpu_memory_bytes=450, source_sequence=11,
+        )
+        self.assertEqual(newer_generation, first_generation + 1)
+
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
             self.service.publish_capacity("not-a-device-token", memory_bytes=1, cpu_millicores=1)
