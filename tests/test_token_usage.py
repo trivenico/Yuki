@@ -93,6 +93,13 @@ class TokenUsageTests(unittest.TestCase):
             __hash__ = None
         provider = Provider()
         self.assertIs(provider_call_lock(provider), provider_call_lock(provider))
+        self.assertIsNot(provider_call_lock(provider), provider_call_lock(Provider()))
+
+    def test_provider_lock_supports_slot_only_adapters_without_leaking_them(self):
+        class Provider:
+            __slots__ = ()
+        first, second = Provider(), Provider()
+        self.assertIs(provider_call_lock(first), provider_call_lock(second))
 
     def test_shared_provider_recorder_uses_exact_metadata(self):
         class Provider:
