@@ -50,6 +50,22 @@ class LocalWorkerTests(unittest.TestCase):
    def __init__(self): super().__init__(); self.timeout=120
   with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
    LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+ def test_stale_claim_token_cannot_complete_job(self):
+  from dataclasses import replace
+  job=self.submit()
+  class StaleClaimService:
+   lease_seconds=self.jobs.lease_seconds
+   def claim_next(inner, token):
+    claimed=self.jobs.claim_next(token)
+    return replace(claimed,claim_token="z"*32) if claimed else None
+   def complete_job(inner,*args,**kwargs):
+    return self.jobs.complete_job(*args,**kwargs)
+  worker=LocalInferenceWorker(StaleClaimService(),self.device.token,{"local/model":self.provider})
+  result=worker.run_once()
+  self.assertEqual(result.status,"failed")
+  self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"running")
+  self.assertIsNone(self.jobs.get_job("owner",job.job_id).result_text)
+
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
   with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
