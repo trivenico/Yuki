@@ -184,9 +184,18 @@ class DeviceAgentServiceTests(unittest.TestCase):
                     "ram_available_bytes": 6000, "gpus": [],
                 },
             )
-        self.assertEqual(agent.list_devices("owner-a")[0].sequence, 1)
+        # A heartbeat is not accepted locally while the authoritative ledger
+        # cannot invalidate/publish its capacity snapshot.
+        self.assertEqual(agent.list_devices("owner-a"), [])
         reservations.fail = False
-        self.assertTrue(agent.retry_pending_capacity(self.credential.token))
+        result = agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={
+                "cpu_cores": 4, "ram_total_bytes": 9000,
+                "ram_available_bytes": 6000, "gpus": [],
+            },
+        )
+        self.assertEqual(result.sequence, 1)
         self.assertEqual(reservations.calls[0], {
             "memory_bytes": 6000, "cpu_millicores": 4000,
             "gpu_memory_bytes": 0, "source_sequence": 1,
@@ -214,9 +223,15 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.credential.token, sequence=7, status="degraded",
                 capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
             )
-        self.assertEqual(agent.list_devices("owner-a")[0].sequence, 7)
+        # Incomplete telemetry also fails closed: do not accept a newer
+        # heartbeat until the ledger has advanced its admission watermark.
+        self.assertEqual(agent.list_devices("owner-a"), [])
         reservations.fail = False
-        self.assertTrue(agent.retry_pending_capacity(self.credential.token))
+        result = agent.heartbeat(
+            self.credential.token, sequence=7, status="degraded",
+            capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+        )
+        self.assertEqual(result.sequence, 7)
         self.assertEqual(reservations.watermarks, [7])
         self.assertFalse(agent.retry_pending_capacity(self.credential.token))
 
