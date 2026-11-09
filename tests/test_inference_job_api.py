@@ -55,6 +55,12 @@ class InferenceJobAPITests(unittest.TestCase):
         self.assertGreaterEqual(len(claimed["job"]["claim_token"]), 32)
         claim = {"claim_generation": claimed["job"]["claim_generation"],
                  "claim_token": claimed["job"]["claim_token"]}
+        status,forged=self.request("POST",f"/v1/inference/jobs/{jid}/complete",
+            {**claim, "claim_token":"x"*43, "result_text":"forged"},self.device.token)
+        self.assertEqual(status,409)
+        status,missing=self.request("POST",f"/v1/inference/jobs/{jid}/complete",
+            {"result_text":"missing fencing"},self.device.token)
+        self.assertEqual(status,400)
         status,done=self.request("POST",f"/v1/inference/jobs/{jid}/complete",
             {**claim, "result_text":"Hello back"},self.device.token)
         self.assertEqual(status,200)
