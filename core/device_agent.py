@@ -200,13 +200,14 @@ class DeviceAgentService:
                 WHERE device_agent_state.owner_id=excluded.owner_id
             """, (device.device_id, device.owner_id, status, sequence, timestamp,
                   timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
-        if self.reservation_service is not None:
-            if capacity is None:
+            if capacity is None and self.reservation_service is not None:
+                # Advance the ledger watermark before committing local heartbeat state.
+                # If this fails, roll back the heartbeat rather than accept stale capacity.
                 self.reservation_service.advance_capacity_sequence(
                     token, source_sequence=sequence
                 )
-            else:
-                self.retry_pending_capacity(token)
+        if self.reservation_service is not None and capacity is not None:
+            self.retry_pending_capacity(token)
         return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                timestamp, safe_capabilities, True)
 
