@@ -185,9 +185,9 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         provider = OpenAICompatibleProvider(
             "test-model", environ={"OPENAI_API_KEY": "test-secret"}
         )
-        provider._resolve_public_host = lambda host, port: (_ for _ in ()).throw(
-            ValueError("Non-public HTTPS destinations are blocked.")
-        )
+        def reject_private_destination(host, port):
+            raise ValueError("Non-public HTTPS destinations are blocked.")
+        provider._resolve_public_host = reject_private_destination
         with self.assertRaisesRegex(RuntimeError, "not safely reachable"):
             provider.generate_chat(messages=[{"role": "user", "content": "hello"}], tools=[])
         self.assertEqual(self.requests, [])
