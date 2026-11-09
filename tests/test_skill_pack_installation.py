@@ -2,6 +2,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core.skill_packs import (
@@ -47,6 +48,28 @@ class SkillPackTests(unittest.TestCase):
         self.assertIn("untrusted task instructions", result.message)
         self.assertTrue(remove_skill_pack("taste_helper", self.root / "installed"))
         self.assertFalse(remove_skill_pack("taste_helper", self.root / "installed"))
+
+    def test_concurrent_installation_never_overwrites_existing_pack(self):
+        source = self.root / "pack.json"
+        source.write_text(json.dumps(self.manifest()), encoding="utf-8")
+        installed = self.root / "installed"
+        installed.mkdir()
+        target = installed / "taste_helper.json"
+        original = b'{"name":"concurrent-winner"}'
+        real_link = __import__("os").link
+
+        def create_competing_target(source_path, destination_path):
+            target.write_bytes(original)
+            return real_link(source_path, destination_path)
+
+        with patch("core.skill_packs.os.link", side_effect=create_competing_target):
+            with self.assertRaises(FileExistsError):
+                install_skill_pack(source, installed)
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(
+            [path.name for path in installed.iterdir()],
+            ["taste_helper.json"],
+        )
 
     def test_rejects_unknown_fields_and_duplicate_json_keys(self):
         with self.assertRaises(ValueError):
