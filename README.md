@@ -100,6 +100,10 @@ The command reads only the loopback Ollama `/api/tags` endpoint. It never pulls,
 
 Model licenses are deliberately reported as unknown unless separately verified from authoritative model metadata. Role suitability is also unverified: this inventory does not benchmark coding, reasoning, or tool-use quality.
 
+## Low-memory laptop and PC mode
+
+Yuki supports bounded Ollama context, generation, prompt-batch and CPU-thread settings. Start with the conservative defaults in `config.yaml`; reduce context and batch size for lower-memory machines. See [Low-memory local runtime](docs/LOW_MEMORY_LOCAL_RUNTIME.md) for hardware starting points, RAM budgeting, and measurement guidance. These settings constrain inference working memory but do not guarantee that every model fits.
+
 ## Local hardware profile
 
 Run a read-only hardware and local-runtime profile:
