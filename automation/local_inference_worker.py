@@ -43,13 +43,23 @@ class LocalInferenceWorker:
         self.jobs, self.device_token = jobs, device_token
         self.providers, self.max_output_bytes = normalized, max_output_bytes
 
-    def _complete(self, job, **result):
-        """Complete only with the credential returned by this exact claim."""
+    def _complete(self, job, *, result_text=None, error_code=None):
+        """Complete only the exact claim returned to this worker invocation."""
+        generation = getattr(job, "claim_generation", None)
+        token = getattr(job, "claim_token", None)
+        if type(generation) is not int or generation < 1:
+            raise PermissionError("missing_claim_generation")
+        if not isinstance(token, str) or not 20 <= len(token) <= 256:
+            raise PermissionError("missing_claim_credential")
+        if (result_text is None) == (error_code is None):
+            raise ValueError("provide_exactly_one_result_or_error")
         return self.jobs.complete_job(
-            self.device_token, job.job_id,
-            claim_generation=job.claim_generation,
-            claim_token=job.claim_token,
-            **result,
+            self.device_token,
+            job.job_id,
+            claim_generation=generation,
+            claim_token=token,
+            result_text=result_text,
+            error_code=error_code,
         )
 
     def run_once(self) -> WorkerRun:
