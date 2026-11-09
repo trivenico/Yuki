@@ -28,11 +28,11 @@ def _trusted_https_endpoint(base_url: str, allowed_hosts=None) -> str:
     try:
         parsed = urlsplit(normalized)
         host = (parsed.hostname or "").rstrip(".").lower()
-        parsed.port
+        port = parsed.port
     except ValueError as exc:
         raise ValueError("Cloud provider endpoint URL is invalid.") from exc
     if (parsed.scheme.lower() != "https" or not host or parsed.username or parsed.password
-            or parsed.query or parsed.fragment):
+            or port not in (None, 443) or parsed.query or parsed.fragment):
         raise ValueError("Cloud provider endpoint must be an HTTPS URL without credentials.")
     try:
         ip = ipaddress.ip_address(host)
