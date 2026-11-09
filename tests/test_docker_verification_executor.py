@@ -133,6 +133,20 @@ class DockerVerificationExecutorTests(unittest.TestCase):
                 executor.run("unit-tests", artifact_sha256="c" * 64)
             popen.assert_not_called()
 
+    def test_rejects_oversized_workspace_file_before_reading_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
+        ), patch(
+            "automation.docker_verification_executor.subprocess.Popen"
+        ) as popen:
+            executor, workspace = self._executor(Path(temp))
+            oversized = workspace / "oversized.bin"
+            with oversized.open("wb") as stream:
+                stream.truncate(16_000_001)
+            with self.assertRaisesRegex(DockerVerificationError, "file_size_exceeded"):
+                executor.run("unit-tests", artifact_sha256="b" * 64)
+            popen.assert_not_called()
+
     def test_rejects_workspace_tampering_before_launch(self):
         with tempfile.TemporaryDirectory() as temp, patch(
             "automation.docker_verification_executor.shutil.which", return_value="/usr/bin/docker"
