@@ -53,6 +53,12 @@ class AgentExperienceStoreTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.store.summary(actor_id="owner", agent_id="research")
 
+    def test_url_safe_workflow_task_ids_may_start_with_dash_or_underscore(self):
+        for task_id in ("-leading-dash", "_leading-underscore", "ordinary-task"):
+            with self.subTest(task_id=task_id):
+                item = self.record(task_id=task_id)
+                self.assertEqual(item["task_id"], task_id)
+
     def test_invalid_scores_and_outcomes_are_rejected(self):
         with self.assertRaises(ValueError):
             self.record(quality_score=1.1)
