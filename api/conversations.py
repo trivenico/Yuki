@@ -133,7 +133,10 @@ class YukiConversationAPI:
                         claim_generation=payload["claim_generation"], claim_token=payload["claim_token"],
                         result_text=payload.get("result_text"), error_code=payload.get("error_code"))
                     return await self._respond(send, 200, {"job": job.public_dict()})
-                except PermissionError: return await self._respond(send, 401, {"error": "device_authentication_required"})
+                except PermissionError as exc:
+                    if str(exc) == "stale_or_invalid_claim":
+                        return await self._respond(send, 409, {"error": "claim_rejected"})
+                    return await self._respond(send, 401, {"error": "device_authentication_required"})
                 except LookupError: return await self._respond(send, 404, {"error": "not_found"})
                 except ValueError: return await self._respond(send, 409, {"error": "job_not_completable"})
 
