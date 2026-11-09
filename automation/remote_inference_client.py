@@ -89,6 +89,22 @@ class RemoteInferenceJobClient:
             raise RuntimeError("invalid_claim_response")
         return RemoteInferenceJob(**raw)
 
+    def renew_job_lease(self,device_token,job_id,*,claim_generation,claim_token):
+        if device_token!=self.device_token: raise PermissionError("device_credential_mismatch")
+        if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id):
+            raise ValueError("invalid_job_id")
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise ValueError("invalid_claim_generation")
+        if not isinstance(claim_token,str) or not 32 <= len(claim_token) <= 128:
+            raise ValueError("invalid_claim_token")
+        response=self._request(f"/v1/inference/jobs/{job_id}/lease",{
+            "claim_generation":claim_generation,"claim_token":claim_token,
+        })
+        expiry=response.get("lease_expires_at")
+        if not isinstance(expiry,str):
+            raise RuntimeError("invalid_lease_response")
+        return expiry
+
     def complete_job(self,device_token,job_id,*,claim_generation,claim_token,result_text=None,error_code=None):
         if device_token!=self.device_token: raise PermissionError("device_credential_mismatch")
         if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
