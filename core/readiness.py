@@ -142,7 +142,7 @@ def _available_memory_bytes() -> int | None:
                                 found = True
                     return pages * page_size if found else None
             return None
-    except (AttributeError, OSError, ValueError):
+    except (AttributeError, OSError, ValueError, subprocess.TimeoutExpired):
         return None
 
 
