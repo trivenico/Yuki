@@ -104,6 +104,14 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         self.assertEqual(timeout, 45)
         self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")
 
+    def test_cloud_endpoint_rejects_nonstandard_port(self):
+        with self.assertRaisesRegex(ValueError, "HTTPS URL"):
+            OpenAICompatibleProvider(
+                "test-model",
+                base_url="https://api.openai.com:8443/v1",
+                environ={"OPENAI_API_KEY": "test-secret"},
+            )
+
     def test_text_only_response_is_supported(self):
         result = self.invoke_with(self.response(content="No tool needed", finish="stop"))
         self.assertEqual(result["tool_calls"], {"tool_calls": []})
