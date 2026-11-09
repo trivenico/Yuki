@@ -77,13 +77,40 @@ def _available_memory_bytes() -> int | None:
             return None
         if sys.platform.startswith("linux"):
             # MemAvailable accounts for reclaimable cache, unlike MemFree.
+            host_available = None
             with open("/proc/meminfo", encoding="ascii") as info:
                 for line in info:
                     if line.startswith("MemAvailable:"):
                         fields = line.split()
                         if len(fields) >= 2 and fields[1].isdigit():
-                            return int(fields[1]) * 1024
-            return None
+                            host_available = int(fields[1]) * 1024
+                            break
+            # Respect container limits: host MemAvailable can substantially
+            # overstate what a Yuki process inside Docker/cgroups may allocate.
+            cgroup_available = None
+            for limit_path, current_path in (
+                ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"),
+                ("/sys/fs/cgroup/memory/memory.limit_in_bytes",
+                 "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+            ):
+                try:
+                    limit_raw = open(limit_path, encoding="ascii").read().strip()
+                    current_raw = open(current_path, encoding="ascii").read().strip()
+                    if limit_raw == "max" or not limit_raw.isdigit() or not current_raw.isdigit():
+                        continue
+                    limit, current = int(limit_raw), int(current_raw)
+                    # cgroup v1 may expose a huge sentinel instead of a real limit.
+                    if limit <= 0 or limit >= (1 << 60):
+                        continue
+                    cgroup_available = max(0, limit - current)
+                    break
+                except (OSError, ValueError):
+                    continue
+            if host_available is None:
+                return cgroup_available
+            if cgroup_available is None:
+                return host_available
+            return min(host_available, cgroup_available)
         try:
             import psutil
             return int(psutil.virtual_memory().available)
