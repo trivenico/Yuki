@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,14 @@ class InferenceMetricsTests(unittest.TestCase):
         self.record()
         with self.assertRaises(ValueError):
             self.record()
+
+    def test_database_rejects_direct_update_and_delete(self):
+        self.record()
+        with sqlite3.connect(Path(self.tmp.name) / "metrics.sqlite3") as db:
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("UPDATE inference_metrics SET outcome='failed'")
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute("DELETE FROM inference_metrics")
 
     def test_actor_authorization_is_required_for_read_and_write(self):
         denied = InferenceMetricsStore(
