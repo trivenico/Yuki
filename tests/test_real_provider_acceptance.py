@@ -98,6 +98,25 @@ class RealProviderAcceptanceTests(unittest.TestCase):
         self.assertTrue(observed["authorization"].startswith(b"Bearer "))
         self.assertNotIn("response", result)
 
+    def test_actual_web_composition_root_and_authenticated_route(self):
+        provider = _Provider()
+        result = MODULE.run_acceptance(
+            environ={"YUKI_RUN_REAL_PROVIDER_ACCEPTANCE": "1"},
+            config_loader=lambda: {
+                "provider": "ollama",
+                "storage_backend": "sqlite",
+                "ollama_base_url": "http://127.0.0.1:11434",
+                "ollama_model": "acceptance-test-model",
+                "database_pool_min": 1,
+                "database_pool_max": 2,
+            },
+            provider_factory=lambda config: provider,
+        )
+        self.assertEqual(result["result"], "passed")
+        self.assertEqual(result["transport"], "authenticated_browser_asgi")
+        self.assertGreater(provider.calls, 0)
+        self.assertTrue(provider.messages)
+
     def test_unavailable_provider_is_not_used(self):
         provider = _Provider(available=False)
         calls = []
