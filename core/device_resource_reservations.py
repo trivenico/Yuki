@@ -302,6 +302,28 @@ class DeviceResourceReservationService:
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
 
+    def expire_stale_reservations(self, *, limit: int = 1000) -> int:
+        """Mark a bounded batch of expired leases terminal for crash recovery.
+
+        Safe to call repeatedly from startup or a maintenance task. Expiry is
+        decided using the service clock and never extends or resurrects a lease.
+        """
+        if type(limit) is not int or not 1 <= limit <= 10_000:
+            raise ValueError("invalid_expiry_batch_limit")
+        now = _stamp(self.clock())
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE resource_reservations SET status='expired'
+                   WHERE reservation_id IN (
+                       SELECT reservation_id FROM resource_reservations
+                       WHERE status='active' AND expires_at<=?
+                       ORDER BY expires_at,reservation_id LIMIT ?
+                   ) AND status='active' AND expires_at<=?""",
+                (now, limit, now),
+            )
+            return int(changed.rowcount)
+
     def renew(self, reservation_id: str, token: str, *, fencing_token: int) -> str:
         return self._transition(reservation_id, token, fencing_token, renew=True)
 
