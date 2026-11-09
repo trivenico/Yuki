@@ -263,6 +263,12 @@ class DeviceResourceReservationService:
                 WHERE owner_id=? AND device_id=?""", (owner_id, device_id)).fetchone()
             if cap is None:
                 raise CapacityUnavailable("capacity_not_published")
+            watermark = db.execute("""
+                SELECT source_sequence FROM resource_capacity_watermarks
+                WHERE owner_id=? AND device_id=?
+            """, (owner_id, device_id)).fetchone()
+            if watermark is not None and int(watermark["source_sequence"]) > int(cap["source_sequence"]):
+                raise CapacityUnavailable("capacity_snapshot_superseded")
             observed = datetime.fromisoformat(cap["observed_at"])
             age = now_dt - observed.astimezone(timezone.utc)
             if age < timedelta(0) or age > timedelta(seconds=self.capacity_max_age_seconds):
