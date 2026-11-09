@@ -121,6 +121,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
               "function": {"name": "lookup", "arguments": '{"x":1}' }},
              {"id": "call_1", "type": "function",
               "function": {"name": "lookup", "arguments": '{"x":2}'}}],
+            [{"id": "call_1", "type": "function",
+              "function": {"name": [], "arguments": '{}'}}],
         ]
         for calls in invalid:
             with self.subTest(calls=calls), self.assertRaises(RuntimeError):
