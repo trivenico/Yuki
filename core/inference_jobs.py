@@ -1,6 +1,6 @@
 """Persistent, owner-scoped inference jobs for paired Yuki devices."""
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
 from pathlib import Path
@@ -11,7 +11,7 @@ def _now(): return datetime.now(timezone.utc)
 def _stamp(v): return v.astimezone(timezone.utc).isoformat()
 @dataclass(frozen=True)
 class InferenceJob:
- job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; claim_generation:int=0; claim_token:str|None=None
+ job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; claim_generation:int=0; claim_token:str|None=field(default=None,repr=False)
  def public_dict(self):
   d=asdict(self); d.pop("input_text"); d.pop("claim_token"); return d
 class InferenceJobService:
@@ -84,11 +84,13 @@ class InferenceJobService:
    if row["status"]!="running" or not row["lease_expires_at"] or row["lease_expires_at"]<=stamp: raise ValueError("job_lease_expired_or_not_running")
    if row["claim_generation"]!=claim_generation or not row["claim_token_hash"] or not hmac.compare_digest(row["claim_token_hash"],digest): raise PermissionError("stale_or_invalid_claim")
    state="succeeded" if result_text is not None else "failed"
-   db.execute("UPDATE inference_jobs SET status=?,result_text=?,error_code=?,lease_expires_at=NULL,claim_token_hash=NULL,updated_at=? WHERE job_id=? AND status='running' AND claim_generation=? AND claim_token_hash=?",(state,result_text,error_code,stamp,job_id,claim_generation,digest))
+   changed=db.execute("UPDATE inference_jobs SET status=?,result_text=?,error_code=?,lease_expires_at=NULL,claim_token_hash=NULL,updated_at=? WHERE job_id=? AND status='running' AND claim_generation=? AND claim_token_hash=?",(state,result_text,error_code,stamp,job_id,claim_generation,digest)).rowcount
+   if changed!=1: raise PermissionError("stale_or_invalid_claim")
    updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
   return self._job(updated)
  def renew_job_lease(self,device_token,job_id,*,claim_generation,claim_token):
   device=self._device(device_token)
+  if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if type(claim_generation)!=int or claim_generation<1: raise ValueError("invalid_claim_generation")
   if not isinstance(claim_token,str) or not 20<=len(claim_token)<=256: raise PermissionError("invalid_claim_credential")
   digest=hashlib.sha256(claim_token.encode("utf-8")).hexdigest(); now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
