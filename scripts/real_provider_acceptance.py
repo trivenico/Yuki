@@ -27,6 +27,7 @@ SUPPORTED_PROVIDERS = {"openai", "ollama"}
 
 
 async def _asgi_request(runtime, method, path, payload=None, *, token):
+    """Issue one bounded JSON request using a complete ASGI HTTP scope."""
     body = json.dumps(payload).encode("utf-8") if payload is not None else b""
     sent = []
     consumed = False
@@ -41,24 +42,46 @@ async def _asgi_request(runtime, method, path, payload=None, *, token):
     async def send(message):
         sent.append(message)
 
+    raw_path = path.encode("ascii")
     await runtime.web({
-        "type": "http", "method": method, "path": path,
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": raw_path,
+        "root_path": "",
+        "query_string": b"",
         "headers": [
             (b"host", b"localhost"),
             (b"authorization", ("Bearer " + token).encode("ascii")),
             (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
         ],
-        "query_string": b"",
+        "server": ("127.0.0.1", 80),
+        "client": ("127.0.0.1", 12345),
     }, receive, send)
-    if not sent or sent[0].get("type") != "http.response.start":
+
+    response_start = next(
+        (message for message in sent if message.get("type") == "http.response.start"),
+        None,
+    )
+    if response_start is None:
         raise RuntimeError("Browser runtime returned an invalid HTTP response.")
-    status = sent[0]["status"]
-    raw = sent[1].get("body", b"") if len(sent) > 1 else b""
+    response_body = bytearray()
+    for message in sent:
+        if message.get("type") == "http.response.body":
+            response_body.extend(message.get("body", b""))
+            if len(response_body) > MAX_RESPONSE_CHARS * 4:
+                raise RuntimeError("Browser runtime response exceeded the acceptance-test size limit.")
     try:
-        payload = json.loads(raw) if raw else {}
+        response_payload = json.loads(response_body.decode("utf-8")) if response_body else {}
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("Browser runtime returned invalid JSON.") from exc
-    return status, payload
+    if not isinstance(response_payload, dict):
+        raise RuntimeError("Browser runtime returned a non-object JSON response.")
+    return response_start["status"], response_payload
 
 
 def _build_runtime(config, provider):
