@@ -59,6 +59,17 @@ class DeviceAgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
             self.heartbeat(capabilities={"ram_total_bytes": 100, "ram_available_bytes": 200})
 
+    def test_resource_capability_totals_are_bounded(self):
+        with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
+            self.heartbeat(capabilities={"cpu_cores": 4097})
+        with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
+            self.heartbeat(capabilities={
+                "gpus": [
+                    {"memory_available_bytes": 2**60},
+                    {"memory_available_bytes": 2**60},
+                ],
+            })
+
     def test_status_and_sequence_are_validated(self):
         with self.assertRaisesRegex(ValueError, "invalid_status"):
             self.heartbeat(status="execute")
@@ -68,6 +79,161 @@ class DeviceAgentServiceTests(unittest.TestCase):
     def test_gpu_metadata_is_bounded(self):
         with self.assertRaisesRegex(ValueError, "invalid_capabilities"):
             self.heartbeat(capabilities={"gpus": [{} for _ in range(9)]})
+
+    def test_heartbeat_publishes_authenticated_resource_capacity(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append((token, capacity))
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-with-capacity.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        result = agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={
+                "cpu_millicores": 1750,
+                "ram_total_bytes": 10_000,
+                "ram_available_bytes": 7000,
+                "gpus": [{"memory_total_bytes": 4000, "memory_available_bytes": 2500}],
+            },
+        )
+        self.assertEqual(result.device_id, self.credential.device.device_id)
+        self.assertEqual(len(reservations.calls), 1)
+        self.assertEqual(reservations.calls[0][0], self.credential.token)
+        self.assertEqual(reservations.calls[0][1], {
+            "memory_bytes": 7000, "cpu_millicores": 1750,
+            "gpu_memory_bytes": 2500, "source_sequence": 1,
+        })
+
+    def test_explicit_empty_gpu_inventory_publishes_zero_gpu_capacity(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
+        reservations = Reservations()
+        agent = DeviceAgentService(
+            Path(self.temp.name) / "agent-zero-gpu.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        agent.heartbeat(
+            self.credential.token, sequence=3, status="idle",
+            capabilities={
+                "cpu_cores": 2, "ram_total_bytes": 8000,
+                "ram_available_bytes": 5000, "gpus": [],
+            },
+        )
+        self.assertEqual(reservations.calls, [{
+            "memory_bytes": 5000, "cpu_millicores": 2000,
+            "gpu_memory_bytes": 0, "source_sequence": 3,
+        }])
+
+    def test_incomplete_capacity_does_not_publish_or_create_outbox(self):
+        class Reservations:
+            def __init__(self):
+                self.calls = []
+                self.watermarks = []
+            def publish_capacity(self, token, **capacity):
+                self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                self.watermarks.append(source_sequence)
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-incomplete.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+        )
+        self.assertEqual(reservations.calls, [])
+        self.assertEqual(reservations.watermarks, [1])
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
+
+    def test_failed_capacity_publish_is_durable_and_retryable(self):
+        class Reservations:
+            def __init__(self):
+                self.fail = True
+                self.calls = []
+            def publish_capacity(self, token, **capacity):
+                if self.fail:
+                    raise RuntimeError("temporary ledger outage")
+                self.calls.append(capacity)
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                pass
+        reservations = Reservations()
+        root = Path(self.temp.name)
+        agent = DeviceAgentService(
+            root / "agent-outbox.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        with self.assertRaisesRegex(RuntimeError, "temporary ledger outage"):
+            agent.heartbeat(
+                self.credential.token, sequence=1, status="idle",
+                capabilities={
+                    "cpu_cores": 4, "ram_total_bytes": 9000,
+                    "ram_available_bytes": 6000, "gpus": [],
+                },
+            )
+        # A heartbeat is not accepted locally while the authoritative ledger
+        # cannot invalidate/publish its capacity snapshot.
+        self.assertEqual(agent.list_devices("owner-a"), [])
+        reservations.fail = False
+        result = agent.heartbeat(
+            self.credential.token, sequence=1, status="idle",
+            capabilities={
+                "cpu_cores": 4, "ram_total_bytes": 9000,
+                "ram_available_bytes": 6000, "gpus": [],
+            },
+        )
+        self.assertEqual(result.sequence, 1)
+        self.assertEqual(reservations.calls[0], {
+            "memory_bytes": 6000, "cpu_millicores": 4000,
+            "gpu_memory_bytes": 0, "source_sequence": 1,
+        })
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
+
+    def test_incomplete_heartbeat_watermark_is_durable_and_retryable(self):
+        class Reservations:
+            def __init__(self):
+                self.fail = True
+                self.watermarks = []
+            def publish_capacity(self, token, **capacity):
+                pass
+            def advance_capacity_sequence(self, token, *, source_sequence):
+                if self.fail:
+                    raise RuntimeError("temporary watermark outage")
+                self.watermarks.append(source_sequence)
+        reservations = Reservations()
+        agent = DeviceAgentService(
+            Path(self.temp.name) / "agent-watermark-outbox.sqlite", self.pairing,
+            reservation_service=reservations,
+        )
+        with self.assertRaisesRegex(RuntimeError, "temporary watermark outage"):
+            agent.heartbeat(
+                self.credential.token, sequence=7, status="degraded",
+                capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+            )
+        # Incomplete telemetry also fails closed: do not accept a newer
+        # heartbeat until the ledger has advanced its admission watermark.
+        self.assertEqual(agent.list_devices("owner-a"), [])
+        reservations.fail = False
+        result = agent.heartbeat(
+            self.credential.token, sequence=7, status="degraded",
+            capabilities={"cpu_cores": 4, "ram_available_bytes": 5000},
+        )
+        self.assertEqual(result.sequence, 7)
+        self.assertEqual(reservations.watermarks, [7])
+        self.assertFalse(agent.retry_pending_capacity(self.credential.token))
 
     def test_serialized_report_has_only_declared_fields(self):
         result = heartbeat_to_dict(self.heartbeat())

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
 from core.device_resource_reservations import (
     CapacityUnavailable,
     DeviceResourceReservationService,
@@ -57,6 +58,83 @@ class AuthenticatedReservationTests(unittest.TestCase):
             reservation_secret=secret or f"reservation-secret-for-{key}-with-high-entropy",
             **args,
         )
+
+    def test_complete_new_heartbeat_replaces_old_capacity_before_acceptance(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-complete-sync.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token, sequence=2, status="degraded",
+            capabilities={
+                "cpu_cores": 1,
+                "ram_total_bytes": 1000,
+                "ram_available_bytes": 100,
+                "gpus": [],
+            },
+        )
+        with self.assertRaisesRegex(CapacityUnavailable, "insufficient_unreserved_capacity"):
+            self.reserve(task="after-lower-heartbeat", key="after-lower-heartbeat",
+                         memory_bytes=101, cpu_millicores=1, gpu_memory_bytes=0)
+
+    def test_incomplete_new_heartbeat_blocks_old_capacity_before_acceptance(self):
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-incomplete-sync.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        agent.heartbeat(
+            self.device.token, sequence=2, status="degraded",
+            capabilities={"cpu_cores": 1, "ram_available_bytes": 100},
+        )
+        with self.assertRaisesRegex(CapacityUnavailable, "capacity_snapshot_superseded"):
+            self.reserve(task="after-incomplete-heartbeat", key="after-incomplete-heartbeat",
+                         memory_bytes=1, cpu_millicores=1, gpu_memory_bytes=0)
+
+    def test_capacity_source_sequence_rejects_out_of_order_updates(self):
+        first_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        stale_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=100, cpu_millicores=100,
+            gpu_memory_bytes=0, source_sequence=9,
+        )
+        self.assertEqual(stale_generation, first_generation)
+        with self.assertRaises(CapacityUnavailable):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "sequence-check",
+                memory_bytes=950, cpu_millicores=100,
+                idempotency_key="sequence-check",
+                reservation_secret="sequence-check-secret-with-enough-entropy",
+            )
+        newer_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=1100, cpu_millicores=1400,
+            gpu_memory_bytes=450, source_sequence=11,
+        )
+        self.assertEqual(newer_generation, first_generation + 1)
+
+    def test_incomplete_heartbeat_watermark_blocks_delayed_capacity_publish(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        self.service.advance_capacity_sequence(
+            self.device.token, source_sequence=11
+        )
+        stale_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=2000, cpu_millicores=2000,
+            gpu_memory_bytes=1000, source_sequence=10,
+        )
+        self.assertEqual(stale_generation, generation)
+        with self.assertRaises(CapacityUnavailable):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "watermark-check",
+                memory_bytes=950, cpu_millicores=100,
+                idempotency_key="watermark-check",
+                reservation_secret="watermark-check-secret-with-enough-entropy",
+            )
 
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
