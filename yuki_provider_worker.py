@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from yuki_agent_worker import TaskContext
-from core.token_usage import record_provider_usage
+from core.token_usage import record_provider_usage, provider_call_lock
 
 
 MAX_PROVIDER_PROMPT_CHARS = 12_000
@@ -55,14 +55,15 @@ def create_provider_handlers(
         if forbidden.intersection(payload):
             raise ValueError("provider and tool configuration cannot be set in task payloads")
         context.check_cancelled()
-        for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
-            try:
-                setattr(provider, attribute, None)
-            except Exception:
-                pass
-        response = provider.generate(prompt)
-        if usage_tracker is not None and isinstance(response, str):
-            record_provider_usage(usage_tracker, provider, prompt, response)
+        with provider_call_lock(provider):
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(provider, attribute, None)
+                except Exception:
+                    pass
+            response = provider.generate(prompt)
+            if usage_tracker is not None and isinstance(response, str):
+                record_provider_usage(usage_tracker, provider, prompt, response)
         context.check_cancelled()
         if not isinstance(response, str) or not response.strip():
             raise RuntimeError("provider returned an empty or invalid response")
