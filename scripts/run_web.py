@@ -37,8 +37,8 @@ class DenyAllTools:
         return False
 
 
-def create_app():
-    config = load_config()
+def create_app(*, config_loader=None, provider_factory=None):
+    config = (config_loader or load_config)()
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -59,7 +59,7 @@ def create_app():
             os.environ.pop("YUKI_BOOTSTRAP_ADMIN_USERNAME", None)
             os.environ.pop("YUKI_BOOTSTRAP_ADMIN_PASSWORD", None)
 
-    provider = create_provider(config)
+    provider = (provider_factory or create_provider)(config)
     adapter = ProviderAgentAdapter(provider)
     provider_manager = ProviderRuntimeManager(
         config, adapter, workspace / "provider-selection.json", environ=os.environ,
