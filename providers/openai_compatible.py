@@ -200,7 +200,9 @@ class OpenAICompatibleProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Cloud provider returned tool calls outside Yuki's protocol limits.") from exc
-        return {"text": content or "", "tool_calls": envelope, "finish_reason": choice.get("finish_reason")}
+        usage = _normalize_openai_usage(body.get("usage"))
+        return {"text": content or "", "tool_calls": envelope,
+                "finish_reason": choice.get("finish_reason"), "usage": usage}
 
 
     def generate_chat_stream(self, *, messages, tools, tool_choice="auto"):
@@ -452,3 +454,15 @@ class OpenAICompatibleProvider:
             "text": message.get("content") if isinstance(message.get("content"), str) else "",
             "finish_reason": body["choices"][0].get("finish_reason"),
         }
+
+
+def _normalize_openai_usage(payload):
+    """Normalize exact OpenAI-compatible prompt/completion token metadata."""
+    if not isinstance(payload, dict):
+        return None
+    prompt = payload.get("prompt_tokens")
+    completion = payload.get("completion_tokens")
+    if (type(prompt) is not int or prompt < 0
+            or type(completion) is not int or completion < 0):
+        return None
+    return {"input_tokens": prompt, "output_tokens": completion, "estimated": False}
