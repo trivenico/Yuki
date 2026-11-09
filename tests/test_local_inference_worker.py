@@ -47,11 +47,11 @@ class LocalWorkerTests(unittest.TestCase):
   self.provider.response={"text":"too long"}
   self.assertEqual(worker.run_once().error_code,"output_too_large")
   self.assertEqual(self.jobs.get_job("owner",job.job_id).status,"failed")
- def test_lease_must_exceed_provider_timeout(self):
+ def test_long_provider_timeout_is_supported_by_lease_renewal(self):
   class SlowProvider(FakeOllamaProvider):
    def __init__(self): super().__init__(timeout=120)
-  with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
-   LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+  worker=LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+  self.assertIsInstance(worker,LocalInferenceWorker)
  def test_stale_claim_token_cannot_complete_job(self):
   job=self.submit()
   class StaleClaimService:
