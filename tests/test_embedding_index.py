@@ -77,6 +77,28 @@ class PersistentEmbeddingIndexTests(unittest.TestCase):
             self.index.put_many(actor_id="owner", memories=[self.memories[0]],
                                 vectors=[[float("nan"), 1.0]])
 
+    def test_vector_magnitudes_are_bounded_before_float32_storage(self):
+        memory = self.memories[0]
+        for vector in ([1e100, 0.0], [10**1000, 0.0], [1_000_001.0, 0.0]):
+            with self.subTest(vector=repr(vector)[:40]), self.assertRaises(ValueError):
+                self.index.put_many(actor_id="owner", memories=[memory], vectors=[vector])
+
+    def test_corrupt_stored_vector_magnitude_is_rejected(self):
+        memory = self.memories[0]
+        with self.index._connect() as db:
+            db.execute(
+                """INSERT INTO agent_memory_embeddings(
+                    actor_id,memory_id,model_id,content_sha256,dimensions,vector
+                ) VALUES(?,?,?,?,?,?)""",
+                (
+                    "owner", memory["memory_id"], self.index.model_id,
+                    self.index._digest(memory["content"]), 1,
+                    __import__("struct").pack("<f", 1_000_001.0),
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "out_of_range"):
+            self.index.get_many(actor_id="owner", memories=[memory])
+
     def test_delete_memory_removes_cached_vectors_atomically(self):
         memory = self.memories[0]
         self.index.put_many(actor_id="owner", memories=[memory], vectors=[[1.0, 0.0, 0.0]])
