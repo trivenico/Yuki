@@ -55,6 +55,11 @@ class HybridProvider:
                     raise RuntimeError("Cloud provider is not available.")
             except Exception as exc:
                 raise RuntimeError("Cloud provider is not available.") from exc
+            for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+                try:
+                    setattr(self.cloud_provider, attribute, None)
+                except Exception:
+                    pass
             result = self.cloud_provider.generate(prompt)
             self.last_usage = getattr(self.cloud_provider, "last_usage", None)
             self.last_usage_provider = getattr(
@@ -67,6 +72,11 @@ class HybridProvider:
                 raise RuntimeError("Local provider is not available; cloud fallback is disabled.")
         except Exception as exc:
             raise RuntimeError("Local provider is not available; cloud fallback is disabled.") from exc
+        for attribute in ("last_usage", "last_usage_provider", "last_usage_model"):
+            try:
+                setattr(self.local_provider, attribute, None)
+            except Exception:
+                pass
         result = self.local_provider.generate(prompt)
         self.last_usage = getattr(self.local_provider, "last_usage", None)
         self.last_usage_provider = getattr(
