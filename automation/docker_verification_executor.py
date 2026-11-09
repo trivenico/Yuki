@@ -199,16 +199,22 @@ class DockerVerificationExecutor:
                 raise DockerVerificationError("sandbox_workspace_file_stat_failed") from exc
             if size > max_file_bytes:
                 raise DockerVerificationError("sandbox_workspace_file_size_exceeded")
-            total_bytes += size
-            if total_bytes > max_total_bytes:
+            if total_bytes + size > max_total_bytes:
                 raise DockerVerificationError("sandbox_workspace_total_size_exceeded")
             relative = path.relative_to(self.workspace).as_posix()
+            read_limit = min(max_file_bytes, max_total_bytes - total_bytes)
             try:
-                content = path.read_bytes()
+                with path.open("rb") as stream:
+                    content = stream.read(read_limit + 1)
             except OSError as exc:
                 raise DockerVerificationError("sandbox_workspace_file_read_failed") from exc
+            if len(content) > max_file_bytes:
+                raise DockerVerificationError("sandbox_workspace_file_size_exceeded")
+            if len(content) > max_total_bytes - total_bytes:
+                raise DockerVerificationError("sandbox_workspace_total_size_exceeded")
             if len(content) != size:
                 raise DockerVerificationError("sandbox_workspace_changed_during_snapshot")
+            total_bytes += len(content)
             files[relative] = content
         snapshot = RepositorySnapshotBuilder(
             max_files=max_files,
