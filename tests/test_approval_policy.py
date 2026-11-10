@@ -27,6 +27,10 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         self.assertEqual(result.stage, "permission_denied")
         self.assertFalse(skill.executed)
 
+    def test_unhashable_risk_value_fails_closed(self):
+        gate = PermissionGate(lambda _request: True)
+        self.assertFalse(gate.request("shell", "run command", risk=[]))
+
     def test_each_call_requests_approval_again(self):
         requests = []
         skill = NormallyUnapprovedSkill()
