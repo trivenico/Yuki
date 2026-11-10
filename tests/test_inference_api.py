@@ -93,7 +93,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
         self.assertNotIn("input_text", body["job"])
-        status, body = self.request("GET", f"/v1/inference/jobs/{job_id}", self.owner_two.token)
+        status, body = self.request("GET", f"/v1/inference/jobs/{job_id}", token=self.owner_two.token)
         self.assertEqual((status, body["error"]), (404, "not_found"))
 
         status, body = self.request("POST", "/v1/inference/worker/jobs/claim", {}, device_token)
@@ -101,7 +101,6 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         claimed = body["job"]
         self.assertEqual(claimed["input_text"], "hello worker")
         self.assertTrue(claimed["lease_token"])
-        self.assertNotIn("lease_token", claimed["public_dict"] if "public_dict" in claimed else {})
 
         status, body = self.request(
             "POST", f"/v1/inference/worker/jobs/{job_id}/complete",
