@@ -92,7 +92,9 @@ class OIDCIdentityTokenVerifier:
 
     @staticmethod
     def _public_key(jwk: dict, algorithm: str):
-        if jwk.get("use", "sig") != "sig" or jwk.get("alg", algorithm) != algorithm:
+        if (jwk.get("use", "sig") != "sig" or jwk.get("alg", algorithm) != algorithm
+                or any(name in jwk for name in ("d", "p", "q", "dp", "dq", "qi", "oth"))
+                or ("key_ops" in jwk and jwk["key_ops"] != ["verify"])):
             raise OIDCIdentityTokenError("oidc_signing_key_invalid")
         if algorithm in ("RS256", "PS256"):
             if jwk.get("kty") != "RSA":
@@ -210,8 +212,14 @@ class OIDCIdentityTokenVerifier:
         if "at_hash" in claims:
             if not isinstance(access_token, str) or not access_token:
                 raise OIDCIdentityTokenError("oidc_access_token_hash_unverifiable")
-            digest = hashlib.sha256(access_token.encode("ascii")).digest()
-            expected_hash = base64.urlsafe_b64encode(digest[:16]).rstrip(b"=").decode("ascii")
+            try:
+                access_bytes = access_token.encode("ascii")
+            except UnicodeEncodeError:
+                raise OIDCIdentityTokenError("oidc_access_token_hash_unverifiable") from None
+            digest = (hashlib.sha512(access_bytes).digest() if algorithm == "EdDSA"
+                      else hashlib.sha256(access_bytes).digest())
+            half = len(digest) // 2
+            expected_hash = base64.urlsafe_b64encode(digest[:half]).rstrip(b"=").decode("ascii")
             if not isinstance(claims["at_hash"], str) or not hmac.compare_digest(
                 claims["at_hash"], expected_hash
             ):
