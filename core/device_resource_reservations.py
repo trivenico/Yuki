@@ -324,17 +324,27 @@ class DeviceResourceReservationService:
             )
             return int(changed.rowcount)
 
-    def renew(self, reservation_id: str, token: str, *, fencing_token: int) -> str:
-        return self._transition(reservation_id, token, fencing_token, renew=True)
+    def renew(self, device_token: str, reservation_id: str, token: str, *,
+              fencing_token: int) -> str:
+        return self._transition(
+            device_token, reservation_id, token, fencing_token, renew=True
+        )
 
-    def release(self, reservation_id: str, token: str, *, fencing_token: int) -> bool:
+    def release(self, device_token: str, reservation_id: str, token: str, *,
+                fencing_token: int) -> bool:
         try:
-            self._transition(reservation_id, token, fencing_token, renew=False)
+            self._transition(
+                device_token, reservation_id, token, fencing_token, renew=False
+            )
             return True
         except StaleReservation:
             return False
 
-    def _transition(self, reservation_id: str, token: str, fencing_token: int, *, renew: bool):
+    def _transition(self, device_token: str, reservation_id: str, token: str,
+                    fencing_token: int, *, renew: bool):
+        device = self.pairing_service.authenticate_device(device_token)
+        if device is None:
+            raise PermissionError("authenticated_paired_device_required")
         if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
             raise ValueError("invalid_reservation_id")
         if (not isinstance(token, str) or not 32 <= len(token) <= 256 or not token.isascii()):
@@ -346,12 +356,14 @@ class DeviceResourceReservationService:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT token_hash, fencing_token, status, expires_at "
+                "SELECT owner_id, device_id, token_hash, fencing_token, status, expires_at "
                 "FROM resource_reservations WHERE reservation_id=?",
                 (reservation_id,),
             ).fetchone()
             if (
                 row is None
+                or row["owner_id"] != device.owner_id
+                or row["device_id"] != device.device_id
                 or not hmac.compare_digest(row["token_hash"], token_hash)
                 or row["fencing_token"] != fencing_token
                 or row["status"] != "active"
