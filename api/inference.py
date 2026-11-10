@@ -32,6 +32,10 @@ class AuthenticatedInferenceAPI:
         self.pairing = pairing
         self.jobs = jobs
 
+    def __getattr__(self, name):
+        """Preserve the wrapped conversation API's existing runtime surface."""
+        return getattr(self.app, name)
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
