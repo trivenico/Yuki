@@ -1,6 +1,7 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import uuid
 from getpass import getpass
 from pathlib import Path
 
@@ -97,15 +98,16 @@ def _build_durable_policy_runtime(principal_id):
         risk_value = str(getattr(skill, "risk", "high")).lower()
         if risk_value not in {risk.value for risk in Risk}:
             continue
-        rules.append(PolicyRule(
-            rule_id=f"durable-registered-skill-{item['name']}",
-            decision=Decision.ALLOW,
-            principal_id=principal_id,
-            trigger="durable_task",
-            capability="skill.invoke",
-            target=item["name"],
-            risk=Risk(risk_value),
-        ))
+        for trigger in ("durable_task", "terminal"):
+            rules.append(PolicyRule(
+                rule_id=f"{trigger}-registered-skill-{item['name']}",
+                decision=Decision.ALLOW,
+                principal_id=principal_id,
+                trigger=trigger,
+                capability="skill.invoke",
+                target=item["name"],
+                risk=Risk(risk_value),
+            ))
     engine = ToolPolicyEngine(rules, policy_version="yuki-durable-cli-v1")
 
     def request_factory(skill_name, argument, skill, context):
@@ -311,9 +313,23 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 write_audit_event("skill:approval", "rejected")
                 return "Cannot approve an unknown skill."
         if parts[1] == "invoke" and len(parts) >= 3:
+            user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+            if user is None:
+                return "Authentication required. Use /auth login USERNAME."
             argument = parts[3] if len(parts) == 4 else ""
-            result = runtime.invoke(parts[2], argument)
-            return result.message if result.ok else f"{result.status}: {result.message}"
+            try:
+                guarded_runtime = _build_durable_policy_runtime(user.user_id)
+                context = SkillPolicyContext(
+                    principal_id=user.user_id,
+                    trigger="terminal",
+                    goal_id="terminal-session",
+                    task_id=uuid.uuid4().hex,
+                )
+                result = guarded_runtime.invoke(parts[2], argument, policy_context=context)
+                return result.message if result.ok else f"{result.status}: {result.message}"
+            except Exception:
+                write_audit_event("skill:invoke", "policy_error")
+                return "Skill invocation blocked because authenticated policy could not be enforced."
         return "Usage: /skill list | diagnostics | install PATH | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
     if command == "/auth" or command.startswith("/auth "):
