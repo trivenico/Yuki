@@ -102,6 +102,24 @@ class AgentEvaluationReviewQueueTests(unittest.TestCase):
             "pending",
         )
 
+    def test_url_safe_task_id_with_leading_symbol_can_be_read_and_decided(self):
+        report = AgentEvaluator().evaluate(
+            task_id="_task-url-safe", agent_id="coding", outcome="succeeded",
+            signals={name: 1.0 for name in (
+                "correctness", "evidence_quality", "instruction_compliance",
+                "completeness", "efficiency",
+            )},
+            evidence_refs=["trace:one", "artifact:two"],
+        )
+        queued = self.queue.enqueue(actor_id="owner", report=report)
+        fetched = self.queue.get_review(actor_id="owner", evaluation_id=report.evaluation_id)
+        self.assertEqual(fetched["task_id"], "_task-url-safe")
+        decided = self.queue.decide(
+            reviewer_actor_id="owner", evaluation_id=report.evaluation_id,
+            decision="approved",
+        )
+        self.assertEqual(decided["status"], "approved")
+
     def test_high_quality_report_is_queued_for_memory_review(self):
         report = AgentEvaluator().evaluate(
             task_id="task-003",
