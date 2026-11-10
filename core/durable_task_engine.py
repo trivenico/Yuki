@@ -175,7 +175,9 @@ class DurableTaskEngine:
                 if old["submission_fingerprint"] is None or old["submission_fingerprint"] != submission_fingerprint:
                     raise TaskConflict("idempotency key reused with different or unverifiable submission options")
                 c.commit()
-                return self._decode(old)
+                # Return the canonical task projection, including its
+                # persisted goal owner, on idempotent replays as well.
+                return self.get_task(old["id"])
             if goal["state"]!="active": raise TaskConflict("goal is not active")
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
