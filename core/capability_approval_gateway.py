@@ -238,6 +238,16 @@ class CapabilityApprovalGateway:
             if existing is not None:
                 db.commit()
                 return existing["request_id"]
+            active_credential = db.execute(
+                """SELECT 1 FROM capability_approvals
+                   WHERE request_sha256=? AND policy_version=?
+                     AND expires_at>? AND consumed_at IS NULL AND revoked_at IS NULL
+                   LIMIT 1""",
+                (digest, policy.policy_version, now),
+            ).fetchone()
+            if active_credential is not None:
+                db.rollback()
+                raise PermissionError("an active approval credential already exists")
             inserted = db.execute(
                 """INSERT INTO capability_approval_requests
                    (request_id,request_sha256,request_json,policy_version,principal_id,
