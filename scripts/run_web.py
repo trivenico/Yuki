@@ -13,6 +13,8 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.device_pairing import DevicePairingService
+from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
@@ -58,10 +60,14 @@ def create_app():
         max_tool_calls=1,
         max_duration_seconds=120,
     )
+    inference_database = workspace / "inference.sqlite3"
+    device_pairing = DevicePairingService(inference_database)
+    inference_jobs = InferenceJobService(inference_database, device_pairing)
     return build_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
+        device_pairing=device_pairing, inference_jobs=inference_jobs,
     )
 
 

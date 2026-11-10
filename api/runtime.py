@@ -9,6 +9,9 @@ from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
 from api.web import YukiWebApplication
+from api.inference import AuthenticatedInferenceAPI
+from core.device_pairing import DevicePairingService
+from core.inference_jobs import InferenceJobService
 
 
 class ConversationRuntime:
@@ -53,6 +56,8 @@ def build_conversation_runtime(
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
+    device_pairing: DevicePairingService | None = None,
+    inference_jobs: InferenceJobService | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -64,6 +69,10 @@ def build_conversation_runtime(
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if (device_pairing is None) != (inference_jobs is None):
+        raise ValueError("device_pairing and inference_jobs must be configured together")
+    if device_pairing is not None and inference_jobs.pairing is not device_pairing:
+        raise ValueError("inference_jobs must use the configured device_pairing service")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
@@ -71,6 +80,8 @@ def build_conversation_runtime(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
         )
+        if device_pairing is not None:
+            app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         return ConversationRuntime(app, store)
     except Exception:
         close = getattr(store, "close", None)
