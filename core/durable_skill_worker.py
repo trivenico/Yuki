@@ -11,6 +11,8 @@ from typing import Any
 import math
 import threading
 
+from core.guarded_skill_runtime import SkillPolicyContext
+
 
 class DurableSkillWorker:
     def __init__(
@@ -21,6 +23,7 @@ class DurableSkillWorker:
         worker_id: str,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
+        allow_unprotected_runtime: bool = False,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -34,13 +37,30 @@ class DurableSkillWorker:
             or heartbeat_interval_seconds > min(lease_seconds / 2, 300)
         ):
             raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
+        if not isinstance(allow_unprotected_runtime, bool):
+            raise TypeError("allow_unprotected_runtime must be a boolean")
+        policy_engine = getattr(runtime, "policy_engine", None)
+        policy_factory = getattr(runtime, "policy_request_factory", None)
+        policy_configured = (
+            callable(getattr(policy_engine, "evaluate", None))
+            and callable(policy_factory)
+        )
+        if not policy_configured and not allow_unprotected_runtime:
+            raise ValueError(
+                "DurableSkillWorker requires a central policy engine and request factory; "
+                "set allow_unprotected_runtime=True only for isolated legacy tests"
+            )
         self.engine = engine
         self.runtime = runtime
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+        self.policy_required = policy_configured
 
-    def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+    def _invoke_with_lease_heartbeat(
+        self, task_id: str, skill_name: str, argument: str,
+        policy_context: SkillPolicyContext | None = None,
+    ):
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -64,7 +84,12 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
-            result = self.runtime.invoke(skill_name, argument)
+            if policy_context is None:
+                result = self.runtime.invoke(skill_name, argument)
+            else:
+                result = self.runtime.invoke(
+                    skill_name, argument, policy_context=policy_context
+                )
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
@@ -78,6 +103,38 @@ class DurableSkillWorker:
             return {"state": "idle", "status": "no_task"}
 
         task_id = task["id"]
+        policy_context = None
+        if self.policy_required:
+            owner_id = task.get("owner_id")
+            goal_id = task.get("goal_id")
+            if (
+                not isinstance(owner_id, str) or not owner_id.strip()
+                or not isinstance(goal_id, str) or not goal_id.strip()
+            ):
+                rejected = self.engine.reject(
+                    task_id, self.worker_id, "missing_authenticated_owner"
+                )
+                return {
+                    "task_id": task_id,
+                    "state": rejected["state"],
+                    "status": "missing_authenticated_owner",
+                }
+            try:
+                policy_context = SkillPolicyContext(
+                    principal_id=owner_id,
+                    trigger="durable_task",
+                    goal_id=goal_id,
+                    task_id=task_id,
+                )
+            except ValueError:
+                rejected = self.engine.reject(
+                    task_id, self.worker_id, "invalid_authenticated_owner"
+                )
+                return {
+                    "task_id": task_id,
+                    "state": rejected["state"],
+                    "status": "invalid_authenticated_owner",
+                }
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke":
@@ -121,7 +178,9 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
-            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
+            result = self._invoke_with_lease_heartbeat(
+                task_id, skill_name, argument, policy_context
+            )
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.

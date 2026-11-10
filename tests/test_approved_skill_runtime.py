@@ -109,7 +109,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         engine = Engine()
         runtime = ApprovedSkillRuntime(
             self.registry, self.store, policy_engine=engine,
-            policy_request_factory=lambda name, argument, instance: (
+            policy_request_factory=lambda name, argument, instance, context: (
                 name, argument, instance
             ),
         )

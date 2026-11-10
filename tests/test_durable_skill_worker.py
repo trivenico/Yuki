@@ -57,7 +57,12 @@ class DurableSkillWorkerTests(unittest.TestCase):
             SkillApprovalStore(root / "approvals.sqlite"),
             invocation_approvals=self.approvals,
         )
-        self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker")
+        # Explicitly opt into the legacy, unprotected path for these isolated
+        # compatibility tests. Production durable workers must configure policy.
+        self.worker = DurableSkillWorker(
+            self.engine, self.runtime, worker_id="test-worker",
+            allow_unprotected_runtime=True,
+        )
         self.goal = self.engine.create_goal()
 
     def submit(self, skill_name, argument="", *, task_type="skill.invoke", max_attempts=1, key="task"):
@@ -69,6 +74,10 @@ class DurableSkillWorkerTests(unittest.TestCase):
             max_attempts=max_attempts,
         )
 
+    def test_durable_worker_fails_closed_without_central_policy_by_default(self):
+        with self.assertRaisesRegex(ValueError, "requires a central policy engine"):
+            DurableSkillWorker(self.engine, self.runtime, worker_id="unsafe-default")
+
     def test_registered_low_risk_skill_runs_and_only_metadata_is_persisted(self):
         task = self.submit("read_demo", "hello")
         result = self.worker.run_once()
@@ -79,8 +88,63 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertNotIn("secret_output", str(stored["result"]))
         self.assertNotIn("do-not-persist", str(stored["result"]))
 
+    def test_central_policy_receives_persisted_owner_and_task_provenance(self):
+        from core.tool_policy import Decision, PolicyResult
+        observed = []
+
+        class AllowEngine:
+            def evaluate(self, request):
+                observed.append(request)
+                return PolicyResult(Decision.ALLOW, "v1", ("owner-allow",), "test")
+
+        owner = "authenticated-user-42"
+        goal = self.engine.create_goal(owner_id=owner)
+        task = self.engine.submit(
+            goal, "skill.invoke",
+            {"skill_name": "read_demo", "argument": "hello"},
+            idempotency_key="owned-policy-task", owner_id=owner, max_attempts=1,
+        )
+        runtime = ApprovedSkillRuntime(
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "policy-approvals.sqlite"),
+            policy_engine=AllowEngine(),
+            policy_request_factory=lambda name, argument, skill, context: context,
+        )
+        worker = DurableSkillWorker(self.engine, runtime, worker_id="policy-worker")
+        result = worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        context = observed[-1]
+        self.assertEqual(context.principal_id, owner)
+        self.assertEqual(context.trigger, "durable_task")
+        self.assertEqual(context.goal_id, goal)
+        self.assertEqual(context.task_id, task["id"])
+
+    def test_central_policy_worker_rejects_ownerless_legacy_task_before_skill(self):
+        from core.tool_policy import Decision, PolicyResult
+
+        class Engine:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "v1", ("allow",), "test")
+
+        calls = []
+
+        class Runtime:
+            policy_engine = Engine()
+            policy_request_factory = staticmethod(lambda name, argument, skill, context: context)
+
+            def invoke(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                raise AssertionError("ownerless task must not invoke skill")
+
+        self.submit("read_demo", "legacy", key="legacy-ownerless")
+        worker = DurableSkillWorker(self.engine, Runtime(), worker_id="policy-worker")
+        result = worker.run_once()
+        self.assertEqual(result["status"], "missing_authenticated_owner")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(calls, [])
+
     def test_high_risk_skill_requires_fresh_approval_before_execution(self):
-        task = self.submit("write_demo", "change")
+        self.submit("write_demo", "change")
         result = self.worker.run_once()
         self.assertEqual(result["status"], "approval_required")
         self.assertEqual(result["state"], "failed")
@@ -125,7 +189,8 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
         task = self.submit("read_demo", "raises", key="worker-exception")
         worker = DurableSkillWorker(
-            self.engine, RaisingRuntime(), worker_id="raising-worker"
+            self.engine, RaisingRuntime(), worker_id="raising-worker",
+            allow_unprotected_runtime=True,
         )
         result = worker.run_once()
         self.assertEqual(result["state"], "failed")
@@ -144,6 +209,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
                         worker_id="invalid-heartbeat",
                         lease_seconds=4,
                         heartbeat_interval_seconds=interval,
+                        allow_unprotected_runtime=True,
                     )
 
     def test_worker_renews_lease_during_long_running_invocation(self):
@@ -168,14 +234,13 @@ class DurableSkillWorkerTests(unittest.TestCase):
             worker_id="heartbeat-worker",
             lease_seconds=2,
             heartbeat_interval_seconds=0.05,
+            allow_unprotected_runtime=True,
         )
         outcomes = []
         thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
         thread.start()
         self.assertTrue(started.wait(timeout=2))
         try:
-            # Wait longer than the original lease; heartbeats must keep the
-            # task owned and prevent another recovery/claim from stealing it.
             import time
             time.sleep(2.2)
             self.assertEqual(self.engine.recover_expired_leases(), 0)
