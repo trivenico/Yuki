@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
+from core.authenticated_task_service import AuthenticatedDurableTaskService
+from core.durable_task_engine import TaskNotFound, TaskConflict
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -38,6 +40,7 @@ class YukiConversationAPI:
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         device_agent: Any | None = None,
         inference_jobs: Any | None = None,
+        task_service: AuthenticatedDurableTaskService | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -60,6 +63,9 @@ class YukiConversationAPI:
         if inference_jobs is not None and not callable(getattr(inference_jobs, "create_job", None)):
             raise TypeError("inference_jobs must provide create_job")
         self.inference_jobs = inference_jobs
+        if task_service is not None and not isinstance(task_service, AuthenticatedDurableTaskService):
+            raise TypeError("task_service must be an AuthenticatedDurableTaskService")
+        self.task_service = task_service
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -200,6 +206,78 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            # Durable task routes are optional until the embedding runtime
+            # injects an authenticated task service. Identity always comes
+            # from the bearer session resolved above, never from request JSON.
+            if path == "/v1/goals" and method == "POST":
+                if self.task_service is None:
+                    return await self._respond(send, 503, {"error": "task_service_unavailable"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                goal_id = await asyncio.to_thread(self.task_service.create_goal, (await self._principal(scope))[1])
+                return await self._respond(send, 201, {"goal_id": goal_id})
+
+            if self.task_service is not None:
+                goal_match = re.fullmatch(r"/v1/goals/([^/]+)", path)
+                goal_tasks_match = re.fullmatch(r"/v1/goals/([^/]+)/tasks", path)
+                goal_events_match = re.fullmatch(r"/v1/goals/([^/]+)/events", path)
+                task_match = re.fullmatch(r"/v1/tasks/([^/]+)", path)
+                task_cancel_match = re.fullmatch(r"/v1/tasks/([^/]+)/cancel", path)
+                _, session_token = await self._principal(scope)
+                if goal_tasks_match and method == "POST":
+                    payload = await self._body(receive)
+                    required = {"task_type", "payload", "idempotency_key"}
+                    optional = {"dependencies", "max_attempts", "delay_seconds"}
+                    if not required.issubset(payload) or set(payload) - required - optional:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    task = await asyncio.to_thread(
+                        self.task_service.submit, session_token, goal_tasks_match.group(1),
+                        payload["task_type"], payload["payload"],
+                        idempotency_key=payload["idempotency_key"],
+                        dependencies=payload.get("dependencies", ()),
+                        max_attempts=payload.get("max_attempts", 3),
+                        delay_seconds=payload.get("delay_seconds", 0),
+                    )
+                    return await self._respond(send, 201, {"task": task})
+                if goal_tasks_match and method == "GET":
+                    tasks = await asyncio.to_thread(
+                        self.task_service.list_tasks, session_token, goal_tasks_match.group(1)
+                    )
+                    return await self._respond(send, 200, {"tasks": tasks})
+                if goal_events_match and method == "GET":
+                    query = self._query(scope)
+                    try:
+                        after_id = int(query.get("after_id", "0"))
+                        limit = int(query.get("limit", "100"))
+                    except (TypeError, ValueError):
+                        return await self._respond(send, 400, {"error": "invalid_pagination"})
+                    if after_id < 0 or not 1 <= limit <= 500:
+                        return await self._respond(send, 400, {"error": "invalid_pagination"})
+                    events = await asyncio.to_thread(
+                        self.task_service.list_events, session_token, goal_events_match.group(1),
+                        after_id=after_id, limit=limit,
+                    )
+                    return await self._respond(send, 200, {"events": events})
+                if goal_match and method == "GET":
+                    goal = await asyncio.to_thread(
+                        self.task_service.get_goal, session_token, goal_match.group(1)
+                    )
+                    return await self._respond(send, 200, {"goal": goal})
+                if task_cancel_match and method == "POST":
+                    payload = await self._body(receive)
+                    if payload:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    task = await asyncio.to_thread(
+                        self.task_service.cancel_task, session_token, task_cancel_match.group(1)
+                    )
+                    return await self._respond(send, 200, {"task": task})
+                if task_match and method == "GET":
+                    task = await asyncio.to_thread(
+                        self.task_service.get_task, session_token, task_match.group(1)
+                    )
+                    return await self._respond(send, 200, {"task": task})
 
             if method == "GET" and path == "/v1/devices":
                 if self.device_agent is None:
@@ -408,9 +486,9 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, result)
 
             return await self._respond(send, 404, {"error": "not_found"})
-        except ConversationNotFound:
+        except (ConversationNotFound, TaskNotFound):
             return await self._respond(send, 404, {"error": "not_found"})
-        except ConversationConflict:
+        except (ConversationConflict, TaskConflict):
             return await self._respond(send, 409, {"error": "conversation_conflict"})
         except (ValueError, ConversationError):
             return await self._respond(send, 400, {"error": "invalid_request"})
