@@ -203,7 +203,7 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             skill_registry=FakeRegistry(),
             deliver_credential=lambda rid, token: delivered.append(token),
         )
-        with self.assertRaisesRegex(PermissionError, "goal is not owned"):
+        with self.assertRaisesRegex(PermissionError, "goal is not active"):
             service.approve_pending("approver-session", request_id)
         self.assertEqual(delivered, [])
 
