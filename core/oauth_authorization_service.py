@@ -28,7 +28,7 @@ class OAuthAuthorizationService:
         provider_id: str, account_id: str, client_id: str,
         authorization_endpoint: str, token_endpoint: str,
         allowed_authorization_hosts, redirect_uri: str,
-        issuer: str, resource: str, scopes,
+        issuer: str, resource: str, scopes, identity_verifier,
     ):
         required = {
             "provider_id": provider_id, "account_id": account_id,
@@ -46,11 +46,14 @@ class OAuthAuthorizationService:
             raise TypeError("an encrypted OAuth credential vault is required")
         if not callable(getattr(transport, "request_form", None)):
             raise TypeError("a pinned OAuth form transport is required")
+        if not callable(getattr(identity_verifier, "verify", None)):
+            raise TypeError("a trusted provider identity verifier is required")
         if not isinstance(scopes, (list, tuple)) or not scopes:
             raise ValueError("at least one OAuth scope is required")
         self._transactions = transaction_store
         self._vault = credential_vault
         self._transport = transport
+        self._identity_verifier = identity_verifier
         self._provider_id = provider_id
         self._account_id = account_id
         self._client_id = client_id
@@ -150,6 +153,9 @@ class OAuthAuthorizationService:
                 expected_issuer=transaction.issuer,
                 expected_resource=transaction.resource,
             )
+            # Bind this authorization grant to the provider account selected by
+            # trusted host configuration before persisting any credential.
+            self._identity_verifier.verify(access_token=grant.access_token)
             version = self._vault.store(
                 owner_id=owner_id,
                 provider_id=self._provider_id,
