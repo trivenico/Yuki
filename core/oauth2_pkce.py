@@ -16,14 +16,7 @@ import secrets
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 
-_TOKEN = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 _SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
-_RESERVED = frozenset({
-    "client_id", "code_challenge", "code_challenge_method", "redirect_uri",
-    "response_type", "scope", "state", "resource",
-})
-
-
 class OAuthAuthorizationError(ValueError):
     """Stable, non-secret OAuth authorization validation failure."""
 
