@@ -107,7 +107,20 @@ class AuthenticatedCapabilityApprovalService:
         """Request review for a real queued task owned by the current session."""
         user = self._principal(session_token)
         request = self._request_from_owned_task(user.user_id, task_id)
-        return self.gateway.request_approval(request, ttl_seconds=ttl_seconds)
+        request_id = self.gateway._request_digest(request)[:32]
+        self.task_engine.hold_task_for_approval(
+            task_id, user.user_id, request_id, ttl_seconds=ttl_seconds,
+        )
+        try:
+            persisted_id = self.gateway.request_approval(
+                request, ttl_seconds=ttl_seconds, request_id=request_id,
+            )
+            if persisted_id != request_id:
+                raise RuntimeError("approval request identifier mismatch")
+            return persisted_id
+        except Exception:
+            self.task_engine.release_task_approval_hold(task_id, request_id)
+            raise
 
     def pending_requests(self, session_token: str, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """List redacted pending approvals for an authorized approver."""
@@ -126,6 +139,9 @@ class AuthenticatedCapabilityApprovalService:
         current_request = self._request_from_owned_task(
             identity["principal_id"], identity["step_id"],
         )
+        self.task_engine.renew_task_approval_hold(
+            identity["step_id"], request_id, ttl_seconds=ttl_seconds,
+        )
         token = self.gateway.approve_request(
             request_id, approved_by=user.user_id, ttl_seconds=ttl_seconds,
             expected_request=current_request,
@@ -137,7 +153,9 @@ class AuthenticatedCapabilityApprovalService:
                 self.gateway.revoke(token, revoked_by=user.user_id)
             except Exception:
                 pass
+            self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
             raise RuntimeError("protected approval credential delivery failed") from None
+        self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
 
     def revoke(self, session_token: str, approval_token: str) -> bool:
         """Revoke an unconsumed credential using the authenticated actor."""
