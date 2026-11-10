@@ -109,7 +109,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         engine = Engine()
         runtime = ApprovedSkillRuntime(
             self.registry, self.store, policy_engine=engine,
-            policy_request_factory=lambda name, argument, instance: (
+            policy_request_factory=lambda name, argument, instance, context: (
                 name, argument, instance
             ),
         )
@@ -117,7 +117,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "central_policy_deny")
         self.assertEqual(calls, [])
-        self.assertEqual(engine.requests, [("weather", "change", skill)])
+        self.assertEqual(engine.requests, [("weather", "change", skill, None)])
 
     def test_central_policy_evaluation_failure_fails_closed(self):
         class SideEffectSkill:
