@@ -1,7 +1,9 @@
 """End-to-end durable worker authorization through the encrypted broker."""
 import hashlib
 import hmac
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -148,6 +150,34 @@ class ApprovalBrokerWorkerIntegrationTests(unittest.TestCase):
             DurableSkillWorker(
                 self.engine, self.runtime, worker_id="worker-2", owner_id="alice",
                 approval_token_resolver=self.broker.resolver(),
+            )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permission semantics required")
+    def test_broker_database_is_owner_only(self):
+        mode = stat.S_IMODE(self.broker_path.stat().st_mode)
+        self.assertEqual(mode, 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permission semantics required")
+    def test_existing_permissive_database_is_hardened(self):
+        path = Path(self.temp.name) / "permissive-broker.sqlite"
+        path.touch()
+        path.chmod(0o644)
+        ApprovalCredentialBroker(
+            path, self.gateway, worker_id="worker-2", seal=seal, unseal=unseal,
+        )
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_broker_rejects_symlink_database_path(self):
+        target = Path(self.temp.name) / "database-target"
+        target.write_bytes(b"not a database")
+        link = Path(self.temp.name) / "broker-link.sqlite"
+        try:
+            link.symlink_to(target)
+        except (NotImplementedError, OSError):
+            self.skipTest("symlink creation is unavailable")
+        with self.assertRaisesRegex(PermissionError, "regular non-symlink"):
+            ApprovalCredentialBroker(
+                link, self.gateway, worker_id="worker-2", seal=seal, unseal=unseal,
             )
 
 
