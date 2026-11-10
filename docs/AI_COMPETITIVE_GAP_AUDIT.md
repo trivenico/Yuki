@@ -133,3 +133,37 @@ Use three model tiers:
 Capability metadata must be measured or verified per provider/model version. At minimum track tool-call reliability, JSON/schema adherence, coding task pass rate, retrieval-grounded factuality, multimodal input/output, context handling, latency, cancellation behavior, and exact-vs-estimated usage. Never infer a capability solely from a model family name.
 
 The November 2026 public landscape includes multiple frontier vendors and open-weight alternatives; independent aggregators disagree on composite rankings and some models have incomplete benchmark coverage. Treat those leaderboards as candidate discovery, not deployment policy. Run Yuki's own task suite and keep raw benchmark source, date, model ID, prompt version, and evaluation configuration with each result.
+
+## Product north star: a private, single-owner AI operating system
+
+Yuki is being built for one personal owner, not as a public multi-tenant SaaS product. Its long-term product ambition combines frontier-assistant breadth, autonomous-agent execution, and a context-aware personal companion. This is a product direction, not a claim that the current repository already delivers every capability.
+
+### Capability families to converge
+
+| Family | Reference patterns | Yuki target |
+|---|---|---|
+| Frontier assistant | OpenAI, Claude, Gemini, Kimi, DeepSeek | Strong conversation, reasoning, research, coding, multimodal input/output, model choice and provider portability |
+| Agent platform | Hermes, OpenClaw, OpenJarvis and agent frameworks | Persistent agent loop, tools, specialist delegation, durable tasks, schedules/events, recovery and auditable outcomes |
+| Agentic engineering | Coding agents and computer-use systems | Repository understanding, isolated workspaces, patch/test/review cycles, browser/desktop operation and approval-gated actions |
+| Personal companion | JARVIS-inspired assistants | Longitudinal memory, voice, proactive context, device presence, personal workflows and natural interaction across interfaces |
+
+### Personal-owner architecture constraints
+
+1. **One owner, one authority root.** Every durable goal, task, plan, memory record, device pairing, approval and audit event must resolve to the authenticated owner. Do not add tenant administration, public user onboarding or billing abstractions without a concrete personal-use need.
+2. **Private by default.** Keep personal memory, files, transcripts, embeddings and run history local or on infrastructure explicitly controlled by the owner. Cloud model calls must be visible, provider-configurable and limited to the data needed for that request.
+3. **Local-first, cloud-capable.** Support local models and local services as first-class providers; use cloud frontier models when selected or when a task requires capabilities unavailable locally. Never imply a cloud provider's usage or billing limits can be bypassed.
+4. **No arbitrary owner quotas.** Do not impose product-level daily/monthly/lifetime message, token, task or agent-invocation quotas on the sole owner. Keep transparent metering, configurable concurrency/resource protection, cancellation, deadlines, loop detection and provider/hardware limits.
+5. **No implicit autonomy escalation.** Memory, agent role, model confidence, prior approval or device pairing must not grant new execution authority. High-impact actions require the central policy and approval path; deny and quarantine always win.
+6. **Proactive, not intrusive.** Background monitoring, microphone/camera access, location, device control and outbound communication must be individually configurable, observable and revocable. Default to off for sensitive sensors and consequential actions.
+7. **Portable and recoverable.** Owner-controlled export, encrypted backups, restore drills, migration paths and an understandable local data directory are core requirements.
+8. **Honest intelligence claims.** “JARVIS-like” means an integrated, responsive, context-aware assistant. It does not imply sentience, guaranteed correctness, quantum computation or unrestricted control of the owner's environment.
+
+### Capability maturity gates
+
+- **Personal assistant foundation:** authenticated single-owner chat, persistent conversations, selectable local/cloud models, reliable memory controls and clear provider usage visibility.
+- **Agentic assistant:** shared run lifecycle across chat/CLI/workers, typed tools, central policy, approval inbox, durable checkpoints, cancellation and traceable outcomes.
+- **Personal AI workspace:** semantic/hybrid retrieval with provenance, voice and multimodal journeys, desktop/browser integration, device presence and proactive event handling.
+- **JARVIS-style orchestration:** cross-domain planning and delegated specialist agents with independent verification, recoverable long-running workflows and explicit owner-configured autonomy.
+- **Advanced autonomy:** sandboxed software engineering, controlled self-improvement proposals, evaluation-backed changes, rollback and owner approval before production-impacting changes.
+
+A capability is not complete when a module exists. It is complete only when the owner can invoke it through a supported interface, policy is enforced at the execution boundary, state survives restart where required, failure is recoverable, and acceptance tests prove the end-to-end journey.
