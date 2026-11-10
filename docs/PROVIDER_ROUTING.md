@@ -50,3 +50,6 @@ For OpenAI-compatible and local loopback Ollama adapters, the specialist worker 
 The current shared adapter contract proves text generation only. Vision, audio, video, tool calling, reasoning quality and context-window sizes remain unknown unless separately verified for the exact provider/model pair. Remote or ambiguous Ollama endpoints are not classified as local. Gemini CLI and hybrid remain on the explicit provider-level route until their exact model identity and construction can be pinned.
 
 Model-level capability routing is currently available through `ProviderManager.create_routed_model_adapter()`; it is not a claim that every agent role or modality is supported.
+
+
+The interactive CLI also constructs its initial OpenAI/Ollama adapter through exact-model routing. Switching to OpenAI is treated as an explicit cloud-provider selection at the CLI command boundary; programmatic callers must pass `allow_cloud=True` themselves. Switching to local Ollama uses the exact configured model identifier. Gemini CLI continues through its existing adapter path because the current registry does not yet pin a verifiable exact Gemini model.
