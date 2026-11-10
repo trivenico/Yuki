@@ -29,6 +29,17 @@ class RuntimeModelCapabilityRoutingTests(unittest.TestCase):
         self.assertEqual(config["provider"], "ollama")
         self.assertEqual(config["ollama_model"], "qwen3")
 
+    def test_ollama_tagged_model_identifier_is_preserved_exactly(self):
+        manager = ProviderManager(
+            config={"ollama_model": "qwen3:8b"},
+            environ={},
+        )
+        selected = manager.model_capability_registry().route(required=("text",))
+        self.assertEqual(selected.model_id, "ollama/qwen3:8b")
+        with patch("providers.factory.create_provider", return_value=_AvailableProvider()) as factory:
+            manager.create_routed_model_adapter(required=("text",))
+        self.assertEqual(factory.call_args.args[0]["ollama_model"], "qwen3:8b")
+
     def test_cloud_model_requires_explicit_consent_and_exact_pin(self):
         manager = ProviderManager(
             config={},
