@@ -149,6 +149,22 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "cloud_consent_required")
         self.assertEqual(calls, [])
 
+    def test_cloud_consent_is_forwarded_to_provider_selector(self):
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "openai", "privacy": "cloud_provider", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {
+            "name": name, "selected": True, "privacy": "cloud_provider"
+        }
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "openai", "confirm_global": True, "confirm_cloud": True},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [("openai", {"allow_cloud": True})])
+
     def test_non_loopback_ollama_endpoint_requires_cloud_consent(self):
         calls = []
         self.app.provider_catalog = lambda: [
