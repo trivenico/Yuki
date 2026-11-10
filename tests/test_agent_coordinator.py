@@ -219,6 +219,11 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertIsNotNone(dispatched.subtasks[0].task_id)
         self.assertEqual(dispatched.subtasks[0].status, "queued")
+        persisted = self.runtime.get(actor_id="alice", task_id=dispatched.subtasks[0].task_id)
+        self.assertEqual(
+            persisted.steps[0]["required_permissions"], ["web:read"]
+        )
+        self.assertTrue(persisted.steps[0]["requires_approval"])
 
     def test_dependency_prevents_early_dispatch(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="dag-1", subtasks=[
@@ -278,6 +283,16 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             denied.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
         with self.assertRaises(KeyError):
             self.coordinator.cancel_plan(actor_id="alice", plan_id="missing-plan")
+
+    def test_permission_requests_cannot_disable_explicit_approval(self):
+        with self.assertRaisesRegex(AgentPlanError, "explicit approval"):
+            self.coordinator.submit(
+                actor_id="alice", idempotency_key="privileged-no-approval",
+                subtasks=[SubtaskSpec(
+                    "collect", "Collect approved public sources", ("research",),
+                    requires_approval=False, required_permissions=("web:read",),
+                )],
+            )
 
     def test_required_permissions_are_part_of_routing(self):
         with self.assertRaises(AgentPlanError):
