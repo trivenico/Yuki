@@ -1,5 +1,7 @@
 # Phase 62 — Hugging Face model discovery
 
+Overview and CLI quick start: [PHASE62_HUGGINGFACE_DISCOVERY.md](PHASE62_HUGGINGFACE_DISCOVERY.md). This file is the canonical technical and security specification.
+
 Yuki can query the public Hugging Face Hub model metadata API through `providers.huggingface_discovery.HuggingFaceDiscovery`. The CLI is:
 
 ```bash
