@@ -21,7 +21,7 @@ class AuthenticatedCapabilityApprovalService:
         auth: Any,
         gateway: CapabilityApprovalGateway,
         *,
-        deliver_credential: Callable[[str, str], None] | None = None,
+        deliver_credential: Callable[[str, PolicyRequest, str, int], None] | None = None,
     ) -> None:
         if not callable(getattr(auth, "resolve_session", None)):
             raise TypeError("auth must provide resolve_session(token)")
@@ -64,11 +64,12 @@ class AuthenticatedCapabilityApprovalService:
         user = self._principal(session_token, "workflow:approve")
         if self.deliver_credential is None:
             raise RuntimeError("protected credential delivery is not configured")
+        request = self.gateway.get_pending_request(request_id)
         token = self.gateway.approve_request(
             request_id, approved_by=user.user_id, ttl_seconds=ttl_seconds,
         )
         try:
-            self.deliver_credential(request_id, token)
+            self.deliver_credential(request_id, request, token, ttl_seconds)
         except Exception:
             # Revoke even if the delivery callback partially completed. Never
             # propagate callback text, which could accidentally contain secrets.
