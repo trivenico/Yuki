@@ -2,10 +2,13 @@
 from __future__ import annotations
 import json
 import re
+from collections.abc import Mapping
 from core.mcp_client import MCPHTTPClient, MCPError
 from skills.base import Skill, SkillResult
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_SERVER_FIELDS = frozenset({"name", "endpoint", "allowed_hosts", "allowed_tools"})
+
 
 class MCPPluginSkill(Skill):
     name = "mcp_plugin"
@@ -13,11 +16,13 @@ class MCPPluginSkill(Skill):
     risk = "high"
     requires_approval = True
 
-    def __init__(self, servers=()):
+    def __init__(self, servers=(), *, token_providers=None):
         self.servers = {}
         for item in servers:
             if not isinstance(item, dict):
                 raise ValueError("Each MCP server configuration must be a mapping.")
+            if set(item) - _SERVER_FIELDS:
+                raise ValueError("MCP server configuration contains unsupported fields; credentials must be injected by trusted host code.")
             name = item.get("name")
             endpoint = item.get("endpoint")
             hosts = item.get("allowed_hosts")
@@ -32,6 +37,17 @@ class MCPPluginSkill(Skill):
                 raise ValueError("MCP allowed_tools must be a list of simple tool names.")
             self.servers[name] = {"endpoint": endpoint, "allowed_hosts": tuple(hosts),
                                   "allowed_tools": tuple(tools)}
+        if token_providers is None:
+            token_providers = {}
+        if not isinstance(token_providers, Mapping):
+            raise TypeError("MCP token providers must be a mapping.")
+        providers = dict(token_providers)
+        if any(
+            not isinstance(name, str) or name not in self.servers or not callable(provider)
+            for name, provider in providers.items()
+        ):
+            raise ValueError("MCP token providers must be callable and match configured servers.")
+        self._token_providers = providers
 
     def run(self, argument=""):
         try:
@@ -43,11 +59,13 @@ class MCPPluginSkill(Skill):
             config = self.servers.get(name)
             if config is None:
                 raise ValueError("Server is not configured. Add it to mcp_servers after reviewing its trust and privacy.")
-            client = MCPHTTPClient(config["endpoint"], allowed_hosts=config["allowed_hosts"],
-                                   allowed_tools=config["allowed_tools"],
-                                   approver=lambda tool, args: (
-                                       request.get("confirm") == f"CALL {name}/{tool}"
-                                   ))
+            client = MCPHTTPClient(
+                config["endpoint"],
+                allowed_hosts=config["allowed_hosts"],
+                allowed_tools=config["allowed_tools"],
+                access_token_provider=self._token_providers.get(name),
+                approver=lambda tool, args: request.get("confirm") == f"CALL {name}/{tool}",
+            )
             client.initialize()
             if action == "list":
                 tools = client.list_tools()
