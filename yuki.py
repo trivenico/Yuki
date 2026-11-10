@@ -206,7 +206,9 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() in {"openai", "gemini", "hybrid"}))
         if result.startswith("Selected provider:"):
             try:
-                adapter = providers.create_selected_runtime_adapter()
+                adapter = providers.create_selected_runtime_adapter(
+                    allow_cloud=(parts[2].strip().lower() in {"openai", "gemini", "hybrid"})
+                )
                 if adapter is None:
                     return "Provider selection failed: no adapter is available."
                 agent.set_provider(adapter)
