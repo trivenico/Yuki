@@ -99,7 +99,11 @@ class DurableTaskEngineTests(unittest.TestCase):
             conn.close()
         migrated = DurableTaskEngine(legacy_db)
         try:
-            columns = {row[1] for row in sqlite3.connect(legacy_db).execute("PRAGMA table_info(goals)")}
+            check = sqlite3.connect(legacy_db)
+            try:
+                columns = {row[1] for row in check.execute("PRAGMA table_info(goals)")}
+            finally:
+                check.close()
             self.assertIn("owner_id", columns)
             legacy_goal = migrated.create_goal("new-owned-goal", owner_id="verified-user")
             self.assertEqual(migrated.get_goal(legacy_goal)["owner_id"], "verified-user")
