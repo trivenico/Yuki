@@ -34,11 +34,11 @@ class StoredOAuthCredential:
     provider_id: str
     account_id: str
     access_token: str = field(repr=False)
-    refresh_token: str | None = field(default=None, repr=False)
     expires_at: int
     scopes: tuple[str, ...]
     version: int
     connected_at: int
+    refresh_token: str | None = field(default=None, repr=False)
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$")
@@ -224,7 +224,11 @@ class SQLiteOAuthCredentialVault:
             scopes = tuple(json.loads(row[5]))
         except (TypeError, ValueError):
             raise OAuthCredentialError("invalid_stored_scopes") from None
-        return StoredOAuthCredential(owner, provider, account, access, refresh, row[4], scopes, row[6], row[7])
+        return StoredOAuthCredential(
+            owner_id=owner, provider_id=provider, account_id=account,
+            access_token=access, expires_at=row[4], scopes=scopes,
+            version=row[6], connected_at=row[7], refresh_token=refresh,
+        )
 
     def rotate(
         self, *, owner_id: str, provider_id: str, account_id: str,
