@@ -15,6 +15,7 @@ class FakeAuth:
             "approver-session": SimpleNamespace(user_id="approver-1", permissions=frozenset({"workflow:approve", "workflow:read"})),
             "reader-session": SimpleNamespace(user_id="reader-1", permissions=frozenset({"workflow:read"})),
             "owner-session": SimpleNamespace(user_id="alice", permissions=frozenset({"workflow:approve", "workflow:read"})),
+            "requester-session": SimpleNamespace(user_id="alice", permissions=frozenset({"workflow:read"})),
         }
 
     def resolve_session(self, token):
@@ -75,14 +76,13 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         audit = repr(self.service.audit_events("reader-session"))
         self.assertNotIn(token, audit)
 
-
     def test_authenticated_inbox_delivery_keeps_token_out_of_response(self):
         delivered = []
         service = AuthenticatedCapabilityApprovalService(
             self.auth, self.gateway,
             deliver_credential=lambda request_id, token: delivered.append((request_id, token)),
         )
-        request_id = service.request_approval("owner-session", self.request)
+        request_id = service.request_approval("requester-session", self.request)
         self.assertEqual(len(service.pending_requests("approver-session")), 1)
         self.assertIsNone(service.approve_pending("approver-session", request_id))
         self.assertEqual(delivered[0][0], request_id)
@@ -95,13 +95,15 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
 
     def test_delivery_failure_revokes_credential(self):
         delivered = []
+
         def failing_delivery(request_id, token):
             delivered.append(token)
             raise RuntimeError("sensitive callback detail")
+
         service = AuthenticatedCapabilityApprovalService(
             self.auth, self.gateway, deliver_credential=failing_delivery,
         )
-        request_id = service.request_approval("owner-session", self.request)
+        request_id = service.request_approval("requester-session", self.request)
         with self.assertRaisesRegex(RuntimeError, "delivery failed"):
             service.approve_pending("approver-session", request_id)
         self.assertFalse(self.gateway.authorize(
@@ -109,10 +111,9 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         ).allowed)
 
     def test_approval_requires_configured_protected_delivery(self):
-        request_id = self.service.request_approval("owner-session", self.request)
+        request_id = self.service.request_approval("requester-session", self.request)
         with self.assertRaisesRegex(RuntimeError, "delivery is not configured"):
             self.service.approve_pending("approver-session", request_id)
-
 
 
 if __name__ == "__main__":
