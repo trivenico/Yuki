@@ -83,19 +83,30 @@ class DurableCliIntegrationTests(unittest.TestCase):
         # and runtime facade, while one-shot approvals are shared process state.
         # This catches accidental reliance on retaining one runtime instance
         # between the /skill approve and /durable run commands.
+        from core.tool_policy import Decision, PolicyResult
+        class AllowPolicy:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "test-v1", ("test-allow",), "test")
+
         def build_runtime():
             runtime = ApprovedSkillRuntime(
                 self.registry,
                 self.approval_store,
                 invocation_approvals=self.approvals,
+                policy_engine=AllowPolicy(),
+                policy_request_factory=lambda name, argument, skill, context: context,
             )
             return self.registry, runtime
+
+        def build_durable_runtime(principal_id):
+            return build_runtime()[1]
 
         self.patches = [
             patch.object(yuki, "_DURABLE_TASK_DB", self.db),
             patch.object(yuki, "_AUTH_DB", self.auth_db),
             patch.object(yuki, "_CLI_SESSION_TOKEN", self.session_token),
             patch.object(yuki, "_build_approved_skill_runtime", build_runtime),
+            patch.object(yuki, "_build_durable_policy_runtime", build_durable_runtime),
         ]
         for item in self.patches:
             item.start()
