@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import unittest
@@ -58,7 +59,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
 
     def test_sensitive_values_are_not_stored_in_plaintext(self):
         self._create()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             row = db.execute(
                 "SELECT state_digest, owner_digest, session_digest, verifier_ciphertext "
                 "FROM oauth_transactions"
@@ -129,7 +130,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
                 session_id="session", redirect_uri="https://yuki.example/callback",
                 issuer="https://login.example", resource="https://mcp.example/mcp",
             )
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM oauth_transactions").fetchone()[0], 0)
 
     def test_decryption_failure_consumes_transaction_fail_closed(self):
@@ -146,7 +147,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         self._create(state="second-state")
         self.now[0] += 600
         self.assertEqual(self.store.purge_expired(retention_seconds=0), 2)
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM oauth_transactions").fetchone()[0], 0)
 
     def test_requires_separate_strong_hmac_key_and_cipher(self):
