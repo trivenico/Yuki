@@ -35,7 +35,7 @@ class YukiConversationAPI:
         *,
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
-        provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        provider_selector: Callable[..., dict[str, Any]] | None = None,
         device_agent: Any | None = None,
         inference_jobs: Any | None = None,
     ):
