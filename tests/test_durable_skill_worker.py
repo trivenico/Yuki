@@ -79,6 +79,63 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertNotIn("secret_output", str(stored["result"]))
         self.assertNotIn("do-not-persist", str(stored["result"]))
 
+
+    def test_central_policy_receives_persisted_owner_and_task_provenance(self):
+        from core.tool_policy import Decision, PolicyResult
+        observed = []
+        class Engine:
+            def evaluate(self, request):
+                observed.append(request)
+                return PolicyResult(Decision.ALLOW, "v1", ("owner-allow",), "test")
+        owner = "authenticated-user-42"
+        goal = self.engine.create_goal(owner_id=owner)
+        task = self.engine.submit(
+            goal, "skill.invoke",
+            {"skill_name": "read_demo", "argument": "hello"},
+            idempotency_key="owned-policy-task", owner_id=owner, max_attempts=1,
+        )
+        runtime = ApprovedSkillRuntime(
+            self.registry, SkillApprovalStore(Path(self.temp.name) / "policy-approvals.sqlite"),
+            policy_engine=Engine(),
+            policy_request_factory=lambda name, argument, skill, context: (
+                observed.append((name, argument, skill, context)) or object()
+            ),
+        )
+        # Replace the evaluator result path with an engine that observes only
+        # the typed request factory output while allowing this test invocation.
+        class AllowEngine:
+            def evaluate(self, request):
+                observed.append(request)
+                return PolicyResult(Decision.ALLOW, "v1", ("owner-allow",), "test")
+        runtime.policy_engine = AllowEngine()
+        runtime.policy_request_factory = lambda name, argument, skill, context: context
+        worker = DurableSkillWorker(self.engine, runtime, worker_id="policy-worker")
+        result = worker.run_once()
+        self.assertEqual(result["state"], "succeeded")
+        context = observed[-1]
+        self.assertEqual(context.principal_id, owner)
+        self.assertEqual(context.trigger, "durable_task")
+        self.assertEqual(context.goal_id, goal)
+        self.assertEqual(context.task_id, task["id"])
+
+    def test_central_policy_worker_rejects_ownerless_legacy_task_before_skill(self):
+        from core.tool_policy import Decision, PolicyResult
+        class Engine:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "v1", ("allow",), "test")
+        calls = []
+        class Runtime:
+            policy_engine = Engine()
+            def invoke(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                raise AssertionError("ownerless task must not invoke skill")
+        task = self.submit("read_demo", "legacy", key="legacy-ownerless")
+        worker = DurableSkillWorker(self.engine, Runtime(), worker_id="policy-worker")
+        result = worker.run_once()
+        self.assertEqual(result["status"], "missing_authenticated_owner")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(calls, [])
+
     def test_high_risk_skill_requires_fresh_approval_before_execution(self):
         task = self.submit("write_demo", "change")
         result = self.worker.run_once()
