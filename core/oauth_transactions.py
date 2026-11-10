@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
+import json
 import hmac
 from pathlib import Path
 import sqlite3
@@ -29,6 +30,8 @@ class SQLiteOAuthTransactionStore:
 
     def __init__(self, database_path: str, *, hmac_key: bytes,
                  encrypt: Callable[[bytes], bytes], decrypt: Callable[[bytes], bytes],
+                 encrypt_with_context: Callable[[bytes, bytes], bytes] | None = None,
+                 decrypt_with_context: Callable[[bytes, bytes], bytes] | None = None,
                  clock: Callable[[], float] = time.time, max_ttl_seconds: int = 900):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path")
@@ -36,11 +39,17 @@ class SQLiteOAuthTransactionStore:
             raise ValueError("hmac_key must contain at least 32 bytes")
         if not callable(encrypt) or not callable(decrypt):
             raise ValueError("trusted encrypt and decrypt callbacks are required")
+        if (encrypt_with_context is None) != (decrypt_with_context is None):
+            raise ValueError("contextual encryption callbacks must be supplied together")
+        if encrypt_with_context is not None and (not callable(encrypt_with_context) or not callable(decrypt_with_context)):
+            raise ValueError("invalid contextual encryption callbacks")
         if type(max_ttl_seconds) is not int or not 60 <= max_ttl_seconds <= 1800:
             raise ValueError("max_ttl_seconds must be between 60 and 1800")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self._hmac_key, self._encrypt, self._decrypt = bytes(hmac_key), encrypt, decrypt
+        self._encrypt_with_context = encrypt_with_context
+        self._decrypt_with_context = decrypt_with_context
         self._clock, self.max_ttl_seconds = clock, max_ttl_seconds
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS oauth_transactions (
@@ -69,6 +78,10 @@ class SQLiteOAuthTransactionStore:
         finally:
             db.close()
 
+    @staticmethod
+    def _cipher_context(state_digest: str, owner_digest: str, session_digest: str) -> bytes:
+        return json.dumps([1, state_digest, owner_digest, session_digest], separators=(",", ":")).encode("ascii")
+
     def create(self, *, state: str, code_verifier: str, owner_id: str, session_id: str,
                redirect_uri: str, issuer: str, resource: str, ttl_seconds: int = 600) -> int:
         state = self._bounded(state, label="state", maximum=256)
@@ -80,8 +93,17 @@ class SQLiteOAuthTransactionStore:
         resource_value = self._bounded(resource, label="resource", maximum=2048)
         if type(ttl_seconds) is not int or not 60 <= ttl_seconds <= self.max_ttl_seconds:
             raise OAuthTransactionError("invalid_transaction_ttl")
+        state_digest = self._digest("state", state)
+        owner_digest = self._digest("owner", owner)
+        session_digest = self._digest("session", session)
         try:
-            encrypted = self._encrypt(verifier.encode("utf-8"))
+            if self._encrypt_with_context is not None:
+                encrypted = self._encrypt_with_context(
+                    verifier.encode("utf-8"),
+                    self._cipher_context(state_digest, owner_digest, session_digest),
+                )
+            else:
+                encrypted = self._encrypt(verifier.encode("utf-8"))
         except Exception:
             raise OAuthTransactionError("verifier_encryption_failed") from None
         if not isinstance(encrypted, bytes) or not encrypted or len(encrypted) > 16384:
@@ -95,8 +117,7 @@ class SQLiteOAuthTransactionStore:
                         (state_digest, owner_digest, session_digest, verifier_ciphertext,
                          redirect_uri, issuer, resource, created_at, expires_at, consumed_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)""",
-                        (self._digest("state", state), self._digest("owner", owner),
-                         self._digest("session", session), sqlite3.Binary(encrypted),
+                        (state_digest, owner_digest, session_digest, sqlite3.Binary(encrypted),
                          redirect, issuer_value, resource_value, now, now + ttl_seconds))
                     db.execute("COMMIT")
                 except Exception:
@@ -148,7 +169,14 @@ class SQLiteOAuthTransactionStore:
                     db.execute("ROLLBACK")
                 raise
         try:
-            verifier = self._decrypt(bytes(ciphertext)).decode("utf-8")
+            if self._decrypt_with_context is not None:
+                plaintext = self._decrypt_with_context(
+                    bytes(ciphertext),
+                    self._cipher_context(state_digest, owner_digest, session_digest),
+                )
+            else:
+                plaintext = self._decrypt(bytes(ciphertext))
+            verifier = plaintext.decode("utf-8")
         except Exception:
             raise OAuthTransactionError("verifier_decryption_failed") from None
         if not verifier or len(verifier) > 128:
