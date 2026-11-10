@@ -48,7 +48,7 @@ class LocalWorkerTests(unittest.TestCase):
  def test_lease_must_outlast_provider_timeout(self):
   class SlowProvider(FakeOllamaProvider):
    def __init__(self): super().__init__(); self.timeout=120
-  with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
+  with self.assertRaisesRegex(ValueError,"job_lease_must_exceed_provider_timeout_by_15_seconds"):
    LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
