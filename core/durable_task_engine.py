@@ -266,6 +266,14 @@ class DurableTaskEngine:
         now = self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
+            task = c.execute(
+                """SELECT t.state,g.state AS goal_state
+                   FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.id=?""",
+                (task_id,),
+            ).fetchone()
+            if task is None or task["state"] != "queued" or task["goal_state"] != "active":
+                c.rollback()
+                raise TaskConflict("task is no longer eligible for approval")
             changed = c.execute(
                 """UPDATE task_approval_holds SET expires_at=?
                    WHERE task_id=? AND request_id=? AND expires_at>?""",
