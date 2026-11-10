@@ -203,10 +203,10 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /provider select NAME"
-        result = providers.select(parts[2])
+        result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() == "openai"))
         if result.startswith("Selected provider:"):
             try:
-                adapter = providers.create_selected_runtime_adapter(allow_cloud=(parts[2].strip().lower() == "openai"))
+                adapter = providers.create_selected_runtime_adapter()
                 if adapter is None:
                     return "Provider selection failed: no adapter is available."
                 agent.set_provider(adapter)
