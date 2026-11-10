@@ -5,7 +5,6 @@ import os
 
 from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
-from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
@@ -13,16 +12,18 @@ from providers.openai_compatible import OpenAICompatibleProvider
 def create_provider(config=None, *, environ=None):
     """Build the configured real provider without implicit fallback.
 
-    OpenAI is the default. Hybrid routing keeps general tasks local and only
-    routes explicitly allow-listed task names to cloud. API keys are read from
-    the process environment, never from YAML or committed files. The mock
-    adapter remains available only to tests that call this factory explicitly.
+    New configurations default to local Ollama. Cloud providers must be
+    explicitly selected; hybrid cloud routing requires an explicit task
+    allow-list. API keys are read from the process environment, never YAML.
+    Mock adapters are test-only and must be injected directly into tests.
     """
     cfg = dict(config or {})
     env = os.environ if environ is None else environ
-    selected = str(cfg.get("provider", "openai")).strip().lower()
+    # Keep direct factory calls consistent with config loading and ProviderManager:
+    # an explicit environment override wins over the YAML/config value.
+    selected = str(env.get("YUKI_PROVIDER", cfg.get("provider", "ollama"))).strip().lower()
     if selected == "mock":
-        return MockProvider()
+        raise ValueError("provider must be one of: ollama, openai, gemini, hybrid (mock is test-only and cannot be selected at runtime).")
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
@@ -38,10 +39,11 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: ollama, openai, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
-        base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
-        model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
+        base_url=str(env.get("YUKI_OLLAMA_BASE_URL") or cfg.get("ollama_base_url") or "http://127.0.0.1:11434"),
+        model=str(env.get("YUKI_OLLAMA_MODEL") or cfg.get("ollama_model") or "llama3.2:3b"),
+        timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
     )
     if selected == "ollama":
         return local

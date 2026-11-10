@@ -1,11 +1,14 @@
 """Provider registry backed by the same factory used by the application runtime."""
 from __future__ import annotations
+
 import os
 from itertools import islice
 from dataclasses import dataclass
 from typing import Callable, Optional
+
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
+
 
 @dataclass(frozen=True)
 class ProviderInfo:
@@ -13,17 +16,30 @@ class ProviderInfo:
     auth_methods: tuple[str, ...]
     implemented: bool = False
 
+
 class ProviderManager:
     """Provider capability registry; availability is checked separately from construction."""
+
     def __init__(self, config=None, *, environ=None):
         self._config = dict(config or {})
         self._environ = os.environ if environ is None else environ
         self._providers: dict[str, ProviderInfo] = {}
         self._factories: dict[str, Callable] = {
-            "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
-            "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            "openai": lambda: create_provider(
+                {**self._config, "provider": "openai"},
+                environ=self._explicit_provider_environ(),
+            ),
+            "gemini": lambda: create_provider(
+                {**self._config, "provider": "gemini"},
+                environ=self._explicit_provider_environ(),
+            ),
         }
-        self._selected: Optional[str] = str(self._config.get("provider", self._environ.get("YUKI_PROVIDER", "openai"))).strip().lower()
+        # The environment override selects the initial provider. Once a caller
+        # explicitly selects a provider, it must not override that selection again
+        # while constructing the adapter.
+        self._selected: Optional[str] = str(
+            self._environ.get("YUKI_PROVIDER", self._config.get("provider", "ollama"))
+        ).strip().lower()
         self._selected_adapter: Optional[BaseProvider] = None
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
@@ -36,6 +52,10 @@ class ProviderManager:
             ProviderInfo("minimax", ("official_api_key_flow_planned",)),
         ):
             self.register(item)
+
+    def _explicit_provider_environ(self):
+        """Return provider settings without the startup-only selection override."""
+        return {key: value for key, value in self._environ.items() if key != "YUKI_PROVIDER"}
 
     def register(self, provider: ProviderInfo, factory=None) -> None:
         if not isinstance(provider, ProviderInfo):
@@ -65,8 +85,9 @@ class ProviderManager:
         } for name, p in sorted(self._providers.items())]
 
     def _build_adapter(self, name: str):
+        env = self._explicit_provider_environ()
         if name in {"ollama", "hybrid"}:
-            adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
+            adapter = create_provider({**self._config, "provider": name}, environ=env)
         else:
             factory = self._factories.get(name)
             if factory is None:
