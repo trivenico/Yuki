@@ -156,3 +156,47 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_durable_inbox_is_idempotent_and_redacted(self):
+        request_id = self.gateway.request_approval(self.request)
+        self.assertEqual(request_id, self.gateway.request_approval(self.request))
+        rows = self.gateway.pending_requests()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["request_id"], request_id)
+        self.assertNotIn("request_json", rows[0])
+        self.assertNotIn("argument_sha256", rows[0])
+        self.assertNotIn("token", repr(rows))
+
+    def test_inbox_approval_is_atomic_one_shot_and_persistent(self):
+        request_id = self.gateway.request_approval(self.request)
+        token = self.gateway.approve_request(request_id, approved_by="admin")
+        with self.assertRaises(PermissionError):
+            self.gateway.approve_request(request_id, approved_by="admin")
+        self.assertTrue(self.gateway.authorize(self.request, approval_token=token).allowed)
+        self.assertFalse(self.gateway.pending_requests())
+
+    def test_inbox_rejects_changed_policy_version(self):
+        request_id = self.gateway.request_approval(self.request)
+        self.gateway.policy_engine = ToolPolicyEngine((
+            PolicyRule(
+                "approval-required", Decision.REQUIRE_APPROVAL,
+                capability="workspace:write", principal_id="alice",
+                target="repo:project-a", risk=Risk.HIGH,
+            ),
+        ), policy_version="policy-v8")
+        with self.assertRaises(PermissionError):
+            self.gateway.approve_request(request_id, approved_by="admin")
+        self.assertFalse(self.gateway.pending_requests())
+
+    def test_inbox_expires_requests(self):
+        request_id = self.gateway.request_approval(self.request, ttl_seconds=5)
+        self.now[0] += 5
+        self.assertFalse(self.gateway.pending_requests())
+        with self.assertRaises(PermissionError):
+            self.gateway.approve_request(request_id, approved_by="admin")
+
+    def test_inbox_rejects_non_approval_policy(self):
+        allowed = self.make_request(capability="workspace:read")
+        with self.assertRaises(PermissionError):
+            self.gateway.request_approval(allowed)
+
