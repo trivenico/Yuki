@@ -69,6 +69,13 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             accepted = manager.select("gemini", allow_cloud=True)
             self.assertEqual(accepted, "Selected provider: gemini")
             self.assertIsInstance(manager.create_selected_adapter(), GeminiCLIProvider)
+        manager = ProviderManager({"ollama_model": "test-model"}, environ={})
+        with patch.object(OllamaProvider, "is_available", return_value=True):
+            rejected = manager.select("hybrid")
+            self.assertIn("explicit cloud consent", rejected)
+            self.assertEqual(manager.current().name, "openai")
+            accepted = manager.select("hybrid", allow_cloud=True)
+            self.assertEqual(accepted, "Selected provider: hybrid")
 
     def test_unavailable_non_exact_provider_does_not_commit_selection(self):
         manager = ProviderManager(environ={})
