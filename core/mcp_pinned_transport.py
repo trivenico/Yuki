@@ -114,13 +114,14 @@ class PinnedMCPHTTPTransport:
         pending = bytearray()
         event_data = []
         event_size = 0
+        event_type = "message"
         total_size = 0
         max_line = 65_536
         max_event = 262_144
         max_total = PinnedMCPHTTPTransport.MAX_RESPONSE_BYTES
 
         def consume_line(line):
-            nonlocal event_data, event_size
+            nonlocal event_data, event_size, event_type
             if len(line) > max_line:
                 raise MCPPinnedTransportError("mcp_sse_line_too_large")
             if line.endswith(b"\r"):
@@ -128,10 +129,15 @@ class PinnedMCPHTTPTransport:
             if not line:
                 if not event_data:
                     event_size = 0
+                    event_type = "message"
                     return None
                 raw = b"\n".join(event_data)
+                current_type = event_type
                 event_data = []
                 event_size = 0
+                event_type = "message"
+                if current_type not in ("", "message"):
+                    return None
                 try:
                     message = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -144,7 +150,12 @@ class PinnedMCPHTTPTransport:
             field, separator, value = line.partition(b":")
             if separator and value.startswith(b" "):
                 value = value[1:]
-            if field == b"data":
+            if field == b"event":
+                try:
+                    event_type = value.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise MCPPinnedTransportError("mcp_sse_invalid_event") from None
+            elif field == b"data":
                 event_size += len(value) + (1 if event_data else 0)
                 if event_size > max_event:
                     raise MCPPinnedTransportError("mcp_sse_event_too_large")
