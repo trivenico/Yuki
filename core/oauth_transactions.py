@@ -29,7 +29,7 @@ class SQLiteOAuthTransactionStore:
     """One-time state store; PKCE verifier is encrypted by an injected host cipher."""
 
     def __init__(self, database_path: str, *, hmac_key: bytes,
-                 encrypt: Callable[[bytes], bytes], decrypt: Callable[[bytes], bytes],
+                 encrypt: Callable[[bytes], bytes] | None = None, decrypt: Callable[[bytes], bytes] | None = None,
                  encrypt_with_context: Callable[[bytes, bytes], bytes] | None = None,
                  decrypt_with_context: Callable[[bytes, bytes], bytes] | None = None,
                  clock: Callable[[], float] = time.time, max_ttl_seconds: int = 900):
@@ -37,8 +37,12 @@ class SQLiteOAuthTransactionStore:
             raise ValueError("database_path must be a non-empty path")
         if not isinstance(hmac_key, bytes) or len(hmac_key) < 32:
             raise ValueError("hmac_key must contain at least 32 bytes")
-        if not callable(encrypt) or not callable(decrypt):
-            raise ValueError("trusted encrypt and decrypt callbacks are required")
+        legacy_pair = callable(encrypt) and callable(decrypt)
+        contextual_pair = callable(encrypt_with_context) and callable(decrypt_with_context)
+        if not (legacy_pair or contextual_pair):
+            raise ValueError("trusted encryption and decryption callbacks are required")
+        if (encrypt is None) != (decrypt is None):
+            raise ValueError("legacy encryption callbacks must be supplied together")
         if (encrypt_with_context is None) != (decrypt_with_context is None):
             raise ValueError("contextual encryption callbacks must be supplied together")
         if encrypt_with_context is not None and (not callable(encrypt_with_context) or not callable(decrypt_with_context)):
