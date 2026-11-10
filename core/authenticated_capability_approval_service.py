@@ -38,6 +38,12 @@ class AuthenticatedCapabilityApprovalService:
         if deliver_credential is not None and not callable(deliver_credential):
             raise TypeError("deliver_credential must be callable")
         inferred_worker_id = getattr(getattr(deliver_credential, "__self__", None), "worker_id", None)
+        if (
+            inferred_worker_id is not None
+            and approval_worker_id is not None
+            and approval_worker_id != inferred_worker_id
+        ):
+            raise ValueError("approval_worker_id must match the credential broker identity")
         approval_worker_id = approval_worker_id or inferred_worker_id
         if approval_worker_id is not None and (
             not isinstance(approval_worker_id, str)
