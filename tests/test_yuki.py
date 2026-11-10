@@ -109,7 +109,8 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIn("explicit cloud consent", result)
         self.assertEqual(manager.current().name, "openai")
         self.assertEqual(created, [])
-        self.assertIsNot(agent.provider, created[0] if created else None)
+        from providers.openai_compatible import OpenAICompatibleProvider
+        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
 
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()
