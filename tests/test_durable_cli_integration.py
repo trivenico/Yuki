@@ -107,6 +107,7 @@ class DurableCliIntegrationTests(unittest.TestCase):
             patch.object(yuki, "_CLI_SESSION_TOKEN", self.session_token),
             patch.object(yuki, "_build_approved_skill_runtime", build_runtime),
             patch.object(yuki, "_build_durable_policy_runtime", build_durable_runtime),
+            patch.object(yuki.SkillRegistry, "defaults", return_value=self.registry),
         ]
         for item in self.patches:
             item.start()
