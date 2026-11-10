@@ -110,6 +110,28 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("Project uses staged deployment.", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "How do we deploy?"})
 
+    def test_reasoning_retrieval_failure_degrades_to_no_memory(self):
+        class UnavailableBuilder:
+            def build(self, **kwargs):
+                raise PermissionError("memory backend unavailable")
+
+            def assemble_prompt(self, context):
+                return ""
+
+        service = ConversationService(
+            self.store, self.loop, reasoning_context_builder=UnavailableBuilder(),
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Answer without memory", request_id="memory-unavailable",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(self.observed[0][0]["role"], "system")
+        self.assertEqual(self.observed[0][1], {
+            "role": "user", "content": "Answer without memory",
+        })
+
     def test_reasoning_context_is_not_queried_for_another_owner(self):
         class FakeContextBuilder:
             def __init__(self):
