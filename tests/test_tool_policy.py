@@ -98,6 +98,18 @@ class ToolPolicyTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             ToolPolicyEngine([object()], policy_version="v1")
 
+    def test_argument_digest_enforces_canonical_size_limit(self):
+        with self.assertRaisesRegex(ValueError, "size limit"):
+            argument_digest({"payload": "x" * (1024 * 1024)})
+
+    def test_policy_rule_collection_is_bounded(self):
+        rules = (
+            PolicyRule(f"rule-{index}", Decision.ALLOW)
+            for index in range(10_001)
+        )
+        with self.assertRaisesRegex(ValueError, "at most 10000"):
+            ToolPolicyEngine(rules, policy_version="v1")
+
     def test_invalid_policy_version_rejected(self):
         with self.assertRaises(ValueError):
             ToolPolicyEngine([], policy_version="")
