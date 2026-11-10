@@ -155,7 +155,11 @@ Yuki commands:
   /skill inspect NAME             Inspect a registered skill's metadata
   /skill approve NAME [argument]  Approve one exact high-risk invocation
   /skill invoke NAME [argument]   Invoke a registered skill through the guard
-  /auth bootstrap USERNAME        Create the initial local administrator\n  /auth login USERNAME            Authenticate for this terminal session\n  /auth logout                    Revoke the current terminal session\n  /auth status                    Show authentication status\n  /durable goal create             Create an authenticated durable goal
+  /auth bootstrap USERNAME        Create the initial local administrator
+  /auth login USERNAME            Authenticate for this terminal session
+  /auth logout                    Revoke the current terminal session
+  /auth status                    Show authentication status
+  /durable goal create             Create an authenticated durable goal
   /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT
   /durable task list GOAL_ID       List durable tasks for a goal
   /durable task cancel TASK_ID     Cancel a durable task
