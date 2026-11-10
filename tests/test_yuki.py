@@ -12,6 +12,7 @@ from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderInfo, ProviderManager
+import yuki
 from yuki import handle_command
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
@@ -129,6 +130,25 @@ class ProviderManagerTests(unittest.TestCase):
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
         self.assertIn("Provider: openai", result)
+
+
+    def test_cli_startup_requires_explicit_cloud_environment_opt_in(self):
+        from unittest.mock import Mock
+        manager = Mock()
+        manager.current.return_value.name = "openai"
+        for setting, expected in (("false", False), ("true", True)):
+            manager.reset_mock()
+            manager.current.return_value.name = "openai"
+            with patch.dict(yuki.os.environ, {"YUKI_ALLOW_CLOUD": setting}, clear=False), \
+                 patch.object(yuki, "ProviderManager", return_value=manager), \
+                 patch.object(yuki, "YukiAgent"), \
+                 patch.object(yuki, "SecurityPolicy"), \
+                 patch.object(yuki, "load_memory", return_value=[]), \
+                 patch.object(yuki, "load_tasks", return_value=[]), \
+                 patch("builtins.input", side_effect=KeyboardInterrupt), \
+                 patch("builtins.print"):
+                yuki.main()
+            manager.create_selected_runtime_adapter.assert_called_once_with(allow_cloud=expected)
 
 
 class ToolTests(unittest.TestCase):
