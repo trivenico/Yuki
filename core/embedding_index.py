@@ -232,6 +232,7 @@ class SQLiteEmbeddingIndex:
         return {"model_id": self.model_id, "vector_count": row[0],
                 "total_dimensions": row[1], "storage": "sqlite_float32"}
 
+
 class _ClosingConnection:
     """Commit/rollback and always close SQLite handles (required on Windows)."""
 
