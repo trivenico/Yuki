@@ -1,6 +1,7 @@
 """Authenticated browser API adapter for owner-controlled local memory."""
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -24,10 +25,10 @@ async def dispatch_memory_request(store: Any, owner_id: str, method: str,
         try:
             limit = int(query.get("limit", ["50"])[-1])
             if "q" in query:
-                records = store.search(actor_id=owner_id, agent_id=_AGENT_ID,
+                records = await asyncio.to_thread(store.search, actor_id=owner_id, agent_id=_AGENT_ID,
                     query=query["q"][-1], limit=min(limit, 20), include_shared=False)
             else:
-                records = store.list_memories(actor_id=owner_id, agent_id=_AGENT_ID,
+                records = await asyncio.to_thread(store.list_memories, actor_id=owner_id, agent_id=_AGENT_ID,
                     limit=min(limit, 100), include_shared=False)
             return 200, {"memories": records}
         except PermissionError:
@@ -44,7 +45,7 @@ async def dispatch_memory_request(store: Any, owner_id: str, method: str,
                 return 400, {"error": "invalid_request"}
             category = payload.get("category", "semantic")
             retention = payload.get("retention_days", 365)
-            record = store.remember(actor_id=owner_id, agent_id=_AGENT_ID,
+            record = await asyncio.to_thread(store.remember, actor_id=owner_id, agent_id=_AGENT_ID,
                 content=payload["content"], source="owner_explicit_save",
                 category=category, confidence=1.0, verified=False,
                 scope="private", retention_days=retention)
@@ -60,7 +61,7 @@ async def dispatch_memory_request(store: Any, owner_id: str, method: str,
     memory_id, action = match.groups()
     if action is None and method == "DELETE":
         try:
-            deleted = store.delete(actor_id=owner_id, agent_id=_AGENT_ID, memory_id=memory_id)
+            deleted = await asyncio.to_thread(store.delete, actor_id=owner_id, agent_id=_AGENT_ID, memory_id=memory_id)
             return (200, {"deleted": True}) if deleted else (404, {"error": "not_found"})
         except PermissionError:
             return 403, {"error": "memory_permission_denied"}
@@ -73,22 +74,22 @@ async def dispatch_memory_request(store: Any, owner_id: str, method: str,
         if action == "review":
             if set(payload) != {"status", "reason"}:
                 return 400, {"error": "invalid_request"}
-            record = store.transition_lifecycle(actor_id=owner_id, agent_id=_AGENT_ID,
+            record = await asyncio.to_thread(store.transition_lifecycle, actor_id=owner_id, agent_id=_AGENT_ID,
                 memory_id=memory_id, status=payload["status"], reason=payload["reason"])
         elif action == "retire":
             if set(payload) != {"reason"}:
                 return 400, {"error": "invalid_request"}
-            record = store.transition_lifecycle(actor_id=owner_id, agent_id=_AGENT_ID,
+            record = await asyncio.to_thread(store.transition_lifecycle, actor_id=owner_id, agent_id=_AGENT_ID,
                 memory_id=memory_id, status="retired", reason=payload["reason"])
         elif action == "renew":
             if set(payload) != {"retention_days", "reason"}:
                 return 400, {"error": "invalid_request"}
-            record = store.renew(actor_id=owner_id, agent_id=_AGENT_ID,
+            record = await asyncio.to_thread(store.renew, actor_id=owner_id, agent_id=_AGENT_ID,
                 memory_id=memory_id, retention_days=payload["retention_days"], reason=payload["reason"])
         else:
             if set(payload) != {"content", "source", "reason"}:
                 return 400, {"error": "invalid_request"}
-            record = store.correct(actor_id=owner_id, agent_id=_AGENT_ID,
+            record = await asyncio.to_thread(store.correct, actor_id=owner_id, agent_id=_AGENT_ID,
                 memory_id=memory_id, content=payload["content"], source=payload["source"],
                 reason=payload["reason"])
         return 200, {"memory": record}
