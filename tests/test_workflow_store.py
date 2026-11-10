@@ -23,6 +23,60 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def test_permission_scopes_are_preserved_in_canonical_definition(self):
+        definition = [{
+            "name": "research",
+            "action": "emit",
+            "argument": "Research public material",
+            "requires_approval": True,
+            "required_permissions": ["web:read", "source:read"],
+        }]
+        run = self.store.create(
+            idempotency_key="permission-scope",
+            workflow_name="approved-research",
+            definition=definition,
+        )
+        self.assertEqual(
+            run.definition[0]["required_permissions"],
+            ["web:read", "source:read"],
+        )
+        self.assertTrue(run.definition[0]["requires_approval"])
+        reloaded = self.store.get(run.run_id)
+        self.assertEqual(reloaded.definition, run.definition)
+
+    def test_permission_scope_requires_explicit_approval(self):
+        with self.assertRaisesRegex(ValueError, "explicit approval"):
+            self.store.create(
+                idempotency_key="permission-without-approval",
+                workflow_name="unsafe-research",
+                definition=[{
+                    "name": "research",
+                    "action": "emit",
+                    "argument": "Research",
+                    "requires_approval": False,
+                    "required_permissions": ["web:read"],
+                }],
+            )
+        self.assertIsNone(self.store.get("permission-without-approval"))
+
+    def test_permission_scope_rejects_duplicates_and_malformed_values(self):
+        for index, permissions in enumerate((
+            ["web:read", "web:read"],
+            ["web:read", ""],
+            ["web:read", "x" * 101],
+            "web:read",
+        )):
+            with self.subTest(permissions=permissions):
+                with self.assertRaises(ValueError):
+                    self.store.create(
+                        idempotency_key=f"bad-permissions-{index}",
+                        workflow_name="bad-permissions",
+                        definition=[{
+                            "name": "research", "action": "emit",
+                            "required_permissions": permissions,
+                        }],
+                    )
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()
