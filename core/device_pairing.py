@@ -164,21 +164,41 @@ class DevicePairingService:
             ).fetchone()
         return DeviceCredential(token=token, device=self._device(device_row))
 
-    def authenticate_device(self, token: str) -> PairedDevice | None:
-        """Resolve a device token without returning its stored hash or owner secrets."""
+    def authenticate_device_in_transaction(self, db, token: str) -> PairedDevice | None:
+        """Resolve and touch a device using the caller's active SQLite transaction.
+
+        Inference job claims/completions use this against the same database as
+        revocation so credential validation and the state transition serialize.
+        """
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return None
+        row = db.execute("""
+            SELECT * FROM paired_devices
+            WHERE token_hash=? AND revoked_at IS NULL
+        """, (_digest(token),)).fetchone()
+        if row is None:
+            return None
+        now = _stamp(_now())
+        db.execute("UPDATE paired_devices SET last_seen_at=? WHERE device_id=? AND revoked_at IS NULL",
+                   (now, row["device_id"]))
+        updated = db.execute("SELECT * FROM paired_devices WHERE device_id=? AND revoked_at IS NULL",
+                             (row["device_id"],)).fetchone()
+        return self._device(updated) if updated is not None else None
+
+    def authenticate_device(self, token: str) -> PairedDevice | None:
+        """Resolve a device token without returning its stored hash or owner secrets."""
         with self._connect() as db:
-            row = db.execute("""
-                SELECT * FROM paired_devices
-                WHERE token_hash=? AND revoked_at IS NULL
-            """, (_digest(token),)).fetchone()
-            if row is None:
-                return None
-            now = _stamp(_now())
-            db.execute("UPDATE paired_devices SET last_seen_at=? WHERE device_id=?", (now, row["device_id"]))
-            updated = db.execute("SELECT * FROM paired_devices WHERE device_id=?", (row["device_id"],)).fetchone()
-            return self._device(updated)
+            return self.authenticate_device_in_transaction(db, token)
+
+    def owns_active_device_in_transaction(self, db, owner_id: str, device_id: str) -> bool:
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            return False
+        row = db.execute(
+            "SELECT 1 FROM paired_devices WHERE device_id=? AND owner_id=? AND revoked_at IS NULL",
+            (device_id, owner_id),
+        ).fetchone()
+        return row is not None
 
     def owns_active_device(self, owner_id: str, device_id: str) -> bool:
         """Check active device ownership using the pairing service's own database."""
