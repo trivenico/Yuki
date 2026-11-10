@@ -11,7 +11,7 @@ import re
 from typing import Mapping
 
 _AGENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
-_TASK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$")
+_TASK = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.:@/-]{0,199}$")
 _DIMENSIONS = {
     "correctness": 0.35,
     "evidence_quality": 0.25,
