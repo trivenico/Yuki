@@ -160,7 +160,8 @@ class OIDCIdentityTokenVerifier:
         kid = header.get("kid")
         if algorithm not in _ALLOWED_ALGORITHMS or not isinstance(kid, str) or not 1 <= len(kid) <= 256:
             raise OIDCIdentityTokenError("oidc_algorithm_or_key_invalid")
-        if any(name in header for name in ("jku", "jwk", "x5u", "x5c", "crit", "b64")):
+        if (any(name in header for name in ("jku", "jwk", "x5u", "x5c", "crit", "b64"))
+                or ("typ" in header and header["typ"] != "JWT")):
             raise OIDCIdentityTokenError("oidc_header_parameter_unsupported")
         try:
             jwks = self._transport.request_json("GET", self._jwks_uri)
@@ -176,7 +177,12 @@ class OIDCIdentityTokenVerifier:
         ]
         if len(matches) != 1:
             raise OIDCIdentityTokenError("oidc_signing_key_not_found")
-        key = self._public_key(matches[0], algorithm)
+        try:
+            key = self._public_key(matches[0], algorithm)
+        except OIDCIdentityTokenError:
+            raise
+        except Exception:
+            raise OIDCIdentityTokenError("oidc_signing_key_invalid") from None
         self._verify_signature(key, algorithm, (parts[0] + "." + parts[1]).encode("ascii"), signature)
 
         now = int(self._clock())
@@ -188,9 +194,11 @@ class OIDCIdentityTokenVerifier:
             raise OIDCIdentityTokenError("oidc_issuer_mismatch")
         if subject != self._subject:
             raise OIDCIdentityTokenError("oidc_subject_mismatch")
-        if not isinstance(audiences, list) or self._client_id not in audiences or not all(
-            isinstance(item, str) and item for item in audiences
-        ):
+        if (not isinstance(audiences, list) or not audiences
+                or len(set(audiences)) != len(audiences)
+                or self._client_id not in audiences or not all(
+                    isinstance(item, str) and item for item in audiences
+                )):
             raise OIDCIdentityTokenError("oidc_audience_mismatch")
         if len(audiences) > 1 and claims.get("azp") != self._client_id:
             raise OIDCIdentityTokenError("oidc_authorized_party_mismatch")
@@ -198,7 +206,8 @@ class OIDCIdentityTokenVerifier:
             raise OIDCIdentityTokenError("oidc_authorized_party_mismatch")
         exp = _integer(claims.get("exp"), label="expiry")
         iat = _integer(claims.get("iat"), label="issued_at")
-        if exp <= now - self._skew or exp <= iat or iat > now + self._skew:
+        if (exp <= now - self._skew or exp <= iat or iat > now + self._skew
+                or exp - iat > self._max_age + (2 * self._skew)):
             raise OIDCIdentityTokenError("oidc_token_time_invalid")
         if now - iat > self._max_age + self._skew:
             raise OIDCIdentityTokenError("oidc_token_too_old")
