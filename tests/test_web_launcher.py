@@ -21,7 +21,7 @@ class WebLauncherTests(unittest.TestCase):
             with patch.object(run_web, "load_config", return_value={
                 "workspace": directory, "storage_backend": "sqlite",
                 "provider": "openai",
-            }), patch.object(run_web, "create_provider", return_value=_Provider()):
+            }), patch.object(run_web.ProviderManager, "create_selected_runtime_adapter", return_value=_Provider()):
                 app = run_web.create_app()
             self.assertIsInstance(app, ConversationRuntime)
             self.assertTrue((Path(directory) / "auth.sqlite3").exists())
