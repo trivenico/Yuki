@@ -162,6 +162,8 @@ class DurableTaskEngine:
                 or owner_id != goal["owner_id"]
             ):
                 raise TaskConflict("authenticated owner does not match goal owner")
+            if goal["owner_id"] is None and owner_id is not None:
+                raise TaskConflict("legacy ownerless goals cannot be claimed by a submitter")
             if owner_id is not None and (
                 not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256
             ):
