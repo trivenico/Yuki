@@ -6,6 +6,7 @@ must supply a durable secret manager whose consume operation is atomic get-and-d
 from __future__ import annotations
 
 from typing import Callable
+import re
 
 from core.capability_approval_gateway import CapabilityApprovalGateway
 from core.tool_policy import PolicyRequest
@@ -36,7 +37,7 @@ class ProtectedApprovalCredentialBroker:
     def deliver(
         self, request_id: str, request: PolicyRequest, token: str, ttl_seconds: int,
     ) -> None:
-        if not isinstance(request_id, str) or len(request_id) != 32:
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("request_id is invalid")
         if not isinstance(request, PolicyRequest):
             raise TypeError("request must be a validated PolicyRequest")
