@@ -48,6 +48,9 @@ class DurableSkillWorker:
         self.require_policy = require_policy
         if approval_token_resolver is not None and not callable(approval_token_resolver):
             raise ValueError("approval_token_resolver must be callable")
+        resolver_worker_id = getattr(approval_token_resolver, "worker_id", None)
+        if resolver_worker_id is not None and resolver_worker_id != worker_id:
+            raise ValueError("approval resolver is bound to a different worker identity")
         if getattr(runtime, "approval_gateway", None) is not None and approval_token_resolver is None:
             raise ValueError("durable approval gateway requires a trusted approval_token_resolver")
         self.approval_token_resolver = approval_token_resolver
