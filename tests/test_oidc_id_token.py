@@ -5,7 +5,6 @@ import unittest
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from core.oidc_id_token import OIDCIdentityTokenError, OIDCIdentityTokenVerifier
 
@@ -98,7 +97,6 @@ class OIDCIdentityTokenTests(unittest.TestCase):
 
     def test_rejects_invalid_signature_and_untrusted_key_url_header(self):
         token = self.token()
-        parts = token.split(".")
         parts = token.split(".")
         changed = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
         bad_signature = parts[0] + "." + parts[1] + "." + changed
