@@ -123,6 +123,12 @@ class SQLiteIncomeOpportunityStore:
         try:
             db.execute("PRAGMA busy_timeout=5000")
             yield db
+            # Explicit BEGIN IMMEDIATE blocks in create/transition must commit.
+            # Without this, closing sqlite3 rolls back those writes on every OS.
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
         finally:
             db.close()
 
