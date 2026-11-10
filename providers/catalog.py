@@ -13,6 +13,8 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
+    {"name":"colibri","label":"Colibri local engine","auth":"local_runtime","privacy":"local_runtime","implemented":True,
+     "capabilities":["text","local_inference"],"model_env":"YUKI_COLIBRI_MODEL","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
      "implemented":True,"capabilities":["text","official_cli"],"model_env":"YUKI_GEMINI_MODEL","key_env":None},
     {"name":"hybrid","label":"Hybrid local/cloud","auth":"local_runtime_and_optional_api_key","privacy":"task_policy",
@@ -45,7 +47,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
     """Return sanitized catalog metadata; never include credential values."""
     cfg = config if isinstance(config, dict) else {}
     env = os.environ if environ is None else environ
-    current = str(cfg.get("provider", "mock")).strip().lower()
+    current = str(cfg.get("provider", env.get("YUKI_PROVIDER", "openai"))).strip().lower()
     manager = {}
     if provider_manager is not None:
         try:
@@ -60,6 +62,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         model = _model(env.get(model_env, "")) if model_env else None
         if item["name"] == "ollama":
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
+        elif item["name"] == "colibri":
+            model = _model(env.get("YUKI_COLIBRI_MODEL", ""))
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
         elif item["name"] == "openai":
@@ -107,6 +111,9 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
                 )
             except ValueError:
                 item["privacy"] = "unknown"
+        elif item["name"] == "colibri":
+            ready = bool(model)
+            reason = "model_configured_runtime_not_probed" if ready else "model_not_configured"
         elif item["name"] == "gemini":
             installed = bool(shutil_which("gemini"))
             ready = installed
