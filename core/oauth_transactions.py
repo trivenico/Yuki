@@ -1,4 +1,4 @@
-"""One-time, owner-bound OAuth 2.1 authorization transactions with PKCE S256.
+"""One-time, owner-bound OAuth authorization transactions with PKCE S256.
 
 OAuth secrets are encrypted by an injected application vault. This module never
 implements token exchange or stores access/refresh tokens.
@@ -9,7 +9,10 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
+import json
+import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -17,6 +20,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 class OAuthTransactionError(PermissionError):
     """Generic OAuth transaction failure; does not disclose transaction secrets."""
+
+
+_STATE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 def _now():
@@ -48,16 +54,28 @@ def _https_url(value, *, name, allow_query=False):
 class OAuthPKCETransactionStore:
     """Short-lived, single-use OAuth state and encrypted PKCE verifier storage."""
 
-    def __init__(self, database_path, *, encrypt, decrypt, ttl_seconds=600):
+    MAX_PENDING_PER_OWNER = 32
+
+    def __init__(self, database_path, *, encrypt, decrypt, allowed_authorization_hosts,
+                 ttl_seconds=600):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if not callable(encrypt) or not callable(decrypt):
             raise TypeError("OAuth verifier encryption and decryption providers are required.")
+        if (not isinstance(allowed_authorization_hosts, (list, tuple, set, frozenset))
+                or not allowed_authorization_hosts):
+            raise ValueError("An explicit OAuth authorization host allow-list is required.")
+        hosts = set()
+        for host in allowed_authorization_hosts:
+            if not isinstance(host, str) or not host or host != host.lower() or "/" in host or ":" in host:
+                raise ValueError("OAuth authorization hosts must be normalized hostnames.")
+            hosts.add(host.rstrip("."))
         if type(ttl_seconds) is not int or not 60 <= ttl_seconds <= 1800:
             raise ValueError("ttl_seconds must be between 60 and 1800.")
         self.database_path = str(Path(database_path).expanduser())
         self.encrypt = encrypt
         self.decrypt = decrypt
+        self.allowed_authorization_hosts = frozenset(hosts)
         self.ttl_seconds = ttl_seconds
         path = Path(self.database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +97,13 @@ class OAuthPKCETransactionStore:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_oauth_pkce_expiry ON oauth_pkce_transactions(expires_at)")
+        if path.is_symlink():
+            raise ValueError("OAuth transaction database path is unsafe.")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            if os.name != "nt":
+                raise
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
@@ -98,6 +123,9 @@ class OAuthPKCETransactionStore:
         self._validate_identity(owner_id, provider_id, client_id)
         issuer = _https_url(issuer, name="issuer")
         endpoint = _https_url(authorization_endpoint, name="authorization_endpoint", allow_query=True)
+        endpoint_host = (urlsplit(endpoint).hostname or "").lower().rstrip(".")
+        if endpoint_host not in self.allowed_authorization_hosts:
+            raise ValueError("OAuth authorization endpoint is not on the configured host allow-list.")
         redirect_uri = _https_url(redirect_uri, name="redirect_uri")
         if not isinstance(scopes, (list, tuple)) or not 1 <= len(scopes) <= 32:
             raise ValueError("scopes must contain between 1 and 32 entries.")
@@ -122,41 +150,41 @@ class OAuthPKCETransactionStore:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM oauth_pkce_transactions WHERE expires_at <= ?", (_iso(now),))
+            pending = db.execute("SELECT COUNT(*) FROM oauth_pkce_transactions WHERE owner_id=?",
+                                  (owner_id,)).fetchone()[0]
+            if pending >= self.MAX_PENDING_PER_OWNER:
+                raise OAuthTransactionError("Too many pending OAuth authorizations.")
+            query_items = parse_qsl(urlsplit(endpoint).query, keep_blank_values=True)
+            required = {
+                "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+                "scope": " ".join(scopes), "state": state, "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+            if any(key in required for key, _ in query_items):
+                raise ValueError("Authorization endpoint contains reserved OAuth parameters.")
             db.execute("""
                 INSERT INTO oauth_pkce_transactions
                 (state_hash, owner_id, provider_id, issuer, client_id, redirect_uri,
                  scopes_json, verifier_ciphertext, created_at, expires_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (state_hash, owner_id, provider_id, issuer, client_id, redirect_uri,
-                  __import__("json").dumps(list(scopes)), bytes(ciphertext), _iso(now), _iso(expires)))
-            db.execute("DELETE FROM oauth_pkce_transactions WHERE expires_at <= ?", (_iso(now),))
+                  json.dumps(list(scopes)), bytes(ciphertext), _iso(now), _iso(expires)))
             db.execute("COMMIT")
         except Exception:
-            db.execute("ROLLBACK")
+            if db.in_transaction:
+                db.execute("ROLLBACK")
             raise
         finally:
             db.close()
         parts = urlsplit(endpoint)
-        query = dict(parse_qsl(parts.query, keep_blank_values=True))
-        required = {
-            "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
-            "scope": " ".join(scopes), "state": state, "code_challenge": challenge,
-            "code_challenge_method": "S256",
-        }
-        if any(key in query for key in required):
-            self._delete_state_hash(state_hash)
-            raise ValueError("Authorization endpoint contains reserved OAuth parameters.")
-        query.update(required)
-        authorization_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+        query_items.extend(required.items())
+        authorization_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query_items), ""))
         return {"authorization_url": authorization_url, "state": state, "expires_at": _iso(expires)}
-
-    def _delete_state_hash(self, state_hash):
-        with self._connect() as db:
-            db.execute("DELETE FROM oauth_pkce_transactions WHERE state_hash=?", (state_hash,))
 
     def consume(self, *, state, owner_id, provider_id, issuer):
         """Atomically consume a callback transaction; any mismatch fails closed."""
-        if (not isinstance(state, str) or len(state) != 43
+        if (not isinstance(state, str) or not _STATE_RE.fullmatch(state)
                 or not isinstance(owner_id, str) or not owner_id
                 or not isinstance(provider_id, str) or not provider_id):
             raise OAuthTransactionError("OAuth callback does not match a pending authorization.")
@@ -164,7 +192,7 @@ class OAuthPKCETransactionStore:
             issuer = _https_url(issuer, name="issuer")
         except ValueError:
             raise OAuthTransactionError("OAuth callback does not match a pending authorization.") from None
-        state_hash = hashlib.sha256(state.encode("ascii", errors="ignore")).hexdigest()
+        state_hash = hashlib.sha256(state.encode("ascii")).hexdigest()
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
@@ -174,7 +202,6 @@ class OAuthPKCETransactionStore:
                 FROM oauth_pkce_transactions WHERE state_hash=?
             """, (state_hash,)).fetchone()
             if row is None:
-                db.execute("ROLLBACK")
                 raise OAuthTransactionError("OAuth callback does not match a pending authorization.")
             stored_owner, stored_provider, stored_issuer, client_id, redirect_uri, scopes_json, ciphertext, expires_at = row
             valid = (
@@ -191,7 +218,7 @@ class OAuthPKCETransactionStore:
             try:
                 verifier_bytes = self.decrypt(ciphertext, associated_data)
                 verifier = verifier_bytes.decode("ascii")
-                if not 43 <= len(verifier) <= 128:
+                if not 43 <= len(verifier) <= 128 or not re.fullmatch(r"[A-Za-z0-9._~-]+", verifier):
                     raise ValueError("invalid verifier")
             except Exception:
                 db.execute("DELETE FROM oauth_pkce_transactions WHERE state_hash=?", (state_hash,))
@@ -200,7 +227,7 @@ class OAuthPKCETransactionStore:
             db.execute("DELETE FROM oauth_pkce_transactions WHERE state_hash=?", (state_hash,))
             db.execute("COMMIT")
             return {"client_id": client_id, "redirect_uri": redirect_uri,
-                    "scopes": __import__("json").loads(scopes_json), "code_verifier": verifier}
+                    "scopes": json.loads(scopes_json), "code_verifier": verifier}
         except Exception:
             if db.in_transaction:
                 db.execute("ROLLBACK")
