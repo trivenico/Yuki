@@ -101,7 +101,7 @@ class ConversationAPITests(unittest.TestCase):
         self.app.provider_catalog = lambda: [
             {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
         ]
-        self.app.provider_selector = lambda name: calls.append(name) or {
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {
             "name": name, "label": "Ollama", "selected": True, "ready": True,
             "privacy": "local_runtime",
         }
@@ -112,7 +112,7 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(data["provider"]["name"], "ollama")
-        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(calls, [("ollama", {"allow_cloud": False})])
 
         status, data, _ = self.request(
             "PUT", "/v1/providers/active",
@@ -139,7 +139,7 @@ class ConversationAPITests(unittest.TestCase):
         self.app.provider_catalog = lambda: [
             {"name": "openai", "privacy": "cloud_provider", "implemented": True, "ready": True}
         ]
-        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {"name": name}
         status, data, _ = self.request(
             "PUT", "/v1/providers/active",
             {"provider": "openai", "confirm_global": True, "confirm_cloud": False},
