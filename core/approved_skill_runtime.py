@@ -28,7 +28,7 @@ class ApprovedSkillRuntime:
         self.registry = registry
         self.approval_store = approval_store
         self.invocation_approvals = invocation_approvals or OneShotSkillApprovals()
-        if (policy_engine is None) != (policy_request_factory is None):
+        if approval_gateway is None and (policy_engine is None) != (policy_request_factory is None):
             raise ValueError("policy_engine and policy_request_factory must be provided together")
         if policy_engine is not None and not callable(getattr(policy_engine, "evaluate", None)):
             raise TypeError("policy_engine must provide evaluate(request)")
