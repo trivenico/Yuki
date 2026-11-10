@@ -7,7 +7,7 @@ not automatically replayed.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 import math
 import threading
 
@@ -25,6 +25,7 @@ class DurableSkillWorker:
         heartbeat_interval_seconds: float = 20,
         owner_id: str | None = None,
         require_policy: bool = True,
+        approval_token_resolver: Callable[[SkillPolicyContext, str], str | None] | None = None,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -47,12 +48,21 @@ class DurableSkillWorker:
         self.require_policy = require_policy
         if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256):
             raise ValueError("owner_id must be non-empty bounded text")
+        if approval_token_resolver is not None and not callable(approval_token_resolver):
+            raise ValueError("approval_token_resolver must be callable")
+        if getattr(runtime, "approval_gateway", None) is not None and approval_token_resolver is None:
+            raise ValueError("durable approval gateway requires a trusted approval_token_resolver")
+        self.approval_token_resolver = approval_token_resolver
         self.owner_id = owner_id
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
 
-    def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str, policy_context: SkillPolicyContext | None = None):
+    def _invoke_with_lease_heartbeat(
+        self, task_id: str, skill_name: str, argument: str,
+        policy_context: SkillPolicyContext | None = None,
+        approval_token: str | None = None,
+    ):
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -79,7 +89,10 @@ class DurableSkillWorker:
             if policy_context is None:
                 result = self.runtime.invoke(skill_name, argument)
             else:
-                result = self.runtime.invoke(skill_name, argument, policy_context=policy_context)
+                result = self.runtime.invoke(
+                    skill_name, argument, policy_context=policy_context,
+                    approval_token=approval_token,
+                )
         finally:
             stop.set()
             heartbeat_thread.join(timeout=max(1.0, self.heartbeat_interval_seconds + 0.5))
@@ -151,7 +164,20 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
-            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument, policy_context)
+            # Approval credentials come only from an injected trusted resolver,
+            # never from the durable task payload or model-generated arguments.
+            approval_token = None
+            if self.approval_token_resolver is not None:
+                if policy_context is None:
+                    raise RuntimeError("trusted task provenance is required for approval lookup")
+                approval_token = self.approval_token_resolver(policy_context, skill_name)
+                if approval_token is not None and (
+                    not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
+                ):
+                    raise RuntimeError("approval resolver returned an invalid credential")
+            result = self._invoke_with_lease_heartbeat(
+                task_id, skill_name, argument, policy_context, approval_token,
+            )
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.
