@@ -11,6 +11,7 @@ from core.income_opportunities import SQLiteIncomeOpportunityStore
 
 
 _MAX_BODY = 12_000
+_MAX_QUERY = 2_048
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _ALLOWED_CREATE = frozenset({
     "platform_id", "title", "category", "source_url", "description",
@@ -58,8 +59,11 @@ class AuthenticatedIncomeOpportunityAPI:
                     )
                     return await self._respond(send, 201, {"opportunity": asdict(item)})
                 if method == "GET":
+                    raw_query = scope.get("query_string", b"")
+                    if not isinstance(raw_query, bytes) or len(raw_query) > _MAX_QUERY:
+                        return await self._respond(send, 400, {"error": "invalid_query"})
                     query = parse_qs(
-                        scope.get("query_string", b"").decode("ascii"),
+                        raw_query.decode("ascii"),
                         keep_blank_values=True, strict_parsing=True,
                     )
                     if set(query) - {"status", "platform_id", "limit"} or any(
