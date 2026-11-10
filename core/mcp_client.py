@@ -2,6 +2,7 @@
 from __future__ import annotations
 import ipaddress
 import json
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -21,11 +22,20 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
+    _BEARER_TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]+=*$")
 
-    def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None, timeout=10):
+    def __init__(
+        self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
+        access_token_provider=None, timeout=10
+    ):
         self.endpoint = self._validate_endpoint(endpoint, allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
+        if access_token_provider is not None and not callable(access_token_provider):
+            raise TypeError("MCP access token provider must be callable.")
+        # The trusted host injects a provider backed by its OAuth/secret broker.
+        # Tokens never enter MCP server config, skill arguments, or model context.
+        self._access_token_provider = access_token_provider
         self.timeout = timeout
         self.session_id = None
         self._request_id = 0
@@ -50,6 +60,22 @@ class MCPHTTPClient:
             raise MCPError("MCP host could not be resolved.") from exc
         return endpoint.strip()
 
+    def _authorization_header(self):
+        if self._access_token_provider is None:
+            return None
+        try:
+            token = self._access_token_provider()
+        except Exception:
+            raise MCPError("MCP authorization credentials are unavailable.") from None
+        if (
+            not isinstance(token, str)
+            or not token
+            or len(token) > 8192
+            or not self._BEARER_TOKEN.fullmatch(token)
+        ):
+            raise MCPError("MCP authorization credentials are invalid.")
+        return "Bearer " + token
+
     def _rpc(self, method, params=None, *, notification=False):
         self._request_id += 1
         payload = {"jsonrpc": "2.0", "method": method}
@@ -58,6 +84,9 @@ class MCPHTTPClient:
         if params is not None:
             payload["params"] = params
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        authorization = self._authorization_header()
+        if authorization is not None:
+            headers["Authorization"] = authorization
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         request = urllib.request.Request(self.endpoint, data=json.dumps(payload).encode("utf-8"),
