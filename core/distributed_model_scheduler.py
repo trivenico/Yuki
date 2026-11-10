@@ -165,3 +165,108 @@ class DistributedModelScheduler:
             "best_fit_single_device; dispatch_not_performed",
             eligible, tuple(sorted(rejected, key=lambda x: x["device_id"])),
         )
+
+
+    def reserve_plan(
+        self,
+        requirements: ModelRequirements,
+        devices: Iterable[dict[str, Any]],
+        *,
+        reservation_service: Any,
+        session_token: str,
+        task_id: str,
+        idempotency_key: str,
+        reservation_secret: str,
+        allowed_device_ids: Iterable[str] | None = None,
+    ) -> ReservedPlacement:
+        """Atomically reserve the first eligible device before any dispatch occurs.
+
+        Candidate-specific idempotency keys and secrets make retries stable while
+        keeping attempts on different devices independent. Capacity races fall
+        through to the next best-fit candidate; all other errors fail closed.
+        """
+        import hashlib
+        import hmac
+        from core.device_resource_reservations import CapacityUnavailable
+
+        if not callable(getattr(reservation_service, "reserve", None)):
+            raise TypeError("reservation_service_must_support_reserve")
+        if not isinstance(session_token, str) or not session_token:
+            raise ValueError("invalid_session_token")
+        if not isinstance(task_id, str) or not _DEVICE_ID.fullmatch(task_id):
+            raise ValueError("invalid_task_id")
+        if not isinstance(idempotency_key, str) or not _DEVICE_ID.fullmatch(idempotency_key):
+            raise ValueError("invalid_idempotency_key")
+        if (not isinstance(reservation_secret, str)
+                or not 32 <= len(reservation_secret) <= 256
+                or not reservation_secret.isascii()):
+            raise ValueError("invalid_reservation_secret")
+
+        records = list(devices)
+        decision = self.plan(
+            requirements, records, allowed_device_ids=allowed_device_ids
+        )
+        if not decision.eligible_device_ids:
+            return ReservedPlacement(decision, None)
+        rejected = list(decision.rejected)
+        for device_id in decision.eligible_device_ids:
+            key_material = (idempotency_key + "\\0" + device_id).encode("utf-8")
+            candidate_key = hashlib.sha256(key_material).hexdigest()
+            candidate_secret = hmac.new(
+                reservation_secret.encode("ascii"),
+                ("yuki-reservation:" + device_id).encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            try:
+                reservation = reservation_service.reserve(
+                    session_token, device_id, task_id,
+                    memory_bytes=requirements.memory_bytes,
+                    cpu_millicores=requirements.cpu_cores * 1000,
+                    gpu_memory_bytes=requirements.gpu_memory_bytes,
+                    idempotency_key=candidate_key,
+                    reservation_secret=candidate_secret,
+                )
+            except CapacityUnavailable:
+                rejected.append({"device_id": device_id, "reason": "reservation_capacity_race"})
+                continue
+            reserved_decision = PlacementDecision(
+                requirements.model_id, device_id, "reserved",
+                "capacity_reserved; dispatch_not_performed",
+                decision.eligible_device_ids,
+                tuple(sorted(rejected, key=lambda item: item["device_id"])),
+            )
+            return ReservedPlacement(reserved_decision, reservation)
+
+        exhausted = PlacementDecision(
+            requirements.model_id, None, "unscheduled",
+            "all_eligible_devices_lost_reservation_race",
+            decision.eligible_device_ids,
+            tuple(sorted(rejected, key=lambda item: item["device_id"])),
+        )
+        return ReservedPlacement(exhausted, None)
+
+@dataclass(frozen=True)
+class ReservedPlacement:
+    """A placement backed by an active capacity lease; never dispatches work."""
+    decision: PlacementDecision
+    reservation: Any
+
+    def to_dict(self) -> dict[str, Any]:
+        reservation = self.reservation
+        serialized_reservation = None
+        if reservation is not None:
+            serialized_reservation = {
+                "reservation_id": reservation.reservation_id,
+                "device_id": reservation.device_id,
+                "task_id": reservation.task_id,
+                "memory_bytes": reservation.memory_bytes,
+                "cpu_millicores": reservation.cpu_millicores,
+                "gpu_memory_bytes": reservation.gpu_memory_bytes,
+                "fencing_token": reservation.fencing_token,
+                "expires_at": reservation.expires_at,
+                "status": reservation.status,
+            }
+        return {
+            "decision": self.decision.to_dict(),
+            "reservation": serialized_reservation,
+        }

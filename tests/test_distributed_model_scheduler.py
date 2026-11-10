@@ -85,6 +85,86 @@ class DistributedModelSchedulerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ModelRequirements("org/model", 1000, require_gpu=True)
 
+    def test_reserve_plan_falls_back_after_atomic_capacity_race(self):
+        from types import SimpleNamespace
+        from core.device_resource_reservations import CapacityUnavailable
+
+        class FakeReservations:
+            def __init__(self):
+                self.calls = []
+
+            def reserve(self, session, device_id, task_id, **kwargs):
+                self.calls.append((session, device_id, task_id, kwargs))
+                if device_id == "small":
+                    raise CapacityUnavailable("race")
+                return SimpleNamespace(
+                    reservation_id="reservation-1", device_id=device_id,
+                    task_id=task_id, memory_bytes=4000, cpu_millicores=1000,
+                    gpu_memory_bytes=0, fencing_token=7, expires_at="expiry",
+                    status="active", token="must-not-serialize",
+                )
+
+        service = FakeReservations()
+        result = self.scheduler.reserve_plan(
+            ModelRequirements("org/model", 4000),
+            [device("small", ram=5000), device("large", ram=32000)],
+            reservation_service=service, session_token="session",
+            task_id="task-1", idempotency_key="request-1",
+            reservation_secret="high-entropy-reservation-secret-value",
+        )
+        self.assertEqual(result.decision.device_id, "large")
+        self.assertEqual(result.decision.status, "reserved")
+        self.assertEqual([call[1] for call in service.calls], ["small", "large"])
+        self.assertEqual(service.calls[1][3]["cpu_millicores"], 1000)
+        self.assertNotIn("must-not-serialize", str(result.to_dict()))
+
+    def test_reserve_plan_does_not_claim_success_when_all_reservations_race(self):
+        from core.device_resource_reservations import CapacityUnavailable
+
+        class FullReservations:
+            def reserve(self, *args, **kwargs):
+                raise CapacityUnavailable("full")
+
+        result = self.scheduler.reserve_plan(
+            ModelRequirements("org/model", 1000), [device("a"), device("b")],
+            reservation_service=FullReservations(), session_token="session",
+            task_id="task-2", idempotency_key="request-2",
+            reservation_secret="high-entropy-reservation-secret-value",
+        )
+        self.assertEqual(result.decision.status, "unscheduled")
+        self.assertIsNone(result.reservation)
+        serialized = result.to_dict()
+        self.assertEqual(serialized["reservation"], None)
+        self.assertEqual(serialized["decision"]["status"], "unscheduled")
+        self.assertEqual(
+            {item["reason"] for item in result.decision.rejected},
+            {"reservation_capacity_race"},
+        )
+
+    def test_reserve_plan_validates_credentials_before_reserving(self):
+        class MustNotReserve:
+            def reserve(self, *args, **kwargs):
+                raise AssertionError("reservation must not be attempted")
+
+        common = dict(
+            requirements=ModelRequirements("org/model", 1000),
+            devices=[device("a")],
+            reservation_service=MustNotReserve(),
+            session_token="session",
+            task_id="task-1",
+            idempotency_key="request-1",
+            reservation_secret="high-entropy-reservation-secret-value",
+        )
+        for field, value, error in (
+            ("task_id", "../task", "invalid_task_id"),
+            ("idempotency_key", "bad key", "invalid_idempotency_key"),
+            ("reservation_secret", "x" * 257, "invalid_reservation_secret"),
+        ):
+            args = dict(common)
+            args[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, error):
+                self.scheduler.reserve_plan(**args)
+
     def test_decision_is_plan_only_and_serializable(self):
         result = self.scheduler.plan(
             ModelRequirements("org/model", 1000), [device("a")]
