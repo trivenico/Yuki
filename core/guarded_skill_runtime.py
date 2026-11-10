@@ -30,16 +30,7 @@ class OneShotSkillApprovals:
     @staticmethod
     def _key(skill_name: str, argument: str) -> tuple[str, str]:
         import hashlib
-        if (policy_engine is None) != (policy_request_factory is None):
-        record("central_policy_configuration_error")
-        return SkillInvocationResult(False, "Central policy configuration is incomplete.", str(skill_name)[:128], "central_policy_error")
-    if policy_engine is not None and not callable(getattr(policy_engine, "evaluate", None)):
-        record("central_policy_configuration_error")
-        return SkillInvocationResult(False, "Central policy configuration is invalid.", str(skill_name)[:128], "central_policy_error")
-    if policy_request_factory is not None and not callable(policy_request_factory):
-        record("central_policy_configuration_error")
-        return SkillInvocationResult(False, "Central policy configuration is invalid.", str(skill_name)[:128], "central_policy_error")
-    if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
+        if not isinstance(skill_name, str) or not skill_name or len(skill_name) > 128:
             raise ValueError("A non-empty bounded skill name is required.")
         if not isinstance(argument, str) or len(argument) > 20000:
             raise ValueError("Approval argument must be text no longer than 20000 characters.")
