@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -23,9 +24,17 @@ from yuki_providers import ProviderManager
 def _load_provider_selection(path: Path):
     """Load a strict, credential-free persisted provider/model selection."""
     try:
-        raw = path.read_text(encoding="utf-8")
+        metadata = path.lstat()
     except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise RuntimeError("Cannot inspect persisted provider selection.") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError("Persisted provider selection must be a regular, non-symlink file.")
+    if metadata.st_size > 4096:
+        raise RuntimeError("Persisted provider selection exceeds the size limit.")
+    try:
+        raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise RuntimeError("Cannot read persisted provider selection.") from exc
     try:
