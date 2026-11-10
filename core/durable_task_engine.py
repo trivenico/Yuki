@@ -190,17 +190,18 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
-    def claim(self, worker_id, *, lease_seconds=60):
+    def claim(self, worker_id, *, lease_seconds=60, owner_id=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
+        if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256): raise ValueError("owner_id must be non-empty bounded text")
         now=self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
             row=c.execute("""SELECT t.* FROM tasks t JOIN goals g ON g.id=t.goal_id
-              WHERE t.state='queued' AND t.available_at<=? AND g.state='active'
+              WHERE t.state='queued' AND t.available_at<=? AND g.state='active' AND (? IS NULL OR g.owner_id=?)
               AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on
                 WHERE d.task_id=t.id AND p.state<>'succeeded')
-              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,)).fetchone()
+              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,owner_id,owner_id)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
             changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
