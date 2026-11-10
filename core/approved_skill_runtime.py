@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from core.approved_skill_wiring import ApprovedSkillWiringService, SkillApprovalStore
-from core.guarded_skill_runtime import OneShotSkillApprovals, SkillInvocationResult, invoke_registered_skill
+from core.guarded_skill_runtime import OneShotSkillApprovals, SkillInvocationResult, SkillPolicyContext, invoke_registered_skill
 from skills.metadata_discovery import SkillCandidate
 
 
@@ -21,7 +21,7 @@ class ApprovedSkillRuntime:
         invocation_approvals: OneShotSkillApprovals | None = None,
         audit: Callable[[str, str], None] | None = None,
         policy_engine: Any = None,
-        policy_request_factory: Callable[[str, str, Any], Any] | None = None,
+        policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
     ):
         self.registry = registry
         self.approval_store = approval_store
@@ -59,7 +59,7 @@ class ApprovedSkillRuntime:
             raise ValueError("Cannot approve an invocation for an unregistered skill.")
         self.invocation_approvals.approve(skill_name, argument)
 
-    def invoke(self, skill_name: str, argument: str = "") -> SkillInvocationResult:
+    def invoke(self, skill_name: str, argument: str = "", *, policy_context: SkillPolicyContext | None = None) -> SkillInvocationResult:
         return invoke_registered_skill(
             self.registry,
             skill_name,
@@ -68,4 +68,5 @@ class ApprovedSkillRuntime:
             audit=self.audit,
             policy_engine=self.policy_engine,
             policy_request_factory=self.policy_request_factory,
+            policy_context=policy_context,
         )
