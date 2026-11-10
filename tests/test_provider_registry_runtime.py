@@ -35,8 +35,8 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         with patch.object(OllamaProvider, "is_available", return_value=True):
             self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
             self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
-        self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
-        self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
+            self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
+            self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
@@ -58,6 +58,22 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "does not support structured agent chat"):
             manager.create_selected_agent_model()
+
+    def test_unavailable_non_exact_provider_does_not_commit_selection(self):
+        manager = ProviderManager(environ={})
+
+        class UnavailableProvider:
+            def generate(self, prompt):
+                return prompt
+
+            def is_available(self):
+                return False
+
+        manager.register(type(manager.current())("custom", (), True), factory=UnavailableProvider)
+        message = manager.select("custom")
+        self.assertIn("Cannot select custom", message)
+        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager._selected_adapter)
 
     def test_unimplemented_provider_does_not_change_selection(self):
         manager = ProviderManager(environ={})
