@@ -99,6 +99,21 @@ class RuntimeModelCapabilityRoutingTests(unittest.TestCase):
         self.assertIsInstance(adapter, _AvailableProvider)
         self.assertEqual(factory.call_args.kwargs["environ"]["YUKI_OPENAI_MODEL"], "gpt-4.1-mini")
 
+    def test_failed_provider_switch_preserves_previous_selection(self):
+        manager = ProviderManager(config={"provider": "ollama", "ollama_model": "qwen3"}, environ={})
+        self.assertEqual(manager.current().name, "ollama")
+        result = manager.select("openai", allow_cloud=True)
+        self.assertIn("Cannot select openai", result)
+        self.assertEqual(manager.current().name, "ollama")
+
+    def test_successful_provider_switch_commits_routed_adapter_once(self):
+        manager = ProviderManager(config={"provider": "ollama", "ollama_model": "qwen3"}, environ={})
+        with patch("providers.factory.create_provider", return_value=_AvailableProvider()) as factory:
+            result = manager.select("ollama")
+            adapter = manager.create_selected_runtime_adapter()
+        self.assertEqual(result, "Selected provider: ollama")
+        self.assertIsInstance(adapter, _AvailableProvider)
+        self.assertEqual(factory.call_count, 1)
     def test_unavailable_exact_model_does_not_fallback(self):
         manager = ProviderManager(
             config={"ollama_model": "qwen3"},
