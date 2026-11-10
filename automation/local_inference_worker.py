@@ -52,7 +52,7 @@ class LocalInferenceWorker:
             return WorkerRun(False, None, "idle")
         provider = self.providers.get(job.model_id)
         if provider is None:
-            self.jobs.complete_job(self.device_token, job.job_id, error_code="model_not_allowlisted")
+            self.jobs.complete_job(self.device_token, job.job_id, lease_token=job.lease_token, error_code="model_not_allowlisted")
             return WorkerRun(True, job.job_id, "failed", "model_not_allowlisted")
         try:
             if not provider.is_available():
@@ -68,7 +68,7 @@ class LocalInferenceWorker:
             if len(output.encode("utf-8")) > self.max_output_bytes:
                 self.jobs.complete_job(self.device_token, job.job_id, error_code="output_too_large")
                 return WorkerRun(True, job.job_id, "failed", "output_too_large")
-            self.jobs.complete_job(self.device_token, job.job_id, result_text=output)
+            self.jobs.complete_job(self.device_token, job.job_id, lease_token=job.lease_token, result_text=output)
             return WorkerRun(True, job.job_id, "succeeded")
         except Exception:
             # Do not expose endpoint details, credentials, prompts or exception text
