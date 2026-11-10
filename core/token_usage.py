@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import json
+import os
+import stat
 from pathlib import Path
 import sqlite3
 import threading
@@ -44,6 +46,7 @@ class TokenUsageTracker:
         self._lock = threading.RLock()
         if self.db_path:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._prepare_private_database_file(self.db_path)
         self._db = sqlite3.connect(str(self.db_path) if self.db_path else ":memory:",
                                    timeout=30, check_same_thread=False)
         self._db.execute("PRAGMA busy_timeout = 30000")
@@ -79,6 +82,29 @@ class TokenUsageTracker:
         self._db.commit()
         self._initialize_totals()
         self._migrate_legacy_json()
+
+
+    @staticmethod
+    def _prepare_private_database_file(path):
+        """Create or tighten the ledger file without following a database symlink."""
+        path = Path(path)
+        if path.is_symlink():
+            raise RuntimeError("Usage database must not be a symlink.")
+        flags = os.O_CREAT | os.O_RDWR
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(str(path), flags, 0o600)
+        except OSError as exc:
+            raise RuntimeError("Usage database could not be opened safely.") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise RuntimeError("Usage database must be a regular file.")
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+            else:
+                os.chmod(path, 0o600)
+        finally:
+            os.close(descriptor)
 
     def _initialize_totals(self):
         """Backfill aggregate counters once for databases created by earlier versions."""
