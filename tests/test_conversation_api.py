@@ -338,7 +338,7 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual([item["id"] for item in data["tasks"]], [task_id])
         status, data, _ = self.request("GET", f"/v1/goals/{goal_id}/events", token=self.issued.token)
         self.assertEqual(status, 200)
-        self.assertTrue(any(item["event_type"] == "task.submitted" for item in data["events"]))
+        self.assertTrue(any(item["event_type"] == "task.queued" for item in data["events"]))
         status, data, _ = self.request("GET", f"/v1/tasks/{task_id}", token=self.issued.token)
         self.assertEqual(status, 200)
         self.assertEqual(data["task"]["id"], task_id)
