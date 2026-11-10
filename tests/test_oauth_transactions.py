@@ -45,6 +45,31 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         values.update(overrides)
         return self.store.create(**values)
 
+    def test_existing_transaction_schema_is_migrated_for_oidc_nonce(self):
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("""CREATE TABLE oauth_transactions (
+                state_digest TEXT PRIMARY KEY, owner_digest TEXT NOT NULL,
+                session_digest TEXT NOT NULL, verifier_ciphertext BLOB NOT NULL,
+                redirect_uri TEXT NOT NULL, issuer TEXT NOT NULL, resource TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed_at INTEGER
+            )""")
+        migrated = self._store()
+        columns = {row[1] for row in sqlite3.connect(self.path).execute(
+            "PRAGMA table_info(oauth_transactions)"
+        )}
+        self.assertIn("oidc_nonce_ciphertext", columns)
+        migrated.create(
+            state="legacy-schema-state-123", code_verifier="verifier",
+            owner_id="owner", session_id="session",
+            redirect_uri="https://yuki.example/callback",
+            issuer="https://login.example", resource="https://mcp.example",
+            oidc_nonce="nonce-value-1234567890",
+        )
+        result = migrated.consume(
+            state="legacy-schema-state-123", owner_id="owner", session_id="session"
+        )
+        self.assertEqual(result.oidc_nonce, "nonce-value-1234567890")
+
     def test_round_trip_and_persistence_across_restart(self):
         expires = self._create()
         restarted = self._store()
