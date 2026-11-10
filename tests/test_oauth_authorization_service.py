@@ -22,6 +22,7 @@ class Transactions:
             state=state, code_verifier=item["code_verifier"],
             redirect_uri=item["redirect_uri"], issuer=item["issuer"],
             resource=item["resource"], expires_at=123456,
+            oidc_nonce=item.get("oidc_nonce"),
         )
 
 
@@ -36,15 +37,19 @@ class Vault:
 class Transport:
     def __init__(self):
         self.calls = []
+        self.id_token = None
     def request_form(self, endpoint, *, fields):
         self.calls.append((endpoint, fields))
-        return {
+        document = {
             "access_token": "access-token-123",
             "refresh_token": "refresh-token-456",
             "token_type": "Bearer",
             "expires_in": 3600,
-            "scope": "read",
+            "scope": "read" if self.id_token is None else "read openid",
         }
+        if self.id_token is not None:
+            document["id_token"] = self.id_token
+        return document
 
 
 class IdentityVerifier:
@@ -56,6 +61,20 @@ class IdentityVerifier:
         if self.subject != "provider-subject-1":
             raise RuntimeError("account mismatch")
         return {"subject": self.subject}
+
+
+class OIDCVerifier:
+    def __init__(self, *, fail=False):
+        self.calls = []
+        self.fail = fail
+    def verify(self, *, id_token, expected_nonce, access_token=None):
+        self.calls.append({
+            "id_token": id_token, "expected_nonce": expected_nonce,
+            "access_token": access_token,
+        })
+        if self.fail:
+            raise RuntimeError("OIDC claim mismatch")
+        return {"issuer": "https://auth.example.com", "subject": "provider-subject-1"}
 
 
 class OAuthAuthorizationServiceTests(unittest.TestCase):
@@ -72,6 +91,61 @@ class OAuthAuthorizationServiceTests(unittest.TestCase):
             issuer="https://auth.example.com", resource="https://api.example.com",
             scopes=["read"], identity_verifier=self.identity,
         )
+
+    def test_oidc_flow_sends_and_persists_nonce_then_verifies_before_store(self):
+        verifier = OIDCVerifier()
+        self.service = OAuthAuthorizationService(
+            transaction_store=self.transactions, credential_vault=self.vault,
+            transport=self.transport, provider_id="upwork", account_id="owner-account",
+            client_id="public-client", authorization_endpoint="https://auth.example.com/authorize",
+            token_endpoint="https://auth.example.com/token",
+            allowed_authorization_hosts={"auth.example.com"},
+            redirect_uri="https://yuki.example/oauth/callback",
+            issuer="https://auth.example.com", resource="https://api.example.com",
+            scopes=["read"], identity_verifier=self.identity, oidc_verifier=verifier,
+        )
+        self.transport.id_token = "header.payload.signature"
+        started = self.service.begin(owner_id="owner-1", session_id="session-1")
+        query = parse_qs(urlsplit(started["authorization_url"]).query)
+        nonce = query["nonce"][0]
+        self.assertIn("openid", query["scope"][0].split(" "))
+        self.assertEqual(self.transactions.items[query["state"][0]]["oidc_nonce"], nonce)
+        callback = "https://yuki.example/oauth/callback?code=code&state=" + query["state"][0]
+        self.service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
+        self.assertEqual(verifier.calls, [{
+            "id_token": "header.payload.signature",
+            "expected_nonce": nonce,
+            "access_token": "access-token-123",
+        }])
+        self.assertEqual(len(self.vault.grants), 1)
+
+    def test_oidc_missing_token_or_failed_verification_never_persists_credentials(self):
+        verifier = OIDCVerifier()
+        self.service = OAuthAuthorizationService(
+            transaction_store=self.transactions, credential_vault=self.vault,
+            transport=self.transport, provider_id="upwork", account_id="owner-account",
+            client_id="public-client", authorization_endpoint="https://auth.example.com/authorize",
+            token_endpoint="https://auth.example.com/token",
+            allowed_authorization_hosts={"auth.example.com"},
+            redirect_uri="https://yuki.example/oauth/callback",
+            issuer="https://auth.example.com", resource="https://api.example.com",
+            scopes=["read"], identity_verifier=self.identity, oidc_verifier=verifier,
+        )
+        started = self.service.begin(owner_id="owner-1", session_id="session-1")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        callback = "https://yuki.example/oauth/callback?code=code&state=" + state
+        with self.assertRaisesRegex(OAuthAuthorizationServiceError, "authorization_exchange_failed"):
+            self.service.complete(owner_id="owner-1", session_id="session-1", callback_url=callback)
+        self.assertEqual(self.vault.grants, [])
+
+        self.transport.id_token = "header.payload.signature"
+        verifier.fail = True
+        started = self.service.begin(owner_id="owner-1", session_id="session-2")
+        state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
+        callback = "https://yuki.example/oauth/callback?code=code&state=" + state
+        with self.assertRaisesRegex(OAuthAuthorizationServiceError, "authorization_exchange_failed"):
+            self.service.complete(owner_id="owner-1", session_id="session-2", callback_url=callback)
+        self.assertEqual(self.vault.grants, [])
 
     def test_begin_and_complete_binds_owner_and_persists_validated_grant(self):
         started = self.service.begin(owner_id="owner-1", session_id="session-1")
