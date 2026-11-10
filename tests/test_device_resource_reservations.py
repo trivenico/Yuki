@@ -319,7 +319,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.assertEqual(self.service.expire_stale_reservations(limit=10), 1)
         self.assertEqual(self.service.expire_stale_reservations(limit=10), 0)
         with self.assertRaises(StaleReservation):
-            self.service.renew(first.reservation_id, first.token,
+            self.service.renew(self.device.token, first.reservation_id, first.token,
                                fencing_token=first.fencing_token)
 
     def test_expiry_recovery_rejects_unbounded_or_invalid_batches(self):
@@ -339,23 +339,53 @@ class AuthenticatedReservationTests(unittest.TestCase):
     def test_renew_and_release_require_secret_and_fencing_token(self):
         reservation = self.reserve()
         with self.assertRaises(StaleReservation):
-            self.service.renew(reservation.reservation_id, "wrong-secret-value-with-sufficient-length",
+            self.service.renew(self.device.token, reservation.reservation_id, "wrong-secret-value-with-sufficient-length",
                                fencing_token=reservation.fencing_token)
         with self.assertRaises(StaleReservation):
-            self.service.renew(reservation.reservation_id, reservation.token,
+            self.service.renew(self.device.token, reservation.reservation_id, reservation.token,
                                fencing_token=reservation.fencing_token + 1)
         self.clock.advance(1)
         expiry = self.service.renew(reservation.reservation_id, reservation.token,
                                     fencing_token=reservation.fencing_token)
         self.assertGreater(datetime.fromisoformat(expiry), datetime.fromisoformat(reservation.expires_at))
-        self.assertTrue(self.service.release(reservation.reservation_id, reservation.token,
+        self.assertTrue(self.service.release(self.device.token, reservation.reservation_id, reservation.token,
                                              fencing_token=reservation.fencing_token))
         self.assertFalse(self.service.release(reservation.reservation_id, reservation.token,
                                               fencing_token=reservation.fencing_token))
 
+    def test_reservation_secret_cannot_be_used_from_another_device(self):
+        reservation = self.reserve()
+        second_challenge = self.pairing.create_pairing_challenge(
+            self.session.user.user_id
+        )
+        second_device = self.pairing.pair_device(second_challenge.code, "Second node")
+        with self.assertRaises(StaleReservation):
+            self.service.renew(
+                second_device.token, reservation.reservation_id, reservation.token,
+                fencing_token=reservation.fencing_token,
+            )
+        self.assertFalse(self.service.release(
+            second_device.token, reservation.reservation_id, reservation.token,
+            fencing_token=reservation.fencing_token,
+        ))
+        expiry = self.service.renew(
+            self.device.token, reservation.reservation_id, reservation.token,
+            fencing_token=reservation.fencing_token,
+        )
+        self.assertGreater(datetime.fromisoformat(expiry),
+                           datetime.fromisoformat(reservation.expires_at))
+
+    def test_renewal_requires_authenticated_paired_device(self):
+        reservation = self.reserve()
+        with self.assertRaises(PermissionError):
+            self.service.renew(
+                "not-a-device-token", reservation.reservation_id, reservation.token,
+                fencing_token=reservation.fencing_token,
+            )
+
     def test_fencing_tokens_increase_after_release(self):
         first = self.reserve()
-        self.service.release(first.reservation_id, first.token, fencing_token=first.fencing_token)
+        self.service.release(self.device.token, first.reservation_id, first.token, fencing_token=first.fencing_token)
         second = self.reserve(task="task-b", key="key-b")
         self.assertGreater(second.fencing_token, first.fencing_token)
 
