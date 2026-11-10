@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
@@ -29,8 +30,11 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
-        self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
-        self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
+        # Selection now validates runtime availability before committing. Keep
+        # this unit test independent of a developer's local Ollama daemon.
+        with patch.object(OllamaProvider, "is_available", return_value=True):
+            self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
+            self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 

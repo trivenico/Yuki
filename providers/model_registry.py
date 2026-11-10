@@ -17,7 +17,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
+_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$")
 _BENCHMARK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
 _MAX_REGISTRY_BYTES = 5_000_000
 _MAX_RECORDS = 5000
@@ -216,7 +216,7 @@ _MODEL_LOCAL = frozenset({"local", "local_runtime", "local_only"})
 _MODEL_CLOUD = frozenset({"cloud_provider", "third_party_gateway"})
 _MODEL_PRIVACY = _MODEL_LOCAL | _MODEL_CLOUD
 _MODEL_EVIDENCE = frozenset({
-    "provider_documentation", "owner_verified", "local_probe", "benchmark_verified",
+    "provider_documentation", "owner_verified", "local_probe", "benchmark_verified", "adapter_contract",
 })
 
 
