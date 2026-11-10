@@ -72,18 +72,23 @@ class GuardedMCPRuntime:
             if request.argument_sha256 != argument_digest(arguments):
                 raise ValueError("policy request is not bound to the exact MCP arguments")
 
-            if self._approval_gateway is not None:
-                decision = self._approval_gateway.authorize(
+            policy_result = self._policy_engine.evaluate(request)
+            policy_decision = getattr(policy_result, "decision", None)
+            if policy_decision not in (Decision.ALLOW, Decision.REQUIRE_APPROVAL):
+                status = getattr(policy_decision, "value", "invalid")
+                self._record(name, "central_policy_" + str(status)[:64])
+                raise PermissionError("MCP tool call blocked by central policy")
+
+            if self._approval_gateway is None:
+                if policy_decision != Decision.ALLOW:
+                    self._record(name, "central_policy_approval_required")
+                    raise PermissionError("MCP tool call requires an approval gateway")
+            else:
+                gateway_decision = self._approval_gateway.authorize(
                     request, approval_token=approval_token,
                 )
-                if getattr(decision, "allowed", False) is not True:
-                    status = getattr(decision, "status", "denied")
-                    self._record(name, "central_policy_" + str(status)[:64])
-                    raise PermissionError("MCP tool call blocked by central policy")
-            else:
-                decision = self._policy_engine.evaluate(request)
-                if getattr(decision, "decision", None) != Decision.ALLOW:
-                    status = getattr(getattr(decision, "decision", None), "value", "denied")
+                if getattr(gateway_decision, "allowed", False) is not True:
+                    status = getattr(gateway_decision, "status", "denied")
                     self._record(name, "central_policy_" + str(status)[:64])
                     raise PermissionError("MCP tool call blocked by central policy")
 
