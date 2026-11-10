@@ -57,6 +57,25 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         self.assertEqual(result.resource, "https://mcp.example/mcp")
         self.assertEqual(result.expires_at, expires)
 
+    def test_oidc_nonce_is_encrypted_and_bound_to_consumed_transaction(self):
+        nonce = "oidc-nonce-value-1234567890"
+        self._create(oidc_nonce=nonce)
+        with closing(sqlite3.connect(self.path)) as db:
+            row = db.execute("SELECT oidc_nonce_ciphertext FROM oauth_transactions").fetchone()
+        self.assertIsNotNone(row[0])
+        self.assertNotIn(nonce.encode("utf-8"), bytes(row[0]))
+        result = self.store.consume(
+            state="state-random-123", owner_id="owner-123", session_id="session-456"
+        )
+        self.assertEqual(result.oidc_nonce, nonce)
+
+    def test_legacy_transaction_without_oidc_nonce_remains_compatible(self):
+        self._create()
+        result = self.store.consume(
+            state="state-random-123", owner_id="owner-123", session_id="session-456"
+        )
+        self.assertIsNone(result.oidc_nonce)
+
     def test_sensitive_values_are_not_stored_in_plaintext(self):
         self._create()
         with closing(sqlite3.connect(self.path)) as db:
