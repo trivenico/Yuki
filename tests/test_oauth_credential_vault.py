@@ -104,6 +104,23 @@ class OAuthCredentialVaultTests(unittest.TestCase):
                 expires_at=3000, scopes=["jobs:read"],
             )
 
+    def test_refresh_token_is_retained_when_rotation_response_omits_it(self):
+        self.store()
+        self.vault.rotate(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1",
+            expected_version=1, expected_refresh_token="refresh.token-1",
+            access_token="access.token-2", refresh_token=None,
+            expires_at=3000, scopes=["jobs:read"],
+        )
+        record = self.vault.get(owner_id="owner-a", provider_id="upwork", account_id="acct-1")
+        self.assertEqual(record.refresh_token, "refresh.token-1")
+        self.vault.rotate(
+            owner_id="owner-a", provider_id="upwork", account_id="acct-1",
+            expected_version=2, expected_refresh_token="refresh.token-1",
+            access_token="access.token-3", refresh_token="refresh.token-3",
+            expires_at=4000, scopes=["jobs:read"],
+        )
+
     def test_refresh_rotation_rejects_wrong_token(self):
         self.store()
         with self.assertRaisesRegex(OAuthCredentialError, "stale_refresh_generation"):
