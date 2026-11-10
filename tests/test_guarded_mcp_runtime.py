@@ -124,6 +124,18 @@ class GuardedMCPRuntimeTests(unittest.TestCase):
         self.assertEqual(len(gateway.calls), 1)
         self.assertEqual(self.client.calls, [])
 
+
+    def test_gateway_cannot_override_central_deny(self):
+        gateway = FakeGateway(True)
+        runtime = GuardedMCPRuntime(
+            self.client, self.engine(Decision.DENY), self.factory,
+            approval_gateway=gateway,
+        )
+        with self.assertRaises(PermissionError):
+            runtime.call_tool("status", self.arguments, approval_token="opaque-token")
+        self.assertEqual(gateway.calls, [])
+        self.assertEqual(self.client.calls, [])
+
     def test_gateway_authorization_preserves_client_call_boundary(self):
         gateway = FakeGateway(True)
         runtime = GuardedMCPRuntime(
