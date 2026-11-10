@@ -112,6 +112,8 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         service.approve_pending("approver-session", request_id)
         audit = repr(service.audit_events("reader-session"))
         self.assertNotIn(delivered[0], audit)
+        with self.assertRaisesRegex(PermissionError, "active approval credential"):
+            self.service.request_approval("requester-session", self.task["id"])
 
     def test_inbox_rejects_cross_principal_task(self):
         with self.assertRaises(PermissionError):
