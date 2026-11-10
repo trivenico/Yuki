@@ -9,7 +9,7 @@ from typing import Any
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.inference_jobs import InferenceJobService
 
-_MAX_BODY = 270_000
+_MAX_BODY = 70_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 _DEVICE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -91,6 +91,10 @@ class AuthenticatedInferenceAPI:
                     payload = await self._body(receive)
                     if set(payload) not in ({"lease_token", "result_text"}, {"lease_token", "error_code"}):
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    if ("result_text" in payload and
+                            (not isinstance(payload["result_text"], str) or
+                             len(payload["result_text"].encode("utf-8")) > 20_000)):
+                        return await self._respond(send, 413, {"error": "result_too_large"})
                     try:
                         job = await asyncio.to_thread(
                             self.jobs.complete_job, token, match.group(1),
@@ -157,7 +161,7 @@ class AuthenticatedInferenceAPI:
             if path == "/v1/inference/jobs" and method == "GET":
                 jobs = await asyncio.to_thread(self.jobs.list_jobs, user.user_id)
                 return await self._respond(send, 200, {
-                    "jobs": [job.public_dict() for job in jobs],
+                    "jobs": [self._job_summary(job) for job in jobs],
                 })
 
             match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})(/cancel)?", path)
@@ -192,6 +196,13 @@ class AuthenticatedInferenceAPI:
         if not sep or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
         return token
+
+    @staticmethod
+    def _job_summary(job):
+        """Keep collection responses small; fetch an individual job for its result."""
+        value = job.public_dict()
+        value.pop("result_text", None)
+        return value
 
     @staticmethod
     def _device(device):
