@@ -217,10 +217,16 @@ class CapabilityApprovalGateway:
                 """UPDATE capability_approval_requests SET status='expired'
                    WHERE status='pending' AND expires_at<=?""", (now,),
             )
+            db.execute(
+                """UPDATE capability_approval_requests SET status='rejected',decided_at=?
+                   WHERE request_sha256=? AND status='pending' AND policy_version<>?""",
+                (now, digest, policy.policy_version),
+            )
             existing = db.execute(
                 """SELECT request_id FROM capability_approval_requests
-                   WHERE request_sha256=? AND status='pending' AND expires_at>?""",
-                (digest, now),
+                   WHERE request_sha256=? AND policy_version=?
+                     AND status='pending' AND expires_at>?""",
+                (digest, policy.policy_version, now),
             ).fetchone()
             if existing is not None:
                 db.commit()
