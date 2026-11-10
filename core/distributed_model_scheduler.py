@@ -23,6 +23,7 @@ class ModelRequirements:
     gpu_memory_bytes: int = 0
     cpu_cores: int = 1
     require_gpu: bool = False
+    cpu_millicores: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.model_id, str) or not _MODEL_ID.fullmatch(self.model_id):
@@ -33,6 +34,10 @@ class ModelRequirements:
                 raise ValueError("invalid_" + name)
         if type(self.cpu_cores) is not int or not 1 <= self.cpu_cores <= 4096:
             raise ValueError("invalid_cpu_cores")
+        if self.cpu_millicores is not None and (
+            type(self.cpu_millicores) is not int or not 1 <= self.cpu_millicores <= 4_096_000
+        ):
+            raise ValueError("invalid_cpu_millicores")
         if type(self.require_gpu) is not bool:
             raise ValueError("invalid_require_gpu")
         if self.require_gpu and self.gpu_memory_bytes == 0:
@@ -58,10 +63,13 @@ class PlacementDecision:
 class DistributedModelScheduler:
     """Choose a single paired device using fresh registry state and explicit limits."""
 
-    def __init__(self, *, max_devices: int = 100):
+    def __init__(self, *, max_devices: int = 100, allow_legacy_cpu_cores: bool = False):
         if type(max_devices) is not int or not 1 <= max_devices <= 1000:
             raise ValueError("max_devices must be between 1 and 1000")
+        if type(allow_legacy_cpu_cores) is not bool:
+            raise ValueError("invalid_legacy_cpu_policy")
         self.max_devices = max_devices
+        self.allow_legacy_cpu_cores = allow_legacy_cpu_cores
 
     @staticmethod
     def _device(item: Any) -> tuple[str, dict[str, Any], str | None]:
@@ -123,9 +131,17 @@ class DistributedModelScheduler:
                 reason = "offline"
             elif status != "idle":
                 reason = "device_not_idle"
-            cpu = self._nonnegative_int(caps.get("cpu_cores"))
+            required_millicores = (
+                requirements.cpu_millicores
+                if requirements.cpu_millicores is not None
+                else requirements.cpu_cores * 1000
+            )
+            cpu = self._nonnegative_int(caps.get("cpu_millicores"))
+            if cpu is None and self.allow_legacy_cpu_cores:
+                legacy_cores = self._nonnegative_int(caps.get("cpu_cores"))
+                cpu = legacy_cores * 1000 if legacy_cores is not None else None
             ram = self._nonnegative_int(caps.get("ram_available_bytes"))
-            if reason is None and (cpu is None or cpu < requirements.cpu_cores):
+            if reason is None and (cpu is None or cpu < required_millicores):
                 reason = "insufficient_or_unknown_cpu"
             if reason is None and (ram is None or ram < requirements.memory_bytes):
                 reason = "insufficient_or_unknown_ram"
