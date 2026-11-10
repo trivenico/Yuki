@@ -48,9 +48,22 @@ class LocalWorkerTests(unittest.TestCase):
  def test_lease_must_outlast_provider_timeout(self):
   class SlowProvider(FakeOllamaProvider):
    def __init__(self): super().__init__(); self.timeout=120
-  with self.assertRaisesRegex(ValueError,"job lease must exceed Ollama timeout"):
+  with self.assertRaisesRegex(ValueError,"job_lease_must_exceed_provider_timeout_by_15_seconds"):
    LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
   with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
+ def test_revocation_during_generation_prevents_completion(self):
+  job=self.submit()
+  original=self.provider.generate_chat
+  def revoke_then_generate(**kwargs):
+   self.jobs.pairing.revoke_device("owner",self.device.device.device_id)
+   return original(**kwargs)
+  self.provider.generate_chat=revoke_then_generate
+  with self.assertRaises(PermissionError):
+   self.worker.run_once()
+  persisted=self.jobs.get_job("owner",job.job_id)
+  self.assertEqual(persisted.status,"running")
+  self.assertIsNone(persisted.result_text)
+
 if __name__=="__main__": unittest.main()
