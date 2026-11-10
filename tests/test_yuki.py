@@ -90,7 +90,7 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
 
-    def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
+    def test_provider_selection_fails_closed_for_unknown_provider_privacy(self):
         manager = ProviderManager()
         created = []
 
@@ -98,21 +98,18 @@ class ProviderManagerTests(unittest.TestCase):
             pass
 
         def factory():
-            if created:
-                raise RuntimeError("factory must not be called twice")
-            adapter = FlakyProvider()
-            created.append(adapter)
-            return adapter
+            created.append(FlakyProvider())
+            return created[-1]
 
         manager.register(ProviderInfo("flaky", ("test",), True), factory=factory)
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select flaky", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
 
-        self.assertEqual(result, "Selected provider: flaky")
-        self.assertEqual(manager.current().name, "flaky")
-        self.assertIs(agent.provider, created[0])
-        self.assertIs(manager.create_selected_adapter(), created[0])
+        self.assertIn("explicit cloud consent", result)
+        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(created, [])
+        self.assertIsNot(agent.provider, created[0] if created else None)
 
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()
