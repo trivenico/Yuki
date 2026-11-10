@@ -32,6 +32,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         first = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(first.lease_token)
         self.assertNotIn("lease_token", first.public_dict())
+        self.assertNotIn(first.lease_token, repr(first))
         self.assertIsNone(self.jobs.get_job("owner", self.job.job_id).lease_token)
 
         with sqlite3.connect(self.database) as db:
