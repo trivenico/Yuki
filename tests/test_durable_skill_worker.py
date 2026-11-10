@@ -52,13 +52,19 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.approvals = OneShotSkillApprovals()
         self.high_risk = HighRiskSkill()
         self.registry = Registry(ReadSkill(), self.high_risk)
+        from core.tool_policy import Decision, PolicyResult
+        class AllowPolicy:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "test-v1", ("test-owner-allow",), "test")
         self.runtime = ApprovedSkillRuntime(
             self.registry,
             SkillApprovalStore(root / "approvals.sqlite"),
             invocation_approvals=self.approvals,
+            policy_engine=AllowPolicy(),
+            policy_request_factory=lambda name, argument, skill, context: context,
         )
-        self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker")
-        self.goal = self.engine.create_goal()
+        self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker", owner_id="test-owner")
+        self.goal = self.engine.create_goal(owner_id="test-owner")
 
     def submit(self, skill_name, argument="", *, task_type="skill.invoke", max_attempts=1, key="task"):
         return self.engine.submit(
@@ -67,7 +73,16 @@ class DurableSkillWorkerTests(unittest.TestCase):
             {"skill_name": skill_name, "argument": argument},
             idempotency_key=key,
             max_attempts=max_attempts,
+            owner_id="test-owner",
         )
+
+    def test_worker_requires_central_policy_by_default(self):
+        runtime = ApprovedSkillRuntime(
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "no-policy.sqlite"),
+        )
+        with self.assertRaisesRegex(ValueError, "central policy engine"):
+            DurableSkillWorker(self.engine, runtime, worker_id="unsafe-worker")
 
     def test_registered_low_risk_skill_runs_and_only_metadata_is_persisted(self):
         task = self.submit("read_demo", "hello")
@@ -125,7 +140,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
         task = self.submit("read_demo", "raises", key="worker-exception")
         worker = DurableSkillWorker(
-            self.engine, RaisingRuntime(), worker_id="raising-worker"
+            self.engine, RaisingRuntime(), worker_id="raising-worker", require_policy=False
         )
         result = worker.run_once()
         self.assertEqual(result["state"], "failed")
@@ -168,6 +183,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             worker_id="heartbeat-worker",
             lease_seconds=2,
             heartbeat_interval_seconds=0.05,
+            require_policy=False,
         )
         outcomes = []
         thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
