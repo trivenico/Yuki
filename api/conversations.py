@@ -277,7 +277,7 @@ class YukiConversationAPI:
                     selected = self.provider_selector(payload["provider"], allow_cloud=payload["confirm_cloud"])
                 except ValueError as exc:
                     code = str(exc)
-                    if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready"}:
+                    if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready", "cloud_consent_required"}:
                         code = "provider_selection_rejected"
                     return await self._respond(send, 422, {"error": code})
                 except Exception:
