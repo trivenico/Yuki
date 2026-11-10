@@ -136,7 +136,7 @@ class PinnedOAuthHTTPTransportTests(unittest.TestCase):
             {"Host": "attacker.example"},
             {"Content-Length": "0"},
             {"Content-Type": "text/plain"},
-            {"X-Test": "safe\\r\\nInjected: yes"},
+            {"X-Test": "safe\r\nInjected: yes"},
             {"Bad Header": "value"},
             {"X-Test": "one", "x-test": "two"},
         ):
