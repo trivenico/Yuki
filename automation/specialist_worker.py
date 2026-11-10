@@ -258,6 +258,31 @@ class SpecialistTaskWorker:
         if claimed is None:
             return None
 
+        # Permission metadata is persisted end-to-end, but this text-only worker
+        # has no execution-time capability gateway yet. Never silently treat a
+        # declared permission as advisory or run a privileged task without it.
+        step_permissions = (
+            claimed.definition[0].get("required_permissions", [])
+            if len(claimed.definition) == 1 and isinstance(claimed.definition[0], dict)
+            else None
+        )
+        if (
+            not isinstance(step_permissions, list)
+            or len(step_permissions) > 32
+            or any(
+                not isinstance(permission, str)
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,99}", permission)
+                for permission in step_permissions
+            )
+            or len(set(step_permissions)) != len(step_permissions)
+            or bool(step_permissions)
+        ):
+            return self.runtime.fail(
+                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                expected_version=claimed.version, worker_id=self.worker_id,
+                error_code="unsupported_permission_scope",
+            )
+
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
         if handler is None:

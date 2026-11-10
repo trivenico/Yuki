@@ -109,10 +109,19 @@ class SpecialistAgentCoordinator:
                 CREATE TABLE IF NOT EXISTS agent_plans (
                     plan_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
+                    client_idempotency_key TEXT,
+                    owner_id TEXT,
                     request_digest TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
             """)
+            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
+            if "owner_id" not in plan_columns:
+                # Existing plans remain unowned and inaccessible; ownership is
+                # never inferred from the current operator or task metadata.
+                db.execute("ALTER TABLE agent_plans ADD COLUMN owner_id TEXT")
+            if "client_idempotency_key" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN client_idempotency_key TEXT")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
                     plan_id TEXT NOT NULL,
@@ -241,6 +250,8 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("required_permissions must be bounded permission identifiers.")
             if len(set(item.required_permissions)) != len(item.required_permissions):
                 raise AgentPlanError("required permissions must be unique.")
+            if item.required_permissions and not item.requires_approval:
+                raise AgentPlanError("subtasks requesting permissions must require explicit approval.")
         for item in items:
             if any(dep not in ids for dep in item.depends_on):
                 raise AgentPlanError(f"subtask {item.subtask_id} references an unknown dependency.")
@@ -410,17 +421,29 @@ class SpecialistAgentCoordinator:
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
+        # Scope the internal unique key and plan ID to the authenticated principal.
+        scoped_key = hashlib.sha256(
+            ("yuki-agent-plan-idempotency\\0" + actor_id.strip() + "\\0" + key).encode("utf-8")
+        ).hexdigest()
+        plan_id = hashlib.sha256(
+            ("yuki-agent-plan\\0" + actor_id.strip() + "\\0" + key).encode("utf-8")
+        ).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (key,)).fetchone()
+            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (scoped_key,)).fetchone()
             if existing:
+                if existing["owner_id"] != actor_id.strip():
+                    raise PermissionError("agent plan access is not authorized.")
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
-                       (plan_id, key, digest, now))
+            db.execute("""
+                INSERT INTO agent_plans(
+                    plan_id, idempotency_key, client_idempotency_key, owner_id,
+                    request_digest, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (plan_id, scoped_key, key, actor_id.strip(), digest, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -446,8 +469,8 @@ class SpecialistAgentCoordinator:
         # advances and recovery after a partial write safe.
         with self._connect() as db:
             plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
-            if plan is None:
-                raise KeyError("agent plan not found.")
+            if plan is None or plan["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan access is not authorized.")
             plan_key = plan["idempotency_key"]
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
@@ -521,6 +544,7 @@ class SpecialistAgentCoordinator:
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
                     "requires_approval": bool(row["requires_approval"]),
+                    "required_permissions": json.loads(row["permissions_json"]),
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
@@ -557,10 +581,10 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent plan cancellation is not authorized.")
         with self._connect() as db:
             plan = db.execute(
-                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+                "SELECT plan_id, owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)
             ).fetchone()
-            if plan is None:
-                raise KeyError("agent plan not found.")
+            if plan is None or plan["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan access is not authorized.")
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
                 (plan_id,),
@@ -616,9 +640,9 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
         with self._connect() as db:
-            row = db.execute("SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
-            if row is None:
-                raise KeyError("agent plan not found.")
+            row = db.execute("SELECT plan_id, owner_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            if row is None or row["owner_id"] != actor_id.strip():
+                raise PermissionError("agent plan access is not authorized.")
             return self._read_plan(db, plan_id)
 
     @staticmethod
@@ -626,7 +650,7 @@ class SpecialistAgentCoordinator:
         row = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
         subtasks = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
         return AgentPlan(
-            plan_id=row["plan_id"], idempotency_key=row["idempotency_key"], created_at=row["created_at"],
+            plan_id=row["plan_id"], idempotency_key=row["client_idempotency_key"] or "", created_at=row["created_at"],
             subtasks=tuple(PlannedSubtask(
                 subtask_id=s["subtask_id"], agent_id=s["agent_id"], description=s["description"],
                 required_capabilities=tuple(json.loads(s["capabilities_json"])),

@@ -1,6 +1,8 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import uuid
+from getpass import getpass
 from pathlib import Path
 
 from yuki_agent import YukiAgent
@@ -15,8 +17,13 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
+from core.auth import AuthenticationError, BuiltInAuthService
+from core.authenticated_task_service import AuthenticatedDurableTaskService
+from core.guarded_skill_runtime import SkillPolicyContext
+from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
+_CLI_SESSION_TOKEN = None
 
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
@@ -53,6 +60,19 @@ def save_memory(memory):
 _SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'
 _DURABLE_TASK_DB = Path(__file__).with_name('.yuki') / 'durable_tasks.sqlite3'
 
+_AUTH_DB = Path(__file__).with_name('.yuki') / 'auth.sqlite3'
+
+
+def _get_auth_service():
+    _AUTH_DB.parent.mkdir(parents=True, exist_ok=True)
+    return BuiltInAuthService(str(_AUTH_DB))
+
+
+def _authenticated_task_service():
+    if not _CLI_SESSION_TOKEN:
+        raise AuthenticationError("Authentication required. Use /auth login USERNAME.")
+    return AuthenticatedDurableTaskService(_get_auth_service(), _get_durable_task_engine())
+
 
 def _get_durable_task_engine():
     _DURABLE_TASK_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +88,52 @@ def _build_approved_skill_runtime():
         audit=lambda action, outcome: write_audit_event(action, outcome),
     )
     return registry, runtime
+
+
+def _build_durable_policy_runtime(principal_id):
+    registry = SkillRegistry.defaults(Path.cwd())
+    rules = []
+    for item in registry.describe():
+        skill = registry.get(item["name"])
+        risk_value = str(getattr(skill, "risk", "high")).lower()
+        if risk_value not in {risk.value for risk in Risk}:
+            continue
+        for trigger in ("durable_task", "terminal"):
+            rules.append(PolicyRule(
+                rule_id=f"{trigger}-registered-skill-{item['name']}",
+                decision=Decision.ALLOW,
+                principal_id=principal_id,
+                trigger=trigger,
+                capability="skill.invoke",
+                target=item["name"],
+                risk=Risk(risk_value),
+            ))
+    engine = ToolPolicyEngine(rules, policy_version="yuki-durable-cli-v1")
+
+    def request_factory(skill_name, argument, skill, context):
+        if not isinstance(context, SkillPolicyContext) or context.principal_id != principal_id:
+            raise ValueError("trusted authenticated task context is required")
+        risk = Risk(str(getattr(skill, "risk", "high")).lower())
+        return PolicyRequest(
+            principal_id=context.principal_id,
+            trigger=context.trigger,
+            capability="skill.invoke",
+            target=skill_name,
+            argument_sha256=argument_digest({"argument": argument}),
+            risk=risk,
+            run_id=context.goal_id,
+            step_id=context.task_id,
+        )
+
+    runtime = ApprovedSkillRuntime(
+        registry,
+        _get_skill_approval_store(),
+        invocation_approvals=_INVOCATION_APPROVALS,
+        audit=lambda action, outcome: write_audit_event(action, outcome),
+        policy_engine=engine,
+        policy_request_factory=request_factory,
+    )
+    return runtime
 
 
 def _get_skill_approval_store():
@@ -90,7 +156,11 @@ Yuki commands:
   /skill inspect NAME             Inspect a registered skill's metadata
   /skill approve NAME [argument]  Approve one exact high-risk invocation
   /skill invoke NAME [argument]   Invoke a registered skill through the guard
-  /durable goal create             Create a durable task goal
+  /auth bootstrap USERNAME        Create the initial local administrator
+  /auth login USERNAME            Authenticate for this terminal session
+  /auth logout                    Revoke the current terminal session
+  /auth status                    Show authentication status
+  /durable goal create             Create an authenticated durable goal
   /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT
   /durable task list GOAL_ID       List durable tasks for a goal
   /durable task cancel TASK_ID     Cancel a durable task
@@ -114,6 +184,7 @@ The runtime defaults to the real OpenAI API. The mock adapter is reserved for au
 
 
 def handle_command(message, memory, tasks, agent, providers, policy=None):
+    global _CLI_SESSION_TOKEN
     command = message.strip()
     if not command:
         return ""
@@ -231,101 +302,138 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f"Invocation approval: {'required' if requires_approval else 'not required'}"
             )
         if parts[1] == "approve" and len(parts) >= 3:
+            user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+            if user is None:
+                return "Authentication required. Use /auth login USERNAME."
             argument = parts[3] if len(parts) == 4 else ""
             try:
-                runtime.approve_invocation(parts[2], argument)
+                runtime.approve_invocation(parts[2], argument, principal_id=user.user_id)
                 write_audit_event("skill:approval", "granted")
                 return f"One-shot invocation approval granted for {parts[2]} and the exact supplied argument."
             except ValueError:
                 write_audit_event("skill:approval", "rejected")
                 return "Cannot approve an unknown skill."
         if parts[1] == "invoke" and len(parts) >= 3:
+            user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+            if user is None:
+                return "Authentication required. Use /auth login USERNAME."
             argument = parts[3] if len(parts) == 4 else ""
-            result = runtime.invoke(parts[2], argument)
-            return result.message if result.ok else f"{result.status}: {result.message}"
+            try:
+                guarded_runtime = _build_durable_policy_runtime(user.user_id)
+                context = SkillPolicyContext(
+                    principal_id=user.user_id,
+                    trigger="terminal",
+                    goal_id="terminal-session",
+                    task_id=uuid.uuid4().hex,
+                )
+                result = guarded_runtime.invoke(parts[2], argument, policy_context=context)
+                return result.message if result.ok else f"{result.status}: {result.message}"
+            except Exception:
+                write_audit_event("skill:invoke", "policy_error")
+                return "Skill invocation blocked because authenticated policy could not be enforced."
         return "Usage: /skill list | diagnostics | install PATH | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
+
+    if command == "/auth" or command.startswith("/auth "):
+        parts = command.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "status"
+        if action == "status":
+            user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+            return f"Authenticated as {user.username}." if user else "Not authenticated. Use /auth login USERNAME."
+        if action == "logout":
+            if _CLI_SESSION_TOKEN:
+                _get_auth_service().revoke_session(_CLI_SESSION_TOKEN)
+            _CLI_SESSION_TOKEN = None
+            return "Terminal session logged out."
+        if action not in {"bootstrap", "login"} or len(parts) != 3:
+            return "Usage: /auth bootstrap USERNAME | /auth login USERNAME | /auth logout | /auth status"
+        username = parts[2]
+        auth = _get_auth_service()
+        try:
+            if action == "bootstrap":
+                password = getpass("Choose administrator password: ")
+                confirm = getpass("Confirm administrator password: ")
+                if password != confirm:
+                    return "Passwords did not match; administrator was not created."
+                auth.bootstrap_admin(username, password)
+            else:
+                password = getpass("Password: ")
+            issued = auth.authenticate(username, password)
+            _CLI_SESSION_TOKEN = issued.token
+            write_audit_event("auth:" + action, "completed")
+            return f"Authenticated as {issued.user.username}; session expires {issued.expires_at}."
+        except (ValueError, PermissionError, AuthenticationError):
+            write_audit_event("auth:" + action, "rejected")
+            return "Authentication operation rejected."
+        except Exception as error:
+            return f"Authentication unavailable ({type(error).__name__})."
 
     if command == "/durable" or command.startswith("/durable "):
         durable_command = command[len("/durable"):].strip()
-        if durable_command == "goal create":
-            try:
-                with _get_durable_task_engine() as engine:
-                    goal_id = engine.create_goal()
+        if not _CLI_SESSION_TOKEN or not _get_auth_service().resolve_session(_CLI_SESSION_TOKEN):
+            return "Authentication required. Use /auth login USERNAME."
+        try:
+            service = _authenticated_task_service()
+            if durable_command == "goal create":
+                goal_id = service.create_goal(_CLI_SESSION_TOKEN)
                 write_audit_event("durable:goal:create", "completed")
-                return f"Durable goal created: {goal_id}"
-            except Exception as error:
-                return f"Could not create durable goal ({type(error).__name__})."
+                return f"Authenticated durable goal created: {goal_id}"
 
-        if durable_command.startswith("task submit "):
-            encoded = durable_command[len("task submit "):]
-            fields = [part.strip() for part in encoded.split("|", 3)]
-            if len(fields) != 4:
-                return "Usage: /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT"
-            key, goal_id, skill_name, argument = fields
-            if not key or not goal_id or not skill_name or len(argument) > 20000:
-                return "Task key, goal ID, skill name, and a bounded argument are required."
-            try:
-                registry, _runtime = _build_approved_skill_runtime()
+            if durable_command.startswith("task submit "):
+                encoded = durable_command[len("task submit "):]
+                fields = [part.strip() for part in encoded.split("|", 3)]
+                if len(fields) != 4:
+                    return "Usage: /durable task submit KEY | GOAL_ID | SKILL | ARGUMENT"
+                key, goal_id, skill_name, argument = fields
+                if not key or not goal_id or not skill_name or len(argument) > 20000:
+                    return "Task key, goal ID, skill name, and a bounded argument are required."
+                registry = SkillRegistry.defaults(Path.cwd())
                 if registry.get(skill_name) is None:
                     return "Cannot queue an unregistered skill."
-                with _get_durable_task_engine() as engine:
-                    task = engine.submit(
-                        goal_id,
-                        "skill.invoke",
-                        {"skill_name": skill_name, "argument": argument},
-                        idempotency_key=key,
-                        max_attempts=1,
-                    )
+                task = service.submit(
+                    _CLI_SESSION_TOKEN, goal_id, "skill.invoke",
+                    {"skill_name": skill_name, "argument": argument},
+                    idempotency_key=key, max_attempts=1,
+                )
                 write_audit_event("durable:task:submit", "completed")
-                return f"Durable task {task['id']} is {task['state']}. Approve the exact skill argument before running high-risk work."
-            except Exception as error:
-                write_audit_event("durable:task:submit", "rejected")
-                return f"Could not submit durable task ({type(error).__name__})."
+                return f"Durable task {task['id']} is {task['state']}."
 
-        if durable_command.startswith("task list "):
-            goal_id = durable_command[len("task list "):].strip()
-            if not goal_id:
-                return "Usage: /durable task list GOAL_ID"
-            try:
-                with _get_durable_task_engine() as engine:
-                    tasks = engine.list_tasks(goal_id)
-                if not tasks:
+            if durable_command.startswith("task list "):
+                goal_id = durable_command[len("task list "):].strip()
+                if not goal_id:
+                    return "Usage: /durable task list GOAL_ID"
+                tasks_for_goal = service.list_tasks(_CLI_SESSION_TOKEN, goal_id)
+                if not tasks_for_goal:
                     return "No durable tasks found."
                 return "\n".join(
                     f"{task['id']} [{task['state']}] {task['task_type']} attempts={task['attempts']}/{task['max_attempts']}"
-                    for task in tasks
+                    for task in tasks_for_goal
                 )
-            except Exception as error:
-                return f"Could not list durable tasks ({type(error).__name__})."
 
-        if durable_command.startswith("task cancel "):
-            task_id = durable_command[len("task cancel "):].strip()
-            if not task_id:
-                return "Usage: /durable task cancel TASK_ID"
-            try:
-                with _get_durable_task_engine() as engine:
-                    task = engine.cancel_task(task_id)
+            if durable_command.startswith("task cancel "):
+                task_id = durable_command[len("task cancel "):].strip()
+                if not task_id:
+                    return "Usage: /durable task cancel TASK_ID"
+                task = service.cancel_task(_CLI_SESSION_TOKEN, task_id)
                 write_audit_event("durable:task:cancel", "completed")
                 return f"Durable task {task_id}: {task['state']}."
-            except Exception as error:
-                return f"Could not cancel durable task ({type(error).__name__})."
 
-        if durable_command == "run":
-            try:
-                registry, runtime = _build_approved_skill_runtime()
+            if durable_command == "run":
+                user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN)
+                runtime = _build_durable_policy_runtime(user.user_id)
                 with _get_durable_task_engine() as engine:
                     engine.recover_expired_leases()
-                    result = DurableSkillWorker(engine, runtime, worker_id="yuki-cli-worker").run_once()
+                    result = DurableSkillWorker(engine, runtime, worker_id="yuki-cli-worker", owner_id=user.user_id).run_once()
                 write_audit_event("durable:worker:run", result.get("status", "unknown"))
                 return (
                     f"Durable worker: {result.get('state', 'unknown')} "
-                    f"({result.get('status', 'unknown')}). "
-                    f"{result.get('message', '')}"
+                    f"({result.get('status', 'unknown')}). {result.get('message', '')}"
                 ).strip()
-            except Exception as error:
-                write_audit_event("durable:worker:run", "failed")
-                return f"Durable worker unavailable ({type(error).__name__})."
-
+        except AuthenticationError:
+            _CLI_SESSION_TOKEN = None
+            return "Session expired or revoked. Please log in again."
+        except Exception as error:
+            write_audit_event("durable:operation", "rejected")
+            return f"Durable operation rejected ({type(error).__name__})."
         return "Usage: /durable goal create | task submit KEY | GOAL_ID | SKILL | ARGUMENT | task list GOAL_ID | task cancel TASK_ID | run"
 
     if command == "/tool" or command.startswith("/tool "):

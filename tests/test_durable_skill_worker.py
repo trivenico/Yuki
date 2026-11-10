@@ -52,13 +52,19 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.approvals = OneShotSkillApprovals()
         self.high_risk = HighRiskSkill()
         self.registry = Registry(ReadSkill(), self.high_risk)
+        from core.tool_policy import Decision, PolicyResult
+        class AllowPolicy:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "test-v1", ("test-owner-allow",), "test")
         self.runtime = ApprovedSkillRuntime(
             self.registry,
             SkillApprovalStore(root / "approvals.sqlite"),
             invocation_approvals=self.approvals,
+            policy_engine=AllowPolicy(),
+            policy_request_factory=lambda name, argument, skill, context: context,
         )
-        self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker")
-        self.goal = self.engine.create_goal()
+        self.worker = DurableSkillWorker(self.engine, self.runtime, worker_id="test-worker", owner_id="test-owner")
+        self.goal = self.engine.create_goal(owner_id="test-owner")
 
     def submit(self, skill_name, argument="", *, task_type="skill.invoke", max_attempts=1, key="task"):
         return self.engine.submit(
@@ -67,7 +73,64 @@ class DurableSkillWorkerTests(unittest.TestCase):
             {"skill_name": skill_name, "argument": argument},
             idempotency_key=key,
             max_attempts=max_attempts,
+            owner_id="test-owner",
         )
+
+    def test_worker_requires_central_policy_by_default(self):
+        runtime = ApprovedSkillRuntime(
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "no-policy.sqlite"),
+        )
+        with self.assertRaisesRegex(ValueError, "central policy engine"):
+            DurableSkillWorker(self.engine, runtime, worker_id="unsafe-worker")
+
+    def test_policy_context_is_derived_from_persisted_authenticated_task(self):
+        observed = []
+        from core.tool_policy import Decision, PolicyResult
+        class CapturePolicy:
+            def evaluate(self, request):
+                observed.append(request)
+                return PolicyResult(Decision.ALLOW, "capture-v1", ("capture",), "test")
+        runtime = ApprovedSkillRuntime(
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "capture.sqlite"),
+            policy_engine=CapturePolicy(),
+            policy_request_factory=lambda name, argument, skill, context: context,
+        )
+        task = self.submit("read_demo", "provenance", key="provenance-task")
+        result = DurableSkillWorker(
+            self.engine, runtime, worker_id="capture-worker", owner_id="test-owner"
+        ).run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(observed[0].principal_id, "test-owner")
+        self.assertEqual(observed[0].trigger, "durable_task")
+        self.assertEqual(observed[0].goal_id, self.goal)
+        self.assertEqual(observed[0].task_id, task["id"])
+
+    def test_policy_worker_rejects_ownerless_legacy_task_before_invocation(self):
+        from core.tool_policy import Decision, PolicyResult
+        class AllowPolicy:
+            def evaluate(self, request):
+                return PolicyResult(Decision.ALLOW, "test-v1", ("allow",), "test")
+        calls = []
+        class Runtime:
+            policy_engine = AllowPolicy()
+            def invoke(self, *args, **kwargs):
+                calls.append((args, kwargs))
+                raise AssertionError("ownerless task must not invoke")
+        legacy_goal = self.engine.create_goal()
+        legacy_task = self.engine.submit(
+            legacy_goal, "skill.invoke",
+            {"skill_name": "read_demo", "argument": "legacy"},
+            idempotency_key="ownerless-legacy", max_attempts=1,
+        )
+        result = DurableSkillWorker(
+            self.engine, Runtime(), worker_id="policy-worker"
+        ).run_once()
+        self.assertEqual(result["status"], "missing_authenticated_owner")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.engine.get_task(legacy_task["id"])["state"], "failed")
+        self.assertEqual(calls, [])
 
     def test_registered_low_risk_skill_runs_and_only_metadata_is_persisted(self):
         task = self.submit("read_demo", "hello")
@@ -86,9 +149,22 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertEqual(self.high_risk.calls, 0)
 
+    def test_high_risk_approval_cannot_be_reused_by_another_principal(self):
+        self.approvals.approve("write_demo", "change", principal_id="alice")
+        task = self.engine.submit(
+            self.goal, "skill.invoke",
+            {"skill_name": "write_demo", "argument": "change"},
+            idempotency_key="bob-cannot-reuse-alice-approval",
+            owner_id="test-owner", max_attempts=1,
+        )
+        result = self.worker.run_once()
+        self.assertEqual(result["status"], "approval_required")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.high_risk.calls, 0)
+
     def test_high_risk_skill_executes_after_exact_argument_approval(self):
         task = self.submit("write_demo", "change", key="approved-task")
-        self.approvals.approve("write_demo", "change")
+        self.approvals.approve("write_demo", "change", principal_id="test-owner")
         result = self.worker.run_once()
         self.assertEqual(result["state"], "succeeded")
         self.assertEqual(self.high_risk.calls, 1)
@@ -113,6 +189,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             {"skill_name": "read_demo", "extra": "not allowed"},
             idempotency_key="invalid-payload",
             max_attempts=1,
+            owner_id="test-owner",
         )
         result = self.worker.run_once()
         self.assertEqual(result["status"], "invalid_payload")
@@ -125,7 +202,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
 
         task = self.submit("read_demo", "raises", key="worker-exception")
         worker = DurableSkillWorker(
-            self.engine, RaisingRuntime(), worker_id="raising-worker"
+            self.engine, RaisingRuntime(), worker_id="raising-worker", require_policy=False
         )
         result = worker.run_once()
         self.assertEqual(result["state"], "failed")
@@ -168,6 +245,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             worker_id="heartbeat-worker",
             lease_seconds=2,
             heartbeat_interval_seconds=0.05,
+            require_policy=False,
         )
         outcomes = []
         thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))

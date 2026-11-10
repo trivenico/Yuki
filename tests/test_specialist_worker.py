@@ -43,17 +43,19 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
-            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit")],
+            [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit", permissions=frozenset({"web:read"}))],
             authorize=lambda actor, action, _plan: actor == "alice" and action in {
                 "agent:plan", "agent:dispatch", "agent:read"
             },
         )
 
-    def create_task(self, *, approval=False):
+    def create_task(self, *, approval=False, required_permissions=()):
         plan = self.coordinator.submit(
-            actor_id="alice", idempotency_key="worker-task-" + str(approval),
+            actor_id="alice",
+            idempotency_key="worker-task-" + str(approval) + "-" + "-".join(required_permissions),
             subtasks=[SubtaskSpec("implement", "Propose a safe patch", ("coding",),
-                                  requires_approval=approval)],
+                                  requires_approval=approval,
+                                  required_permissions=tuple(required_permissions))],
         )
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
@@ -152,6 +154,43 @@ class SpecialistWorkerTests(unittest.TestCase):
         task_id = self.create_task(approval=True)
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
         self.assertEqual(self.store.get(task_id).state, "queued")
+
+    def test_permission_scoped_task_fails_closed_without_execution_gateway(self):
+        task_id = self.create_task(
+            approval=True, required_permissions=("web:read",),
+        )
+        queued = self.store.get(task_id)
+        self.store.approve(
+            task_id, actor_id="reviewer", session_id="secure-session",
+            expected_version=queued.version,
+        )
+        calls = []
+        result = self.worker({
+            "code-review": lambda text: calls.append(text) or "must not execute",
+        }).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "unsupported_permission_scope")
+        self.assertEqual(calls, [])
+
+    def test_malformed_permission_metadata_fails_closed_before_handler(self):
+        task_id = self.create_task()
+        run = self.store.get(task_id)
+        definition = [dict(run.definition[0], required_permissions=["web:read", "web:read"])]
+        # Tamper only in the test database to exercise the worker's trust boundary.
+        import json
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET definition_json=? WHERE run_id=?",
+                (json.dumps(definition), task_id),
+            )
+        calls = []
+        result = self.worker({
+            "code-review": lambda text: calls.append(text) or "must not execute",
+        }).run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "unsupported_permission_scope")
+        self.assertEqual(calls, [])
 
     def test_approved_task_can_execute(self):
         task_id = self.create_task(approval=True)

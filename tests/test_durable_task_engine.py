@@ -45,6 +45,25 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
 
 
+    def test_owner_scoped_claim_never_leases_another_users_task(self):
+        alice_goal = self.engine.create_goal(owner_id="alice-user")
+        bob_goal = self.engine.create_goal(owner_id="bob-user")
+        bob_task = self.engine.submit(
+            bob_goal, "work", {}, idempotency_key="bob-owned-task",
+            owner_id="bob-user",
+        )
+        alice_task = self.engine.submit(
+            alice_goal, "work", {}, idempotency_key="alice-owned-task",
+            owner_id="alice-user",
+        )
+        claimed = self.engine.claim("alice-worker", owner_id="alice-user")
+        self.assertEqual(claimed["id"], alice_task["id"])
+        self.assertEqual(claimed["owner_id"], "alice-user")
+        self.assertIsNone(self.engine.claim("alice-worker", owner_id="alice-user"))
+        bob_claim = self.engine.claim("bob-worker", owner_id="bob-user")
+        self.assertEqual(bob_claim["id"], bob_task["id"])
+        self.assertEqual(bob_claim["owner_id"], "bob-user")
+
     def test_owned_goal_persists_authenticated_owner_on_task_reads(self):
         goal = self.engine.create_goal(owner_id="auth-user-123")
         task = self.engine.submit(
