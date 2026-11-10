@@ -7,3 +7,6 @@ psycopg-pool>=3.2.4,<4
 
 # AES-GCM authenticated encryption for OAuth credential storage.
 cryptography>=42,<47
+
+# Explicit native OS credential-store backends for OAuth key custody.
+keyring>=25,<27
