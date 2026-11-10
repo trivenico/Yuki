@@ -134,6 +134,94 @@ class ProviderManager:
         from providers.capabilities import registry_from_catalog
         return registry_from_catalog(self.catalog())
 
+    def model_capability_registry(self):
+        """Build exact-model profiles from the sanitized, configured adapter catalog.
+
+        Only the text capability is asserted by the current provider adapter
+        contract. Modality, tool-calling, reasoning and context-window support
+        remain unknown until separately verified for an exact model.
+        """
+        from providers.model_registry import ModelCapabilityProfile, ModelCapabilityRegistry
+
+        profiles = []
+        for item in self.catalog():
+            provider = item.get("name")
+            model = item.get("configured_model")
+            privacy = item.get("privacy")
+            if provider not in {"openai", "ollama"} or not isinstance(model, str):
+                continue
+            # The current exact-model identifier contract is provider/model.
+            # Do not rewrite or guess identifiers that do not fit it.
+            model_id = f"{provider}/{model}"
+            try:
+                profile = ModelCapabilityProfile(
+                    provider=provider,
+                    model_id=model_id,
+                    capabilities=frozenset({"text"}),
+                    implemented=item.get("implemented") is True,
+                    ready=item.get("ready") is True,
+                    privacy=(
+                        "local_runtime" if provider == "ollama" and privacy == "local_runtime"
+                        else "cloud_provider" if provider == "openai" and privacy == "cloud_provider"
+                        else "unknown"
+                    ),
+                    context_window=None,
+                    evidence_source="adapter_contract",
+                )
+            except (TypeError, ValueError):
+                # Invalid or ambiguous catalog data is excluded, never repaired
+                # into a routable profile.
+                continue
+            profiles.append(profile)
+        return ModelCapabilityRegistry(profiles)
+
+    def create_routed_model_adapter(
+        self, *, required=("text",), provider_preference=(), model_preference=(),
+        allow_cloud=False, min_context_window=None,
+    ):
+        """Select and instantiate one exact model under capability/privacy policy.
+
+        This production route is intentionally limited to adapters whose model
+        identifier can be explicitly pinned at construction (OpenAI and local
+        Ollama today). It never falls back to a different model or provider.
+        """
+        from providers.factory import create_provider as build_provider
+
+        if type(allow_cloud) is not bool:
+            raise TypeError("allow_cloud must be a boolean")
+        selected = self.model_capability_registry().route(
+            required=required,
+            provider_preference=provider_preference,
+            model_preference=model_preference,
+            allow_cloud=allow_cloud,
+            strict_provider_preference=bool(tuple(provider_preference)),
+            min_context_window=min_context_window,
+        )
+        provider, model = selected.provider, selected.model_id.split("/", 1)[1]
+        config = dict(self._config)
+        environ = dict(self._environ)
+        config["provider"] = provider
+        if provider == "openai":
+            environ["YUKI_OPENAI_MODEL"] = model
+        elif provider == "ollama":
+            config["ollama_model"] = model
+        else:
+            raise RuntimeError("selected provider has no exact-model construction path")
+        adapter = build_provider(config, environ=environ)
+        if not callable(getattr(adapter, "generate", None)) or not callable(
+            getattr(adapter, "is_available", None)
+        ):
+            raise TypeError("Provider factory returned an invalid adapter.")
+        try:
+            available = adapter.is_available()
+        except Exception:
+            available = False
+        if available is not True:
+            raise RuntimeError(
+                f"Selected model '{selected.model_id}' is unavailable; no fallback was attempted."
+            )
+        return adapter
+
     def create_routed_adapter(self, *, required=("text",), preference=(), allow_cloud=False):
         """Create the explicitly routed adapter; never fall back after selection.
 
