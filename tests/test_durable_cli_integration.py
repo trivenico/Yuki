@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import yuki
 from core.approved_skill_runtime import ApprovedSkillRuntime
+from core.auth import BuiltInAuthService
 from core.approved_skill_wiring import SkillApprovalStore
 from core.guarded_skill_runtime import OneShotSkillApprovals
 
@@ -71,6 +72,12 @@ class DurableCliIntegrationTests(unittest.TestCase):
         self.registry = Registry(self.low, self.high)
         self.approvals = OneShotSkillApprovals()
         self.approval_store = SkillApprovalStore(root / "approvals.sqlite")
+        self.auth_db = root / "auth.sqlite"
+        auth = BuiltInAuthService(str(self.auth_db), password_iterations=100_000)
+        auth.bootstrap_admin("test-admin", "correct-horse-battery-staple")
+        self.session_token = auth.authenticate(
+            "test-admin", "correct-horse-battery-staple"
+        ).token
 
         # Mirror the real CLI lifecycle: each command rebuilds the registry
         # and runtime facade, while one-shot approvals are shared process state.
@@ -86,6 +93,8 @@ class DurableCliIntegrationTests(unittest.TestCase):
 
         self.patches = [
             patch.object(yuki, "_DURABLE_TASK_DB", self.db),
+            patch.object(yuki, "_AUTH_DB", self.auth_db),
+            patch.object(yuki, "_CLI_SESSION_TOKEN", self.session_token),
             patch.object(yuki, "_build_approved_skill_runtime", build_runtime),
         ]
         for item in self.patches:
@@ -94,6 +103,11 @@ class DurableCliIntegrationTests(unittest.TestCase):
 
     def command(self, message):
         return yuki.handle_command(message, [], [], DummyAgent(), None)
+
+    def test_durable_commands_require_authenticated_session(self):
+        with patch.object(yuki, "_CLI_SESSION_TOKEN", None):
+            response = self.command("/durable goal create")
+        self.assertIn("authentication required", response.lower())
 
     def test_goal_submit_list_and_run_are_wired_end_to_end(self):
         created = self.command("/durable goal create")
