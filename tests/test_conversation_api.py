@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from api.conversations import YukiConversationAPI
-from core.auth import BuiltInAuthService
+from core.auth import BuiltInAuthService, agent_memory_authorizer
+from core.agent_memory import AgentMemoryStore
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
@@ -307,6 +308,66 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_owner_controlled_memory_save_review_and_cross_account_isolation(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        status, saved, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "Owner prefers concise technical explanations", "category": "semantic"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        memory = saved["memory"]
+        self.assertFalse(memory["verified"])
+        self.assertEqual(memory["source"], "owner_explicit_save")
+        self.assertTrue(saved["review_required"])
+        memory_id = memory["memory_id"]
+
+        status, listing, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in listing["memories"]], [memory_id])
+
+        status, reviewed, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/review",
+            {"status": "approved", "reason": "Explicitly confirmed by owner"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(reviewed["memory"]["verified"])
+        self.assertEqual(reviewed["memory"]["lifecycle_status"], "approved")
+
+        self.auth.create_account("other-owner", "another-secure-password")
+        other_session = self.auth.authenticate("other-owner", "another-secure-password")
+        status, result, _ = self.request("GET", "/v1/memory", token=other_session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["memories"], [])
+        status, result, _ = self.request(
+            "DELETE", f"/v1/memory/{memory_id}", token=other_session.token
+        )
+        self.assertEqual(status, 404)
+        status, result, _ = self.request(
+            "DELETE", f"/v1/memory/{memory_id}", token=self.issued.token
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["deleted"])
+
+    def test_memory_routes_require_authentication_and_reject_forged_actor_fields(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        status, _, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "Should not be saved", "actor_id": "victim"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        status, data, _ = self.request("GET", "/v1/memory")
+        self.assertEqual(status, 401)
 
 if __name__ == "__main__":
     unittest.main()
