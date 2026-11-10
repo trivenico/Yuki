@@ -170,10 +170,15 @@ class OIDCIdentityTokenVerifier:
         keys = jwks.get("keys") if isinstance(jwks, dict) else None
         if not isinstance(keys, list) or not 1 <= len(keys) <= 100:
             raise OIDCIdentityTokenError("oidc_jwks_invalid")
-        matches = [
+        kid_matches = [
             item for item in keys
             if isinstance(item, dict) and item.get("kid") == kid
-            and item.get("kty") in ("RSA", "EC", "OKP")
+        ]
+        if len(kid_matches) != 1:
+            raise OIDCIdentityTokenError("oidc_signing_key_not_found")
+        matches = [
+            item for item in kid_matches
+            if item.get("kty") in ("RSA", "EC", "OKP")
         ]
         if len(matches) != 1:
             raise OIDCIdentityTokenError("oidc_signing_key_not_found")
