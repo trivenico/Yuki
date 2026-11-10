@@ -274,7 +274,7 @@ class YukiConversationAPI:
                         return await self._respond(send, 422, {"error": "provider_not_implemented"})
                     if target.get("privacy") != "local_runtime" and not payload["confirm_cloud"]:
                         return await self._respond(send, 400, {"error": "cloud_consent_required"})
-                    selected = self.provider_selector(payload["provider"])
+                    selected = self.provider_selector(payload["provider"], allow_cloud=payload["confirm_cloud"])
                 except ValueError as exc:
                     code = str(exc)
                     if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready"}:
