@@ -70,7 +70,7 @@ class OAuthFormTransportTests(unittest.TestCase):
         self.assertTrue(self.connections[0].closed)
 
     def test_form_validation_and_header_override_rejected(self):
-        for fields in ({}, {"code": object()}, {"code": "bad\\nvalue"}, {"x": "x" * 65000}):
+        for fields in ({}, {"code": object()}, {"code": "bad\nvalue"}, {"x": "x" * 65000}):
             with self.subTest(fields=fields), self.assertRaises(OAuthHTTPError):
                 self.transport.request_form("https://oauth.example.com/token", fields=fields)
         with self.assertRaises(OAuthHTTPError):
