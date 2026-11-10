@@ -196,7 +196,7 @@ def validate_oauth_authorization_callback(
     if require_issuer and len(issuer_values) != 1:
         raise OAuthAuthorizationError("authorization_response_issuer_missing")
     if issuer_values:
-        if expected_issuer is None or not hmac.compare_digest(issuer_values[0], expected_issuer):
+        if expected_issuer is None or not hmac.compare_digest(issuer_values[0].encode("utf-8"), expected_issuer.encode("utf-8")):
             raise OAuthAuthorizationError("authorization_response_issuer_mismatch")
     codes = fields.get("code", [])
     if len(codes) != 1 or not codes[0] or len(codes[0]) > 4096:
