@@ -216,7 +216,7 @@ _MODEL_LOCAL = frozenset({"local", "local_runtime", "local_only"})
 _MODEL_CLOUD = frozenset({"cloud_provider", "third_party_gateway"})
 _MODEL_PRIVACY = _MODEL_LOCAL | _MODEL_CLOUD
 _MODEL_EVIDENCE = frozenset({
-    "provider_documentation", "owner_verified", "local_probe", "benchmark_verified",
+    "provider_documentation", "owner_verified", "local_probe", "benchmark_verified", "adapter_contract",
 })
 
 
