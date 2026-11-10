@@ -230,6 +230,23 @@ class ProviderManager:
             )
         return adapter
 
+    def create_selected_runtime_adapter(self, *, allow_cloud=False):
+        """Construct the selected provider through exact-model routing where supported.
+
+        OpenAI cloud use must be explicitly authorized by the caller. Providers
+        without exact model pinning retain their existing adapter path.
+        """
+        if type(allow_cloud) is not bool:
+            raise TypeError("allow_cloud must be a boolean")
+        selected = self._selected
+        if selected in {"openai", "ollama"}:
+            return self.create_routed_model_adapter(
+                required=("text",),
+                provider_preference=(selected,),
+                allow_cloud=allow_cloud,
+            )
+        return self.create_selected_adapter()
+
     def create_routed_adapter(self, *, required=("text",), preference=(), allow_cloud=False):
         """Create the explicitly routed adapter; never fall back after selection.
 
