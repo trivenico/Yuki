@@ -203,7 +203,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /provider select NAME"
-        result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() == "openai"))
+        result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() in {"openai", "gemini"}))
         if result.startswith("Selected provider:"):
             try:
                 adapter = providers.create_selected_runtime_adapter()
@@ -521,7 +521,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 def main():
     providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=(providers.current().name == "openai")))
+    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=(providers.current().name in {"openai", "gemini"})))
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
