@@ -47,7 +47,7 @@ def build_web_reasoning_context(
 
     factory = embedder_factory or HuggingFaceLocalEmbedder
     embedder = factory(model_path, device=device)
-    if getattr(embedder, "is_local", True) is not True or not callable(getattr(embedder, "encode", None)):
+    if getattr(embedder, "is_local", False) is not True or not callable(getattr(embedder, "encode", None)):
         raise RuntimeError("Memory embeddings must use a local encoder with an encode method.")
 
     workspace_path = Path(workspace).expanduser().resolve()
