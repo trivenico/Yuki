@@ -65,6 +65,8 @@ class BuiltInAuthServiceTests(unittest.TestCase):
     def test_memory_authorization_is_owner_bound_and_revocable(self):
         owner = self.auth.create_account("memory.owner", "A sufficiently long password 3!")
         other = self.auth.create_account("memory.other", "Another secure password 4!")
+        self.assertRegex(owner.user_id, r"^usr_[A-Za-z0-9_-]+$")
+        self.assertRegex(other.user_id, r"^usr_[A-Za-z0-9_-]+$")
         authorize = agent_memory_authorizer(self.auth)
         store = AgentMemoryStore(str(Path(self.tmp.name) / "memory.sqlite3"), authorize=authorize)
 
