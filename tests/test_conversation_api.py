@@ -369,5 +369,49 @@ class ConversationAPITests(unittest.TestCase):
         status, data, _ = self.request("GET", "/v1/memory")
         self.assertEqual(status, 401)
 
+
+    def test_memory_list_rejects_invalid_and_ambiguous_query_parameters(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        invalid_queries = [
+            b"limit=0",
+            b"limit=101",
+            b"limit=-1",
+            b"limit=abc",
+            b"limit=10&limit=20",
+            b"q=",
+            b"q=one&q=two",
+            b"q=" + (b"x" * 1001),
+            b"unexpected=value",
+            b"q=%FF",
+            b"a=1&b=2&c=3",
+        ]
+        for query in invalid_queries:
+            with self.subTest(query=query[:40]):
+                status, data, _ = self.request(
+                    "GET", "/v1/memory", token=self.issued.token, query=query
+                )
+                self.assertEqual(status, 400)
+                self.assertEqual(data, {"error": "invalid_request"})
+
+    def test_memory_list_caps_search_limit_and_accepts_valid_bounds(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        status, data, _ = self.request(
+            "GET", "/v1/memory?ignored", token=self.issued.token, query=b"limit=100"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+        status, data, _ = self.request(
+            "GET", "/v1/memory", token=self.issued.token, query=b"limit=1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["memories"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
