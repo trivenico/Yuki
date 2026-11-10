@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from yuki_storage import atomic_write_text
+
 TASKS_FILE = Path(__file__).with_name("yuki_tasks.json")
 
 
@@ -21,17 +23,7 @@ def load_tasks():
 
 
 def save_tasks(tasks):
-    temp = TASKS_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(TASKS_FILE)
-        return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+    return atomic_write_text(TASKS_FILE, json.dumps(tasks, indent=2, ensure_ascii=False))
 
 
 def add_task(tasks, description):

@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from yuki_storage import atomic_write_text
+
 HISTORY_FILE = Path(__file__).with_name("yuki_learning.json")
 MAX_RECORDS = 500
 MAX_TEXT = 1000
@@ -56,17 +58,10 @@ def save_history(history):
             "lesson": _clean(item.get("lesson", "")),
             "created_at": _clean(item.get("created_at", ""))[:64],
         })
-    temp = HISTORY_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(safe_history, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(HISTORY_FILE)
-        return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+    return atomic_write_text(
+        HISTORY_FILE,
+        json.dumps(safe_history, indent=2, ensure_ascii=False),
+    )
 
 
 def record_outcome(task, outcome, approach="", lesson=""):
