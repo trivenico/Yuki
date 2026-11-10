@@ -47,6 +47,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
 
     def test_existing_transaction_schema_is_migrated_for_oidc_nonce(self):
         with closing(sqlite3.connect(self.path)) as db:
+            db.execute("DROP TABLE oauth_transactions")
             db.execute("""CREATE TABLE oauth_transactions (
                 state_digest TEXT PRIMARY KEY, owner_digest TEXT NOT NULL,
                 session_digest TEXT NOT NULL, verifier_ciphertext BLOB NOT NULL,
@@ -54,9 +55,8 @@ class OAuthTransactionStoreTests(unittest.TestCase):
                 created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed_at INTEGER
             )""")
         migrated = self._store()
-        columns = {row[1] for row in sqlite3.connect(self.path).execute(
-            "PRAGMA table_info(oauth_transactions)"
-        )}
+        with closing(sqlite3.connect(self.path)) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(oauth_transactions)")}
         self.assertIn("oidc_nonce_ciphertext", columns)
         migrated.create(
             state="legacy-schema-state-123", code_verifier="verifier",
