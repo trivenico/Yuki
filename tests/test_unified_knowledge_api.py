@@ -61,14 +61,20 @@ class UnifiedKnowledgeAPITests(unittest.TestCase):
         self.assertEqual({row["agent_id"] for row in packet["evidence"]}, {"research"})
 
     def test_shared_knowledge_requires_authorized_shared_read(self):
-        self.add("verified deployment runbook", verified=True, scope="shared")
+        private = self.add("verified deployment runbook", verified=True, scope="private")
+        shared = self.add("verified deployment runbook", verified=True, scope="shared")
         packet = self.api.retrieve(actor_id="owner", agent_id="research", query="deployment")
-        self.assertEqual(packet["count"], 1)
+        self.assertEqual(packet["count"], 2)
         self.permissions["owner"].remove("agent_memory:share")
         denied_packet = self.api.retrieve(
             actor_id="owner", agent_id="research", query="deployment"
         )
-        self.assertEqual(denied_packet["count"], 0)
+        self.assertEqual(denied_packet["count"], 1)
+        self.assertEqual(denied_packet["evidence"][0]["memory_id"], private["memory_id"])
+        page = self.store.list_memories_page(
+            actor_id="owner", agent_id="research", include_shared=True
+        )
+        self.assertEqual([item["memory_id"] for item in page], [private["memory_id"]])
 
     def test_unauthorized_actor_cannot_read_knowledge(self):
         self.add("verified deployment runbook", verified=True)
