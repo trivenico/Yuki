@@ -13,6 +13,8 @@ class GuardedToolRuntime:
         audit: Callable[[str, str], None] | None = None,
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
+        policy_engine: Any | None = None,
+        policy_request_factory: Callable[[str, str], Any] | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -29,10 +31,18 @@ class GuardedToolRuntime:
                 raise ValueError(f"{label} must be an integer between 1 and 1000000")
         if not callable(getattr(policy, "authorize_tool", None)):
             raise TypeError("policy must provide authorize_tool(name)")
+        if (policy_engine is None) != (policy_request_factory is None):
+            raise ValueError("policy_engine and policy_request_factory must be provided together")
+        if policy_engine is not None and not callable(getattr(policy_engine, "evaluate", None)):
+            raise TypeError("policy_engine must provide evaluate(request)")
+        if policy_request_factory is not None and not callable(policy_request_factory):
+            raise TypeError("policy_request_factory must be callable")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
         self._tools = dict(tools)
         self._policy = policy
+        self._policy_engine = policy_engine
+        self._policy_request_factory = policy_request_factory
         self._audit = audit
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
@@ -55,6 +65,17 @@ class GuardedToolRuntime:
         if name not in self._tools:
             self._record(name, "not_found")
             return "Unknown tool."
+        if self._policy_engine is not None:
+            try:
+                from core.tool_policy import Decision
+                request = self._policy_request_factory(name, argument)
+                decision = self._policy_engine.evaluate(request)
+                if decision.decision != Decision.ALLOW:
+                    self._record(name, "policy_" + decision.decision.value)
+                    return "Tool blocked by Yuki's central security policy."
+            except Exception:
+                self._record(name, "policy_error")
+                return "Tool blocked because central policy evaluation failed."
         try:
             authorized = self._policy.authorize_tool(name)
         except Exception:
