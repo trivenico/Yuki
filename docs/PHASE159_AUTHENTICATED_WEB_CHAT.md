@@ -17,7 +17,7 @@ Install the base dependencies and optional web server:
 python -m pip install -r requirements.txt -r requirements-web.txt
 ```
 
-Set a real provider credential (for example `OPENAI_API_KEY`) or configure a supported local provider. On first launch, bootstrap the administrator using environment variables:
+Set a real provider credential (for example `OPENAI_API_KEY`) or configure a supported local provider. OpenAI and other cloud-hosted providers require explicit initial deployment consent: set `YUKI_ALLOW_CLOUD=true` only when you intend to send inference requests to the configured cloud provider. A local Ollama deployment does not require this flag. Interactive cloud switches require the authenticated administrator's explicit confirmation. The browser persists provider ID, exact configured model ID and consent state atomically in `provider-selection.json` (mode 0600); credentials are never stored there. A persisted model/configuration mismatch fails startup rather than silently selecting a different model. On first launch, bootstrap the administrator using environment variables:
 
 ```bash
 export YUKI_BOOTSTRAP_ADMIN_USERNAME='your-admin'
