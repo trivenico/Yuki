@@ -80,12 +80,16 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertEqual(store.list_memories(
             actor_id=other.user_id, agent_id="yuki-companion"
         ), [])
-        with self.assertRaises(PermissionError):
-            store.remember(
-                actor_id=other.user_id, agent_id="yuki-companion",
-                content="Attempted owner impersonation",
-                source="test", category="episodic",
-            )
+        other_saved = store.remember(
+            actor_id=other.user_id, agent_id="yuki-companion",
+            content="Other account's own private memory",
+            source="test", category="episodic",
+        )
+        self.assertEqual(other_saved["actor_id"], other.user_id)
+        self.assertEqual(len(store.list_memories(
+            actor_id=other.user_id, agent_id="yuki-companion"
+        )), 1)
+        self.assertFalse(authorize("not-an-account", "agent_memory:read", "yuki-companion"))
 
         self.assertTrue(self.auth.disable_user(owner.user_id))
         with self.assertRaises(PermissionError):
