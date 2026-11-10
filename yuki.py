@@ -18,6 +18,8 @@ from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.authenticated_task_service import AuthenticatedDurableTaskService
+from core.guarded_skill_runtime import SkillPolicyContext
+from core.tool_policy import Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 _CLI_SESSION_TOKEN = None
@@ -85,6 +87,51 @@ def _build_approved_skill_runtime():
         audit=lambda action, outcome: write_audit_event(action, outcome),
     )
     return registry, runtime
+
+
+def _build_durable_policy_runtime(principal_id):
+    registry = SkillRegistry.defaults(Path.cwd())
+    rules = []
+    for item in registry.describe():
+        skill = registry.get(item["name"])
+        risk_value = str(getattr(skill, "risk", "high")).lower()
+        if risk_value != Risk.LOW.value or bool(getattr(skill, "requires_approval", True)):
+            continue
+        rules.append(PolicyRule(
+            rule_id=f"durable-low-risk-{item['name']}",
+            decision=Decision.ALLOW,
+            principal_id=principal_id,
+            trigger="durable_task",
+            capability="skill.invoke",
+            target=item["name"],
+            risk=Risk.LOW,
+        ))
+    engine = ToolPolicyEngine(rules, policy_version="yuki-durable-cli-v1")
+
+    def request_factory(skill_name, argument, skill, context):
+        if not isinstance(context, SkillPolicyContext) or context.principal_id != principal_id:
+            raise ValueError("trusted authenticated task context is required")
+        risk = Risk(str(getattr(skill, "risk", "high")).lower())
+        return PolicyRequest(
+            principal_id=context.principal_id,
+            trigger=context.trigger,
+            capability="skill.invoke",
+            target=skill_name,
+            argument_sha256=argument_digest({"argument": argument}),
+            risk=risk,
+            run_id=context.goal_id,
+            step_id=context.task_id,
+        )
+
+    runtime = ApprovedSkillRuntime(
+        registry,
+        _get_skill_approval_store(),
+        invocation_approvals=_INVOCATION_APPROVALS,
+        audit=lambda action, outcome: write_audit_event(action, outcome),
+        policy_engine=engine,
+        policy_request_factory=request_factory,
+    )
+    return runtime
 
 
 def _get_skill_approval_store():
@@ -353,7 +400,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
             if durable_command == "run":
                 user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN)
-                registry, runtime = _build_approved_skill_runtime()
+                runtime = _build_durable_policy_runtime(user.user_id)
                 with _get_durable_task_engine() as engine:
                     engine.recover_expired_leases()
                     result = DurableSkillWorker(engine, runtime, worker_id="yuki-cli-worker", owner_id=user.user_id).run_once()
