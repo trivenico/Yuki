@@ -76,8 +76,9 @@ class ApprovalBrokerWorkerIntegrationTests(unittest.TestCase):
             root / "gateway.sqlite", self.policy,
             authorize_approver=lambda actor, request: actor == "approver",
         )
+        self.broker_path = root / "broker.sqlite"
         self.broker = ApprovalCredentialBroker(
-            root / "broker.sqlite", self.gateway, worker_id="worker-1",
+            self.broker_path, self.gateway, worker_id="worker-1",
             seal=seal, unseal=unseal,
         )
         self.runtime = ApprovedSkillRuntime(
