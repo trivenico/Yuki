@@ -1,0 +1,281 @@
+"""Durable, request-bound one-shot approvals for central capability policy.
+
+This gateway is an authorization primitive, not a sandbox. Every side-effecting
+execution path must call it immediately before dispatch and must enforce its
+decision. Approval credentials are never stored in plaintext.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import hmac
+import json
+import re
+import secrets
+import sqlite3
+import time
+from contextlib import closing
+from pathlib import Path
+from typing import Any, Callable
+
+from core.tool_policy import Decision, PolicyRequest
+
+
+@dataclass(frozen=True)
+class CapabilityDecision:
+    allowed: bool
+    status: str
+    policy_version: str
+    matched_rule_ids: tuple[str, ...]
+    approval_consumed: bool = False
+
+
+class CapabilityApprovalGateway:
+    """Evaluate central policy and consume exact-operation approvals atomically."""
+
+    def __init__(
+        self,
+        database_path: str | Path,
+        policy_engine: Any,
+        *,
+        authorize_approver: Callable[[str, PolicyRequest], bool],
+        clock: Callable[[], float] = time.time,
+        max_approval_ttl_seconds: int = 3600,
+    ) -> None:
+        if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
+            raise ValueError("database_path must be a non-empty path")
+        if not callable(getattr(policy_engine, "evaluate", None)):
+            raise TypeError("policy_engine must provide evaluate(request)")
+        if not callable(authorize_approver):
+            raise TypeError("a trusted approval authorization callback is required")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        if type(max_approval_ttl_seconds) is not int or not 1 <= max_approval_ttl_seconds <= 86400:
+            raise ValueError("max_approval_ttl_seconds must be between 1 and 86400")
+        self.database_path = str(Path(database_path).expanduser())
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.policy_engine = policy_engine
+        self.authorize_approver = authorize_approver
+        self.clock = clock
+        self.max_approval_ttl_seconds = max_approval_ttl_seconds
+        with closing(self._connect()) as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS capability_approvals (
+                    token_sha256 TEXT PRIMARY KEY,
+                    request_sha256 TEXT NOT NULL,
+                    principal_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    consumed_at REAL,
+                    revoked_at REAL
+                );
+                CREATE INDEX IF NOT EXISTS idx_capability_approvals_expiry
+                    ON capability_approvals(expires_at);
+                CREATE TABLE IF NOT EXISTS capability_audit (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    principal_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    request_sha256 TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    matched_rules_json TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    occurred_at REAL NOT NULL
+                );
+            """)
+
+    def _connect(self):
+        db = sqlite3.connect(self.database_path, timeout=10)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA busy_timeout=10000")
+        return db
+
+    @staticmethod
+    def _request_digest(request: PolicyRequest) -> str:
+        if not isinstance(request, PolicyRequest):
+            raise TypeError("request must be a validated PolicyRequest")
+        canonical = json.dumps(
+            asdict(request), sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+            default=lambda value: value.value if hasattr(value, "value") else value,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    @staticmethod
+    def _token_digest(token: str) -> str:
+        if not isinstance(token, str) or not 40 <= len(token) <= 256:
+            raise ValueError("approval token is invalid")
+        try:
+            token.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise ValueError("approval token is invalid") from error
+        return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+    def _audit(self, db, event_type: str, request: PolicyRequest,
+               request_digest: str, policy_version: str,
+               matched_rule_ids: tuple[str, ...], outcome: str) -> None:
+        db.execute(
+            """INSERT INTO capability_audit
+               (event_type,principal_id,capability,target,run_id,step_id,
+                request_sha256,policy_version,matched_rules_json,outcome,occurred_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (event_type, request.principal_id, request.capability, request.target,
+             request.run_id, request.step_id, request_digest, policy_version,
+             json.dumps(list(matched_rule_ids), separators=(",", ":")),
+             outcome, self.clock()),
+        )
+
+    def issue_approval(
+        self, request: PolicyRequest, *, approved_by: str,
+        ttl_seconds: int = 300,
+    ) -> str:
+        """Issue an opaque token only after trusted human approval authorization."""
+        digest = self._request_digest(request)
+        if not isinstance(approved_by, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", approved_by
+        ):
+            raise ValueError("approved_by must be a bounded authenticated identity")
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= self.max_approval_ttl_seconds:
+            raise ValueError("ttl_seconds is outside the configured approval lifetime")
+        policy = self.policy_engine.evaluate(request)
+        if policy.decision != Decision.REQUIRE_APPROVAL:
+            raise PermissionError("the current policy does not permit an approval override")
+        try:
+            trusted = self.authorize_approver(approved_by, request)
+        except Exception as error:
+            raise PermissionError("approval authority could not be verified") from error
+        if trusted is not True:
+            raise PermissionError("approver is not authorized for this request")
+
+        token = secrets.token_urlsafe(32)
+        token_hash = self._token_digest(token)
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """INSERT INTO capability_approvals
+                   (token_sha256,request_sha256,principal_id,capability,target,
+                    run_id,step_id,created_by,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (token_hash, digest, request.principal_id, request.capability,
+                 request.target, request.run_id, request.step_id, approved_by,
+                 now, now + ttl_seconds),
+            )
+            self._audit(db, "approval_issued", request, digest, policy.policy_version,
+                        policy.matched_rule_ids, "issued")
+            db.commit()
+        return token
+
+    def authorize(
+        self, request: PolicyRequest, *, approval_token: str | None = None,
+    ) -> CapabilityDecision:
+        """Evaluate policy; consume a matching approval once, in the same transaction."""
+        digest = self._request_digest(request)
+        try:
+            policy = self.policy_engine.evaluate(request)
+            if policy.decision == Decision.ALLOW:
+                outcome = "allowed"
+                decision = CapabilityDecision(True, outcome, policy.policy_version,
+                                              policy.matched_rule_ids)
+            elif policy.decision == Decision.REQUIRE_APPROVAL and approval_token is not None:
+                token_hash = self._token_digest(approval_token)
+                now = self.clock()
+                with closing(self._connect()) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    row = db.execute(
+                        "SELECT * FROM capability_approvals WHERE token_sha256=?",
+                        (token_hash,),
+                    ).fetchone()
+                    valid = (
+                        row is not None
+                        and hmac.compare_digest(row["request_sha256"], digest)
+                        and row["principal_id"] == request.principal_id
+                        and row["capability"] == request.capability
+                        and row["target"] == request.target
+                        and row["run_id"] == request.run_id
+                        and row["step_id"] == request.step_id
+                        and row["expires_at"] > now
+                        and row["consumed_at"] is None
+                        and row["revoked_at"] is None
+                    )
+                    if valid:
+                        changed = db.execute(
+                            """UPDATE capability_approvals SET consumed_at=?
+                               WHERE token_sha256=? AND consumed_at IS NULL
+                               AND revoked_at IS NULL AND expires_at>?""",
+                            (now, token_hash, now),
+                        ).rowcount
+                        valid = changed == 1
+                    outcome = "approval_consumed" if valid else "approval_rejected"
+                    self._audit(db, "authorization", request, digest,
+                                policy.policy_version, policy.matched_rule_ids, outcome)
+                    db.commit()
+                decision = CapabilityDecision(
+                    bool(valid), outcome if valid else "approval_invalid",
+                    policy.policy_version, policy.matched_rule_ids,
+                    approval_consumed=bool(valid),
+                )
+            else:
+                outcome = policy.decision.value
+                with closing(self._connect()) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    self._audit(db, "authorization", request, digest,
+                                policy.policy_version, policy.matched_rule_ids, outcome)
+                    db.commit()
+                decision = CapabilityDecision(
+                    False, outcome, policy.policy_version, policy.matched_rule_ids,
+                )
+            return decision
+        except (TypeError, ValueError):
+            raise
+        except Exception:
+            # Policy and storage failures never become permission to execute.
+            return CapabilityDecision(False, "gateway_error", "unavailable", ())
+
+    def revoke(self, approval_token: str, *, revoked_by: str) -> bool:
+        """Revoke an unconsumed approval; caller must authenticate revoked_by."""
+        token_hash = self._token_digest(approval_token)
+        if not isinstance(revoked_by, str) or not revoked_by.strip() or len(revoked_by) > 256:
+            raise ValueError("revoked_by must be authenticated bounded identity text")
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT consumed_at,revoked_at FROM capability_approvals WHERE token_sha256=?",
+                (token_hash,),
+            ).fetchone()
+            if row is None or row["consumed_at"] is not None or row["revoked_at"] is not None:
+                db.commit()
+                return False
+            changed = db.execute(
+                """UPDATE capability_approvals SET revoked_at=?
+                   WHERE token_sha256=? AND consumed_at IS NULL AND revoked_at IS NULL""",
+                (self.clock(), token_hash),
+            ).rowcount
+            db.commit()
+            return changed == 1
+
+    def audit_events(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with closing(self._connect()) as db:
+            rows = db.execute(
+                "SELECT * FROM capability_audit ORDER BY event_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple({
+            "event_id": row["event_id"], "event_type": row["event_type"],
+            "principal_id": row["principal_id"], "capability": row["capability"],
+            "target": row["target"], "run_id": row["run_id"],
+            "step_id": row["step_id"], "request_sha256": row["request_sha256"],
+            "policy_version": row["policy_version"],
+            "matched_rule_ids": tuple(json.loads(row["matched_rules_json"])),
+            "outcome": row["outcome"], "occurred_at": row["occurred_at"],
+        } for row in rows)
