@@ -4,7 +4,9 @@ import time
 import unittest
 
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from core.oidc_id_token import OIDCIdentityTokenError, OIDCIdentityTokenVerifier
 
@@ -82,6 +84,83 @@ class OIDCIdentityTokenTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [
             ("GET", "https://auth.example.com/.well-known/jwks.json")
         ])
+
+    def test_verifies_ps256_es256_and_eddsa(self):
+        nonce = "nonce-value-1234567890"
+
+        ps_header = segment({"alg": "PS256", "kid": "key-1"})
+        ps_claims = segment({
+            "iss": "https://auth.example.com", "sub": "provider-user-123",
+            "aud": "yuki-client", "iat": self.now, "exp": self.now + 300, "nonce": nonce,
+        })
+        ps_input = (ps_header + "." + ps_claims).encode("ascii")
+        ps_sig = self.private_key.sign(
+            ps_input,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
+            hashes.SHA256(),
+        )
+        self.assertEqual(
+            self.verifier.verify(
+                id_token=ps_header + "." + ps_claims + "." + b64(ps_sig),
+                expected_nonce=nonce,
+            )["subject"],
+            "provider-user-123",
+        )
+
+        ec_private = ec.generate_private_key(ec.SECP256R1())
+        ec_numbers = ec_private.public_key().public_numbers()
+        ec_jwk = {
+            "kty": "EC", "crv": "P-256", "kid": "ec-1", "use": "sig", "alg": "ES256",
+            "x": b64(ec_numbers.x.to_bytes(32, "big")),
+            "y": b64(ec_numbers.y.to_bytes(32, "big")),
+        }
+        ec_verifier = OIDCIdentityTokenVerifier(
+            transport=FakeTransport({"keys": [ec_jwk]}),
+            jwks_uri="https://auth.example.com/.well-known/jwks.json",
+            issuer="https://auth.example.com", client_id="yuki-client",
+            expected_subject="provider-user-123", clock=lambda: self.now,
+        )
+        ec_header = segment({"alg": "ES256", "kid": "ec-1"})
+        ec_claims = segment({
+            "iss": "https://auth.example.com", "sub": "provider-user-123",
+            "aud": "yuki-client", "iat": self.now, "exp": self.now + 300, "nonce": nonce,
+        })
+        ec_input = (ec_header + "." + ec_claims).encode("ascii")
+        der = ec_private.sign(ec_input, ec.ECDSA(hashes.SHA256()))
+        r_value, s_value = decode_dss_signature(der)
+        ec_signature = r_value.to_bytes(32, "big") + s_value.to_bytes(32, "big")
+        self.assertEqual(
+            ec_verifier.verify(
+                id_token=ec_header + "." + ec_claims + "." + b64(ec_signature),
+                expected_nonce=nonce,
+            )["subject"],
+            "provider-user-123",
+        )
+
+        ed_private = ed25519.Ed25519PrivateKey.generate()
+        ed_public = ed_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        ed_jwk = {"kty": "OKP", "crv": "Ed25519", "kid": "ed-1", "use": "sig",
+                  "alg": "EdDSA", "x": b64(ed_public)}
+        ed_verifier = OIDCIdentityTokenVerifier(
+            transport=FakeTransport({"keys": [ed_jwk]}),
+            jwks_uri="https://auth.example.com/.well-known/jwks.json",
+            issuer="https://auth.example.com", client_id="yuki-client",
+            expected_subject="provider-user-123", clock=lambda: self.now,
+        )
+        ed_header = segment({"alg": "EdDSA", "kid": "ed-1"})
+        ed_claims = segment({
+            "iss": "https://auth.example.com", "sub": "provider-user-123",
+            "aud": "yuki-client", "iat": self.now, "exp": self.now + 300, "nonce": nonce,
+        })
+        ed_input = (ed_header + "." + ed_claims).encode("ascii")
+        ed_signature = ed_private.sign(ed_input)
+        self.assertEqual(
+            ed_verifier.verify(
+                id_token=ed_header + "." + ed_claims + "." + b64(ed_signature),
+                expected_nonce=nonce,
+            )["subject"],
+            "provider-user-123",
+        )
 
     def test_rejects_wrong_nonce_issuer_subject_audience_and_expiry(self):
         invalid = (
