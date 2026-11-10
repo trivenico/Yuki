@@ -59,13 +59,65 @@ def _get_durable_task_engine():
     return DurableTaskEngine(_DURABLE_TASK_DB)
 
 
+def _build_skill_policy():
+    """Create the default-deny central policy for registered skill execution."""
+    from core.tool_policy import (
+        Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest,
+    )
+
+    triggers = ("interactive", "durable_task")
+    rules = tuple(
+        PolicyRule(
+            rule_id=f"registered-skill-{trigger}-{risk.value}",
+            decision=Decision.ALLOW,
+            capability="skill.invoke",
+            trigger=trigger,
+            risk=risk,
+        )
+        for trigger in triggers
+        for risk in Risk
+    )
+    engine = ToolPolicyEngine(rules, policy_version="yuki-skill-policy-v1")
+
+    def request_factory(skill_name, argument, skill, context):
+        risk = Risk(str(getattr(skill, "risk", "high")).lower())
+        if context is None:
+            # The local interactive CLI is the trusted caller for direct
+            # /skill invoke. Durable execution always supplies persisted
+            # authenticated owner provenance from DurableSkillWorker.
+            principal_id = "owner:local"
+            trigger = "interactive"
+            run_id = "cli-session"
+            step_id = "cli-invocation"
+        else:
+            principal_id = context.principal_id
+            trigger = context.trigger
+            run_id = context.goal_id
+            step_id = context.task_id
+        return PolicyRequest(
+            principal_id=principal_id,
+            trigger=trigger,
+            capability="skill.invoke",
+            target=f"skill:{skill_name}",
+            argument_sha256=argument_digest(argument),
+            risk=risk,
+            run_id=run_id,
+            step_id=step_id,
+        )
+
+    return engine, request_factory
+
+
 def _build_approved_skill_runtime():
     registry = SkillRegistry.defaults(Path.cwd())
+    policy_engine, policy_request_factory = _build_skill_policy()
     runtime = ApprovedSkillRuntime(
         registry,
         _get_skill_approval_store(),
         invocation_approvals=_INVOCATION_APPROVALS,
         audit=lambda action, outcome: write_audit_event(action, outcome),
+        policy_engine=policy_engine,
+        policy_request_factory=policy_request_factory,
     )
     return registry, runtime
 
