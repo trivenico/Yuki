@@ -463,7 +463,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         )
 
         def tool_request_factory(tool_name, argument):
-            if tool_name not in TOOLS or user.user_id != getattr(user, "user_id", None):
+            if tool_name not in TOOLS or not isinstance(user.user_id, str) or not user.user_id:
                 raise ValueError("authenticated tool context is required")
             return PolicyRequest(
                 principal_id=user.user_id,
