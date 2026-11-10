@@ -1,2 +1,0 @@
-# Optional OAuth credential encryption dependency.
-cryptography>=42,<47
