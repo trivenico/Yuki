@@ -17,8 +17,10 @@ _CATALOG = (
      "implemented":True,"capabilities":["text","official_cli"],"model_env":"YUKI_GEMINI_MODEL","key_env":None},
     {"name":"hybrid","label":"Hybrid local/cloud","auth":"local_runtime_and_optional_api_key","privacy":"task_policy",
      "implemented":True,"capabilities":["text","per_task_routing"],"model_env":"YUKI_CLOUD_MODEL","key_env":"YUKI_CLOUD_API_KEY_ENV"},
-    {"name":"openai","label":"OpenAI API","auth":"api_key","privacy":"cloud_provider","implemented":True,
+    {"name":"openai","label":"OpenAI Chat Completions","auth":"api_key","privacy":"cloud_provider","implemented":True,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_OPENAI_MODEL","key_env":"OPENAI_API_KEY"},
+    {"name":"openai_responses","label":"OpenAI Responses API","auth":"api_key","privacy":"cloud_provider","implemented":True,
+     "capabilities":["text"],"model_env":"YUKI_OPENAI_RESPONSES_MODEL","key_env":"OPENAI_API_KEY"},
     {"name":"anthropic","label":"Anthropic API","auth":"api_key","privacy":"cloud_provider","implemented":False,
      "capabilities":["text","tooling_provider_dependent"],"model_env":"YUKI_ANTHROPIC_MODEL","key_env":"ANTHROPIC_API_KEY"},
     {"name":"deepseek","label":"DeepSeek API","auth":"api_key","privacy":"cloud_provider","implemented":False,
@@ -64,6 +66,8 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
         elif item["name"] == "openai":
             model = _model(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini")))
+        elif item["name"] == "openai_responses":
+            model = _model(env.get("YUKI_OPENAI_RESPONSES_MODEL", cfg.get("openai_responses_model", "")))
         elif item["name"] == "hybrid":
             model = _model(env.get("YUKI_CLOUD_MODEL", ""))
         configured_key = bool(key_env and str(env.get(key_env, "")).strip())
@@ -78,7 +82,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         if item["name"] == "mock":
             ready = False
             reason = "test_only_adapter_not_exposed"
-        elif item["name"] == "openai":
+        elif item["name"] in {"openai", "openai_responses"}:
             ready = bool(model and configured_key)
             reason = "api_key_and_model_configured" if ready else (
                 "api_key_not_configured" if not configured_key else "model_not_configured"

@@ -1,0 +1,30 @@
+name: OpenAI Responses provider tests
+
+on:
+  pull_request:
+    paths:
+      - "providers/openai_responses.py"
+      - "providers/factory.py"
+      - "providers/catalog.py"
+      - "providers/__init__.py"
+      - "yuki_providers.py"
+      - "tests/test_openai_responses_*.py"
+      - "tests/test_provider_factory.py"
+      - "docs/OPENAI_RESPONSES_PROVIDER.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Run Responses API adapter and registry tests
+        run: |
+          python -m unittest tests.test_openai_responses_provider tests.test_openai_responses_registry tests.test_provider_factory -v
