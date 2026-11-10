@@ -147,6 +147,43 @@ class AgentMemoryStore:
                 (actor_id, agent_id, int(include_shared), now, limit)).fetchall()
         return [self._record(row) for row in rows]
 
+    def list_memories_page(self, *, actor_id, agent_id, limit=100,
+                           include_shared=True, before=None):
+        """Authorized keyset page for resumable maintenance operations.
+
+        Cursor is the last record's (created_at, memory_id), ordered newest
+        first. Newer inserts do not shift an in-progress older-page scan.
+        """
+        self._validate_scope(actor_id, agent_id)
+        if not self._allowed(actor_id, "agent_memory:read", agent_id):
+            raise PermissionError("agent memory read is not authorized")
+        if type(limit) is not int or not 1 <= limit <= _MAX_LIMIT:
+            raise ValueError("limit_must_be_1_to_100")
+        if type(include_shared) is not bool:
+            raise ValueError("include_shared_must_be_boolean")
+        cursor_created = cursor_id = None
+        if before is not None:
+            if not isinstance(before, dict):
+                raise ValueError("invalid_memory_page_cursor")
+            cursor_created, cursor_id = before.get("created_at"), before.get("memory_id")
+            if (not isinstance(cursor_created, str) or len(cursor_created) > 64
+                    or not isinstance(cursor_id, str)
+                    or not re.fullmatch(r"[a-f0-9]{32}", cursor_id)):
+                raise ValueError("invalid_memory_page_cursor")
+        now = datetime.now(timezone.utc).isoformat()
+        sql = """SELECT * FROM agent_memories
+            WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+            AND (expires_at IS NULL OR expires_at>?)"""
+        params = [actor_id, agent_id, int(include_shared), now]
+        if before is not None:
+            sql += " AND (created_at < ? OR (created_at = ? AND memory_id < ?))"
+            params.extend([cursor_created, cursor_created, cursor_id])
+        sql += " ORDER BY created_at DESC, memory_id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as db:
+            rows = db.execute(sql, params).fetchall()
+        return [self._record(row) for row in rows]
+
     def search(self, *, actor_id, agent_id, query, limit=10, include_shared=True):
         if not isinstance(query, str) or not query.strip() or len(query) > 1000:
             raise ValueError("invalid_memory_query")
@@ -164,6 +201,23 @@ class AgentMemoryStore:
         ranked.sort(key=lambda item: (item[0], item[1]["created_at"]), reverse=True)
         return [{"score": round(score, 4), **row} for score, row in ranked[:limit]]
 
+    @staticmethod
+    def _delete_embedding_cache_rows(db, *, actor_id, memory_ids):
+        """Delete derived vectors in the same transaction as source memories."""
+        if not memory_ids:
+            return 0
+        table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory_embeddings'"
+        ).fetchone()
+        if table is None:
+            return 0
+        placeholders = ",".join("?" for _ in memory_ids)
+        cursor = db.execute(
+            f"DELETE FROM agent_memory_embeddings WHERE actor_id=? AND memory_id IN ({placeholders})",
+            (actor_id, *memory_ids),
+        )
+        return cursor.rowcount
+
     def delete(self, *, actor_id, agent_id, memory_id):
         self._validate_scope(actor_id, agent_id)
         if not isinstance(memory_id, str) or not re.fullmatch(r"[a-f0-9]{32}", memory_id):
@@ -174,6 +228,8 @@ class AgentMemoryStore:
             cursor = db.execute("""DELETE FROM agent_memories
                 WHERE memory_id=? AND actor_id=? AND agent_id=?""",
                 (memory_id, actor_id, agent_id))
+            if cursor.rowcount == 1:
+                self._delete_embedding_cache_rows(db, actor_id=actor_id, memory_ids=[memory_id])
             return cursor.rowcount == 1
 
     def prune_expired(self, *, actor_id):
@@ -181,8 +237,23 @@ class AgentMemoryStore:
             raise PermissionError("memory pruning is not authorized")
         now = datetime.now(timezone.utc).isoformat()
         with self._lock, self._connect() as db:
-            cursor = db.execute("DELETE FROM agent_memories WHERE actor_id=? AND expires_at IS NOT NULL AND expires_at<=?",
-                                (actor_id, now))
+            expired = db.execute(
+                """SELECT memory_id FROM agent_memories
+                   WHERE actor_id=? AND expires_at IS NOT NULL AND expires_at<=?""",
+                (actor_id, now),
+            ).fetchall()
+            memory_ids = [row["memory_id"] for row in expired]
+            if not memory_ids:
+                return 0
+            placeholders = ",".join("?" for _ in memory_ids)
+            cursor = db.execute(
+                f"DELETE FROM agent_memories WHERE actor_id=? AND memory_id IN ({placeholders})",
+                (actor_id, *memory_ids),
+            )
+            if cursor.rowcount:
+                self._delete_embedding_cache_rows(
+                    db, actor_id=actor_id, memory_ids=memory_ids
+                )
             return cursor.rowcount
 
 
