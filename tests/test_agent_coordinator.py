@@ -281,7 +281,8 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         with self.assertRaises(PermissionError):
             denied.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
-        with self.assertRaises(KeyError):
+        # Missing and foreign-owned plans share the same response to avoid ID enumeration.
+        with self.assertRaises(PermissionError):
             self.coordinator.cancel_plan(actor_id="alice", plan_id="missing-plan")
 
     def test_permission_requests_cannot_disable_explicit_approval(self):
