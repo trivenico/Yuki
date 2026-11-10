@@ -89,7 +89,7 @@ class MCPHTTPClient:
             return None
         content_type = response_headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json" and not content_type.endswith("+json"):
-            raise MCPError("This client currently supports JSON MCP responses, not SSE-only responses.")
+            raise MCPError("MCP server returned an unsupported response content type.")
         try:
             result = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
