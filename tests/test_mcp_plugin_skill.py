@@ -26,6 +26,17 @@ class MCPPluginSkillTests(unittest.TestCase):
         result = MCPPluginSkill([]).run(json.dumps({"action": "list", "server": "docs"}))
         self.assertFalse(result.ok)
 
+    def test_rejects_credentials_and_unknown_fields_in_skill_arguments(self):
+        skill = MCPPluginSkill([SERVER])
+        result = skill.run(json.dumps({"action": "list", "server": "docs", "access_token": "secret"}))
+        self.assertFalse(result.ok)
+        self.assertIn("credentials are never accepted", result.message)
+
+    def test_rejects_oversized_or_non_text_skill_arguments(self):
+        skill = MCPPluginSkill([SERVER])
+        self.assertFalse(skill.run(" " * 64001).ok)
+        self.assertFalse(skill.run(None).ok)
+
     @patch("skills.mcp_plugin.MCPHTTPClient")
     def test_list_only_returns_allowlisted_tools(self, factory):
         client = factory.return_value
