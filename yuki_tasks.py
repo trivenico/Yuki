@@ -14,8 +14,22 @@ def load_tasks():
         data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, list):
             return []
-        return [x for x in data if isinstance(x, dict) and isinstance(x.get("id"), int)
-                and isinstance(x.get("description"), str) and isinstance(x.get("completed"), bool)]
+        valid = []
+        seen_ids = set()
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            task_id = item.get("id")
+            # bool is a subclass of int in Python; reject it explicitly. Task IDs
+            # must be positive and unique so commands cannot target ambiguous rows.
+            if (not isinstance(task_id, int) or isinstance(task_id, bool)
+                    or task_id <= 0 or task_id in seen_ids):
+                continue
+            if not isinstance(item.get("description"), str) or not isinstance(item.get("completed"), bool):
+                continue
+            seen_ids.add(task_id)
+            valid.append(item)
+        return valid
     except (OSError, json.JSONDecodeError):
         return []
 
