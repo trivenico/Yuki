@@ -188,6 +188,11 @@ class CapabilityApprovalGateway:
             policy = self.policy_engine.evaluate(request)
             if policy.decision == Decision.ALLOW:
                 outcome = "allowed"
+                with closing(self._connect()) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    self._audit(db, "authorization", request, digest,
+                                policy.policy_version, policy.matched_rule_ids, outcome)
+                    db.commit()
                 decision = CapabilityDecision(True, outcome, policy.policy_version,
                                               policy.matched_rule_ids)
             elif policy.decision == Decision.REQUIRE_APPROVAL and approval_token is not None:
@@ -207,6 +212,7 @@ class CapabilityApprovalGateway:
                         and row["target"] == request.target
                         and row["run_id"] == request.run_id
                         and row["step_id"] == request.step_id
+                        and row["policy_version"] == policy.policy_version
                         and row["expires_at"] > now
                         and row["consumed_at"] is None
                         and row["revoked_at"] is None
