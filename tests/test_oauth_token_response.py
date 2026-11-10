@@ -52,6 +52,19 @@ class OAuthTokenResponseTests(unittest.TestCase):
             with self.subTest(scope=scope), self.assertRaises(OAuthTokenResponseError):
                 self.validate({**self.base, "scope": scope})
 
+    def test_accepts_compact_id_token_without_exposing_it_in_repr(self):
+        token = "header.payload.signature"
+        grant = self.validate({**self.base, "id_token": token})
+        self.assertEqual(grant.id_token, token)
+        self.assertNotIn(token, repr(grant))
+
+    def test_rejects_malformed_or_oversized_id_token(self):
+        for token in ("not-a-jwt", "a.b", "a.b.c.extra", "x" * 32769, "a b.c.d"):
+            with self.subTest(token=token), self.assertRaisesRegex(
+                OAuthTokenResponseError, "invalid_id_token"
+            ):
+                self.validate({**self.base, "id_token": token})
+
     def test_rejects_missing_or_malformed_access_token(self):
         for token in (None, "", "has space", "line\\nbreak", "bad,token", "x" * 8193):
             document = dict(self.base)
@@ -78,7 +91,7 @@ class OAuthTokenResponseTests(unittest.TestCase):
                 self.validate(document)
 
     def test_rejects_unknown_fields_and_invalid_context(self):
-        with self.assertRaisesRegex(OAuthTokenResponseError, "unsupported_token_response_fields"):
+        with self.assertRaisesRegex(OAuthTokenResponseError, "invalid_id_token"):
             self.validate({**self.base, "id_token": "jwt"})
         with self.assertRaises(OAuthTokenResponseError):
             validate_oauth_token_response(
