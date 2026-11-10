@@ -8,6 +8,7 @@ from skills.base import Skill, SkillResult
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _SERVER_FIELDS = frozenset({"name", "endpoint", "allowed_hosts", "allowed_tools"})
+_REQUEST_FIELDS = frozenset({"action", "server", "tool", "arguments", "confirm"})
 
 
 class MCPPluginSkill(Skill):
@@ -51,9 +52,13 @@ class MCPPluginSkill(Skill):
 
     def run(self, argument=""):
         try:
+            if not isinstance(argument, str) or len(argument.encode("utf-8")) > 64000:
+                raise ValueError("Argument must be bounded JSON text.")
             request = json.loads(argument) if argument.strip() else {}
             if not isinstance(request, dict):
                 raise ValueError("Argument must be a JSON object.")
+            if set(request) - _REQUEST_FIELDS:
+                raise ValueError("Request contains unsupported fields; credentials are never accepted in skill arguments.")
             action = request.get("action", "list")
             name = request.get("server")
             config = self.servers.get(name)
