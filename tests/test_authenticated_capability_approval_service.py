@@ -80,13 +80,14 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         delivered = []
         service = AuthenticatedCapabilityApprovalService(
             self.auth, self.gateway,
-            deliver_credential=lambda request_id, token: delivered.append((request_id, token)),
+            deliver_credential=lambda request_id, request, token, ttl: delivered.append((request_id, request, token, ttl)),
         )
         request_id = service.request_approval("owner-session", self.request)
         self.assertEqual(len(service.pending_requests("approver-session")), 1)
         self.assertIsNone(service.approve_pending("approver-session", request_id))
         self.assertEqual(delivered[0][0], request_id)
-        decision = self.gateway.authorize(self.request, approval_token=delivered[0][1])
+        self.assertEqual(delivered[0][1], self.request)
+        decision = self.gateway.authorize(self.request, approval_token=delivered[0][2])
         self.assertTrue(decision.allowed)
 
     def test_inbox_rejects_cross_principal_request_creation(self):
@@ -95,7 +96,7 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
 
     def test_delivery_failure_revokes_credential(self):
         delivered = []
-        def failing_delivery(request_id, token):
+        def failing_delivery(request_id, request, token, ttl_seconds):
             delivered.append(token)
             raise RuntimeError("sensitive callback detail")
         service = AuthenticatedCapabilityApprovalService(
