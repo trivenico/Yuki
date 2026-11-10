@@ -12,6 +12,7 @@ from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderInfo, ProviderManager
+import yuki
 from yuki import handle_command
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
@@ -89,7 +90,7 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
 
-    def test_provider_selection_constructs_adapter_once_and_commits_atomically(self):
+    def test_provider_selection_fails_closed_for_unknown_provider_privacy(self):
         manager = ProviderManager()
         created = []
 
@@ -97,21 +98,19 @@ class ProviderManagerTests(unittest.TestCase):
             pass
 
         def factory():
-            if created:
-                raise RuntimeError("factory must not be called twice")
-            adapter = FlakyProvider()
-            created.append(adapter)
-            return adapter
+            created.append(FlakyProvider())
+            return created[-1]
 
         manager.register(ProviderInfo("flaky", ("test",), True), factory=factory)
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select flaky", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
 
-        self.assertEqual(result, "Selected provider: flaky")
-        self.assertEqual(manager.current().name, "flaky")
-        self.assertIs(agent.provider, created[0])
-        self.assertIs(manager.create_selected_adapter(), created[0])
+        self.assertIn("explicit cloud consent", result)
+        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(created, [])
+        from providers.openai_compatible import OpenAICompatibleProvider
+        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
 
     def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
         manager = ProviderManager()
@@ -129,6 +128,25 @@ class ProviderManagerTests(unittest.TestCase):
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
         self.assertIn("Yuki dashboard", result)
         self.assertIn("Provider: openai", result)
+
+
+    def test_cli_startup_requires_explicit_cloud_environment_opt_in(self):
+        from unittest.mock import Mock
+        manager = Mock()
+        manager.current.return_value.name = "openai"
+        for setting, expected in (("false", False), ("true", True)):
+            manager.reset_mock()
+            manager.current.return_value.name = "openai"
+            with patch.dict(yuki.os.environ, {"YUKI_ALLOW_CLOUD": setting}, clear=False), \
+                 patch.object(yuki, "ProviderManager", return_value=manager), \
+                 patch.object(yuki, "YukiAgent"), \
+                 patch.object(yuki, "SecurityPolicy"), \
+                 patch.object(yuki, "load_memory", return_value=[]), \
+                 patch.object(yuki, "load_tasks", return_value=[]), \
+                 patch("builtins.input", side_effect=KeyboardInterrupt), \
+                 patch("builtins.print"):
+                yuki.main()
+            manager.create_selected_runtime_adapter.assert_called_once_with(allow_cloud=expected)
 
 
 class ToolTests(unittest.TestCase):

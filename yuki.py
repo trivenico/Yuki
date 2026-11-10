@@ -1,6 +1,7 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import os
 import uuid
 from getpass import getpass
 from pathlib import Path
@@ -203,10 +204,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /provider select NAME"
-        result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() == "openai"))
+        result = providers.select(parts[2], allow_cloud=(parts[2].strip().lower() in {"openai", "gemini", "hybrid"}))
         if result.startswith("Selected provider:"):
             try:
-                adapter = providers.create_selected_runtime_adapter()
+                adapter = providers.create_selected_runtime_adapter(
+                    allow_cloud=(parts[2].strip().lower() in {"openai", "gemini", "hybrid"})
+                )
                 if adapter is None:
                     return "Provider selection failed: no adapter is available."
                 agent.set_provider(adapter)
@@ -521,7 +524,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 def main():
     providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=(providers.current().name == "openai")))
+    cloud_authorized = os.environ.get("YUKI_ALLOW_CLOUD", "").strip().lower() == "true"
+    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=cloud_authorized))
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()

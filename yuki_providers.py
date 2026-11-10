@@ -87,13 +87,32 @@ class ProviderManager:
             return f"Unknown provider: {key}"
         if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
+        # Enforce cloud consent at the shared provider boundary, not only
+        # in browser/UI callers. Keep authorization failures distinct from
+        # adapter-construction PermissionErrors so callers receive accurate errors.
+        catalog_entry = next(
+            (item for item in self.catalog() if item.get("name") == key), None
+        )
+        privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
+        if privacy != "local_runtime" and not allow_cloud:
+            return f"Cannot select {key}: explicit cloud consent is required."
+        if privacy == "unknown":
+            return f"Cannot select {key}: provider privacy is unknown; refusing selection."
         try:
             if key in {"openai", "ollama"}:
                 adapter = self.create_routed_model_adapter(required=("text",), provider_preference=(key,), allow_cloud=allow_cloud)
             else:
                 adapter = self._build_adapter(key)
+                # Non-exact-model adapters (for example Gemini CLI and hybrid)
+                # must pass the same availability gate before selection commits.
+                try:
+                    available = adapter.is_available()
+                except Exception:
+                    available = False
+                if available is not True:
+                    raise RuntimeError("provider is not available")
         except Exception as exc:
-            return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
+            return f"Cannot select {key}: provider configuration, availability, or construction failed ({type(exc).__name__})."
         # Commit selected name and availability-checked adapter atomically.
         self._selected = key
         self._selected_adapter = adapter
@@ -105,15 +124,15 @@ class ProviderManager:
             self._selected_adapter = self._build_adapter(self._selected)
         return self._selected_adapter
 
-    def create_selected_agent_model(self):
+    def create_selected_agent_model(self, *, allow_cloud=False):
         """Return the selected provider through the bounded agent chat contract.
 
-        Text-only providers (Gemini CLI and hybrid routing) are rejected rather
-        than silently flattening transcripts or routing tool requests elsewhere.
+        Cloud-capable routes require explicit caller authorization. Text-only
+        providers are rejected rather than silently flattening transcripts.
         """
         from providers.agent_adapter import ProviderAgentAdapter
 
-        provider = self.create_selected_adapter()
+        provider = self.create_selected_runtime_adapter(allow_cloud=allow_cloud)
         if provider is None:
             raise RuntimeError("No provider is selected.")
         if not callable(getattr(provider, "generate_chat", None)):
@@ -128,9 +147,12 @@ class ProviderManager:
     def catalog(self):
         """Return sanitized provider/model metadata without making network calls."""
         from providers.catalog import build_provider_catalog
-        return build_provider_catalog(
+        entries = build_provider_catalog(
             config=self._config, environ=self._environ, provider_manager=self
         )
+        for item in entries:
+            item["selected"] = item.get("name") == self._selected
+        return entries
 
     def routing_registry(self):
         """Return a capability-filtered registry for explicit, policy-aware routing."""
@@ -236,12 +258,23 @@ class ProviderManager:
     def create_selected_runtime_adapter(self, *, allow_cloud=False):
         """Construct the selected provider through exact-model routing where supported.
 
-        OpenAI cloud use must be explicitly authorized by the caller. Providers
-        without exact model pinning retain their existing adapter path.
+        Every non-local provider or configured endpoint requires explicit
+        authorization, including cached adapters and provider-level routes.
+        Providers without exact model pinning retain their existing adapter path.
         """
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
         selected = self._selected
+        catalog_entry = next(
+            (item for item in self.catalog() if item.get("name") == selected), None
+        )
+        privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
+        if privacy == "unknown":
+            raise PermissionError("Provider privacy is unknown; refusing runtime construction.")
+        if privacy != "local_runtime" and not allow_cloud:
+            raise PermissionError(
+                "Explicit cloud consent is required for this provider or configured endpoint."
+            )
         if selected in {"openai", "ollama"} and self._selected_adapter is not None:
             return self._selected_adapter
         if selected in {"openai", "ollama"}:

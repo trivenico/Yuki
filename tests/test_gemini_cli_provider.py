@@ -112,8 +112,12 @@ class GeminiCLIProviderTests(unittest.TestCase):
         listed = {item["name"]: item for item in manager.list_providers()}
         self.assertTrue(listed["gemini"]["implemented"])
         self.assertIn("gemini", listed["gemini"]["auth_methods"][0])
-        self.assertIn("gemini", manager.select("gemini").lower())
-        self.assertIsInstance(manager.create_selected_adapter(), GeminiCLIProvider)
+        # Selection now commits only after the executable availability check.
+        # Keep this registry/factory contract test independent of whether the
+        # Gemini CLI happens to be installed on the CI runner.
+        with patch.object(GeminiCLIProvider, "is_available", return_value=True):
+            self.assertEqual(manager.select("gemini", allow_cloud=True), "Selected provider: gemini")
+            self.assertIsInstance(manager.create_selected_adapter(), GeminiCLIProvider)
 
 
 if __name__ == "__main__":

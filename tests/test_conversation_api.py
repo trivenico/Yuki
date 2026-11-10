@@ -101,7 +101,7 @@ class ConversationAPITests(unittest.TestCase):
         self.app.provider_catalog = lambda: [
             {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
         ]
-        self.app.provider_selector = lambda name: calls.append(name) or {
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {
             "name": name, "label": "Ollama", "selected": True, "ready": True,
             "privacy": "local_runtime",
         }
@@ -112,7 +112,7 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(data["provider"]["name"], "ollama")
-        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(calls, [("ollama", {"allow_cloud": False})])
 
         status, data, _ = self.request(
             "PUT", "/v1/providers/active",
@@ -120,7 +120,7 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(data["error"], "explicit_confirmation_required")
-        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(calls, [("ollama", {"allow_cloud": False})])
 
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")
@@ -139,7 +139,7 @@ class ConversationAPITests(unittest.TestCase):
         self.app.provider_catalog = lambda: [
             {"name": "openai", "privacy": "cloud_provider", "implemented": True, "ready": True}
         ]
-        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {"name": name}
         status, data, _ = self.request(
             "PUT", "/v1/providers/active",
             {"provider": "openai", "confirm_global": True, "confirm_cloud": False},
@@ -148,6 +148,22 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(data["error"], "cloud_consent_required")
         self.assertEqual(calls, [])
+
+    def test_cloud_consent_is_forwarded_to_provider_selector(self):
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "openai", "privacy": "cloud_provider", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name, **kwargs: calls.append((name, kwargs)) or {
+            "name": name, "selected": True, "privacy": "cloud_provider"
+        }
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "openai", "confirm_global": True, "confirm_cloud": True},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [("openai", {"allow_cloud": True})])
 
     def test_non_loopback_ollama_endpoint_requires_cloud_consent(self):
         calls = []

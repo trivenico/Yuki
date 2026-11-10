@@ -92,7 +92,7 @@ class RuntimeModelCapabilityRoutingTests(unittest.TestCase):
             config={"provider": "openai"},
             environ={"OPENAI_API_KEY": "test-secret", "YUKI_OPENAI_MODEL": "gpt-4.1-mini"},
         )
-        with self.assertRaises(LookupError):
+        with self.assertRaises(PermissionError):
             manager.create_selected_runtime_adapter()
         with patch("providers.factory.create_provider", return_value=_AvailableProvider()) as factory:
             adapter = manager.create_selected_runtime_adapter(allow_cloud=True)
