@@ -77,6 +77,28 @@ class RuntimeModelCapabilityRoutingTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             registry.route(required=("text",))
 
+    def test_selected_local_runtime_uses_exact_model_route(self):
+        manager = ProviderManager(
+            config={"provider": "ollama", "ollama_model": "qwen3:8b"},
+            environ={},
+        )
+        with patch("providers.factory.create_provider", return_value=_AvailableProvider()) as factory:
+            adapter = manager.create_selected_runtime_adapter()
+        self.assertIsInstance(adapter, _AvailableProvider)
+        self.assertEqual(factory.call_args.args[0]["ollama_model"], "qwen3:8b")
+
+    def test_selected_cloud_runtime_requires_explicit_opt_in(self):
+        manager = ProviderManager(
+            config={"provider": "openai"},
+            environ={"OPENAI_API_KEY": "test-secret", "YUKI_OPENAI_MODEL": "gpt-4.1-mini"},
+        )
+        with self.assertRaises(LookupError):
+            manager.create_selected_runtime_adapter()
+        with patch("providers.factory.create_provider", return_value=_AvailableProvider()) as factory:
+            adapter = manager.create_selected_runtime_adapter(allow_cloud=True)
+        self.assertIsInstance(adapter, _AvailableProvider)
+        self.assertEqual(factory.call_args.kwargs["environ"]["YUKI_OPENAI_MODEL"], "gpt-4.1-mini")
+
     def test_unavailable_exact_model_does_not_fallback(self):
         manager = ProviderManager(
             config={"ollama_model": "qwen3"},
