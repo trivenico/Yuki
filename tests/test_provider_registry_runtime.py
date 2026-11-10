@@ -59,6 +59,17 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "does not support structured agent chat"):
             manager.create_selected_agent_model()
 
+    def test_cloud_provider_selection_requires_explicit_consent(self):
+        from providers.gemini_cli import GeminiCLIProvider
+        manager = ProviderManager(environ={})
+        with patch.object(GeminiCLIProvider, "is_available", return_value=True):
+            rejected = manager.select("gemini")
+            self.assertIn("explicit cloud consent", rejected)
+            self.assertEqual(manager.current().name, "openai")
+            accepted = manager.select("gemini", allow_cloud=True)
+            self.assertEqual(accepted, "Selected provider: gemini")
+            self.assertIsInstance(manager.create_selected_adapter(), GeminiCLIProvider)
+
     def test_unavailable_non_exact_provider_does_not_commit_selection(self):
         manager = ProviderManager(environ={})
 
