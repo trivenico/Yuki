@@ -402,7 +402,7 @@ class ConversationAPITests(unittest.TestCase):
             authorize=agent_memory_authorizer(self.auth),
         )
         status, data, _ = self.request(
-            "GET", "/v1/memory?ignored", token=self.issued.token, query=b"limit=100"
+            "GET", "/v1/memory", token=self.issued.token, query=b"limit=100"
         )
         self.assertEqual(status, 200)
         self.assertEqual(data["memories"], [])
