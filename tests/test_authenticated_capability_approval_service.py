@@ -222,6 +222,21 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             service.approve_pending("approver-session", request_id)
         self.assertEqual(delivered, [])
 
+    def test_explicit_worker_identity_must_match_bound_broker(self):
+        class BrokerCallback:
+            worker_id = "broker-worker"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        with self.assertRaisesRegex(ValueError, "must match the credential broker identity"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=callback.deliver_credential,
+                approval_worker_id="different-worker",
+            )
+
     def test_cannot_request_for_task_with_untrusted_skill_or_payload(self):
         class EmptyRegistry:
             def get(self, name):
