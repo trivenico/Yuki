@@ -34,6 +34,7 @@ class PKCEAuthorizationRequest:
 class OAuthAuthorizationCallback:
     code: str
     state: str
+    issuer: str | None = None
 
 
 def _https_url(value: str, *, label: str, allowed_hosts=None) -> str:
@@ -142,6 +143,8 @@ def validate_oauth_authorization_callback(
     callback_url: str,
     expected_redirect_uri: str,
     expected_state: str,
+    expected_issuer: str | None = None,
+    require_issuer: bool = False,
 ) -> OAuthAuthorizationCallback:
     """Validate exact callback destination and one-time state before code exchange.
 
@@ -149,6 +152,12 @@ def validate_oauth_authorization_callback(
     this pure helper cannot prevent replay by itself.
     """
     expected = _https_url(expected_redirect_uri, label="redirect_uri")
+    if type(require_issuer) is not bool:
+        raise OAuthAuthorizationError("invalid_issuer_requirement")
+    if expected_issuer is not None:
+        expected_issuer = _https_url(expected_issuer, label="issuer")
+    if require_issuer and expected_issuer is None:
+        raise OAuthAuthorizationError("expected_issuer_required")
     if (
         not isinstance(expected_state, str)
         or not 32 <= len(expected_state) <= 256
@@ -183,9 +192,18 @@ def validate_oauth_authorization_callback(
         raise OAuthAuthorizationError("callback_state_mismatch")
     if "error" in fields:
         raise OAuthAuthorizationError("authorization_was_denied")
+    issuer_values = fields.get("iss", [])
+    if require_issuer and len(issuer_values) != 1:
+        raise OAuthAuthorizationError("authorization_response_issuer_missing")
+    if issuer_values:
+        if expected_issuer is None or not hmac.compare_digest(issuer_values[0], expected_issuer):
+            raise OAuthAuthorizationError("authorization_response_issuer_mismatch")
     codes = fields.get("code", [])
     if len(codes) != 1 or not codes[0] or len(codes[0]) > 4096:
         raise OAuthAuthorizationError("invalid_authorization_code")
-    if any(key not in {"code", "state"} for key in fields):
+    if any(key not in {"code", "state", "iss"} for key in fields):
         raise OAuthAuthorizationError("unexpected_callback_parameter")
-    return OAuthAuthorizationCallback(code=codes[0], state=states[0])
+    return OAuthAuthorizationCallback(
+        code=codes[0], state=states[0],
+        issuer=issuer_values[0] if issuer_values else None,
+    )
