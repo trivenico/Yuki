@@ -62,11 +62,15 @@ class AuthenticatedInferenceAPI:
                     "device": self._device(credential.device),
                 })
 
-            if path.startswith("/v1/inference/worker/"):
+            worker_claim = path in {"/v1/inference/claim", "/v1/inference/worker/jobs/claim"}
+            worker_completion = re.fullmatch(
+                r"/v1/inference/(?:worker/jobs/)?([0-9a-f]{32})/complete", path
+            )
+            if path.startswith("/v1/inference/worker/") or worker_claim or worker_completion:
                 token = self._bearer(scope)
                 if token is None:
                     return await self._respond(send, 401, {"error": "device_authentication_required"})
-                if path == "/v1/inference/worker/jobs/claim" and method == "POST":
+                if worker_claim and method == "POST":
                     payload = await self._body(receive)
                     if payload:
                         return await self._respond(send, 400, {"error": "invalid_request"})
@@ -77,10 +81,12 @@ class AuthenticatedInferenceAPI:
                     if job is None:
                         return await self._respond(send, 200, {"job": None})
                     return await self._respond(send, 200, {"job": {
-                        **job.public_dict(), "input_text": job.input_text,
+                        "job_id": job.job_id, "model_id": job.model_id,
+                        "input_text": job.input_text,
+                        "lease_expires_at": job.lease_expires_at,
                         "lease_token": job.lease_token,
                     }})
-                match = re.fullmatch(r"/v1/inference/worker/jobs/([0-9a-f]{32})/complete", path)
+                match = worker_completion
                 if match and method == "POST":
                     payload = await self._body(receive)
                     if set(payload) not in ({"lease_token", "result_text"}, {"lease_token", "error_code"}):
