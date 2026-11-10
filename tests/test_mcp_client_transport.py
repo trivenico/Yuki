@@ -32,6 +32,7 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         self.assertEqual(result["server_info"]["name"], "test")
         self.assertEqual(client.session_id, "session-1")
         self.assertEqual(transport.calls[1][2]["Mcp-Session-Id"], "session-1")
+        self.assertEqual(transport.calls[1][2]["MCP-Protocol-Version"], client.PROTOCOL_VERSION)
 
     def test_rejects_mismatched_jsonrpc_id(self):
         transport = FakeTransport([
