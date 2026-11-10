@@ -73,6 +73,7 @@ def create_pkce_authorization_request(
     redirect_uri: str,
     scopes,
     resource: str,
+    oidc_nonce: str | None = None,
 ) -> PKCEAuthorizationRequest:
     """Build a bounded S256 authorization request for a reviewed OAuth server."""
     endpoint = _https_url(
@@ -112,6 +113,12 @@ def create_pkce_authorization_request(
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode("ascii")).digest()
     ).rstrip(b"=").decode("ascii")
+    if oidc_nonce is not None and (
+        not isinstance(oidc_nonce, str) or not 16 <= len(oidc_nonce) <= 512
+        or any(ord(char) < 0x21 for char in oidc_nonce)
+    ):
+        raise OAuthAuthorizationError("invalid_oidc_nonce")
+
     params = [
         ("response_type", "code"),
         ("client_id", client_id),
@@ -122,6 +129,8 @@ def create_pkce_authorization_request(
         ("code_challenge_method", "S256"),
         ("resource", resource_uri),
     ]
+    if oidc_nonce is not None:
+        params.append(("nonce", oidc_nonce))
     authorization_url = urlunsplit((
         endpoint_parts.scheme,
         endpoint_parts.netloc,
