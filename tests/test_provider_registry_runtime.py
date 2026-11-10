@@ -41,7 +41,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
         manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
-        model = manager.create_selected_agent_model()
+        model = manager.create_selected_agent_model(allow_cloud=True)
         self.assertIsInstance(model, ProviderAgentAdapter)
 
     def test_selected_ollama_provider_exposes_bounded_agent_model(self):
@@ -49,7 +49,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(
             {"provider": "ollama", "ollama_model": "test-model"}, environ={}
         )
-        model = manager.create_selected_agent_model()
+        model = manager.create_selected_agent_model(allow_cloud=True)
         self.assertIsInstance(model, ProviderAgentAdapter)
 
     def test_text_only_hybrid_provider_fails_closed_for_agent_chat(self):
