@@ -60,6 +60,32 @@ class TokenUsageTests(unittest.TestCase):
             tracker.record(provider="ollama", input_tokens=-1, output_tokens=1)
         tracker.close()
 
+
+    @unittest.skipUnless(__import__("os").name == "posix", "POSIX file permissions required")
+    def test_database_file_is_private(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "usage.json"
+            tracker = TokenUsageTracker(path)
+            tracker.close()
+            self.assertEqual(os.stat(str(path) + ".sqlite3").st_mode & 0o777, 0o600)
+
+    def test_rejects_database_symlink(self):
+        import os
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "usage.json"
+            target = Path(d) / "outside.sqlite3"
+            target.touch()
+            link = Path(str(path) + ".sqlite3")
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+            with self.assertRaisesRegex(RuntimeError, "must not be a symlink"):
+                TokenUsageTracker(path)
+
     def test_persists_and_loads(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "usage.json"
