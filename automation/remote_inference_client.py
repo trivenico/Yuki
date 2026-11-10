@@ -17,6 +17,7 @@ class RemoteInferenceJob:
     model_id: str
     input_text: str
     lease_expires_at: str | None
+    lease_token: str
 
 class RemoteInferenceJobClient:
     def __init__(self, base_url: str, device_token: str, *, lease_seconds: int = 120,
@@ -75,15 +76,17 @@ class RemoteInferenceJobClient:
         body=self._request("/v1/inference/claim")
         raw=body.get("job")
         if raw is None: return None
-        if not isinstance(raw,dict) or set(raw)!={"job_id","model_id","input_text","lease_expires_at"}:
+        if not isinstance(raw,dict) or set(raw)!={"job_id","model_id","input_text","lease_expires_at","lease_token"}:
             raise RuntimeError("invalid_claim_response")
         if not all(isinstance(raw[k],str) for k in ("job_id","model_id","input_text")):
+            raise RuntimeError("invalid_claim_response")
+        if not isinstance(raw["lease_token"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",raw["lease_token"]):
             raise RuntimeError("invalid_claim_response")
         if raw["lease_expires_at"] is not None and not isinstance(raw["lease_expires_at"],str):
             raise RuntimeError("invalid_claim_response")
         return RemoteInferenceJob(**raw)
 
-    def complete_job(self,device_token,job_id,*,result_text=None,error_code=None):
+    def complete_job(self,device_token,job_id,*,lease_token,result_text=None,error_code=None):
         if device_token!=self.device_token: raise PermissionError("device_credential_mismatch")
         if not isinstance(job_id, str) or not re.fullmatch(r"[0-9a-f]{32}", job_id):
             raise ValueError("invalid_job_id")
@@ -92,7 +95,8 @@ class RemoteInferenceJobClient:
             raise ValueError("result_too_large")
         if error_code is not None and (not isinstance(error_code,str) or len(error_code)>64):
             raise ValueError("invalid_error_code")
-        body={"result_text":result_text} if result_text is not None else {"error_code":error_code}
+        if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token): raise ValueError("invalid_lease_token")
+        body={"lease_token":lease_token,"result_text":result_text} if result_text is not None else {"lease_token":lease_token,"error_code":error_code}
         response=self._request(f"/v1/inference/jobs/{job_id}/complete",body)
         if not isinstance(response.get("job"),dict): raise RuntimeError("invalid_completion_response")
         return response["job"]
