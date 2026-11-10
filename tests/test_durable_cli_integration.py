@@ -104,6 +104,16 @@ class DurableCliIntegrationTests(unittest.TestCase):
     def command(self, message):
         return yuki.handle_command(message, [], [], DummyAgent(), None)
 
+    def test_terminal_login_and_logout_manage_session(self):
+        with patch.object(yuki, "_CLI_SESSION_TOKEN", None):
+            with patch.object(yuki, "getpass", return_value="correct-horse-battery-staple"):
+                login = self.command("/auth login test-admin")
+            self.assertIn("Authenticated as test-admin", login)
+            self.assertIn("Authenticated as test-admin", self.command("/auth status"))
+            logout = self.command("/auth logout")
+            self.assertIn("logged out", logout.lower())
+            self.assertIn("Not authenticated", self.command("/auth status"))
+
     def test_durable_commands_require_authenticated_session(self):
         with patch.object(yuki, "_CLI_SESSION_TOKEN", None):
             response = self.command("/durable goal create")
