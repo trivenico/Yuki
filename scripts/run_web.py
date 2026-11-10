@@ -16,7 +16,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
-from providers.runtime_manager import ProviderRuntimeManager
+from yuki_providers import ProviderManager
 
 
 class DenyAllTools:
@@ -44,11 +44,38 @@ def create_app():
             if str(exc) != "Initial administrator already exists.":
                 raise
 
-    provider = create_provider(config)
-    adapter = ProviderAgentAdapter(provider)
-    provider_manager = ProviderRuntimeManager(
-        config, adapter, workspace / "provider-selection.json", environ=os.environ,
+    # The browser, CLI and specialist workers share the exact-model capability
+    # router. The initial cloud choice comes from trusted deployment config;
+    # interactive changes require a separate explicit confirmation.
+    provider_manager = ProviderManager(config, environ=os.environ)
+    selected_name = (config.get("provider") or os.environ.get("YUKI_PROVIDER", "openai")).strip().lower()
+    adapter = ProviderAgentAdapter(
+        provider_manager.create_selected_runtime_adapter(allow_cloud=(selected_name == "openai"))
     )
+
+    def provider_catalog():
+        return provider_manager.catalog()
+
+    def select_provider(name: str, *, allow_cloud: bool = False):
+        result = provider_manager.select(name, allow_cloud=allow_cloud)
+        if result != f"Selected provider: {name.strip().lower()}":
+            raise ValueError("provider_not_ready")
+        selected_adapter = provider_manager.create_selected_runtime_adapter(allow_cloud=allow_cloud)
+        # ProviderAgentAdapter is the stable object already held by the agent
+        # loop; switch its underlying provider only after exact-model validation.
+        adapter.provider = selected_adapter
+        entry = next(
+            item for item in provider_manager.catalog()
+            if item.get("name") == name.strip().lower()
+        )
+        return {
+            "name": entry["name"], "label": entry.get("label", entry["name"]),
+            "implemented": entry.get("implemented", False), "ready": entry.get("ready", False),
+            "privacy": entry.get("privacy", "unknown"),
+            "configured_model": entry.get("configured_model"),
+            "credential_configured": entry.get("credential_configured", False),
+            "selected": True, "status": entry.get("status", "selected"),
+        }
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
     agent_loop = AgentExecutionLoop(
         adapter,
@@ -60,8 +87,8 @@ def create_app():
     )
     return build_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=provider_manager.catalog,
-        provider_selector=provider_manager.select,
+        provider_catalog=provider_catalog,
+        provider_selector=select_provider,
     )
 
 
