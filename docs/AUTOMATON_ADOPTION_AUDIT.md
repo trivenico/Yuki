@@ -114,6 +114,38 @@ This review compares the repository README (the documented baseline) with the di
 5. Provider routing and usage metering foundations exist, but routing must be validated across all execution paths with explicit local/cloud policy.
 6. Self-improvement should remain a supervised engineering workflow; autonomous production self-modification is not a target.
 
+## Initial source-level authorization inventory
+
+The following execution paths were inspected on `feature/distributed-model-placement`. This is a verified starting inventory, not yet proof that every side-effect path in the repository has been enumerated.
+
+| Entry point / module | Current enforcement | Remaining gateway work |
+|---|---|---|
+| `yuki.py` `/tool` -> `core/guarded_tool_runtime.py` | Registered tool lookup, `SecurityPolicy.authorize_tool(name)`, bounded arguments/results, metadata audit | Pass authenticated principal, trigger/run/step provenance, typed risk and canonical argument digest into shared policy decision |
+| `yuki.py` `/skill invoke` -> `core/approved_skill_runtime.py` -> `core/guarded_skill_runtime.py` | Registry lookup and exact-argument one-shot approval; optional audit | Preserve explicit approval while making policy decision and audit schema common to interactive and worker execution |
+| `yuki.py` `/durable run` -> `core/durable_skill_worker.py` | Fixed `skill.invoke` task type, one-attempt semantics, lease heartbeat and guarded skill runtime | Verify worker identity and original owner/trigger provenance at dispatch; prevent task payloads from asserting authority |
+| `core/mcp_client.py` | HTTPS host allow-list, public-address check, tool allow-list, explicit callback approval, bounded JSON payloads; results marked untrusted | Route MCP calls through shared policy; bind approvals to server identity, tool schema/version and argument digest; keep returned content untrusted |
+| `automation/workflow_engine.py` | Synchronous allow-listed actions, bounded steps/arguments/output, per-step approval callback | If/when connected to runtime scheduling, require shared authorization at each side effect; do not treat workflow approval as a general capability grant |
+| `core/plugin_loader.py` / `skills/registry.py` | Discovery disabled by default; explicit trusted module list; validates loaded skill shape | Python imports still execute with process privileges. Keep arbitrary plugins out of process or behind a real OS/container sandbox; policy checks alone do not sandbox code |
+
+### Security boundary conclusions
+
+- The existing guards are useful local controls, but they have different APIs and audit semantics. They are not one centralized policy gateway.
+- A successful approval for one skill invocation must not authorize a different argument, tool, server, task, or later run.
+- The durable worker must derive authority from persisted authenticated task ownership and trusted dispatch context, not from the skill name or task payload alone.
+- MCP discovery metadata and tool results are untrusted. A prompt-injection scan is a signal only; a clean scan must never grant authority.
+- The legacy workflow engine is a bounded synchronous runner. Do not describe it as a durable scheduler or claim it currently dispatches arbitrary tools.
+- The plugin loader is not a sandbox. A future gateway cannot make in-process untrusted Python safe simply by authorizing its import.
+
+### Gateway integration acceptance criteria
+
+1. Enumerate every call site that can cause a side effect, including direct skill execution, provider actions, browser/network operations, GitHub operations, local file writes, device dispatch, workflow handlers and background workers.
+2. Define a typed request contract: authenticated principal, trigger provenance, run/step/task IDs, capability/tool ID, target resource, validated argument digest, declared risk and policy version.
+3. Return exactly one of `allow`, `require_approval`, `deny`, or `quarantine`; unknown identities, malformed requests, unavailable policy storage and evaluation errors deny by default.
+4. Enforce deny-overrides and scope approvals to the exact action, target, argument digest, principal and expiry. Roles, agent names and model output never grant permissions.
+5. Emit a redacted, append-only decision event before execution and a separate outcome event after execution. Audit failure must not turn a denial into an allow.
+6. Add adversarial tests for direct-call bypasses, forged principals, replayed approvals, changed arguments, stale worker leases, malicious MCP metadata/results, plugin import side effects, policy-store failure and attempted policy self-modification.
+7. Migrate one execution surface at a time; retain existing controls until parity tests prove the shared gateway preserves or strengthens them.
+
 ## Recommended implementation sequence
 
 1. Policy gateway audit and enforcement — establish one mandatory tool authorization path and close bypasses.
