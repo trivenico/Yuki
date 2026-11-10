@@ -299,9 +299,12 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 f"Invocation approval: {'required' if requires_approval else 'not required'}"
             )
         if parts[1] == "approve" and len(parts) >= 3:
+            user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+            if user is None:
+                return "Authentication required. Use /auth login USERNAME."
             argument = parts[3] if len(parts) == 4 else ""
             try:
-                runtime.approve_invocation(parts[2], argument)
+                runtime.approve_invocation(parts[2], argument, principal_id=user.user_id)
                 write_audit_event("skill:approval", "granted")
                 return f"One-shot invocation approval granted for {parts[2]} and the exact supplied argument."
             except ValueError:
