@@ -54,8 +54,10 @@ def _persist_provider_selection(path: Path, *, provider: str, model: str, cloud_
     ):
         raise ValueError("Invalid provider selection state.")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"schema_version": 2, "provider": provider, "model": model,
-                          "cloud_authorized": cloud_authorized}, sort_keys=True, separators=(",", ":")) + "\n
+    payload = json.dumps({
+        "schema_version": 2, "provider": provider, "model": model,
+        "cloud_authorized": cloud_authorized,
+    }, sort_keys=True, separators=(",", ":")) + "\n"
     fd, temporary = tempfile.mkstemp(prefix=".provider-selection-", suffix=".tmp", dir=str(path.parent))
     try:
         if hasattr(os, 'fchmod'):
