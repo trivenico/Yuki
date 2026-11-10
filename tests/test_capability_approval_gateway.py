@@ -154,9 +154,6 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         self.assertIn(self.gateway._request_digest(self.request), audit)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_durable_inbox_is_idempotent_and_redacted(self):
         request_id = self.gateway.request_approval(self.request)
         self.assertEqual(request_id, self.gateway.request_approval(self.request))
@@ -200,3 +197,7 @@ if __name__ == "__main__":
         with self.assertRaises(PermissionError):
             self.gateway.request_approval(allowed)
 
+
+
+if __name__ == "__main__":
+    unittest.main()
