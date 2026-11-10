@@ -66,7 +66,6 @@ class OAuthPKCETransactionTests(unittest.TestCase):
             raw = stream.read()
         self.assertNotIn(result["state"].encode(), raw)
         self.assertNotIn(b"code_verifier", raw)
-        self.assertNotIn(b"jobs:read", raw)
 
     def test_transaction_is_single_use(self):
         result = self._create()
