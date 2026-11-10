@@ -11,7 +11,8 @@ Allow a trusted application host to attach short-lived OAuth bearer credentials 
 - Tokens are validated against a bounded bearer-token character set and are sent only in the HTTP `Authorization: Bearer` header over the existing HTTPS-only transport.
 - Provider exceptions and malformed values fail closed with stable errors that do not include the token or provider exception text.
 - When no provider is configured, existing public/unauthenticated MCP behavior remains unchanged.
-- MCP server configuration and skill arguments never accept raw access tokens.
+- MCP server configuration rejects unknown fields. The MCP skill rejects unknown request fields, including raw credential injection, and only accepts providers through trusted constructor injection.
+- Skill request text is bounded to 64 KB.
 
 ## Security boundaries and limitations
 
@@ -27,4 +28,4 @@ Upwork's official MCP endpoint advertises OAuth 2.1 with dynamic client registra
 
 ## Acceptance
 
-Tests cover bearer header injection, provider rotation per request, no-auth compatibility, malformed tokens, provider failures, and absence of token leakage in stable errors.
+Tests cover bearer header injection, provider rotation per request, no-auth compatibility, malformed tokens, provider failures, credential injection rejection, bounded skill input, and absence of token leakage in stable errors.
