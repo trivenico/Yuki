@@ -76,9 +76,11 @@ class ProviderManager:
             raise TypeError("Provider factory must return an adapter with generate() and is_available().")
         return adapter
 
-    def select(self, name: str) -> str:
+    def select(self, name: str, *, allow_cloud=False) -> str:
         if not isinstance(name, str) or not name.strip():
             return "Provide a provider name."
+        if type(allow_cloud) is not bool:
+            raise TypeError("allow_cloud must be a boolean")
         key = name.strip().lower()
         info = self._providers.get(key)
         if info is None:
@@ -86,15 +88,16 @@ class ProviderManager:
         if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
-            adapter = self._build_adapter(key)
+            if key in {"openai", "ollama"}:
+                adapter = self.create_routed_model_adapter(required=("text",), provider_preference=(key,), allow_cloud=allow_cloud)
+            else:
+                adapter = self._build_adapter(key)
         except Exception as exc:
             return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
-        # Commit provider selection and its adapter together. A second factory call
-        # could fail after the selected name changed, leaving status and runtime split.
+        # Commit selected name and availability-checked adapter atomically.
         self._selected = key
         self._selected_adapter = adapter
         return f"Selected provider: {key}"
-
     def create_selected_adapter(self) -> Optional[BaseProvider]:
         if not self._selected:
             return None
@@ -239,6 +242,8 @@ class ProviderManager:
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
         selected = self._selected
+        if selected in {"openai", "ollama"} and self._selected_adapter is not None:
+            return self._selected_adapter
         if selected in {"openai", "ollama"}:
             return self.create_routed_model_adapter(
                 required=("text",),
