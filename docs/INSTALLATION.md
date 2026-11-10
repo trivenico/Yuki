@@ -19,6 +19,24 @@ Windows users can also use `install_windows.bat` and then `.venv\\Scripts\\pytho
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, configure `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL`.
 
+## Free-tier provider APIs
+
+Yuki supports direct Google Gemini Developer API and NVIDIA NIM API adapters in addition to the official Gemini CLI and local Ollama. Free access is subject to each account's model availability, rate limits, regional eligibility, and provider terms; it is not an unlimited or guaranteed production quota. Check the provider console before relying on a quota. Review provider privacy terms before sending private source code or business data.
+
+### Google Gemini Developer API
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com/apikey).
+2. In PowerShell, set the key for the current terminal session: `$env:GEMINI_API_KEY = "your-key"`.
+3. Set `provider: gemini_api` in `config.yaml` (or use the existing `create_provider({"provider": "gemini_api"})` path). The default model is `gemini-2.5-flash`; override with `YUKI_GEMINI_MODEL`.
+
+### NVIDIA NIM API
+
+1. Generate an API key from [NVIDIA Build](https://build.nvidia.com/).
+2. In PowerShell, set `$env:NVIDIA_API_KEY = "your-key"`.
+3. Set `provider: nvidia` in `config.yaml`. The default model is `openai/gpt-oss-20b`; override with `YUKI_NVIDIA_MODEL`. Hosted model IDs and trial limits can change; use a model currently enabled for your account.
+
+Never commit API keys or put them in YAML. These adapters do not automatically fall back to another cloud provider on authentication errors, quota exhaustion, or network failures. For local-first routing, use `provider: hybrid` with explicit cloud task allow-list settings; verify the router configuration before using it with sensitive data.
+
 ## Optional integrations
 
 Install only what you intend to use:

@@ -1,7 +1,9 @@
 import unittest
 
 from providers.factory import create_provider
+from providers.gemini_api import GeminiAPIProvider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.nvidia_nim import NvidiaNIMProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.openai_compatible import OpenAICompatibleProvider
@@ -20,6 +22,17 @@ class ProviderFactoryTests(unittest.TestCase):
         provider = create_provider({"provider": "gemini"}, environ={})
         self.assertIsInstance(provider, GeminiCLIProvider)
         self.assertFalse(provider.is_available())
+
+    def test_direct_gemini_api_provider_uses_environment_key(self):
+        provider = create_provider({"provider": "gemini_api"}, environ={})
+        self.assertIsInstance(provider, GeminiAPIProvider)
+        self.assertFalse(provider.is_available())
+
+    def test_nvidia_provider_uses_environment_key_and_trusted_endpoint(self):
+        provider = create_provider({"provider": "nvidia"}, environ={})
+        self.assertIsInstance(provider, NvidiaNIMProvider)
+        self.assertFalse(provider.is_available())
+        self.assertEqual(provider.base_url, "https://integrate.api.nvidia.com/v1")
 
     def test_hybrid_routes_to_local_without_explicit_cloud_tasks(self):
         provider = create_provider(

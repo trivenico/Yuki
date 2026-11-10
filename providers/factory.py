@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import os
 
+from providers.gemini_api import GeminiAPIProvider
 from providers.gemini_cli import GeminiCLIProvider
+from providers.nvidia_nim import NvidiaNIMProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
@@ -37,8 +39,20 @@ def create_provider(config=None, *, environ=None):
             max_prompt_chars=cfg.get("gemini_max_prompt_chars", 20000),
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
+    if selected == "gemini_api":
+        return GeminiAPIProvider(
+            model=str(env.get("YUKI_GEMINI_MODEL", cfg.get("gemini_model", "gemini-2.5-flash"))),
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+            environ=env,
+        )
+    if selected == "nvidia":
+        return NvidiaNIMProvider(
+            str(env.get("YUKI_NVIDIA_MODEL", cfg.get("nvidia_model", "openai/gpt-oss-20b"))),
+            environ=env,
+            timeout=float(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", 45)),
+        )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, ollama, gemini, gemini_api, nvidia, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
