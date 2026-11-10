@@ -22,6 +22,7 @@ class ApprovedSkillRuntime:
         audit: Callable[[str, str], None] | None = None,
         policy_engine: Any = None,
         policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
+        approval_gateway: Any = None,
     ):
         self.registry = registry
         self.approval_store = approval_store
@@ -35,6 +36,11 @@ class ApprovedSkillRuntime:
         self.audit = audit
         self.policy_engine = policy_engine
         self.policy_request_factory = policy_request_factory
+        if approval_gateway is not None and not callable(getattr(approval_gateway, "authorize", None)):
+            raise TypeError("approval_gateway must provide authorize(request, approval_token=...)")
+        if approval_gateway is not None and policy_engine is None:
+            raise ValueError("approval_gateway requires the central policy engine and request factory")
+        self.approval_gateway = approval_gateway
         self.wiring = ApprovedSkillWiringService(registry, approval_store)
 
     def discover(self, root):
@@ -59,7 +65,7 @@ class ApprovedSkillRuntime:
             raise ValueError("Cannot approve an invocation for an unregistered skill.")
         self.invocation_approvals.approve(skill_name, argument, principal_id=principal_id)
 
-    def invoke(self, skill_name: str, argument: str = "", *, policy_context: SkillPolicyContext | None = None) -> SkillInvocationResult:
+    def invoke(self, skill_name: str, argument: str = "", *, policy_context: SkillPolicyContext | None = None, approval_token: str | None = None) -> SkillInvocationResult:
         return invoke_registered_skill(
             self.registry,
             skill_name,
@@ -69,4 +75,6 @@ class ApprovedSkillRuntime:
             policy_engine=self.policy_engine,
             policy_request_factory=self.policy_request_factory,
             policy_context=policy_context,
+            approval_gateway=self.approval_gateway,
+            approval_token=approval_token,
         )
