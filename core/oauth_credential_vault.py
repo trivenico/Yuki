@@ -43,7 +43,7 @@ class StoredOAuthCredential:
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,255}$")
 _TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]{1,8192}={0,}$")
-_SCOPE = re.compile(r"^[\\x21\\x23-\\x5B\\x5D-\\x7E]{1,128}$")
+_SCOPE = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]{1,128}$")
 
 
 class SQLiteOAuthCredentialVault:
