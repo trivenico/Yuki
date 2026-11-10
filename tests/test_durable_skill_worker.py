@@ -149,9 +149,22 @@ class DurableSkillWorkerTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertEqual(self.high_risk.calls, 0)
 
+    def test_high_risk_approval_cannot_be_reused_by_another_principal(self):
+        self.approvals.approve("write_demo", "change", principal_id="alice")
+        task = self.engine.submit(
+            self.goal, "skill.invoke",
+            {"skill_name": "write_demo", "argument": "change"},
+            idempotency_key="bob-cannot-reuse-alice-approval",
+            owner_id="test-owner", max_attempts=1,
+        )
+        result = self.worker.run_once()
+        self.assertEqual(result["status"], "approval_required")
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(self.high_risk.calls, 0)
+
     def test_high_risk_skill_executes_after_exact_argument_approval(self):
         task = self.submit("write_demo", "change", key="approved-task")
-        self.approvals.approve("write_demo", "change")
+        self.approvals.approve("write_demo", "change", principal_id="test-owner")
         result = self.worker.run_once()
         self.assertEqual(result["state"], "succeeded")
         self.assertEqual(self.high_risk.calls, 1)
