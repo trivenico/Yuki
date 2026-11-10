@@ -66,6 +66,7 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
     def test_request_is_reconstructed_from_persisted_owned_task(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
         self.assertEqual(len(self.service.pending_requests("approver-session")), 1)
+        self.assertIsNone(self.engine.claim("worker-before-approval", owner_id="alice"))
         delivered = []
         service = AuthenticatedCapabilityApprovalService(
             self.auth, self.gateway, task_engine=self.engine,
@@ -76,6 +77,8 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         request = self.service._request_from_owned_task("alice", self.task["id"])
         decision = self.gateway.authorize(request, approval_token=delivered[0][1])
         self.assertTrue(decision.allowed)
+        claimed = self.engine.claim("worker-after-approval", owner_id="alice")
+        self.assertEqual(claimed["id"], self.task["id"])
 
     def test_unauthenticated_user_cannot_request_or_revoke(self):
         with self.assertRaises(AuthenticationError):
@@ -149,8 +152,7 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
 
     def test_approval_rechecks_task_state_after_request(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
-        claimed = self.engine.claim("worker-1", owner_id="alice")
-        self.assertEqual(claimed["id"], self.task["id"])
+        self.engine.cancel_task(self.task["id"])
         delivered = []
         service = AuthenticatedCapabilityApprovalService(
             self.auth, self.gateway, task_engine=self.engine,
@@ -160,6 +162,13 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "only queued tasks"):
             service.approve_pending("approver-session", request_id)
         self.assertEqual(delivered, [])
+
+    def test_worker_cannot_claim_task_while_approval_is_pending(self):
+        request_id = self.service.request_approval("requester-session", self.task["id"])
+        self.assertIsNone(self.engine.claim("worker-1", owner_id="alice"))
+        self.assertTrue(self.engine.release_task_approval_hold(self.task["id"], request_id))
+        claimed = self.engine.claim("worker-1", owner_id="alice")
+        self.assertEqual(claimed["id"], self.task["id"])
 
     def test_approval_rechecks_goal_state_after_request(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
