@@ -9,7 +9,7 @@ from typing import Any
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.inference_jobs import InferenceJobService
 
-_MAX_BODY = 70_000
+_MAX_BODY = 270_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 _DEVICE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
