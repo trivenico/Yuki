@@ -49,7 +49,8 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(
             {"provider": "ollama", "ollama_model": "test-model"}, environ={}
         )
-        model = manager.create_selected_agent_model()
+        with patch("providers.factory.create_provider", return_value=OllamaProvider()):
+            model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
     def test_text_only_hybrid_provider_fails_closed_for_agent_chat(self):
