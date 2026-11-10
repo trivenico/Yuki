@@ -250,6 +250,8 @@ class SpecialistAgentCoordinator:
                 raise AgentPlanError("required_permissions must be bounded permission identifiers.")
             if len(set(item.required_permissions)) != len(item.required_permissions):
                 raise AgentPlanError("required permissions must be unique.")
+            if item.required_permissions and not item.requires_approval:
+                raise AgentPlanError("subtasks requesting permissions must require explicit approval.")
         for item in items:
             if any(dep not in ids for dep in item.depends_on):
                 raise AgentPlanError(f"subtask {item.subtask_id} references an unknown dependency.")
@@ -542,6 +544,7 @@ class SpecialistAgentCoordinator:
                     "name": row["subtask_id"], "action": agent.action,
                     "argument": argument,
                     "requires_approval": bool(row["requires_approval"]),
+                    "required_permissions": json.loads(row["permissions_json"]),
                 }],
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
