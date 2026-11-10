@@ -56,6 +56,7 @@ def build_conversation_runtime(
     device_agent: Any | None = None,
     reasoning_context_builder: Any | None = None,
     reasoning_agent_id: str = "yuki",
+    memory_store: Any | None = None,
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -76,7 +77,7 @@ def build_conversation_runtime(
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
-            device_agent=device_agent,
+            device_agent=device_agent, memory_store=memory_store,
         )
         return ConversationRuntime(app, store)
     except Exception:
