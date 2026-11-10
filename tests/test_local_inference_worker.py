@@ -65,4 +65,5 @@ class LocalWorkerTests(unittest.TestCase):
   persisted=self.jobs.get_job("owner",job.job_id)
   self.assertEqual(persisted.status,"running")
   self.assertIsNone(persisted.result_text)
-\nif __name__=="__main__": unittest.main()
+
+if __name__=="__main__": unittest.main()
