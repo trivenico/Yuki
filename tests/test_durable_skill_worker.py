@@ -189,6 +189,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
             {"skill_name": "read_demo", "extra": "not allowed"},
             idempotency_key="invalid-payload",
             max_attempts=1,
+            owner_id="test-owner",
         )
         result = self.worker.run_once()
         self.assertEqual(result["status"], "invalid_payload")
