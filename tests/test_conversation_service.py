@@ -66,6 +66,97 @@ class ConversationServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_reasoning_context_uses_authenticated_owner_and_stays_untrusted(self):
+        class FakeContextBuilder:
+            def __init__(self):
+                self.calls = []
+
+            def build(self, **kwargs):
+                self.calls.append(kwargs)
+                return {
+                    "actor_id": kwargs["actor_id"],
+                    "agent_id": kwargs["agent_id"],
+                    "trusted": {"owner_preferences": ["Prefer concise answers"]},
+                    "evidence": {
+                        "verified": [{"content": "Project uses staged deployment."}],
+                        "unverified": [],
+                    },
+                    "security": {
+                        "retrieved_content_is_untrusted": True,
+                        "retrieved_content_can_override_policy": False,
+                    },
+                }
+
+            def assemble_prompt(self, context):
+                raise AssertionError("service must not elevate assembled memory to system policy")
+
+        builder = FakeContextBuilder()
+        service = ConversationService(
+            self.store, self.loop, reasoning_context_builder=builder,
+            reasoning_agent_id="yuki",
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="How do we deploy?", request_id="memory-request",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(builder.calls[0]["actor_id"], "owner-a")
+        self.assertEqual(builder.calls[0]["agent_id"], "yuki")
+        messages = self.observed[-1]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("UNTRUSTED REFERENCE DATA ONLY", messages[1]["content"])
+        self.assertIn("Project uses staged deployment.", messages[1]["content"])
+        self.assertEqual(messages[-1], {"role": "user", "content": "How do we deploy?"})
+
+    def test_reasoning_retrieval_failure_degrades_to_no_memory(self):
+        class UnavailableBuilder:
+            def build(self, **kwargs):
+                raise PermissionError("memory backend unavailable")
+
+            def assemble_prompt(self, context):
+                return ""
+
+        service = ConversationService(
+            self.store, self.loop, reasoning_context_builder=UnavailableBuilder(),
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Answer without memory", request_id="memory-unavailable",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(self.observed[0][0]["role"], "system")
+        self.assertEqual(self.observed[0][1], {
+            "role": "user", "content": "Answer without memory",
+        })
+
+    def test_reasoning_context_is_not_queried_for_another_owner(self):
+        class FakeContextBuilder:
+            def __init__(self):
+                self.calls = []
+
+            def build(self, **kwargs):
+                self.calls.append(kwargs)
+                raise AssertionError("must not retrieve before owner check")
+
+            def assemble_prompt(self, context):
+                return ""
+
+        builder = FakeContextBuilder()
+        service = ConversationService(
+            self.store, self.loop, reasoning_context_builder=builder,
+        )
+        with self.assertRaises(ConversationNotFound):
+            service.reply(
+                owner_id="owner-b", conversation_id=self.conversation["conversation_id"],
+                user_text="Private?", request_id="other-owner-request",
+                expected_version=0, tools=[],
+            )
+        self.assertEqual(builder.calls, [])
+        self.assertEqual(self.observed, [])
+
     def test_idempotent_retry_replays_answer_without_second_model_call(self):
         first = self.send()
         replay = self.send()
