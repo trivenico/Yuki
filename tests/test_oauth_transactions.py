@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import threading
 import unittest
@@ -58,7 +59,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
 
     def test_sensitive_values_are_not_stored_in_plaintext(self):
         self._create()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db:
             row = db.execute(
                 "SELECT state_digest, owner_digest, session_digest, verifier_ciphertext "
                 "FROM oauth_transactions"
