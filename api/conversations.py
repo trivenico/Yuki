@@ -203,7 +203,7 @@ class YukiConversationAPI:
                 await asyncio.to_thread(self.auth.revoke_session, token)
                 return await self._respond(send, 200, {"logged_out": True})
 
-            user, _ = await self._principal(scope)
+            user, session_token = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
 
@@ -216,7 +216,7 @@ class YukiConversationAPI:
                 payload = await self._body(receive)
                 if payload:
                     return await self._respond(send, 400, {"error": "invalid_request"})
-                goal_id = await asyncio.to_thread(self.task_service.create_goal, (await self._principal(scope))[1])
+                goal_id = await asyncio.to_thread(self.task_service.create_goal, session_token)
                 return await self._respond(send, 201, {"goal_id": goal_id})
 
             if self.task_service is not None:
@@ -225,7 +225,6 @@ class YukiConversationAPI:
                 goal_events_match = re.fullmatch(r"/v1/goals/([^/]+)/events", path)
                 task_match = re.fullmatch(r"/v1/tasks/([^/]+)", path)
                 task_cancel_match = re.fullmatch(r"/v1/tasks/([^/]+)/cancel", path)
-                _, session_token = await self._principal(scope)
                 if goal_tasks_match and method == "POST":
                     payload = await self._body(receive)
                     required = {"task_type", "payload", "idempotency_key"}
