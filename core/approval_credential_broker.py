@@ -162,6 +162,8 @@ class ApprovalCredentialBroker:
             except UnicodeDecodeError:
                 raise PermissionError("credential encoding is invalid") from None
 
+        # The worker constructor verifies this pinned identity before accepting the resolver.
+        resolve.worker_id = self.worker_id
         return resolve
 
     def revoke(self, request_id: str) -> bool:
