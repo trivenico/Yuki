@@ -202,6 +202,52 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         claimed = self.engine.claim("credential-worker", owner_id="alice")
         self.assertEqual(claimed["id"], self.task["id"])
 
+    def test_explicit_worker_identity_must_match_bound_broker(self):
+        class Broker:
+            worker_id = "broker-worker"
+
+            def deliver_credential(self, request_id, token):
+                pass
+
+        broker = Broker()
+        with self.assertRaisesRegex(ValueError, "must match"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=broker.deliver_credential,
+                approval_worker_id="different-worker",
+            )
+
+    def test_worker_identity_is_inferred_from_bound_broker(self):
+        class Broker:
+            worker_id = "broker-worker"
+
+            def deliver_credential(self, request_id, token):
+                pass
+
+        broker = Broker()
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=broker.deliver_credential,
+        )
+        self.assertEqual(service.approval_worker_id, "broker-worker")
+
+    def test_invalid_broker_worker_identity_is_rejected(self):
+        class Broker:
+            worker_id = "../untrusted"
+
+            def deliver_credential(self, request_id, token):
+                pass
+
+        broker = Broker()
+        with self.assertRaisesRegex(ValueError, "invalid worker identity"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=broker.deliver_credential,
+            )
+
     def test_worker_cannot_claim_task_while_approval_is_pending(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
         self.assertIsNone(self.engine.claim("worker-1", owner_id="alice"))
