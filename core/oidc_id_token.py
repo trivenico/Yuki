@@ -195,10 +195,9 @@ class OIDCIdentityTokenVerifier:
         if subject != self._subject:
             raise OIDCIdentityTokenError("oidc_subject_mismatch")
         if (not isinstance(audiences, list) or not audiences
+                or not all(isinstance(item, str) and item for item in audiences)
                 or len(set(audiences)) != len(audiences)
-                or self._client_id not in audiences or not all(
-                    isinstance(item, str) and item for item in audiences
-                )):
+                or self._client_id not in audiences):
             raise OIDCIdentityTokenError("oidc_audience_mismatch")
         if len(audiences) > 1 and claims.get("azp") != self._client_id:
             raise OIDCIdentityTokenError("oidc_authorized_party_mismatch")
