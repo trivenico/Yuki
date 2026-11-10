@@ -63,6 +63,8 @@ class CapabilityApprovalGateway:
                 CREATE TABLE IF NOT EXISTS capability_approvals (
                     token_sha256 TEXT PRIMARY KEY,
                     request_sha256 TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
                     principal_id TEXT NOT NULL,
                     capability TEXT NOT NULL,
                     target TEXT NOT NULL,
@@ -72,7 +74,8 @@ class CapabilityApprovalGateway:
                     created_at REAL NOT NULL,
                     expires_at REAL NOT NULL,
                     consumed_at REAL,
-                    revoked_at REAL
+                    revoked_at REAL,
+                    revoked_by TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_capability_approvals_expiry
                     ON capability_approvals(expires_at);
@@ -162,12 +165,14 @@ class CapabilityApprovalGateway:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 """INSERT INTO capability_approvals
-                   (token_sha256,request_sha256,principal_id,capability,target,
-                    run_id,step_id,created_by,created_at,expires_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (token_hash, digest, request.principal_id, request.capability,
-                 request.target, request.run_id, request.step_id, approved_by,
-                 now, now + ttl_seconds),
+                   (token_sha256,request_sha256,request_json,policy_version,
+                    principal_id,capability,target,run_id,step_id,created_by,
+                    created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (token_hash, digest, json.dumps(asdict(request), sort_keys=True,
+                 separators=(",", ":"), ensure_ascii=False), policy.policy_version,
+                 request.principal_id, request.capability, request.target,
+                 request.run_id, request.step_id, approved_by, now, now + ttl_seconds),
             )
             self._audit(db, "approval_issued", request, digest, policy.policy_version,
                         policy.matched_rule_ids, "issued")
@@ -248,17 +253,29 @@ class CapabilityApprovalGateway:
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT consumed_at,revoked_at FROM capability_approvals WHERE token_sha256=?",
+                "SELECT * FROM capability_approvals WHERE token_sha256=?",
                 (token_hash,),
             ).fetchone()
             if row is None or row["consumed_at"] is not None or row["revoked_at"] is not None:
                 db.commit()
                 return False
+            raw = json.loads(row["request_json"])
+            request = PolicyRequest(**raw)
+            try:
+                trusted = self.authorize_approver(revoked_by, request)
+            except Exception as error:
+                raise PermissionError("revocation authority could not be verified") from error
+            if trusted is not True:
+                raise PermissionError("revoker is not authorized for this request")
+            now = self.clock()
             changed = db.execute(
-                """UPDATE capability_approvals SET revoked_at=?
+                """UPDATE capability_approvals SET revoked_at=?,revoked_by=?
                    WHERE token_sha256=? AND consumed_at IS NULL AND revoked_at IS NULL""",
-                (self.clock(), token_hash),
+                (now, revoked_by, token_hash),
             ).rowcount
+            if changed == 1:
+                self._audit(db, "approval_revoked", request, row["request_sha256"],
+                            row["policy_version"], (), "revoked")
             db.commit()
             return changed == 1
 
