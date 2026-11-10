@@ -5,6 +5,8 @@ It never evaluates code, invokes a shell, or performs implicit network access.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -39,17 +41,19 @@ class WorkflowEngine:
     @staticmethod
     def _validate_step(index: int, step: Any) -> tuple[str, str, str, bool]:
         if isinstance(step, dict):
-            allowed_keys = {"name", "action", "argument", "requires_approval"}
+            allowed_keys = {"name", "action", "argument", "requires_approval", "required_permissions"}
             if set(step) - allowed_keys:
                 raise ValueError("Workflow step contains unsupported fields.")
             name = step.get("name", f"step-{index + 1}")
             action = step.get("action")
             argument = step.get("argument", "")
             approval = step.get("requires_approval", True)
+            permissions = step.get("required_permissions", [])
         elif isinstance(step, WorkflowStep):
             name, action, argument, approval = (
                 step.name, step.action, step.argument, step.requires_approval
             )
+            permissions = []
         else:
             raise ValueError("Each workflow step must be a mapping or WorkflowStep.")
 
@@ -70,6 +74,15 @@ class WorkflowEngine:
             raise ValueError("Step argument must be NUL-free text of at most 2000 characters.")
         if not isinstance(approval, bool):
             raise ValueError("requires_approval must be a boolean.")
+        if (
+            not isinstance(permissions, (list, tuple))
+            or len(permissions) > 32
+            or any(not isinstance(permission, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,99}", permission) for permission in permissions)
+            or len(set(permissions)) != len(permissions)
+        ):
+            raise ValueError("required_permissions must contain at most 32 unique permission identifiers.")
+        if permissions and not approval:
+            raise ValueError("steps requesting permissions must require explicit approval.")
         if action == "wait_for_approval" and not approval:
             raise ValueError("wait_for_approval always requires explicit approval.")
         return name.strip(), action, argument, approval
