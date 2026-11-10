@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -37,7 +38,7 @@ class OAuthRuntimeTests(unittest.TestCase):
         vault.store(
             owner_id="owner-1", provider_id="provider-1", account_id="account-1",
             access_token="access-token-123", refresh_token="refresh-token-456",
-            expires_at=1_900_000_000, scopes=["read"],
+            expires_at=int(time.time()) + 3600, scopes=["read"],
         )
         restarted_provider = OSKeyringOAuthKeyProvider(
             service_name="runtime-test", backend=self.backend
