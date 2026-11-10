@@ -120,7 +120,7 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(data["error"], "explicit_confirmation_required")
-        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(calls, [("ollama", {"allow_cloud": False})])
 
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")
