@@ -317,6 +317,8 @@ class AgentMemoryStore:
             ).fetchone()
             if previous is None:
                 raise ValueError("active_memory_not_found")
+            if previous["lifecycle_status"] in {"rejected", "retired"}:
+                raise ValueError("terminal_memory_status_cannot_be_corrected")
             if previous["scope"] == "shared" and not self._allowed(
                 actor_id, "agent_memory:share", agent_id
             ):
