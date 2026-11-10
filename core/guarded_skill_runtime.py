@@ -237,6 +237,8 @@ def invoke_registered_skill(
     policy_engine: Any = None,
     policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
     policy_context: SkillPolicyContext | None = None,
+    approval_gateway: Any = None,
+    approval_token: str | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -290,14 +292,26 @@ def invoke_registered_skill(
             if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
                 raise ValueError("invalid trusted policy context")
             policy_request = policy_request_factory(skill_name, argument, skill, policy_context)
-            policy_result = policy_engine.evaluate(policy_request)
-            if policy_result.decision != Decision.ALLOW:
-                status = "central_policy_" + policy_result.decision.value
-                record(status)
-                return SkillInvocationResult(
-                    False, "Skill blocked by Yuki's central security policy.",
-                    skill_name, status,
+            if approval_gateway is not None:
+                gateway_decision = approval_gateway.authorize(
+                    policy_request, approval_token=approval_token,
                 )
+                if not gateway_decision.allowed:
+                    status = "central_policy_" + gateway_decision.status
+                    record(status)
+                    return SkillInvocationResult(
+                        False, "Skill blocked by Yuki's central security policy.",
+                        skill_name, status,
+                    )
+            else:
+                policy_result = policy_engine.evaluate(policy_request)
+                if policy_result.decision != Decision.ALLOW:
+                    status = "central_policy_" + policy_result.decision.value
+                    record(status)
+                    return SkillInvocationResult(
+                        False, "Skill blocked by Yuki's central security policy.",
+                        skill_name, status,
+                    )
         except Exception:
             record("central_policy_error")
             return SkillInvocationResult(
