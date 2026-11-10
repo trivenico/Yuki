@@ -99,10 +99,10 @@ class AgentMemoryTests(unittest.TestCase):
    content="new",source="review",reason="owner approved")
   with closing(sqlite3.connect(self.store.database_path)) as connection:
    with connection as db:
-   with self.assertRaises(sqlite3.IntegrityError):
-    db.execute("UPDATE agent_memory_corrections SET reason='tampered'")
-   with self.assertRaises(sqlite3.IntegrityError):
-    db.execute("DELETE FROM agent_memory_corrections")
+    with self.assertRaises(sqlite3.IntegrityError):
+     db.execute("UPDATE agent_memory_corrections SET reason='tampered'")
+    with self.assertRaises(sqlite3.IntegrityError):
+     db.execute("DELETE FROM agent_memory_corrections")
 
  def test_correction_requires_share_permission_for_shared_claim(self):
   old=self.store.remember(actor_id="owner",agent_id="research",content="shared old",
@@ -165,11 +165,12 @@ class AgentMemoryTests(unittest.TestCase):
   item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
    memory_id=item["memory_id"],status="approved",reason="Reviewed")
-  with sqlite3.connect(self.store.database_path) as db:
-   with self.assertRaises(sqlite3.IntegrityError):
-    db.execute("UPDATE agent_memory_lifecycle_events SET reason='tampered'")
-   with self.assertRaises(sqlite3.IntegrityError):
-    db.execute("DELETE FROM agent_memory_lifecycle_events")
+  with closing(sqlite3.connect(self.store.database_path)) as connection:
+   with connection as db:
+    with self.assertRaises(sqlite3.IntegrityError):
+     db.execute("UPDATE agent_memory_lifecycle_events SET reason='tampered'")
+    with self.assertRaises(sqlite3.IntegrityError):
+     db.execute("DELETE FROM agent_memory_lifecycle_events")
 
  def test_lifecycle_review_permission_is_required(self):
   item=self.store.remember(actor_id="owner",agent_id="research",content="Fact",source="source")
