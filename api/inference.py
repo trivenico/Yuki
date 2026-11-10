@@ -153,8 +153,8 @@ class AuthenticatedInferenceAPI:
             match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})(/cancel)?", path)
             if match and method == "GET" and not match.group(2):
                 job = await asyncio.to_thread(self.jobs.get_job, user.user_id, match.group(1))
-                return await self._respond(send, 200, {"job": job.public_dict()} if job else {"error": "not_found"},
-                                           status=200 if job else 404)
+                return await self._respond(send, 200 if job else 404,
+                                           {"job": job.public_dict()} if job else {"error": "not_found"})
             if match and method == "POST" and match.group(2) == "/cancel":
                 cancelled = await asyncio.to_thread(
                     self.jobs.cancel_job, user.user_id, match.group(1)
