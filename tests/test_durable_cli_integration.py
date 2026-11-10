@@ -130,6 +130,17 @@ class DurableCliIntegrationTests(unittest.TestCase):
             response = self.command("/durable goal create")
         self.assertIn("authentication required", response.lower())
 
+    def test_interactive_skill_invocation_requires_authenticated_policy(self):
+        result = self.command("/skill invoke read_demo interactive")
+        self.assertIn("executed safely", result)
+        self.assertEqual(self.low.calls, ["interactive"])
+
+    def test_interactive_skill_invocation_rejects_missing_session(self):
+        with patch.object(yuki, "_CLI_SESSION_TOKEN", None):
+            result = self.command("/skill invoke read_demo interactive")
+        self.assertIn("authentication required", result.lower())
+        self.assertEqual(self.low.calls, [])
+
     def test_goal_submit_list_and_run_are_wired_end_to_end(self):
         created = self.command("/durable goal create")
         goal_id = created.split(": ", 1)[1]
