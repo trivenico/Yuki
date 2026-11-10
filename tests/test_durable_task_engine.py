@@ -54,6 +54,12 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_goal(goal)["owner_id"], "auth-user-123")
         self.assertEqual(self.engine.get_task(task["id"])["owner_id"], "auth-user-123")
         self.assertEqual(self.engine.list_tasks(goal)[0]["owner_id"], "auth-user-123")
+        replay = self.engine.submit(
+            goal, "work", {"value": 1}, idempotency_key="owned-task",
+            owner_id="auth-user-123",
+        )
+        self.assertEqual(replay["id"], task["id"])
+        self.assertEqual(replay["owner_id"], "auth-user-123")
 
     def test_owned_goal_rejects_missing_or_forged_submitter(self):
         goal = self.engine.create_goal(owner_id="auth-user-123")
