@@ -31,7 +31,7 @@ to the task metadata. Payload identity claims are not authorization data.
 ## Local web deployment
 
 The standard `scripts/run_web.py` launcher creates
-`.yuki/durable_tasks.sqlite3` under the configured workspace and injects the
+`durable_tasks.sqlite3` in the configured workspace and injects the
 engine into the ASGI runtime. The runtime owns the engine and closes it during
 graceful shutdown. The durable task engine uses SQLite and is intended for a
 local filesystem; it is not a distributed queue.
