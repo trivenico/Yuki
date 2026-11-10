@@ -36,6 +36,7 @@ class MCPHTTPClient:
             allowed_hosts=self.allowed_hosts, timeout=timeout,
         )
         self.session_id = None
+        self._initialized = False
         self._request_id = 0
 
     @staticmethod
@@ -78,6 +79,8 @@ class MCPHTTPClient:
             headers["Authorization"] = authorization
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
+        if self._initialized:
+            headers["MCP-Protocol-Version"] = self.PROTOCOL_VERSION
         try:
             status, response_headers, body = self._http.post_json(
                 self.endpoint, payload=payload, headers=headers,
@@ -110,6 +113,7 @@ class MCPHTTPClient:
         })
         if not isinstance(result, dict):
             raise MCPError("MCP initialize response is invalid.")
+        self._initialized = True
         self._rpc("notifications/initialized", notification=True)
         return {"server_info": result.get("serverInfo", {}),
                 "protocol_version": result.get("protocolVersion", self.PROTOCOL_VERSION)}
