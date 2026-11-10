@@ -119,8 +119,18 @@ class AuthenticatedCapabilityApprovalService:
         user = self._principal(session_token, "workflow:approve")
         if self.deliver_credential is None:
             raise RuntimeError("protected credential delivery is not configured")
+        # Rebuild from authoritative task state at decision time. A task may
+        # have been claimed, cancelled, modified, or had its goal paused after
+        # the inbox item was created.
+        identity = self.gateway.pending_request_identity(request_id)
+        if identity["principal_id"] != user.user_id:
+            raise PermissionError("only the task owner may approve this request")
+        current_request = self._request_from_owned_task(
+            identity["principal_id"], identity["step_id"],
+        )
         token = self.gateway.approve_request(
             request_id, approved_by=user.user_id, ttl_seconds=ttl_seconds,
+            expected_request=current_request,
         )
         try:
             self.deliver_credential(request_id, token)
