@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import time
 import unittest
@@ -84,6 +85,19 @@ class OIDCIdentityTokenTests(unittest.TestCase):
         self.assertEqual(self.transport.calls, [
             ("GET", "https://auth.example.com/.well-known/jwks.json")
         ])
+        access_token = "opaque-access-token"
+        at_hash = b64(hashlib.sha256(access_token.encode("ascii")).digest()[:16])
+        self.verifier.verify(
+            id_token=self.token(at_hash=at_hash),
+            expected_nonce="nonce-value-1234567890",
+            access_token=access_token,
+        )
+        with self.assertRaisesRegex(OIDCIdentityTokenError, "access_token_hash_mismatch"):
+            self.verifier.verify(
+                id_token=self.token(at_hash="wrong-hash"),
+                expected_nonce="nonce-value-1234567890",
+                access_token=access_token,
+            )
 
     def test_verifies_ps256_es256_and_eddsa(self):
         nonce = "nonce-value-1234567890"
