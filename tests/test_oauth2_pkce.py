@@ -125,6 +125,47 @@ class OAuthPKCEPrimitiveTests(unittest.TestCase):
                     expected_state=request.state,
                 )
 
+    def test_validates_authorization_response_issuer(self):
+        request = self._request()
+        issuer = "https://auth.example.com"
+        callback = validate_oauth_authorization_callback(
+            callback_url=request.redirect_uri + "?code=code-1&state=" + request.state + "&iss=" + issuer,
+            expected_redirect_uri=request.redirect_uri,
+            expected_state=request.state,
+            expected_issuer=issuer,
+            require_issuer=True,
+        )
+        self.assertEqual(callback.issuer, issuer)
+
+    def test_rejects_missing_or_mismatched_authorization_response_issuer(self):
+        request = self._request()
+        issuer = "https://auth.example.com"
+        callbacks = (
+            request.redirect_uri + "?code=c&state=" + request.state,
+            request.redirect_uri + "?code=c&state=" + request.state + "&iss=https%3A%2F%2Fevil.example",
+            request.redirect_uri + "?code=c&state=" + request.state + "&iss=" + issuer + "&iss=" + issuer,
+        )
+        for callback_url in callbacks:
+            with self.subTest(callback_url=callback_url), self.assertRaises(OAuthAuthorizationError):
+                validate_oauth_authorization_callback(
+                    callback_url=callback_url,
+                    expected_redirect_uri=request.redirect_uri,
+                    expected_state=request.state,
+                    expected_issuer=issuer,
+                    require_issuer=True,
+                )
+
+    def test_optional_issuer_is_still_validated_when_present(self):
+        request = self._request()
+        with self.assertRaises(OAuthAuthorizationError):
+            validate_oauth_authorization_callback(
+                callback_url=request.redirect_uri + "?code=c&state=" + request.state + "&iss=https%3A%2F%2Fevil.example",
+                expected_redirect_uri=request.redirect_uri,
+                expected_state=request.state,
+                expected_issuer="https://auth.example.com",
+                require_issuer=False,
+            )
+
     def test_rejects_malformed_or_oversized_callback(self):
         request = self._request()
         for callback_url in ("not-a-url", request.redirect_uri + "?code=&state=" + request.state,
