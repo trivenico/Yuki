@@ -198,9 +198,16 @@ class CapabilityApprovalGateway:
         return token
 
 
-    def request_approval(self, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
+    def request_approval(
+        self, request: PolicyRequest, *, ttl_seconds: int = 86400,
+        request_id: str | None = None,
+    ) -> str:
         """Persist an approval request; duplicate live requests are idempotent."""
         digest = self._request_digest(request)
+        if request_id is None:
+            request_id = digest[:32]
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
             raise ValueError("ttl_seconds is outside the configured request lifetime")
         policy = self.policy_engine.evaluate(request)
@@ -231,16 +238,35 @@ class CapabilityApprovalGateway:
             if existing is not None:
                 db.commit()
                 return existing["request_id"]
-            request_id = secrets.token_hex(16)
-            db.execute(
+            active_credential = db.execute(
+                """SELECT 1 FROM capability_approvals
+                   WHERE request_sha256=? AND policy_version=?
+                     AND expires_at>? AND consumed_at IS NULL AND revoked_at IS NULL
+                   LIMIT 1""",
+                (digest, policy.policy_version, now),
+            ).fetchone()
+            if active_credential is not None:
+                db.rollback()
+                raise PermissionError("an active approval credential already exists")
+            inserted = db.execute(
                 """INSERT INTO capability_approval_requests
                    (request_id,request_sha256,request_json,policy_version,principal_id,
                     capability,target,run_id,step_id,status,created_at,expires_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)
+                   ON CONFLICT(request_id) DO UPDATE SET
+                     request_json=excluded.request_json,
+                     policy_version=excluded.policy_version,
+                     status='pending',created_at=excluded.created_at,
+                     expires_at=excluded.expires_at,decided_at=NULL,decided_by=NULL
+                   WHERE capability_approval_requests.request_sha256=excluded.request_sha256
+                     AND capability_approval_requests.status IN ('expired','rejected','approved')""",
                 (request_id, digest, request_json, policy.policy_version,
                  request.principal_id, request.capability, request.target,
                  request.run_id, request.step_id, now, now + ttl_seconds),
             )
+            if inserted.rowcount != 1:
+                db.rollback()
+                raise PermissionError("approval request identifier is already bound")
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
             db.commit()
@@ -268,8 +294,24 @@ class CapabilityApprovalGateway:
             db.commit()
         return tuple(dict(row) for row in rows)
 
+    def pending_request_identity(self, request_id: str) -> dict[str, str]:
+        """Return the owner and task identifiers for a pending request only."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT principal_id,step_id,status,expires_at
+                   FROM capability_approval_requests WHERE request_id=?""",
+                (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= now:
+            raise PermissionError("approval request is unavailable")
+        return {"principal_id": row["principal_id"], "step_id": row["step_id"]}
+
     def approve_request(
         self, request_id: str, *, approved_by: str, ttl_seconds: int = 300,
+        expected_request: PolicyRequest | None = None,
     ) -> str:
         """Atomically approve one inbox item and mint its one-shot credential."""
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
@@ -303,6 +345,11 @@ class CapabilityApprovalGateway:
             raw["risk"] = Risk(raw["risk"])
             request = PolicyRequest(**raw)
             digest = self._request_digest(request)
+            if expected_request is not None:
+                expected_digest = self._request_digest(expected_request)
+                if not hmac.compare_digest(expected_digest, digest):
+                    db.rollback()
+                    raise PermissionError("underlying task changed since approval was requested")
             if not hmac.compare_digest(digest, row["request_sha256"]):
                 db.rollback()
                 raise PermissionError("approval request integrity check failed")

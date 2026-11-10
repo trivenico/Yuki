@@ -1,8 +1,8 @@
-"""Authenticated facade for durable capability approvals.
+"""Authenticated approval inbox backed by trusted durable task state.
 
-Approver identity is resolved from a live authentication session. Callers cannot
-supply an actor ID, and approval tokens are returned only to an injected trusted
-resolver for immediate delivery.
+Requesters identify a task, never a PolicyRequest. The service reconstructs the
+policy request from the persisted task, its authenticated goal owner, and the
+server-side registered skill metadata.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from core.auth import AuthenticationError
 from core.capability_approval_gateway import CapabilityApprovalGateway
-from core.tool_policy import PolicyRequest
+from core.tool_policy import PolicyRequest, Risk, argument_digest
 
 
 class AuthenticatedCapabilityApprovalService:
@@ -21,16 +21,24 @@ class AuthenticatedCapabilityApprovalService:
         auth: Any,
         gateway: CapabilityApprovalGateway,
         *,
+        task_engine: Any,
+        skill_registry: Any,
         deliver_credential: Callable[[str, str], None] | None = None,
     ) -> None:
         if not callable(getattr(auth, "resolve_session", None)):
             raise TypeError("auth must provide resolve_session(token)")
         if not isinstance(gateway, CapabilityApprovalGateway):
             raise TypeError("gateway must be a CapabilityApprovalGateway")
+        if not callable(getattr(task_engine, "get_task", None)) or not callable(getattr(task_engine, "get_goal", None)):
+            raise TypeError("task_engine must provide get_task(task_id) and get_goal(goal_id)")
+        if not callable(getattr(skill_registry, "get", None)):
+            raise TypeError("skill_registry must provide get(skill_name)")
         if deliver_credential is not None and not callable(deliver_credential):
             raise TypeError("deliver_credential must be callable")
         self.auth = auth
         self.gateway = gateway
+        self.task_engine = task_engine
+        self.skill_registry = skill_registry
         self.deliver_credential = deliver_credential
 
     def _principal(self, session_token: str, permission: str | None = None):
@@ -46,14 +54,75 @@ class AuthenticatedCapabilityApprovalService:
             raise AuthenticationError("Authenticated principal is invalid.")
         return user
 
-    def request_approval(self, session_token: str, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
-        """Let an authenticated owner request review of their own operation."""
-        if not isinstance(request, PolicyRequest):
-            raise TypeError("request must be a validated PolicyRequest")
+    def _request_from_owned_task(self, user_id: str, task_id: str) -> PolicyRequest:
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
+            raise ValueError("task_id must be non-empty bounded text")
+        task = self.task_engine.get_task(task_id)
+        if task.get("owner_id") != user_id:
+            raise PermissionError("approval requests must belong to the authenticated task owner")
+        goal_id = task.get("goal_id")
+        if not isinstance(goal_id, str) or not goal_id:
+            raise PermissionError("task has no valid goal provenance")
+        # Reject stale task state before checking goal eligibility. Both checks
+        # remain mandatory; ordering keeps the task's terminal state explicit.
+        if task.get("state") != "queued":
+            raise PermissionError("only queued tasks can request approval")
+        goal = self.task_engine.get_goal(goal_id)
+        if goal.get("owner_id") != user_id or goal.get("state") != "active":
+            raise PermissionError("task goal is not owned by the authenticated principal")
+        if task.get("task_type") != "skill.invoke" or task.get("max_attempts") != 1:
+            raise PermissionError("task is not an eligible single-attempt skill invocation")
+        payload = task.get("payload")
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"skill_name", "argument"}
+            or not isinstance(payload.get("skill_name"), str)
+            or not payload["skill_name"]
+            or len(payload["skill_name"]) > 128
+            or not isinstance(payload.get("argument"), str)
+            or len(payload["argument"]) > 20000
+        ):
+            raise ValueError("persisted skill task payload is invalid")
+        skill_name = payload["skill_name"]
+        skill = self.skill_registry.get(skill_name)
+        if skill is None or getattr(skill, "name", None) != skill_name:
+            raise PermissionError("task does not reference a trusted registered skill")
+        raw_risk = getattr(skill, "risk", None)
+        if not isinstance(raw_risk, str):
+            raise PermissionError("registered skill has no trusted risk classification")
+        try:
+            risk = Risk(raw_risk.lower())
+        except ValueError:
+            raise PermissionError("registered skill risk classification is invalid") from None
+        return PolicyRequest(
+            principal_id=user_id,
+            trigger="durable_task",
+            capability="skill.invoke",
+            target=skill_name,
+            argument_sha256=argument_digest({"argument": payload["argument"]}),
+            risk=risk,
+            run_id=goal_id,
+            step_id=task_id,
+        )
+
+    def request_approval(self, session_token: str, task_id: str, *, ttl_seconds: int = 86400) -> str:
+        """Request review for a real queued task owned by the current session."""
         user = self._principal(session_token)
-        if request.principal_id != user.user_id:
-            raise PermissionError("approval requests must belong to the authenticated principal")
-        return self.gateway.request_approval(request, ttl_seconds=ttl_seconds)
+        request = self._request_from_owned_task(user.user_id, task_id)
+        request_id = self.gateway._request_digest(request)[:32]
+        self.task_engine.hold_task_for_approval(
+            task_id, user.user_id, request_id, ttl_seconds=ttl_seconds,
+        )
+        try:
+            persisted_id = self.gateway.request_approval(
+                request, ttl_seconds=ttl_seconds, request_id=request_id,
+            )
+            if persisted_id != request_id:
+                raise RuntimeError("approval request identifier mismatch")
+            return persisted_id
+        except Exception:
+            self.task_engine.release_task_approval_hold(task_id, request_id)
+            raise
 
     def pending_requests(self, session_token: str, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """List redacted pending approvals for an authorized approver."""
@@ -65,38 +134,30 @@ class AuthenticatedCapabilityApprovalService:
         user = self._principal(session_token, "workflow:approve")
         if self.deliver_credential is None:
             raise RuntimeError("protected credential delivery is not configured")
+        # Rebuild from authoritative task state at decision time. A task may
+        # have been claimed, cancelled, modified, or had its goal paused after
+        # the inbox item was created.
+        identity = self.gateway.pending_request_identity(request_id)
+        current_request = self._request_from_owned_task(
+            identity["principal_id"], identity["step_id"],
+        )
+        self.task_engine.renew_task_approval_hold(
+            identity["step_id"], request_id, ttl_seconds=ttl_seconds,
+        )
         token = self.gateway.approve_request(
             request_id, approved_by=user.user_id, ttl_seconds=ttl_seconds,
+            expected_request=current_request,
         )
         try:
             self.deliver_credential(request_id, token)
         except Exception:
-            # Revoke even if the delivery callback partially completed. Never
-            # propagate callback text, which could accidentally contain secrets.
             try:
                 self.gateway.revoke(token, revoked_by=user.user_id)
             except Exception:
                 pass
+            self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
             raise RuntimeError("protected approval credential delivery failed") from None
-
-    def approve(
-        self,
-        session_token: str,
-        request: PolicyRequest,
-        *,
-        ttl_seconds: int = 300,
-    ) -> str:
-        """Approve one exact operation and return its opaque one-time credential.
-
-        The caller must deliver the returned credential directly to a trusted
-        resolver; it must not put it in task payloads, model context, or logs.
-        """
-        if not isinstance(request, PolicyRequest):
-            raise TypeError("request must be a validated PolicyRequest")
-        user = self._principal(session_token, "workflow:approve")
-        return self.gateway.issue_approval(
-            request, approved_by=user.user_id, ttl_seconds=ttl_seconds,
-        )
+        self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
 
     def revoke(self, session_token: str, approval_token: str) -> bool:
         """Revoke an unconsumed credential using the authenticated actor."""
