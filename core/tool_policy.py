@@ -10,6 +10,7 @@ from enum import Enum
 import hashlib
 import json
 import re
+from itertools import islice
 from typing import Iterable
 
 
@@ -29,6 +30,8 @@ class Risk(str, Enum):
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+MAX_ARGUMENT_BYTES = 1024 * 1024
+MAX_POLICY_RULES = 10_000
 
 
 def _bounded_identifier(value: object, field: str) -> str:
@@ -40,12 +43,25 @@ def _bounded_identifier(value: object, field: str) -> str:
 def argument_digest(arguments: object) -> str:
     """Hash canonical JSON arguments; reject non-JSON and non-finite numbers."""
     try:
-        encoded = json.dumps(
-            arguments, sort_keys=True, separators=(",", ":"),
+        encoder = json.JSONEncoder(
+            sort_keys=True, separators=(",", ":"),
             ensure_ascii=False, allow_nan=False,
-        ).encode("utf-8")
+        )
+        chunks = []
+        total = 0
+        for chunk in encoder.iterencode(arguments):
+            # Avoid encoding an individual oversized chunk into another large
+            # allocation; UTF-8 byte length can never be smaller than chars.
+            if len(chunk) > MAX_ARGUMENT_BYTES - total:
+                raise ValueError("arguments exceed the maximum canonical size")
+            encoded_chunk = chunk.encode("utf-8")
+            total += len(encoded_chunk)
+            if total > MAX_ARGUMENT_BYTES:
+                raise ValueError("arguments exceed the maximum canonical size")
+            chunks.append(encoded_chunk)
+        encoded = b"".join(chunks)
     except (TypeError, ValueError, UnicodeEncodeError) as error:
-        raise ValueError("arguments must be valid finite JSON data") from error
+        raise ValueError("arguments must be valid finite JSON data within the size limit") from error
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -125,7 +141,11 @@ class ToolPolicyEngine:
         self.policy_version = _bounded_identifier(policy_version, "policy_version")
         if isinstance(rules, (str, bytes)):
             raise TypeError("rules must be an iterable of PolicyRule objects")
-        materialized = tuple(rules)
+        # Bound iteration so an untrusted or accidental infinite rule
+        # generator cannot exhaust memory during policy-engine construction.
+        materialized = tuple(islice(iter(rules), MAX_POLICY_RULES + 1))
+        if len(materialized) > MAX_POLICY_RULES:
+            raise ValueError(f"at most {MAX_POLICY_RULES} policy rules are allowed")
         if any(not isinstance(rule, PolicyRule) for rule in materialized):
             raise TypeError("every policy rule must be a PolicyRule")
         ids = [rule.rule_id for rule in materialized]
