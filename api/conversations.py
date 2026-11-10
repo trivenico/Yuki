@@ -37,6 +37,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         device_agent: Any | None = None,
+        memory_store: Any | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -56,6 +57,7 @@ class YukiConversationAPI:
         if device_agent is not None and not callable(getattr(device_agent, "heartbeat", None)):
             raise TypeError("device_agent must provide a heartbeat method")
         self.device_agent = device_agent
+        self.memory_store = memory_store
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -123,6 +125,15 @@ class YukiConversationAPI:
             user, _ = await self._principal(scope)
             if user is None:
                 return await self._respond(send, 401, {"error": "authentication_required"})
+
+            if path.startswith("/v1/memory"):
+                from api.memory import dispatch_memory_request
+                result = await dispatch_memory_request(
+                    self.memory_store, user.user_id, method, path, receive, scope
+                )
+                if result is not None:
+                    status, payload = result
+                    return await self._respond(send, status, payload)
 
             if method == "GET" and path == "/v1/devices":
                 if self.device_agent is None:
