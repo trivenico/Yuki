@@ -21,6 +21,7 @@ class DurableSkillWorker:
         worker_id: str,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
+        owner_id: str | None = None,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -36,6 +37,9 @@ class DurableSkillWorker:
             raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
         self.engine = engine
         self.runtime = runtime
+        if owner_id is not None and (not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256):
+            raise ValueError("owner_id must be non-empty bounded text")
+        self.owner_id = owner_id
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
@@ -73,7 +77,7 @@ class DurableSkillWorker:
         return result
 
     def run_once(self) -> dict[str, Any]:
-        task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds)
+        task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds, owner_id=self.owner_id)
         if task is None:
             return {"state": "idle", "status": "no_task"}
 
