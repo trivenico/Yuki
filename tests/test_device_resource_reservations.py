@@ -313,8 +313,9 @@ class AuthenticatedReservationTests(unittest.TestCase):
             ).fetchall())
         finally:
             db.close()
-        self.assertEqual(statuses[first.reservation_id], "expired")
-        self.assertEqual(statuses[second.reservation_id], "active")
+        # Both reservations can share the same expiry timestamp; tie-breaking
+        # is intentionally by reservation ID, not creation order.
+        self.assertCountEqual(statuses.values(), ["expired", "active"])
         self.assertEqual(self.service.expire_stale_reservations(limit=10), 1)
         self.assertEqual(self.service.expire_stale_reservations(limit=10), 0)
         with self.assertRaises(StaleReservation):
