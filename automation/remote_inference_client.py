@@ -4,7 +4,7 @@ The client talks only to Yuki's fixed inference endpoints. It rejects redirects,
 uses a device bearer credential, bounds response bodies, and never logs secrets.
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
 import urllib.error
@@ -17,7 +17,7 @@ class RemoteInferenceJob:
     model_id: str
     input_text: str
     lease_expires_at: str | None
-    lease_token: str
+    lease_token: str = field(repr=False, compare=False)
 
 class RemoteInferenceJobClient:
     def __init__(self, base_url: str, device_token: str, *, lease_seconds: int = 120,
