@@ -1,5 +1,6 @@
 """Durable, owner/session-bound OAuth transaction storage."""
 from __future__ import annotations
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -59,10 +60,14 @@ class SQLiteOAuthTransactionStore:
             raise OAuthTransactionError("invalid_" + label)
         return value
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout = 5000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout = 5000")
+            yield db
+        finally:
+            db.close()
 
     def create(self, *, state: str, code_verifier: str, owner_id: str, session_id: str,
                redirect_uri: str, issuer: str, resource: str, ttl_seconds: int = 600) -> int:
