@@ -99,7 +99,9 @@ class OIDCIdentityTokenTests(unittest.TestCase):
     def test_rejects_invalid_signature_and_untrusted_key_url_header(self):
         token = self.token()
         parts = token.split(".")
-        bad_signature = token[:-2] + ("AA" if token[-2:] != "AA" else "BB")
+        parts = token.split(".")
+        changed = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+        bad_signature = parts[0] + "." + parts[1] + "." + changed
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signature_invalid"):
             self.verifier.verify(id_token=bad_signature, expected_nonce="nonce-value-1234567890")
         header = segment({"alg": "RS256", "kid": "key-1", "jku": "https://evil.example/jwks"})
