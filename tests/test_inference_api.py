@@ -96,14 +96,14 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, body = self.request("GET", f"/v1/inference/jobs/{job_id}", token=self.owner_two.token)
         self.assertEqual((status, body["error"]), (404, "not_found"))
 
-        status, body = self.request("POST", "/v1/inference/worker/jobs/claim", {}, device_token)
+        status, body = self.request("POST", "/v1/inference/claim", {}, device_token)
         self.assertEqual(status, 200)
         claimed = body["job"]
         self.assertEqual(claimed["input_text"], "hello worker")
         self.assertTrue(claimed["lease_token"])
 
         status, body = self.request(
-            "POST", f"/v1/inference/worker/jobs/{job_id}/complete",
+            "POST", f"/v1/inference/{job_id}/complete",
             {"lease_token": claimed["lease_token"], "result_text": "finished"}, device_token,
         )
         self.assertEqual(status, 200)
