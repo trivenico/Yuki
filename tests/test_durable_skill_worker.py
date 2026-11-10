@@ -76,6 +76,77 @@ class DurableSkillWorkerTests(unittest.TestCase):
             owner_id="test-owner",
         )
 
+    def test_gateway_approval_is_resolved_outside_task_payload_and_passed_to_runtime(self):
+        from core.capability_approval_gateway import CapabilityApprovalGateway
+        from core.guarded_skill_runtime import SkillPolicyContext
+        from core.tool_policy import (
+            Decision, PolicyRequest, PolicyRule, Risk, ToolPolicyEngine, argument_digest,
+        )
+
+        engine = ToolPolicyEngine((
+            PolicyRule(
+                "durable-read-approval", Decision.REQUIRE_APPROVAL,
+                capability="skill.invoke", principal_id="test-owner",
+                trigger="durable_task", target="read_demo", risk=Risk.LOW,
+            ),
+        ), policy_version="durable-approval-v1")
+        gateway = CapabilityApprovalGateway(
+            Path(self.temp.name) / "gateway.sqlite", engine,
+            authorize_approver=lambda actor, request: actor == "admin",
+        )
+        runtime = ApprovedSkillRuntime(
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "gateway-skills.sqlite"),
+            policy_engine=engine,
+            policy_request_factory=lambda name, argument, skill, context: PolicyRequest(
+                principal_id=context.principal_id,
+                trigger=context.trigger,
+                capability="skill.invoke",
+                target=name,
+                argument_sha256=argument_digest({"argument": argument}),
+                risk=Risk.LOW,
+                run_id=context.goal_id,
+                step_id=context.task_id,
+            ),
+            approval_gateway=gateway,
+        )
+        with self.assertRaisesRegex(ValueError, "approval_token_resolver"):
+            DurableSkillWorker(
+                self.engine, runtime, worker_id="missing-resolver",
+                owner_id="test-owner",
+            )
+
+        task = self.submit("read_demo", "gateway-approved", key="gateway-approved")
+        context = SkillPolicyContext(
+            principal_id="test-owner", trigger="durable_task",
+            goal_id=self.goal, task_id=task["id"],
+        )
+        request = PolicyRequest(
+            principal_id="test-owner", trigger="durable_task",
+            capability="skill.invoke", target="read_demo",
+            argument_sha256=argument_digest({"argument": "gateway-approved"}),
+            risk=Risk.LOW, run_id=self.goal, step_id=task["id"],
+        )
+        token = gateway.issue_approval(request, approved_by="admin")
+        resolver_calls = []
+
+        def resolve_approval(policy_context, skill_name):
+            resolver_calls.append((policy_context, skill_name))
+            return token
+
+        result = DurableSkillWorker(
+            self.engine, runtime, worker_id="gateway-worker",
+            owner_id="test-owner", approval_token_resolver=resolve_approval,
+        ).run_once()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(resolver_calls), 1)
+        self.assertEqual(resolver_calls[0][0], context)
+        self.assertEqual(resolver_calls[0][1], "read_demo")
+        stored = self.engine.get_task(task["id"])
+        self.assertNotIn(token, str(stored))
+        self.assertNotIn("approval_token", str(stored["payload"]))
+
     def test_worker_requires_central_policy_by_default(self):
         runtime = ApprovedSkillRuntime(
             self.registry,
@@ -222,6 +293,59 @@ class DurableSkillWorkerTests(unittest.TestCase):
                         lease_seconds=4,
                         heartbeat_interval_seconds=interval,
                     )
+
+    def test_worker_renews_lease_during_slow_approval_resolution(self):
+        import threading
+        import time
+
+        resolving = threading.Event()
+        release = threading.Event()
+
+        class SlowApprovalRuntime:
+            policy_engine = object()
+            approval_gateway = object()
+
+            def invoke(self, _skill_name, _argument, *, policy_context, approval_token):
+                self.received = (policy_context, approval_token)
+                return type("Result", (), {
+                    "ok": True, "status": "completed", "message": "done"
+                })()
+
+        runtime = SlowApprovalRuntime()
+
+        def resolve_approval(_policy_context, _skill_name):
+            resolving.set()
+            if not release.wait(timeout=8):
+                raise RuntimeError("approval lookup timed out")
+            return "a" * 40
+
+        task = self.submit("read_demo", "approval-wait", key="slow-approval-resolution")
+        worker = DurableSkillWorker(
+            self.engine,
+            runtime,
+            worker_id="approval-heartbeat-worker",
+            lease_seconds=2,
+            heartbeat_interval_seconds=0.05,
+            owner_id="test-owner",
+            approval_token_resolver=resolve_approval,
+        )
+        outcomes = []
+        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(resolving.wait(timeout=2))
+        try:
+            # The resolver is deliberately slower than the original lease.
+            # The task must remain owned while trusted authorization is fetched.
+            time.sleep(2.2)
+            self.assertEqual(self.engine.recover_expired_leases(), 0)
+            self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
+        finally:
+            release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not finish after approval resolution")
+        self.assertEqual(outcomes[0]["state"], "succeeded")
+        self.assertEqual(runtime.received[1], "a" * 40)
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "succeeded")
 
     def test_worker_renews_lease_during_long_running_invocation(self):
         import threading
