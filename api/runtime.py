@@ -4,13 +4,15 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
+from api.income import AuthenticatedIncomeOpportunityAPI
+from api.inference import AuthenticatedInferenceAPI
+from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.conversation_store_factory import create_conversation_store
-from api.web import YukiWebApplication
-from api.inference import AuthenticatedInferenceAPI
 from core.device_pairing import DevicePairingService
+from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 
 
@@ -58,12 +60,12 @@ def build_conversation_runtime(
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     device_pairing: DevicePairingService | None = None,
     inference_jobs: InferenceJobService | None = None,
+    income_opportunities: SQLiteIncomeOpportunityStore | None = None,
 ) -> ConversationRuntime:
-    """Build an authenticated ASGI API with the configured persistence backend.
+    """Build authenticated APIs around the configured conversation runtime.
 
-    The caller owns provider and auth construction. This function owns the
-    conversation store and guarantees the selected backend is injected into the
-    same service used by every API route.
+    Provider/auth construction belongs to the caller. The conversation store
+    is owned here; optional workflow stores use per-operation SQLite connections.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -73,6 +75,10 @@ def build_conversation_runtime(
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
         raise ValueError("inference_jobs must use the configured device_pairing service")
+    if income_opportunities is not None and not isinstance(
+        income_opportunities, SQLiteIncomeOpportunityStore
+    ):
+        raise TypeError("income_opportunities must be a SQLiteIncomeOpportunityStore")
     store = create_conversation_store(config)
     try:
         service = ConversationService(store, agent_loop)
@@ -82,6 +88,8 @@ def build_conversation_runtime(
         )
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
+        if income_opportunities is not None:
+            app = AuthenticatedIncomeOpportunityAPI(app, auth_service, income_opportunities)
         return ConversationRuntime(app, store)
     except Exception:
         close = getattr(store, "close", None)
