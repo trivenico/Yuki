@@ -201,7 +201,7 @@ class CapabilityApprovalGateway:
     def request_approval(self, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
         """Persist an approval request; duplicate live requests are idempotent."""
         digest = self._request_digest(request)
-        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= min(86400, self.max_approval_ttl_seconds):
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
             raise ValueError("ttl_seconds is outside the configured request lifetime")
         policy = self.policy_engine.evaluate(request)
         if policy.decision != Decision.REQUIRE_APPROVAL:
