@@ -103,7 +103,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertTrue(claimed["lease_token"])
 
         status, body = self.request(
-            "POST", f"/v1/inference/{job_id}/complete",
+            "POST", f"/v1/inference/jobs/{job_id}/complete",
             {"lease_token": claimed["lease_token"], "result_text": "finished"}, device_token,
         )
         self.assertEqual(status, 200)
