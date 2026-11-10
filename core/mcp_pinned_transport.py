@@ -106,6 +106,90 @@ class PinnedMCPHTTPTransport:
             result[key] = value
         return result
 
+    @staticmethod
+    def _read_sse_response(response, expected_id):
+        """Read SSE incrementally and stop at the matching JSON-RPC response."""
+        if type(expected_id) not in (str, int) or isinstance(expected_id, bool):
+            raise MCPPinnedTransportError("mcp_sse_request_id_invalid")
+        pending = bytearray()
+        event_data = []
+        event_size = 0
+        event_type = "message"
+        total_size = 0
+        max_line = 65_536
+        max_event = 262_144
+        max_total = PinnedMCPHTTPTransport.MAX_RESPONSE_BYTES
+
+        def consume_line(line):
+            nonlocal event_data, event_size, event_type
+            if len(line) > max_line:
+                raise MCPPinnedTransportError("mcp_sse_line_too_large")
+            if line.endswith(b"\r"):
+                line = line[:-1]
+            if not line:
+                if not event_data:
+                    event_size = 0
+                    event_type = "message"
+                    return None
+                raw = b"\n".join(event_data)
+                current_type = event_type
+                event_data = []
+                event_size = 0
+                event_type = "message"
+                if current_type not in ("", "message"):
+                    return None
+                try:
+                    message = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    raise MCPPinnedTransportError("mcp_sse_invalid_event") from None
+                if (
+                    isinstance(message, dict)
+                    and message.get("jsonrpc") == "2.0"
+                    and type(message.get("id")) is type(expected_id)
+                    and message.get("id") == expected_id
+                ):
+                    return json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                return None
+            if line.startswith(b":"):
+                return None
+            field, separator, value = line.partition(b":")
+            if separator and value.startswith(b" "):
+                value = value[1:]
+            if field == b"event":
+                try:
+                    event_type = value.decode("utf-8")
+                except UnicodeDecodeError:
+                    raise MCPPinnedTransportError("mcp_sse_invalid_event") from None
+            elif field == b"data":
+                event_size += len(value) + (1 if event_data else 0)
+                if event_size > max_event:
+                    raise MCPPinnedTransportError("mcp_sse_event_too_large")
+                event_data.append(value)
+            return None
+
+        while True:
+            try:
+                chunk = response.read1(4096)
+            except (AttributeError, OSError, http.client.HTTPException, TimeoutError):
+                raise MCPPinnedTransportError("mcp_sse_stream_failed") from None
+            if not chunk:
+                raise MCPPinnedTransportError("mcp_sse_response_missing")
+            total_size += len(chunk)
+            if total_size > max_total:
+                raise MCPPinnedTransportError("mcp_response_too_large")
+            pending.extend(chunk)
+            while True:
+                newline = pending.find(b"\n")
+                if newline < 0:
+                    if len(pending) > max_line:
+                        raise MCPPinnedTransportError("mcp_sse_line_too_large")
+                    break
+                line = bytes(pending[:newline])
+                del pending[:newline + 1]
+                result = consume_line(line)
+                if result is not None:
+                    return result
+
     def post_json(self, endpoint, *, payload, headers):
         try:
             body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -115,7 +199,8 @@ class PinnedMCPHTTPTransport:
             raise MCPPinnedTransportError("mcp_request_too_large")
         host, target = self._endpoint(endpoint)
         pinned_ip = self._resolve(host)
-        request_headers = {"Accept": "application/json", "Content-Type": "application/json",
+        request_headers = {"Accept": "application/json, text/event-stream",
+                           "Content-Type": "application/json",
                            "User-Agent": "Yuki-MCP/1.0"}
         request_headers.update(self._headers(headers))
         connection = self._factory(host, pinned_ip, timeout=self.timeout, context=self._ssl_context)
@@ -127,6 +212,17 @@ class PinnedMCPHTTPTransport:
                 raise MCPPinnedTransportError("mcp_redirect_rejected")
             if response.status not in (200, 202, 204):
                 raise MCPPinnedTransportError("mcp_http_request_failed")
+            if response.status in (202, 204):
+                return response.status, response_headers, b""
+            content_type = response_headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if content_type == "text/event-stream":
+                if not isinstance(payload, dict) or "id" not in payload:
+                    raise MCPPinnedTransportError("mcp_sse_notification_not_supported")
+                raw = self._read_sse_response(response, payload["id"])
+                response_headers["content-type"] = "application/json"
+                return response.status, response_headers, raw
+            if content_type != "application/json" and not content_type.endswith("+json"):
+                raise MCPPinnedTransportError("mcp_response_content_type_invalid")
             raw = response.read(self.MAX_RESPONSE_BYTES + 1)
             if len(raw) > self.MAX_RESPONSE_BYTES:
                 raise MCPPinnedTransportError("mcp_response_too_large")

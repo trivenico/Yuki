@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from core.mcp_pinned_transport import (
@@ -19,6 +20,9 @@ class Response:
         return self._headers
     def read(self, limit):
         return self._body[:limit]
+    def read1(self, limit):
+        value, self._body = self._body[:limit], self._body[limit:]
+        return value
 
 
 class Connection:
@@ -82,6 +86,91 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
             )
         with self.assertRaises(MCPPinnedTransportError):
             self.transport.post_json("https://127.0.0.1/rpc", payload={}, headers={})
+
+
+    def test_sse_skips_progress_and_stops_at_correlated_response(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream; charset=utf-8")], b"")
+                self.chunks = [
+                    b": keepalive\r\nevent: message\r\ndata: {\"jsonrpc\":\"2.0\",\r\n",
+                    b"data: \"method\":\"notifications/progress\",\"params\":{}}\r\n\r\n",
+                    b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":77,\n",
+                    b"data: \"result\":{\"ok\":true}}\n\n",
+                ]
+                self.read_count = 0
+            def read1(self, limit):
+                self.read_count += 1
+                return self.chunks.pop(0) if self.chunks else b""
+        response = StreamingResponse()
+        self.transport._factory = lambda *args, **kwargs: Connection(response=response)
+        status, headers, body = self.transport.post_json(
+            "https://mcp.example.com/rpc",
+            payload={"jsonrpc":"2.0","id":77},
+            headers={"Accept":"application/json, text/event-stream"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(json.loads(body), {"jsonrpc":"2.0","id":77,"result":{"ok":True}})
+        self.assertEqual(response.read_count, 4)
+        self.assertEqual(response.chunks, [])
+
+    def test_sse_requires_matching_response_before_stream_end(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+                self.chunks = [b"data: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\n\n", b""]
+            def read1(self, limit):
+                return self.chunks.pop(0)
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_response_missing"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
+            )
+
+    def test_sse_rejects_boolean_id_as_integer_response_id(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+                self.chunks = [
+                    b'data: {"jsonrpc":"2.0","id":true,"result":{}}\n\n',
+                    b"",
+                ]
+            def read1(self, limit):
+                return self.chunks.pop(0)
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_response_missing"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":1}, headers={}
+            )
+
+    def test_sse_enforces_line_size_limit(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+            def read1(self, limit):
+                return b"data: " + b"x" * 262145 + b"\n\n"
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_line_too_large"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
+            )
+
+    def test_sse_enforces_event_size_limit(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+                self.payload = b"".join(
+                    b"data: " + b"x" * 60000 + b"\n" for _ in range(5)
+                ) + b"\n"
+            def read1(self, limit):
+                value, self.payload = self.payload[:limit], self.payload[limit:]
+                return value
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_event_too_large"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
+            )
 
     def test_bounds_response(self):
         self.transport.MAX_RESPONSE_BYTES = 4

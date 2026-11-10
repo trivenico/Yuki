@@ -36,6 +36,7 @@ class MCPHTTPClient:
             allowed_hosts=self.allowed_hosts, timeout=timeout,
         )
         self.session_id = None
+        self._initialized = False
         self._request_id = 0
 
     @staticmethod
@@ -72,12 +73,14 @@ class MCPHTTPClient:
             payload["id"] = self._request_id
         if params is not None:
             payload["params"] = params
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         authorization = self._authorization_header()
         if authorization is not None:
             headers["Authorization"] = authorization
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
+        if self._initialized:
+            headers["MCP-Protocol-Version"] = self.PROTOCOL_VERSION
         try:
             status, response_headers, body = self._http.post_json(
                 self.endpoint, payload=payload, headers=headers,
@@ -89,7 +92,7 @@ class MCPHTTPClient:
             return None
         content_type = response_headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json" and not content_type.endswith("+json"):
-            raise MCPError("This client currently supports JSON MCP responses, not SSE-only responses.")
+            raise MCPError("MCP server returned an unsupported response content type.")
         try:
             result = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -110,6 +113,7 @@ class MCPHTTPClient:
         })
         if not isinstance(result, dict):
             raise MCPError("MCP initialize response is invalid.")
+        self._initialized = True
         self._rpc("notifications/initialized", notification=True)
         return {"server_info": result.get("serverInfo", {}),
                 "protocol_version": result.get("protocolVersion", self.PROTOCOL_VERSION)}
