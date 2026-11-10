@@ -61,3 +61,26 @@ def build_web_reasoning_context(
         memory_store, embed=embedder.encode, embedding_index=embedding_index,
     )
     return ReasoningContextBuilder(UnifiedKnowledgeAPI(retriever))
+
+
+def build_web_memory_store(
+    auth_service: BuiltInAuthService,
+    workspace: str | Path,
+    *,
+    environ: dict[str, str] | None = None,
+) -> AgentMemoryStore | None:
+    """Expose the same local database to owner-approved memory management."""
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service_must_be_BuiltInAuthService")
+    env = os.environ if environ is None else environ
+    enabled = env.get("YUKI_MEMORY_ENABLED", "false").strip().lower()
+    if enabled in {"0", "false", "no", "off"}:
+        return None
+    if enabled not in {"1", "true", "yes", "on"}:
+        raise RuntimeError("YUKI_MEMORY_ENABLED must be true or false.")
+    workspace_path = Path(workspace).expanduser().resolve()
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    return AgentMemoryStore(
+        str(workspace_path / "agent-memory.sqlite3"),
+        authorize=agent_memory_authorizer(auth_service),
+    )
