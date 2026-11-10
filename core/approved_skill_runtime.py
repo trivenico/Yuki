@@ -20,11 +20,21 @@ class ApprovedSkillRuntime:
         approval_store: SkillApprovalStore,
         invocation_approvals: OneShotSkillApprovals | None = None,
         audit: Callable[[str, str], None] | None = None,
+        policy_engine: Any = None,
+        policy_request_factory: Callable[[str, str, Any], Any] | None = None,
     ):
         self.registry = registry
         self.approval_store = approval_store
         self.invocation_approvals = invocation_approvals or OneShotSkillApprovals()
+        if (policy_engine is None) != (policy_request_factory is None):
+            raise ValueError("policy_engine and policy_request_factory must be provided together")
+        if policy_engine is not None and not callable(getattr(policy_engine, "evaluate", None)):
+            raise TypeError("policy_engine must provide evaluate(request)")
+        if policy_request_factory is not None and not callable(policy_request_factory):
+            raise TypeError("policy_request_factory must be callable")
         self.audit = audit
+        self.policy_engine = policy_engine
+        self.policy_request_factory = policy_request_factory
         self.wiring = ApprovedSkillWiringService(registry, approval_store)
 
     def discover(self, root):
@@ -56,4 +66,6 @@ class ApprovedSkillRuntime:
             argument,
             approvals=self.invocation_approvals,
             audit=self.audit,
+            policy_engine=self.policy_engine,
+            policy_request_factory=self.policy_request_factory,
         )

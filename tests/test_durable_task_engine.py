@@ -44,6 +44,72 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(completed["state"], "succeeded")
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
 
+
+    def test_owned_goal_persists_authenticated_owner_on_task_reads(self):
+        goal = self.engine.create_goal(owner_id="auth-user-123")
+        task = self.engine.submit(
+            goal, "work", {"value": 1}, idempotency_key="owned-task",
+            owner_id="auth-user-123",
+        )
+        self.assertEqual(self.engine.get_goal(goal)["owner_id"], "auth-user-123")
+        self.assertEqual(self.engine.get_task(task["id"])["owner_id"], "auth-user-123")
+        self.assertEqual(self.engine.list_tasks(goal)[0]["owner_id"], "auth-user-123")
+
+    def test_owned_goal_rejects_missing_or_forged_submitter(self):
+        goal = self.engine.create_goal(owner_id="auth-user-123")
+        for supplied in (None, "attacker-user", "", 42):
+            with self.subTest(owner_id=supplied), self.assertRaises(TaskConflict):
+                self.engine.submit(
+                    goal, "work", {}, idempotency_key="forged-" + str(supplied),
+                    owner_id=supplied,
+                )
+
+    def test_legacy_ownerless_goal_cannot_be_claimed_by_submitter(self):
+        with self.assertRaises(TaskConflict):
+            self.engine.submit(
+                self.goal, "work", {}, idempotency_key="retroactive-claim",
+                owner_id="auth-user-123",
+            )
+        # Existing local-only ownerless queue remains backward compatible.
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="legacy-local-task"
+        )
+        self.assertIsNone(self.engine.get_task(task["id"])["owner_id"])
+
+    def test_legacy_database_gets_additive_goal_owner_migration(self):
+        legacy_db = Path(self.tmp.name) / "legacy-goals.sqlite"
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.executescript("""
+                CREATE TABLE goals(
+                    id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                );
+                CREATE TABLE tasks(
+                    id TEXT PRIMARY KEY, goal_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
+                    state TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+                    available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL,
+                    last_error TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    UNIQUE(goal_id,idempotency_key)
+                );
+            """)
+        finally:
+            conn.close()
+        migrated = DurableTaskEngine(legacy_db)
+        try:
+            check = sqlite3.connect(legacy_db)
+            try:
+                columns = {row[1] for row in check.execute("PRAGMA table_info(goals)")}
+            finally:
+                check.close()
+            self.assertIn("owner_id", columns)
+            legacy_goal = migrated.create_goal("new-owned-goal", owner_id="verified-user")
+            self.assertEqual(migrated.get_goal(legacy_goal)["owner_id"], "verified-user")
+        finally:
+            migrated.close()
+
     def test_task_survives_engine_restart_and_emits_events(self):
         task = self.engine.submit(self.goal, "summarize", {"text": "hello"}, idempotency_key="one")
         again = DurableTaskEngine(self.db)

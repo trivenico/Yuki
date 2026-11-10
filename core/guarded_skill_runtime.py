@@ -214,6 +214,8 @@ def invoke_registered_skill(
     audit: Callable[[str, str], None] | None = None,
     max_result_chars: int = 2000,
     expected_skill: Any = None,
+    policy_engine: Any = None,
+    policy_request_factory: Callable[[str, str, Any], Any] | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -260,6 +262,25 @@ def invoke_registered_skill(
             False, "Registered skill changed after approval; invocation was blocked.",
             skill_name, "skill_identity_changed"
         )
+
+    if policy_engine is not None:
+        try:
+            from core.tool_policy import Decision
+            policy_request = policy_request_factory(skill_name, argument, skill)
+            policy_result = policy_engine.evaluate(policy_request)
+            if policy_result.decision != Decision.ALLOW:
+                status = "central_policy_" + policy_result.decision.value
+                record(status)
+                return SkillInvocationResult(
+                    False, "Skill blocked by Yuki's central security policy.",
+                    skill_name, status,
+                )
+        except Exception:
+            record("central_policy_error")
+            return SkillInvocationResult(
+                False, "Skill blocked because central policy evaluation failed.",
+                skill_name, "central_policy_error",
+            )
 
     risk = str(getattr(skill, "risk", "high")).lower()
     known_risks = {"low", "medium", "high", "critical"}
