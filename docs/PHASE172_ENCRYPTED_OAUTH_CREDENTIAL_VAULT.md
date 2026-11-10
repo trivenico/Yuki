@@ -11,7 +11,7 @@ Provide durable owner/provider/account-scoped storage for OAuth credentials with
 - Owner, provider, account, and token kind are supplied as AEAD associated data. Copying ciphertext to another owner, provider, account, or token column must fail authentication.
 - A separate host-managed HMAC key fingerprints refresh tokens for compare-and-swap. It must be stable across restarts and distinct from encryption keys.
 - Access and refresh token fields are excluded from the credential dataclass representation. The account-list projection never returns tokens.
-- Refresh rotation is serialized with SQLite `BEGIN IMMEDIATE` and checks both the expected credential version and current refresh-token fingerprint. Only one concurrent refresh can advance a generation.
+- Refresh rotation is serialized with SQLite `BEGIN IMMEDIATE` and checks both the expected credential version and current refresh-token fingerprint. Only one concurrent refresh can advance a generation. If a provider omits a replacement refresh token, the existing token is retained.
 - Disconnect deletes the encrypted credential record. External provider revocation remains a separate integration responsibility.
 
 ## API
