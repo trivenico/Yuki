@@ -169,6 +169,58 @@ class PinnedOAuthHTTPTransport:
         finally:
             connection.close()
 
+    def request_form_status(self, endpoint, *, fields, headers=None):
+        """POST a bounded form and return the HTTP status without parsing a body.
+
+        OAuth revocation endpoints commonly return an empty 200 response. This
+        deliberately separate primitive avoids weakening the JSON token path.
+        """
+        if not isinstance(fields, dict) or not fields:
+            raise OAuthHTTPError("invalid_oauth_form")
+        normalized = []
+        for key, value in fields.items():
+            if (not isinstance(key, str) or not key or len(key) > 128
+                    or not isinstance(value, str) or len(value) > 8192
+                    or any(ord(c) < 0x20 or ord(c) == 0x7f for c in key + value)):
+                raise OAuthHTTPError("invalid_oauth_form")
+            normalized.append((key, value))
+        try:
+            body = urlencode(normalized).encode("ascii")
+        except (UnicodeEncodeError, ValueError):
+            raise OAuthHTTPError("invalid_oauth_form") from None
+        if len(body) > self.MAX_REQUEST_BYTES:
+            raise OAuthHTTPError("oauth_request_too_large")
+        host, target = self._parse_endpoint(endpoint)
+        pinned_ip = self._resolve_public_ip(host)
+        request_headers = {
+            "Accept": "application/json",
+            "User-Agent": "Yuki-OAuth/1.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        request_headers.update(self._custom_headers(
+            headers,
+            reserved={"host", "connection", "content-length", "transfer-encoding", "content-type"},
+        ))
+        connection = self._connection_factory(
+            host, pinned_ip, port=443, timeout=self.timeout, context=self._ssl_context
+        )
+        try:
+            connection.request("POST", target, body=body, headers=request_headers)
+            response = connection.getresponse()
+            if 300 <= response.status < 400:
+                raise OAuthHTTPError("oauth_redirect_rejected")
+            # Read only a small bounded diagnostic body; never return it.
+            response.read(min(self.MAX_RESPONSE_BYTES, 16_384) + 1)
+            if response.status < 200 or response.status >= 300:
+                raise OAuthHTTPError("oauth_revocation_rejected")
+            return response.status
+        except OAuthHTTPError:
+            raise
+        except (OSError, http.client.HTTPException, ssl.SSLError, TimeoutError):
+            raise OAuthHTTPError("oauth_endpoint_unavailable") from None
+        finally:
+            connection.close()
+
     def request_form(self, endpoint, *, fields, headers=None):
         """POST standard application/x-www-form-urlencoded OAuth fields."""
         if not isinstance(fields, dict) or not fields:
