@@ -266,6 +266,16 @@ class ProviderManager:
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
         selected = self._selected
+        catalog_entry = next(
+            (item for item in self.catalog() if item.get("name") == selected), None
+        )
+        privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
+        if privacy != "local_runtime" and not allow_cloud:
+            raise PermissionError(
+                "Explicit cloud consent is required for this provider or configured endpoint."
+            )
+        if privacy == "unknown":
+            raise PermissionError("Provider privacy is unknown; refusing runtime construction.")
         if selected in {"openai", "ollama"} and self._selected_adapter is not None:
             return self._selected_adapter
         if selected in {"openai", "ollama"}:
