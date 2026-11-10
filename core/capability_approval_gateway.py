@@ -198,9 +198,16 @@ class CapabilityApprovalGateway:
         return token
 
 
-    def request_approval(self, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
+    def request_approval(
+        self, request: PolicyRequest, *, ttl_seconds: int = 86400,
+        request_id: str | None = None,
+    ) -> str:
         """Persist an approval request; duplicate live requests are idempotent."""
         digest = self._request_digest(request)
+        if request_id is None:
+            request_id = digest[:32]
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
             raise ValueError("ttl_seconds is outside the configured request lifetime")
         policy = self.policy_engine.evaluate(request)
@@ -231,7 +238,6 @@ class CapabilityApprovalGateway:
             if existing is not None:
                 db.commit()
                 return existing["request_id"]
-            request_id = secrets.token_hex(16)
             db.execute(
                 """INSERT INTO capability_approval_requests
                    (request_id,request_sha256,request_json,policy_version,principal_id,
