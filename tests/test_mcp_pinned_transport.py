@@ -128,7 +128,7 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
                 "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
             )
 
-    def test_sse_enforces_event_size_limit(self):
+    def test_sse_enforces_line_size_limit(self):
         class StreamingResponse(Response):
             def __init__(self):
                 super().__init__([("Content-Type", "text/event-stream")], b"")
