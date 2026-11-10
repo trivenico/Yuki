@@ -99,8 +99,14 @@ class OIDCIdentityTokenTests(unittest.TestCase):
             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
             hashes.SHA256(),
         )
+        ps_verifier = OIDCIdentityTokenVerifier(
+            transport=FakeTransport({"keys": [{**self.jwk, "alg": "PS256"}]}),
+            jwks_uri="https://auth.example.com/.well-known/jwks.json",
+            issuer="https://auth.example.com", client_id="yuki-client",
+            expected_subject="provider-user-123", clock=lambda: self.now,
+        )
         self.assertEqual(
-            self.verifier.verify(
+            ps_verifier.verify(
                 id_token=ps_header + "." + ps_claims + "." + b64(ps_sig),
                 expected_nonce=nonce,
             )["subject"],
