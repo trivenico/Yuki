@@ -105,12 +105,20 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
 
         status, body = self.request(
             "POST", f"/v1/inference/jobs/{job_id}/complete",
+            {"lease_token": claimed["lease_token"], "result_text": "x" * 20_001}, device_token,
+        )
+        self.assertEqual((status, body["error"]), (413, "result_too_large"))
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/complete",
             {"lease_token": claimed["lease_token"], "result_text": "finished"}, device_token,
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["job"]["status"], "succeeded")
         status, body = self.request("GET", f"/v1/inference/jobs/{job_id}", token=self.owner_one.token)
         self.assertEqual((status, body["job"]["result_text"]), (200, "finished"))
+        status, body = self.request("GET", "/v1/inference/jobs", token=self.owner_one.token)
+        self.assertEqual(status, 200)
+        self.assertNotIn("result_text", body["jobs"][0])
 
     def test_revoked_device_cannot_claim_jobs_and_owner_cannot_revoke_another_device(self):
         paired = self._pair_device()
