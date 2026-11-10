@@ -77,10 +77,13 @@ class DurableCliIntegrationTests(unittest.TestCase):
         # This catches accidental reliance on retaining one runtime instance
         # between the /skill approve and /durable run commands.
         def build_runtime():
+            policy_engine, policy_request_factory = yuki._build_skill_policy()
             runtime = ApprovedSkillRuntime(
                 self.registry,
                 self.approval_store,
                 invocation_approvals=self.approvals,
+                policy_engine=policy_engine,
+                policy_request_factory=policy_request_factory,
             )
             return self.registry, runtime
 
