@@ -49,7 +49,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(
             {"provider": "ollama", "ollama_model": "test-model"}, environ={}
         )
-        model = manager.create_selected_agent_model(allow_cloud=True)
+        model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
     def test_text_only_hybrid_provider_fails_closed_for_agent_chat(self):
@@ -57,7 +57,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             {"provider": "hybrid", "ollama_model": "test-model"}, environ={}
         )
         with self.assertRaisesRegex(RuntimeError, "does not support structured agent chat"):
-            manager.create_selected_agent_model()
+            manager.create_selected_agent_model(allow_cloud=True)
 
     def test_runtime_adapter_construction_cannot_bypass_cloud_consent(self):
         from providers.gemini_cli import GeminiCLIProvider
