@@ -182,6 +182,8 @@ This runs at 03:00 local time while the process remains alive. It is not an OS s
 
 ## Runtime commands
 
+The terminal runtime applies the same cloud-consent boundary as the browser. If the configured startup provider is cloud-hosted (including OpenAI, Gemini, or hybrid routing), explicitly set `YUKI_ALLOW_CLOUD=true` before launching Yuki. Without that opt-in, startup fails closed; configure `YUKI_PROVIDER=ollama` and a local Ollama model to use local inference instead. During an active terminal session, `/provider select NAME` is an explicit user-directed provider switch and requires cloud consent for cloud-capable routes.
+
 - `/help`, `/status`, `/providers`, `/provider select NAME`, `/dashboard`
 - `/skill list`, `/skill install PATH`, `/skill inspect NAME`, `/skill approve NAME [argument]`, `/skill invoke NAME [argument]`
 - `/durable goal create`, `/durable task submit KEY | GOAL_ID | SKILL | ARGUMENT`, `/durable task list GOAL_ID`, `/durable task cancel TASK_ID`, `/durable run`
