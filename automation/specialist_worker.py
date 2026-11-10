@@ -118,6 +118,8 @@ def build_handlers_from_provider_manager(
     if not callable(selected_factory):
         raise TypeError("provider_manager must expose create_selected_adapter().")
     routed_factory = getattr(provider_manager, "create_routed_adapter", None)
+    model_routed_factory = getattr(provider_manager, "create_routed_model_adapter", None)
+    exact_model_providers = frozenset({"openai", "ollama"})
     cache = {}
     handlers = {}
     for agent_id, role in agent_roles.items():
@@ -125,16 +127,33 @@ def build_handlers_from_provider_manager(
         cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
         if cache_key not in cache:
             if preferences:
-                if not callable(routed_factory):
-                    raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
-                cache[cache_key] = routed_factory(
-                    required=("text",), preference=preferences, allow_cloud=allow_cloud,
-                )
+                if callable(model_routed_factory) and set(preferences).issubset(exact_model_providers):
+                    cache[cache_key] = model_routed_factory(
+                        required=("text",), provider_preference=preferences,
+                        allow_cloud=allow_cloud,
+                    )
+                else:
+                    if not callable(routed_factory):
+                        raise TypeError("provider_manager must expose a compatible routing method.")
+                    cache[cache_key] = routed_factory(
+                        required=("text",), preference=preferences, allow_cloud=allow_cloud,
+                    )
             else:
                 current_factory = getattr(provider_manager, "current", None)
                 current_info = current_factory() if callable(current_factory) else None
                 selected_name = getattr(current_info, "name", None)
-                if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                if (
+                    callable(model_routed_factory)
+                    and isinstance(selected_name, str)
+                    and selected_name in exact_model_providers
+                ):
+                    cache[cache_key] = model_routed_factory(
+                        required=("text",), provider_preference=(selected_name,),
+                        allow_cloud=allow_cloud,
+                    )
+                elif callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                    # Gemini CLI and hybrid remain on their existing explicit
+                    # adapter-level route until exact model pinning is supported.
                     cache[cache_key] = routed_factory(
                         required=("text",), preference=(selected_name,),
                         allow_cloud=allow_cloud,
