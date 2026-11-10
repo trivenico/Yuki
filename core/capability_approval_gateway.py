@@ -238,15 +238,25 @@ class CapabilityApprovalGateway:
             if existing is not None:
                 db.commit()
                 return existing["request_id"]
-            db.execute(
+            inserted = db.execute(
                 """INSERT INTO capability_approval_requests
                    (request_id,request_sha256,request_json,policy_version,principal_id,
                     capability,target,run_id,step_id,status,created_at,expires_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)""",
+                   VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)
+                   ON CONFLICT(request_id) DO UPDATE SET
+                     request_json=excluded.request_json,
+                     policy_version=excluded.policy_version,
+                     status='pending',created_at=excluded.created_at,
+                     expires_at=excluded.expires_at,decided_at=NULL,decided_by=NULL
+                   WHERE capability_approval_requests.request_sha256=excluded.request_sha256
+                     AND capability_approval_requests.status IN ('expired','rejected','approved')""",
                 (request_id, digest, request_json, policy.policy_version,
                  request.principal_id, request.capability, request.target,
                  request.run_id, request.step_id, now, now + ttl_seconds),
             )
+            if inserted.rowcount != 1:
+                db.rollback()
+                raise PermissionError("approval request identifier is already bound")
             self._audit(db, "approval_requested", request, digest,
                         policy.policy_version, policy.matched_rule_ids, "pending")
             db.commit()
