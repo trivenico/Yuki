@@ -83,7 +83,7 @@ class DurableSkillWorkerTests(unittest.TestCase):
     def test_central_policy_receives_persisted_owner_and_task_provenance(self):
         from core.tool_policy import Decision, PolicyResult
         observed = []
-        class Engine:
+        class AllowEngine:
             def evaluate(self, request):
                 observed.append(request)
                 return PolicyResult(Decision.ALLOW, "v1", ("owner-allow",), "test")
@@ -95,20 +95,11 @@ class DurableSkillWorkerTests(unittest.TestCase):
             idempotency_key="owned-policy-task", owner_id=owner, max_attempts=1,
         )
         runtime = ApprovedSkillRuntime(
-            self.registry, SkillApprovalStore(Path(self.temp.name) / "policy-approvals.sqlite"),
-            policy_engine=Engine(),
-            policy_request_factory=lambda name, argument, skill, context: (
-                observed.append((name, argument, skill, context)) or object()
-            ),
+            self.registry,
+            SkillApprovalStore(Path(self.temp.name) / "policy-approvals.sqlite"),
+            policy_engine=AllowEngine(),
+            policy_request_factory=lambda name, argument, skill, context: context,
         )
-        # Replace the evaluator result path with an engine that observes only
-        # the typed request factory output while allowing this test invocation.
-        class AllowEngine:
-            def evaluate(self, request):
-                observed.append(request)
-                return PolicyResult(Decision.ALLOW, "v1", ("owner-allow",), "test")
-        runtime.policy_engine = AllowEngine()
-        runtime.policy_request_factory = lambda name, argument, skill, context: context
         worker = DurableSkillWorker(self.engine, runtime, worker_id="policy-worker")
         result = worker.run_once()
         self.assertEqual(result["state"], "succeeded")
