@@ -45,7 +45,16 @@ class ProtectedApprovalCredentialBroker:
             raise ValueError("credential lifetime is invalid")
         # The external store owns encryption, access controls, durability and TTL.
         # It must atomically replace an existing value for this exact request key.
-        self.put_secret(self._key(request), token, ttl_seconds)
+        key = self._key(request)
+        try:
+            self.put_secret(key, token, ttl_seconds)
+        except Exception:
+            if self.delete_secret is not None:
+                try:
+                    self.delete_secret(key)
+                except Exception:
+                    pass
+            raise
 
     def resolve(self, request: PolicyRequest) -> str | None:
         """Atomically retrieve and delete the credential for this exact request."""
