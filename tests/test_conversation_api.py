@@ -413,5 +413,94 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["memories"], [])
 
 
+    def test_rejected_memory_is_terminal_and_cannot_be_renewed_or_corrected(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        status, saved, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "An outdated preference"}, self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        memory_id = saved["memory"]["memory_id"]
+
+        status, rejected, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/review",
+            {"status": "rejected", "reason": "Owner says this is inaccurate"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(rejected["memory"]["lifecycle_status"], "rejected")
+
+        status, listing, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(listing["memories"], [])
+
+        status, result, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/renew",
+            {"retention_days": 30, "reason": "Attempt to renew rejected memory"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 404)
+        status, result, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/correct",
+            {"content": "A replacement claim", "source": "owner_correction",
+             "reason": "Attempt to revive rejected claim"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 404)
+
+    def test_memory_renew_correct_and_retire_lifecycle(self):
+        self.app.memory_store = AgentMemoryStore(
+            str(Path(self.tempdir.name) / "memory.sqlite"),
+            authorize=agent_memory_authorizer(self.auth),
+        )
+        status, saved, _ = self.request(
+            "POST", "/v1/memory",
+            {"content": "Prefers concise answers"}, self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        original = saved["memory"]
+        memory_id = original["memory_id"]
+
+        status, renewed, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/renew",
+            {"retention_days": 30, "reason": "Owner reconfirmed this preference"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertGreater(renewed["memory"]["expires_at"], original["expires_at"])
+
+        status, corrected, _ = self.request(
+            "POST", f"/v1/memory/{memory_id}/correct",
+            {"content": "Prefers concise, actionable answers",
+             "source": "owner_correction", "reason": "Owner clarified the preference"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        replacement = corrected["memory"]
+        self.assertNotEqual(replacement["memory_id"], memory_id)
+        self.assertEqual(replacement["content"], "Prefers concise, actionable answers")
+        self.assertEqual(replacement["lifecycle_status"], "approved")
+        self.assertTrue(replacement["verified"])
+
+        status, listing, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["memory_id"] for item in listing["memories"]],
+                         [replacement["memory_id"]])
+
+        status, retired, _ = self.request(
+            "POST", f"/v1/memory/{replacement['memory_id']}/retire",
+            {"reason": "Owner no longer wants this retained"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(retired["memory"]["lifecycle_status"], "retired")
+        status, listing, _ = self.request("GET", "/v1/memory", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(listing["memories"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
