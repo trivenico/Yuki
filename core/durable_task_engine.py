@@ -53,6 +53,14 @@ class DurableTaskEngine:
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
+            CREATE TABLE IF NOT EXISTS task_approval_holds(
+              task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+              request_id TEXT NOT NULL UNIQUE,
+              expires_at REAL NOT NULL,
+              created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS task_approval_holds_expiry_idx
+              ON task_approval_holds(expires_at);
             CREATE TABLE IF NOT EXISTS dependencies(
               task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
               depends_on TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(task_id,depends_on), CHECK(task_id<>depends_on));
@@ -190,6 +198,85 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
+    def hold_task_for_approval(self, task_id, owner_id, request_id, *, ttl_seconds=86400):
+        """Atomically prevent workers claiming a queued task during approval."""
+        if not isinstance(task_id, str) or not task_id or len(task_id) > 256:
+            raise ValueError("task_id is invalid")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
+            raise ValueError("owner_id is invalid")
+        if not isinstance(request_id, str) or not __import__("re").fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
+            raise ValueError("ttl_seconds must be between 1 and 86400")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                """SELECT t.state,g.state AS goal_state,g.owner_id
+                   FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.id=?""",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise TaskNotFound("task not found")
+            if row["owner_id"] != owner_id or row["goal_state"] != "active" or row["state"] != "queued":
+                raise TaskConflict("task is not eligible for an approval hold")
+            existing = c.execute(
+                "SELECT request_id,expires_at FROM task_approval_holds WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if existing is not None and existing["expires_at"] > now and existing["request_id"] != request_id:
+                raise TaskConflict("task already has a pending approval hold")
+            c.execute(
+                """INSERT INTO task_approval_holds(task_id,request_id,expires_at,created_at)
+                   VALUES(?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET
+                   request_id=excluded.request_id,expires_at=excluded.expires_at,
+                   created_at=excluded.created_at""",
+                (task_id, request_id, now + ttl_seconds, now),
+            )
+            self._event(c, row["owner_id"] and c.execute(
+                "SELECT goal_id FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()["goal_id"], task_id, "task.approval_held",
+                {"request_id": request_id, "expires_at": now + ttl_seconds})
+            c.commit()
+
+    def release_task_approval_hold(self, task_id, request_id):
+        """Release only the matching approval hold; safe to retry."""
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT t.goal_id FROM task_approval_holds h JOIN tasks t ON t.id=h.task_id WHERE h.task_id=? AND h.request_id=?",
+                (task_id, request_id),
+            ).fetchone()
+            if row is None:
+                c.commit()
+                return False
+            c.execute(
+                "DELETE FROM task_approval_holds WHERE task_id=? AND request_id=?",
+                (task_id, request_id),
+            )
+            self._event(c, row["goal_id"], task_id, "task.approval_released",
+                        {"request_id": request_id})
+            c.commit()
+            return True
+
+    def renew_task_approval_hold(self, task_id, request_id, *, ttl_seconds=300):
+        """Shorten/renew a hold to cover protected credential handoff."""
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 3600:
+            raise ValueError("ttl_seconds must be between 1 and 3600")
+        now = self.clock()
+        with closing(self._connect()) as c:
+            c.execute("BEGIN IMMEDIATE")
+            changed = c.execute(
+                """UPDATE task_approval_holds SET expires_at=?
+                   WHERE task_id=? AND request_id=? AND expires_at>?""",
+                (now + ttl_seconds, task_id, request_id, now),
+            ).rowcount
+            c.commit()
+        if changed != 1:
+            raise TaskConflict("approval hold is unavailable")
+        return now + ttl_seconds
+
     def claim(self, worker_id, *, lease_seconds=60, owner_id=None):
         if not isinstance(worker_id,str) or not 1 <= len(worker_id) <= 256: raise ValueError("invalid worker_id")
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1 <= lease_seconds <= 3600: raise ValueError("lease_seconds must be an integer in 1..3600")
@@ -199,9 +286,10 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             row=c.execute("""SELECT t.* FROM tasks t JOIN goals g ON g.id=t.goal_id
               WHERE t.state='queued' AND t.available_at<=? AND g.state='active' AND (? IS NULL OR g.owner_id=?)
+              AND NOT EXISTS(SELECT 1 FROM task_approval_holds h WHERE h.task_id=t.id AND h.expires_at>?)
               AND NOT EXISTS(SELECT 1 FROM dependencies d JOIN tasks p ON p.id=d.depends_on
                 WHERE d.task_id=t.id AND p.state<>'succeeded')
-              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,owner_id,owner_id)).fetchone()
+              ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,owner_id,owner_id,now)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
             changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
