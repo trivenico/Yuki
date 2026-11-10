@@ -368,6 +368,8 @@ class AuthenticatedReservationTests(unittest.TestCase):
             second_device.token, reservation.reservation_id, reservation.token,
             fencing_token=reservation.fencing_token,
         ))
+        # Advance the deterministic test clock so the renewal has a later expiry.
+        self.clock.advance(1)
         expiry = self.service.renew(
             self.device.token, reservation.reservation_id, reservation.token,
             fencing_token=reservation.fencing_token,
