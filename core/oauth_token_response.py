@@ -94,7 +94,7 @@ def validate_oauth_token_response(
     id_token = document.get("id_token")
     if id_token is not None and (
         not isinstance(id_token, str) or not 1 <= len(id_token) <= 32768
-        or not re.fullmatch(r"[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+", id_token)
+        or not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", id_token)
     ):
         raise OAuthTokenResponseError("invalid_id_token")
     raw_scope = document.get("scope")
