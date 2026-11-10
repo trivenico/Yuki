@@ -244,7 +244,7 @@ class SQLiteOAuthCredentialVault:
         refresh = self._token(refresh_token, "refresh_token", required=False)
         if type(expected_version) is not int or expected_version < 1:
             raise OAuthCredentialError("invalid_expected_version")
-        if type(expires_at) is not int or expires_at <= int(self._clock()):
+        if type(expires_at) is not int or not int(self._clock()) < expires_at <= int(self._clock()) + 31_536_000:
             raise OAuthCredentialError("invalid_token_expiry")
         normalized_scopes = self._scopes(scopes)
         access_key, access_cipher = self._encrypt(access, self._aad(owner, provider, account, "access"))
@@ -263,6 +263,13 @@ class SQLiteOAuthCredentialVault:
                     raise OAuthCredentialError("credential_not_found")
                 if row[0] != expected_version or row[1] is None or not hmac.compare_digest(row[1], expected_digest):
                     raise OAuthCredentialError("stale_refresh_generation")
+                # OAuth refresh responses may omit refresh_token. Retain the
+                # current token rather than accidentally disabling future refresh.
+                if refresh is None:
+                    refresh = old_refresh
+                    refresh_key, refresh_cipher = self._encrypt(
+                        refresh, self._aad(owner, provider, account, "refresh")
+                    )
                 next_version = expected_version + 1
                 db.execute("""UPDATE oauth_credentials SET access_key_id=?,access_ciphertext=?,
                     refresh_key_id=?,refresh_ciphertext=?,refresh_digest=?,expires_at=?,scopes_json=?,
