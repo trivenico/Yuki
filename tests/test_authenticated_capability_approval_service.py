@@ -249,5 +249,34 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             service.request_approval("requester-session", self.task["id"])
 
 
+    def test_worker_identity_is_inferred_from_bound_broker(self):
+        class BrokerCallback:
+            worker_id = "broker-worker"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=callback.deliver_credential,
+        )
+        self.assertEqual(service.approval_worker_id, "broker-worker")
+
+    def test_invalid_broker_worker_identity_is_rejected(self):
+        class BrokerCallback:
+            worker_id = "../untrusted"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        with self.assertRaisesRegex(ValueError, "invalid worker identity"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=callback.deliver_credential,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
