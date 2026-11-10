@@ -42,7 +42,8 @@ class WebLauncherTests(unittest.TestCase):
                 "schema_version": 2, "provider": "openai",
                 "model": "gpt-4.1-mini", "cloud_authorized": True,
             })
-            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            if os.name != "nt":
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
     def test_provider_selection_persistence_rejects_unknown_schema(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -58,6 +59,22 @@ class WebLauncherTests(unittest.TestCase):
                 run_web._persist_provider_selection(
                     path, provider="openai", model="gpt-4.1-mini", cloud_authorized=1,
                 )
+
+
+    def test_provider_selection_persistence_rejects_symlinks(self):
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlinks are unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.json"
+            target.write_text("{}")
+            link = root / "provider-selection.json"
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("symlink creation is not permitted")
+            with self.assertRaisesRegex(RuntimeError, "non-symlink"):
+                run_web._load_provider_selection(link)
 
     def test_default_tool_policy_denies_all_tools(self):
         self.assertFalse(run_web.DenyAllTools.authorize_tool("anything"))
