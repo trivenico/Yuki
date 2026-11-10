@@ -298,7 +298,14 @@ def invoke_registered_skill(
             if approval_gateway is not None:
                 if policy_engine is not None or not callable(approval_token_resolver):
                     raise ValueError("approval gateway requires an exclusive token resolver")
-                approval_token = approval_token_resolver(policy_request)
+                # Do not consume a vault entry for a policy decision that does
+                # not require approval. The gateway re-evaluates policy during
+                # authorization; any intervening change fails closed.
+                preflight = approval_gateway.policy_engine.evaluate(policy_request)
+                approval_token = (
+                    approval_token_resolver(policy_request)
+                    if preflight.decision == Decision.REQUIRE_APPROVAL else None
+                )
                 gateway_result = approval_gateway.authorize(
                     policy_request, approval_token=approval_token,
                 )
