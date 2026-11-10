@@ -198,3 +198,155 @@ def recommend(registry, *, benchmark_id, max_results=10):
             "Ranking is not a deployment approval and never changes the active model.",
         ],
     }
+
+
+# Model capability metadata is intentionally separate from evaluation reports:
+# a benchmark score does not prove that a model supports a modality or tool API.
+from dataclasses import dataclass
+from itertools import islice
+from typing import Iterable
+
+MODEL_CAPABILITIES = frozenset({
+    "text", "reasoning", "coding", "vision_input", "audio_input",
+    "audio_output", "video_input", "tool_calling", "structured_output",
+    "long_context",
+})
+_MODEL_LOCAL = frozenset({"local", "local_runtime", "local_only"})
+_MODEL_CLOUD = frozenset({"cloud_provider", "third_party_gateway"})
+_MODEL_PRIVACY = _MODEL_LOCAL | _MODEL_CLOUD
+_MODEL_EVIDENCE = frozenset({
+    "provider_documentation", "owner_verified", "local_probe", "benchmark_verified",
+})
+
+
+@dataclass(frozen=True)
+class ModelCapabilityProfile:
+    """Verified capability metadata for one exact provider/model pair."""
+    provider: str
+    model_id: str
+    capabilities: frozenset[str]
+    implemented: bool
+    ready: bool
+    privacy: str
+    context_window: int | None = None
+    evidence_source: str = "owner_verified"
+
+    def __post_init__(self):
+        if not isinstance(self.provider, str) or not self.provider.strip():
+            raise ValueError("provider must be non-empty")
+        if self.provider != self.provider.strip().lower():
+            raise ValueError("provider must be normalized to lowercase")
+        if not isinstance(self.model_id, str) or not _MODEL_ID.fullmatch(self.model_id):
+            raise ValueError("model_id must use provider/model identifier syntax")
+        if not isinstance(self.capabilities, frozenset):
+            raise TypeError("capabilities must be a frozenset")
+        if any(not isinstance(value, str) for value in self.capabilities):
+            raise ValueError("capabilities must contain strings")
+        unknown = self.capabilities - MODEL_CAPABILITIES
+        if unknown:
+            raise ValueError("unknown model capabilities: " + ", ".join(sorted(unknown)))
+        if type(self.implemented) is not bool or type(self.ready) is not bool:
+            raise TypeError("implemented and ready must be booleans")
+        if self.ready and not self.implemented:
+            raise ValueError("an unimplemented model cannot be ready")
+        if self.privacy not in _MODEL_PRIVACY:
+            raise ValueError("unknown model privacy classification")
+        if self.context_window is not None and (
+            isinstance(self.context_window, bool)
+            or not isinstance(self.context_window, int)
+            or not 1 <= self.context_window <= 10_000_000
+        ):
+            raise ValueError("context_window must be a positive bounded integer")
+        if self.evidence_source not in _MODEL_EVIDENCE:
+            raise ValueError("evidence_source must identify verified metadata")
+
+
+class ModelCapabilityRegistry:
+    """Deterministic exact-model selector; it never probes networks or activates models."""
+    def __init__(self, profiles: Iterable[ModelCapabilityProfile] = ()):
+        self._profiles: dict[tuple[str, str], ModelCapabilityProfile] = {}
+        for profile in profiles:
+            self.register(profile)
+
+    def register(self, profile: ModelCapabilityProfile) -> None:
+        if not isinstance(profile, ModelCapabilityProfile):
+            raise TypeError("profile must be a ModelCapabilityProfile")
+        key = (profile.provider, profile.model_id)
+        if key in self._profiles:
+            raise ValueError("model profile already registered")
+        self._profiles[key] = profile
+
+    def get(self, provider: str, model_id: str):
+        if not isinstance(provider, str) or not isinstance(model_id, str):
+            return None
+        return self._profiles.get((provider.strip().lower(), model_id))
+
+    def list(self):
+        return [{
+            "provider": p.provider, "model_id": p.model_id,
+            "capabilities": sorted(p.capabilities), "implemented": p.implemented,
+            "ready": p.ready, "privacy": p.privacy,
+            "context_window": p.context_window, "evidence_source": p.evidence_source,
+        } for p in sorted(self._profiles.values(), key=lambda item: (item.provider, item.model_id))]
+
+    def route(self, *, required=("text",), provider_preference=(), model_preference=(),
+              allow_cloud=False, strict_provider_preference=False, min_context_window=None):
+        if any(isinstance(value, (str, bytes)) for value in
+               (required, provider_preference, model_preference)):
+            raise TypeError("capabilities and preferences must be iterables, not strings")
+        if type(allow_cloud) is not bool or type(strict_provider_preference) is not bool:
+            raise TypeError("routing flags must be booleans")
+        if min_context_window is not None and (
+            isinstance(min_context_window, bool) or not isinstance(min_context_window, int)
+            or min_context_window < 1
+        ):
+            raise ValueError("min_context_window must be a positive integer")
+        try:
+            required_values = tuple(islice(iter(required), 11))
+            providers = tuple(islice(iter(provider_preference), 65))
+            models = tuple(islice(iter(model_preference), 65))
+        except TypeError as exc:
+            raise TypeError("routing inputs must be iterable") from exc
+        if len(required_values) > 10:
+            raise ValueError("too many required capabilities")
+        if len(providers) > 64 or len(models) > 64:
+            raise ValueError("too many preferences")
+        if any(not isinstance(value, str) for value in required_values):
+            raise ValueError("required capabilities must be strings")
+        required_set = frozenset(required_values)
+        unknown = required_set - MODEL_CAPABILITIES
+        if unknown:
+            raise ValueError("unknown required capabilities: " + ", ".join(sorted(unknown)))
+
+        def normalize(values, lowercase):
+            result, seen = [], set()
+            for value in values:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("preferences must contain non-empty strings")
+                item = value.strip().lower() if lowercase else value.strip()
+                if item not in seen:
+                    result.append(item)
+                    seen.add(item)
+            return result
+
+        providers = normalize(providers, True)
+        models = normalize(models, False)
+        provider_rank = {value: index for index, value in enumerate(providers)}
+        model_rank = {value: index for index, value in enumerate(models)}
+        candidates = [
+            p for p in self._profiles.values()
+            if p.implemented and p.ready and required_set.issubset(p.capabilities)
+            and (p.privacy in _MODEL_LOCAL or (allow_cloud and p.privacy in _MODEL_CLOUD))
+            and (not strict_provider_preference or p.provider in provider_rank)
+            and (min_context_window is None or (
+                p.context_window is not None and p.context_window >= min_context_window
+            ))
+        ]
+        candidates.sort(key=lambda p: (
+            model_rank.get(p.model_id, len(model_rank)),
+            provider_rank.get(p.provider, len(provider_rank)),
+            0 if p.privacy in _MODEL_LOCAL else 1, p.provider, p.model_id,
+        ))
+        if not candidates:
+            raise LookupError("no model satisfies capabilities, readiness and privacy policy")
+        return candidates[0]
