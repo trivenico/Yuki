@@ -121,7 +121,7 @@ class AgentEvaluationReviewQueue:
     def get_review(self, *, actor_id: str, evaluation_id: str) -> dict:
         """Return one owner-scoped review record, including its decision."""
         if not isinstance(evaluation_id, str) or not re.fullmatch(
-            r"eval-[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}", evaluation_id
+            r"eval-[A-Za-z0-9_-][A-Za-z0-9_.:@/-]{0,199}", evaluation_id
         ):
             raise ValueError("invalid_evaluation_id")
         if not self._allowed(actor_id, "agent_evaluation:read", ""):
