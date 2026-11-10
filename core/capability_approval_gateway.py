@@ -79,6 +79,24 @@ class CapabilityApprovalGateway:
                 );
                 CREATE INDEX IF NOT EXISTS idx_capability_approvals_expiry
                     ON capability_approvals(expires_at);
+                CREATE TABLE IF NOT EXISTS capability_approval_requests (
+                    request_id TEXT PRIMARY KEY,
+                    request_sha256 TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    policy_version TEXT NOT NULL,
+                    principal_id TEXT NOT NULL,
+                    capability TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    step_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending','approved','expired','rejected')),
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    decided_at REAL,
+                    decided_by TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_approval_requests_status_expiry
+                    ON capability_approval_requests(status, expires_at);
                 CREATE TABLE IF NOT EXISTS capability_audit (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_type TEXT NOT NULL,
@@ -176,6 +194,151 @@ class CapabilityApprovalGateway:
             )
             self._audit(db, "approval_issued", request, digest, policy.policy_version,
                         policy.matched_rule_ids, "issued")
+            db.commit()
+        return token
+
+
+    def request_approval(self, request: PolicyRequest, *, ttl_seconds: int = 86400) -> str:
+        """Persist an approval request; duplicate live requests are idempotent."""
+        digest = self._request_digest(request)
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= min(86400, self.max_approval_ttl_seconds):
+            raise ValueError("ttl_seconds is outside the configured request lifetime")
+        policy = self.policy_engine.evaluate(request)
+        if policy.decision != Decision.REQUIRE_APPROVAL:
+            raise PermissionError("the current policy does not permit an approval request")
+        now = self.clock()
+        request_json = json.dumps(
+            asdict(request), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            default=lambda value: value.value if hasattr(value, "value") else value,
+        )
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """UPDATE capability_approval_requests SET status='expired'
+                   WHERE status='pending' AND expires_at<=?""", (now,),
+            )
+            existing = db.execute(
+                """SELECT request_id FROM capability_approval_requests
+                   WHERE request_sha256=? AND status='pending' AND expires_at>?""",
+                (digest, now),
+            ).fetchone()
+            if existing is not None:
+                db.commit()
+                return existing["request_id"]
+            request_id = secrets.token_hex(16)
+            db.execute(
+                """INSERT INTO capability_approval_requests
+                   (request_id,request_sha256,request_json,policy_version,principal_id,
+                    capability,target,run_id,step_id,status,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)""",
+                (request_id, digest, request_json, policy.policy_version,
+                 request.principal_id, request.capability, request.target,
+                 request.run_id, request.step_id, now, now + ttl_seconds),
+            )
+            self._audit(db, "approval_requested", request, digest,
+                        policy.policy_version, policy.matched_rule_ids, "pending")
+            db.commit()
+        return request_id
+
+    def pending_requests(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
+        """Return redacted inbox metadata; never expose request arguments or credentials."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                """UPDATE capability_approval_requests SET status='expired'
+                   WHERE status='pending' AND expires_at<=?""", (now,),
+            )
+            rows = db.execute(
+                """SELECT request_id,principal_id,capability,target,run_id,step_id,
+                          policy_version,created_at,expires_at
+                   FROM capability_approval_requests
+                   WHERE status='pending' AND expires_at>?
+                   ORDER BY created_at,request_id LIMIT ?""",
+                (now, limit),
+            ).fetchall()
+            db.commit()
+        return tuple(dict(row) for row in rows)
+
+    def approve_request(
+        self, request_id: str, *, approved_by: str, ttl_seconds: int = 300,
+    ) -> str:
+        """Atomically approve one inbox item and mint its one-shot credential."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        if not isinstance(approved_by, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", approved_by
+        ):
+            raise ValueError("approved_by must be a bounded authenticated identity")
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= self.max_approval_ttl_seconds:
+            raise ValueError("ttl_seconds is outside the configured approval lifetime")
+        token = secrets.token_urlsafe(32)
+        token_hash = self._token_digest(token)
+        now = self.clock()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM capability_approval_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                db.rollback()
+                raise PermissionError("approval request is unavailable")
+            if row["expires_at"] <= now:
+                db.execute(
+                    """UPDATE capability_approval_requests SET status='expired',decided_at=?
+                       WHERE request_id=? AND status='pending'""", (now, request_id),
+                )
+                db.commit()
+                raise PermissionError("approval request has expired")
+            raw = json.loads(row["request_json"])
+            raw["risk"] = Risk(raw["risk"])
+            request = PolicyRequest(**raw)
+            digest = self._request_digest(request)
+            if not hmac.compare_digest(digest, row["request_sha256"]):
+                db.rollback()
+                raise PermissionError("approval request integrity check failed")
+            policy = self.policy_engine.evaluate(request)
+            if (policy.decision != Decision.REQUIRE_APPROVAL
+                    or policy.policy_version != row["policy_version"]):
+                db.execute(
+                    """UPDATE capability_approval_requests SET status='rejected',
+                       decided_at=?,decided_by=? WHERE request_id=? AND status='pending'""",
+                    (now, approved_by, request_id),
+                )
+                self._audit(db, "approval_rejected", request, digest,
+                            policy.policy_version, policy.matched_rule_ids, "policy_changed")
+                db.commit()
+                raise PermissionError("approval request is stale under the current policy")
+            try:
+                trusted = self.authorize_approver(approved_by, request)
+            except Exception as error:
+                db.rollback()
+                raise PermissionError("approval authority could not be verified") from error
+            if trusted is not True:
+                db.rollback()
+                raise PermissionError("approver is not authorized for this request")
+            changed = db.execute(
+                """UPDATE capability_approval_requests SET status='approved',
+                   decided_at=?,decided_by=? WHERE request_id=? AND status='pending'""",
+                (now, approved_by, request_id),
+            ).rowcount
+            if changed != 1:
+                db.rollback()
+                raise PermissionError("approval request is no longer pending")
+            db.execute(
+                """INSERT INTO capability_approvals
+                   (token_sha256,request_sha256,request_json,policy_version,principal_id,
+                    capability,target,run_id,step_id,created_by,created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (token_hash, digest, row["request_json"], policy.policy_version,
+                 request.principal_id, request.capability, request.target,
+                 request.run_id, request.step_id, approved_by, now, now + ttl_seconds),
+            )
+            self._audit(db, "approval_issued", request, digest,
+                        policy.policy_version, policy.matched_rule_ids, "issued_from_inbox")
             db.commit()
         return token
 
