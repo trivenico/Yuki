@@ -53,4 +53,16 @@ class LocalWorkerTests(unittest.TestCase):
  def test_provider_mapping_validated(self):
   with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
   with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
-if __name__=="__main__": unittest.main()
+ def test_revocation_during_generation_prevents_completion(self):
+  job=self.submit()
+  original=self.provider.generate_chat
+  def revoke_then_generate(**kwargs):
+   self.jobs.pairing.revoke_device("owner",self.device.device.device_id)
+   return original(**kwargs)
+  self.provider.generate_chat=revoke_then_generate
+  with self.assertRaises(PermissionError):
+   self.worker.run_once()
+  persisted=self.jobs.get_job("owner",job.job_id)
+  self.assertEqual(persisted.status,"running")
+  self.assertIsNone(persisted.result_text)
+\nif __name__=="__main__": unittest.main()
