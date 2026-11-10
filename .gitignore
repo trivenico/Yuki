@@ -58,3 +58,4 @@ YukiData/
 # Local backup archives may contain private data
 BACKUP/
 *.tmp.zip
+.yuki/
