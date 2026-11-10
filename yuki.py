@@ -440,11 +440,43 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) < 2:
             return "Usage: /tool NAME [argument]"
+        user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+        if user is None:
+            write_audit_event("tool:dispatch", "authentication_required")
+            return "Authentication required. Use /auth login USERNAME."
         name = parts[1]
+        rules = [
+            PolicyRule(
+                rule_id=f"terminal-tool-{tool_name}",
+                decision=Decision.ALLOW,
+                principal_id=user.user_id,
+                trigger="terminal",
+                capability="tool.invoke",
+                target=tool_name,
+                risk=Risk.MEDIUM,
+            )
+            for tool_name in TOOLS
+        ]
+        engine = ToolPolicyEngine(rules, policy_version="yuki-terminal-tools-v1")
+
+        def request_factory(tool_name, argument):
+            return PolicyRequest(
+                principal_id=user.user_id,
+                trigger="terminal",
+                capability="tool.invoke",
+                target=tool_name,
+                argument_sha256=argument_digest({"argument": argument}),
+                risk=Risk.MEDIUM,
+                run_id="terminal-session",
+                step_id=uuid.uuid4().hex,
+            )
+
         runtime = GuardedToolRuntime(
             TOOLS,
             policy,
             audit=lambda action, outcome: write_audit_event(action, outcome),
+            policy_engine=engine,
+            policy_request_factory=request_factory,
         )
         return runtime.invoke(name, parts[2] if len(parts) > 2 else "")
     if command == "/task" or command.startswith("/task "):
