@@ -64,7 +64,7 @@ class AuthenticatedInferenceAPI:
 
             worker_claim = path in {"/v1/inference/claim", "/v1/inference/worker/jobs/claim"}
             worker_completion = re.fullmatch(
-                r"/v1/inference/(?:worker/jobs/)?([0-9a-f]{32})/complete", path
+                r"/v1/inference/(?:worker/jobs/|jobs/)?([0-9a-f]{32})/complete", path
             )
             if path.startswith("/v1/inference/worker/") or worker_claim or worker_completion:
                 token = self._bearer(scope)
