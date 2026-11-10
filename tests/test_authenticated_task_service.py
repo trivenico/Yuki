@@ -13,7 +13,7 @@ class AuthenticatedTaskServiceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
-        self.auth = BuiltInAuthService(root / "auth.sqlite", password_iterations=100_000)
+        self.auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
         self.engine = DurableTaskEngine(root / "tasks.sqlite")
         self.addCleanup(self.engine.close)
         self.service = AuthenticatedDurableTaskService(self.auth, self.engine)
