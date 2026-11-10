@@ -95,7 +95,7 @@ class ProviderManager:
                 (item for item in self.catalog() if item.get("name") == key), None
             )
             privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
-            if privacy in {"cloud_provider", "third_party_gateway"} and not allow_cloud:
+            if privacy in {"cloud_provider", "third_party_gateway", "task_policy"} and not allow_cloud:
                 raise PermissionError("cloud consent is required")
             if privacy == "unknown":
                 raise PermissionError("provider privacy is unknown")
