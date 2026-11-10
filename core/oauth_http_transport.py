@@ -10,7 +10,7 @@ import ipaddress
 import json
 import socket
 import ssl
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 
 class OAuthHTTPError(RuntimeError):
@@ -151,3 +151,67 @@ class PinnedOAuthHTTPTransport:
             raise OAuthHTTPError("oauth_endpoint_unavailable") from None
         finally:
             connection.close()
+
+    def request_form(self, endpoint, *, fields, headers=None):
+        """POST standard application/x-www-form-urlencoded OAuth fields."""
+        if not isinstance(fields, dict) or not fields:
+            raise OAuthHTTPError("invalid_oauth_form")
+        normalized = []
+        for key, value in fields.items():
+            if (not isinstance(key, str) or not key or len(key) > 128
+                    or not isinstance(value, str) or len(value) > 8192
+                    or any(ord(c) < 0x20 or ord(c) == 0x7f for c in key + value)):
+                raise OAuthHTTPError("invalid_oauth_form")
+            normalized.append((key, value))
+        try:
+            body = urlencode(normalized).encode("ascii")
+        except (UnicodeEncodeError, ValueError):
+            raise OAuthHTTPError("invalid_oauth_form") from None
+        if len(body) > self.MAX_REQUEST_BYTES:
+            raise OAuthHTTPError("oauth_request_too_large")
+        host, target = self._parse_endpoint(endpoint)
+        pinned_ip = self._resolve_public_ip(host)
+        request_headers = {
+            "Accept": "application/json",
+            "User-Agent": "Yuki-OAuth/1.0",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        if headers is not None:
+            if not isinstance(headers, dict):
+                raise OAuthHTTPError("invalid_oauth_headers")
+            for key, value in headers.items():
+                if (not isinstance(key, str) or not isinstance(value, str)
+                        or key.lower() in {"host", "connection", "content-length", "transfer-encoding", "content-type"}
+                        or any(ord(c) < 0x20 or ord(c) == 0x7f for c in key + value)):
+                    raise OAuthHTTPError("invalid_oauth_headers")
+                request_headers[key] = value
+        connection = self._connection_factory(
+            host, pinned_ip, port=443, timeout=self.timeout, context=self._ssl_context
+        )
+        try:
+            connection.request("POST", target, body=body, headers=request_headers)
+            response = connection.getresponse()
+            if 300 <= response.status < 400:
+                raise OAuthHTTPError("oauth_redirect_rejected")
+            if response.status < 200 or response.status >= 300:
+                raise OAuthHTTPError("oauth_http_request_failed")
+            content_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json" and not content_type.endswith("+json"):
+                raise OAuthHTTPError("oauth_response_content_type_invalid")
+            raw = response.read(self.MAX_RESPONSE_BYTES + 1)
+            if len(raw) > self.MAX_RESPONSE_BYTES:
+                raise OAuthHTTPError("oauth_response_too_large")
+            try:
+                value = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise OAuthHTTPError("oauth_response_invalid_json") from None
+            if not isinstance(value, dict):
+                raise OAuthHTTPError("oauth_response_invalid_shape")
+            return value
+        except OAuthHTTPError:
+            raise
+        except (OSError, http.client.HTTPException, ssl.SSLError, TimeoutError):
+            raise OAuthHTTPError("oauth_endpoint_unavailable") from None
+        finally:
+            connection.close()
+
