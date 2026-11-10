@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-from providers.model_registry import ModelCapabilityRegistry
 from yuki_providers import ProviderManager
 
 
