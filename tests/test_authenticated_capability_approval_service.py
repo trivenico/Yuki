@@ -187,6 +187,21 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             engine.renew_task_approval_hold(task["id"], request_id)
 
+    def test_approved_task_is_affined_to_credential_worker(self):
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=lambda rid, token: delivered.append((rid, token)),
+            approval_worker_id="credential-worker",
+        )
+        request_id = service.request_approval("requester-session", self.task["id"])
+        service.approve_pending("approver-session", request_id)
+        self.assertEqual(len(delivered), 1)
+        self.assertIsNone(self.engine.claim("different-worker", owner_id="alice"))
+        claimed = self.engine.claim("credential-worker", owner_id="alice")
+        self.assertEqual(claimed["id"], self.task["id"])
+
     def test_worker_cannot_claim_task_while_approval_is_pending(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
         self.assertIsNone(self.engine.claim("worker-1", owner_id="alice"))
@@ -203,9 +218,24 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             skill_registry=FakeRegistry(),
             deliver_credential=lambda rid, token: delivered.append(token),
         )
-        with self.assertRaisesRegex(PermissionError, "goal is not owned"):
+        with self.assertRaisesRegex(PermissionError, "goal is not active"):
             service.approve_pending("approver-session", request_id)
         self.assertEqual(delivered, [])
+
+    def test_explicit_worker_identity_must_match_bound_broker(self):
+        class BrokerCallback:
+            worker_id = "broker-worker"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        with self.assertRaisesRegex(ValueError, "must match the credential broker identity"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=callback.deliver_credential,
+                approval_worker_id="different-worker",
+            )
 
     def test_cannot_request_for_task_with_untrusted_skill_or_payload(self):
         class EmptyRegistry:
@@ -217,6 +247,35 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         )
         with self.assertRaises(PermissionError):
             service.request_approval("requester-session", self.task["id"])
+
+
+    def test_worker_identity_is_inferred_from_bound_broker(self):
+        class BrokerCallback:
+            worker_id = "broker-worker"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=callback.deliver_credential,
+        )
+        self.assertEqual(service.approval_worker_id, "broker-worker")
+
+    def test_invalid_broker_worker_identity_is_rejected(self):
+        class BrokerCallback:
+            worker_id = "../untrusted"
+            def deliver_credential(self, request_id, token):
+                return None
+
+        callback = BrokerCallback()
+        with self.assertRaisesRegex(ValueError, "invalid worker identity"):
+            AuthenticatedCapabilityApprovalService(
+                self.auth, self.gateway, task_engine=self.engine,
+                skill_registry=FakeRegistry(),
+                deliver_credential=callback.deliver_credential,
+            )
 
 
 if __name__ == "__main__":
