@@ -1,4 +1,5 @@
 from .base import BaseProvider
+from .anthropic import AnthropicProvider
 from .mock import MockProvider
 from .ollama import OllamaProvider
 from .openai_compatible import OpenAICompatibleProvider
@@ -8,6 +9,7 @@ from .factory import create_provider
 
 __all__ = [
     "BaseProvider",
+    "AnthropicProvider",
     "MockProvider",
     "OllamaProvider",
     "OpenAICompatibleProvider",

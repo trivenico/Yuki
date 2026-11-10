@@ -70,13 +70,18 @@ class ProviderTests(unittest.TestCase):
 
 
 class ProviderManagerTests(unittest.TestCase):
-    def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
-        manager = ProviderManager(environ={})
+    def test_real_provider_is_default_and_anthropic_can_be_selected(self):
+        from providers.anthropic import AnthropicProvider
+        manager = ProviderManager(
+            {"anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "test-key"},
+        )
         self.assertEqual(manager.current().name, "openai")
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
-        self.assertIn("not implemented", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertEqual(result, "Selected provider: anthropic")
+        self.assertEqual(manager.current().name, "anthropic")
+        self.assertIsInstance(manager.create_selected_adapter(), AnthropicProvider)
 
     def test_selected_adapter_is_created(self):
         from providers.openai_compatible import OpenAICompatibleProvider
@@ -109,14 +114,18 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIs(agent.provider, created[0])
         self.assertIs(manager.create_selected_adapter(), created[0])
 
-    def test_terminal_provider_selection_does_not_claim_unimplemented_provider(self):
-        manager = ProviderManager()
+    def test_terminal_provider_selection_switches_to_configured_anthropic(self):
+        from providers.anthropic import AnthropicProvider
+        manager = ProviderManager(
+            {"anthropic_model": "claude-test"},
+            environ={"ANTHROPIC_API_KEY": "test-key"},
+        )
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/provider select anthropic", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("not implemented", result)
-        from providers.openai_compatible import OpenAICompatibleProvider
-        self.assertIsInstance(agent.provider, OpenAICompatibleProvider)
+        self.assertEqual(result, "Selected provider: anthropic")
+        self.assertEqual(manager.current().name, "anthropic")
+        self.assertIsInstance(agent.provider, AnthropicProvider)
 
     def test_dashboard_reports_core_status(self):
         manager = ProviderManager()
