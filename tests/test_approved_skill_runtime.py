@@ -87,6 +87,65 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(result.message, "done:sunny")
         self.assertEqual(self.events[-1], ("skill:invoke", "completed"))
 
+
+    def test_central_policy_denial_blocks_approved_skill_execution(self):
+        from core.tool_policy import Decision, PolicyResult
+        calls = []
+        class SideEffectSkill:
+            name = "weather"
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                calls.append(argument)
+                return type("Result", (), {"ok": True, "message": "executed"})()
+        class Engine:
+            def __init__(self):
+                self.requests = []
+            def evaluate(self, request):
+                self.requests.append(request)
+                return PolicyResult(Decision.DENY, "v1", ("deny-skill",), "test")
+        skill = SideEffectSkill()
+        self.registry.register(skill)
+        engine = Engine()
+        runtime = ApprovedSkillRuntime(
+            self.registry, self.store, policy_engine=engine,
+            policy_request_factory=lambda name, argument, instance: (
+                name, argument, instance
+            ),
+        )
+        result = runtime.invoke("weather", "change")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "central_policy_deny")
+        self.assertEqual(calls, [])
+        self.assertEqual(engine.requests, [("weather", "change", skill)])
+
+    def test_central_policy_evaluation_failure_fails_closed(self):
+        class SideEffectSkill:
+            name = "weather"
+            risk = "low"
+            requires_approval = False
+            def execute(self, argument=""):
+                raise AssertionError("must not execute")
+        class BrokenEngine:
+            def evaluate(self, request):
+                raise RuntimeError("policy unavailable")
+        self.registry.register(SideEffectSkill())
+        runtime = ApprovedSkillRuntime(
+            self.registry, self.store, policy_engine=BrokenEngine(),
+            policy_request_factory=lambda *_: object(),
+        )
+        result = runtime.invoke("weather")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "central_policy_error")
+
+    def test_central_policy_requires_engine_and_factory_together(self):
+        from core.tool_policy import ToolPolicyEngine
+        with self.assertRaises(ValueError):
+            ApprovedSkillRuntime(
+                self.registry, self.store,
+                policy_engine=ToolPolicyEngine([], policy_version="v1"),
+            )
+
     def test_unknown_skill_cannot_be_approved_or_invoked(self):
         with self.assertRaises(ValueError):
             self.runtime.approve_invocation("not-registered")
