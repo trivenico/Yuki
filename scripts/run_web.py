@@ -14,6 +14,7 @@ from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.device_pairing import DevicePairingService
+from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
@@ -63,11 +64,15 @@ def create_app():
     inference_database = workspace / "inference.sqlite3"
     device_pairing = DevicePairingService(inference_database)
     inference_jobs = InferenceJobService(inference_database, device_pairing)
+    income_opportunities = SQLiteIncomeOpportunityStore(
+        str(workspace / "income-opportunities.sqlite3")
+    )
     return build_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
         device_pairing=device_pairing, inference_jobs=inference_jobs,
+        income_opportunities=income_opportunities,
     )
 
 
