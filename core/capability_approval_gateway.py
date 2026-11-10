@@ -266,7 +266,8 @@ class CapabilityApprovalGateway:
                 db.commit()
                 return False
             raw = json.loads(row["request_json"])
-            raw["risk"] = Risk(raw["risk"])\n            request = PolicyRequest(**raw)
+            raw["risk"] = Risk(raw["risk"])
+            request = PolicyRequest(**raw)
             try:
                 trusted = self.authorize_approver(revoked_by, request)
             except Exception as error:
