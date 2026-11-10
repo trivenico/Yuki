@@ -12,6 +12,21 @@ from typing import Callable, Any
 
 
 @dataclass(frozen=True)
+class SkillPolicyContext:
+    """Trusted provenance supplied by the authenticated durable task boundary."""
+    principal_id: str
+    trigger: str
+    goal_id: str
+    task_id: str
+
+    def __post_init__(self) -> None:
+        for field in ("principal_id", "trigger", "goal_id", "task_id"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 256 or value != value.strip():
+                raise ValueError(f"{field} must be non-empty bounded trusted text")
+
+
+@dataclass(frozen=True)
 class SkillInvocationResult:
     ok: bool
     message: str
@@ -215,7 +230,8 @@ def invoke_registered_skill(
     max_result_chars: int = 2000,
     expected_skill: Any = None,
     policy_engine: Any = None,
-    policy_request_factory: Callable[[str, str, Any], Any] | None = None,
+    policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
+    policy_context: SkillPolicyContext | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -266,7 +282,9 @@ def invoke_registered_skill(
     if policy_engine is not None:
         try:
             from core.tool_policy import Decision
-            policy_request = policy_request_factory(skill_name, argument, skill)
+            if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
+                raise ValueError("invalid trusted policy context")
+            policy_request = policy_request_factory(skill_name, argument, skill, policy_context)
             policy_result = policy_engine.evaluate(policy_request)
             if policy_result.decision != Decision.ALLOW:
                 status = "central_policy_" + policy_result.decision.value
