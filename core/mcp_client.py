@@ -1,22 +1,16 @@
 """Restricted MCP Streamable HTTP client. No stdio subprocesses or implicit tool trust."""
 from __future__ import annotations
-import ipaddress
+
 import json
 import re
-import socket
-import urllib.error
-import urllib.request
 from urllib.parse import urlsplit
+
+from core.mcp_pinned_transport import MCPPinnedTransportError, PinnedMCPHTTPTransport
 from core.prompt_guard import scan_untrusted_text
 
 
 class MCPError(RuntimeError):
     pass
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 class MCPHTTPClient:
@@ -26,39 +20,39 @@ class MCPHTTPClient:
 
     def __init__(
         self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
-        access_token_provider=None, timeout=10
+        access_token_provider=None, timeout=10, http_transport=None,
     ):
-        self.endpoint = self._validate_endpoint(endpoint, allowed_hosts)
+        self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
+        self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
         self.approver = approver
         if access_token_provider is not None and not callable(access_token_provider):
             raise TypeError("MCP access token provider must be callable.")
-        # The trusted host injects a provider backed by its OAuth/secret broker.
-        # Tokens never enter MCP server config, skill arguments, or model context.
         self._access_token_provider = access_token_provider
         self.timeout = timeout
+        if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
+            raise TypeError("MCP HTTP transport must provide post_json.")
+        self._http = http_transport or PinnedMCPHTTPTransport(
+            allowed_hosts=self.allowed_hosts, timeout=timeout,
+        )
         self.session_id = None
         self._request_id = 0
-        self._opener = urllib.request.build_opener(_NoRedirect)
 
     @staticmethod
     def _validate_endpoint(endpoint, allowed_hosts):
-        if not isinstance(endpoint, str) or len(endpoint) > 2048:
+        if not isinstance(endpoint, str) or not 1 <= len(endpoint) <= 2048:
             raise MCPError("MCP endpoint must be a bounded URL.")
-        parts = urlsplit(endpoint.strip())
-        host = (parts.hostname or "").lower().rstrip(".")
-        allowed = frozenset(str(h).lower().rstrip(".") for h in allowed_hosts)
-        if parts.scheme != "https" or not host or parts.username or parts.password or parts.port not in (None, 443):
-            raise MCPError("Only HTTPS MCP endpoints on the default port are accepted.")
-        if not allowed or host not in allowed:
-            raise MCPError("MCP host is not on the explicit allow-list.")
         try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
-            if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
-                raise MCPError("Non-public MCP destinations are blocked.")
-        except OSError as exc:
-            raise MCPError("MCP host could not be resolved.") from exc
-        return endpoint.strip()
+            parts = urlsplit(endpoint)
+            port = parts.port
+        except ValueError:
+            raise MCPError("MCP endpoint is invalid.") from None
+        host = (parts.hostname or "").lower().rstrip(".")
+        if (parts.scheme != "https" or not host or parts.username is not None
+                or parts.password is not None or port not in (None, 443)
+                or parts.fragment or host not in allowed_hosts):
+            raise MCPError("MCP endpoint is not trusted.")
+        return endpoint
 
     def _authorization_header(self):
         if self._access_token_provider is None:
@@ -67,12 +61,7 @@ class MCPHTTPClient:
             token = self._access_token_provider()
         except Exception:
             raise MCPError("MCP authorization credentials are unavailable.") from None
-        if (
-            not isinstance(token, str)
-            or not token
-            or len(token) > 8192
-            or not self._BEARER_TOKEN.fullmatch(token)
-        ):
+        if not isinstance(token, str) or not token or len(token) > 8192 or not self._BEARER_TOKEN.fullmatch(token):
             raise MCPError("MCP authorization credentials are invalid.")
         return "Bearer " + token
 
@@ -89,27 +78,26 @@ class MCPHTTPClient:
             headers["Authorization"] = authorization
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
-        request = urllib.request.Request(self.endpoint, data=json.dumps(payload).encode("utf-8"),
-                                          headers=headers, method="POST")
         try:
-            with self._opener.open(request, timeout=self.timeout) as response:
-                self.session_id = response.headers.get("Mcp-Session-Id", self.session_id)
-                body = response.read(self.MAX_RESPONSE_BYTES + 1)
-                if len(body) > self.MAX_RESPONSE_BYTES:
-                    raise MCPError("MCP response exceeds the 1 MB limit.")
-                if not body and notification:
-                    return None
-                if "application/json" not in response.headers.get("Content-Type", "").lower():
-                    raise MCPError("This client currently supports JSON MCP responses, not SSE-only responses.")
-                result = json.loads(body.decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raise MCPError(f"MCP HTTP request failed ({exc.code}); redirects are disabled.") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise MCPError("MCP server was unreachable or timed out.") from exc
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise MCPError("MCP server returned invalid JSON.") from exc
+            status, response_headers, body = self._http.post_json(
+                self.endpoint, payload=payload, headers=headers,
+            )
+        except MCPPinnedTransportError:
+            raise MCPError("MCP server was unreachable or rejected the request.") from None
+        self.session_id = response_headers.get("mcp-session-id", self.session_id)
+        if not body and notification and status in (202, 204):
+            return None
+        content_type = response_headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json" and not content_type.endswith("+json"):
+            raise MCPError("This client currently supports JSON MCP responses, not SSE-only responses.")
+        try:
+            result = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise MCPError("MCP server returned invalid JSON.") from None
         if not isinstance(result, dict) or result.get("jsonrpc") != "2.0":
             raise MCPError("MCP server returned an invalid JSON-RPC envelope.")
+        if not notification and result.get("id") != self._request_id:
+            raise MCPError("MCP server returned a mismatched response identifier.")
         if "error" in result:
             raise MCPError("MCP server returned a JSON-RPC error.")
         return result.get("result")
@@ -146,8 +134,8 @@ class MCPHTTPClient:
             raise MCPError("MCP tool arguments must be an object.")
         try:
             encoded_arguments = json.dumps(arguments, ensure_ascii=False).encode("utf-8")
-        except (TypeError, ValueError) as exc:
-            raise MCPError("MCP tool arguments must be JSON-serializable.") from exc
+        except (TypeError, ValueError):
+            raise MCPError("MCP tool arguments must be JSON-serializable.") from None
         if len(encoded_arguments) > 64000:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
