@@ -27,6 +27,20 @@ class StrictApprovalPolicyTests(unittest.TestCase):
         self.assertEqual(result.stage, "permission_denied")
         self.assertFalse(skill.executed)
 
+    def test_malformed_risk_values_fail_closed_without_calling_approver(self):
+        calls = []
+        gate = PermissionGate(lambda request: calls.append(request) or True)
+        for risk in ([], {}, set(), None, 1, True):
+            with self.subTest(risk=repr(risk)):
+                self.assertFalse(gate.request("shell.execute", "run untrusted command", risk=risk))
+        self.assertEqual(calls, [])
+
+    def test_approver_must_return_exact_true(self):
+        for response in (1, "yes", [], None):
+            with self.subTest(response=repr(response)):
+                gate = PermissionGate(lambda _request, value=response: value)
+                self.assertFalse(gate.request("shell.execute", "run command", risk="high"))
+
     def test_each_call_requests_approval_again(self):
         requests = []
         skill = NormallyUnapprovedSkill()
