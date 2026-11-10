@@ -49,7 +49,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(
             {"provider": "ollama", "ollama_model": "test-model"}, environ={}
         )
-        with patch("providers.factory.create_provider", return_value=OllamaProvider()):
+        with patch.object(OllamaProvider, "is_available", return_value=True):
             model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
