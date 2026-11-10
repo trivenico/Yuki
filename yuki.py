@@ -440,11 +440,48 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         parts = command.split(maxsplit=2)
         if len(parts) < 2:
             return "Usage: /tool NAME [argument]"
+        user = _get_auth_service().resolve_session(_CLI_SESSION_TOKEN) if _CLI_SESSION_TOKEN else None
+        if user is None:
+            return "Authentication required. Use /auth login USERNAME."
         name = parts[1]
+        # Bind central tool authorization to the authenticated terminal principal.
+        # The local allow-list remains an independent second gate.
+        tool_rules = tuple(
+            PolicyRule(
+                rule_id=f"terminal-tool-{tool_name}",
+                decision=Decision.ALLOW,
+                principal_id=user.user_id,
+                trigger="terminal",
+                capability="tool.invoke",
+                target=tool_name,
+                risk=Risk.MEDIUM,
+            )
+            for tool_name in TOOLS
+        )
+        tool_policy_engine = ToolPolicyEngine(
+            tool_rules, policy_version="yuki-terminal-tools-v1",
+        )
+
+        def tool_request_factory(tool_name, argument):
+            if tool_name not in TOOLS or user.user_id != getattr(user, "user_id", None):
+                raise ValueError("authenticated tool context is required")
+            return PolicyRequest(
+                principal_id=user.user_id,
+                trigger="terminal",
+                capability="tool.invoke",
+                target=tool_name,
+                argument_sha256=argument_digest({"argument": argument}),
+                risk=Risk.MEDIUM,
+                run_id="terminal-session",
+                step_id=uuid.uuid4().hex,
+            )
+
         runtime = GuardedToolRuntime(
             TOOLS,
             policy,
             audit=lambda action, outcome: write_audit_event(action, outcome),
+            policy_engine=tool_policy_engine,
+            policy_request_factory=tool_request_factory,
         )
         return runtime.invoke(name, parts[2] if len(parts) > 2 else "")
     if command == "/task" or command.startswith("/task "):
