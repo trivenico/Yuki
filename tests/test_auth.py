@@ -4,7 +4,8 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.auth import (AuthenticationError, BuiltInAuthService, agent_memory_authorizer, workflow_principal_resolver)
+from core.agent_memory import AgentMemoryStore
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -59,6 +60,51 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             self.auth.create_account("ab", "too short")
         with self.assertRaises(ValueError):
             BuiltInAuthService(str(Path(self.tmp.name) / "bad.sqlite3"), password_iterations=1)
+
+
+    def test_memory_authorization_is_owner_bound_and_revocable(self):
+        owner = self.auth.create_account("memory.owner", "A sufficiently long password 3!")
+        other = self.auth.create_account("memory.other", "Another secure password 4!")
+        authorize = agent_memory_authorizer(self.auth)
+        store = AgentMemoryStore(str(Path(self.tmp.name) / "memory.sqlite3"), authorize=authorize)
+
+        saved = store.remember(
+            actor_id=owner.user_id, agent_id="yuki-companion",
+            content="Prefers concise technical explanations",
+            source="owner conversation", category="semantic",
+        )
+        self.assertEqual(saved["actor_id"], owner.user_id)
+        self.assertEqual(len(store.list_memories(
+            actor_id=owner.user_id, agent_id="yuki-companion"
+        )), 1)
+        self.assertEqual(store.list_memories(
+            actor_id=other.user_id, agent_id="yuki-companion"
+        ), [])
+        with self.assertRaises(PermissionError):
+            store.remember(
+                actor_id=other.user_id, agent_id="yuki-companion",
+                content="Attempted owner impersonation",
+                source="test", category="episodic",
+            )
+
+        self.assertTrue(self.auth.disable_user(owner.user_id))
+        with self.assertRaises(PermissionError):
+            store.list_memories(actor_id=owner.user_id, agent_id="yuki-companion")
+        with self.assertRaises(PermissionError):
+            store.remember(
+                actor_id=owner.user_id, agent_id="yuki-companion",
+                content="Must be rejected after disable",
+                source="test", category="episodic",
+            )
+
+    def test_memory_sharing_is_separate_privilege(self):
+        admin = self.auth.bootstrap_admin("memory.admin", "Correct horse battery staple 9!")
+        user = self.auth.create_account("memory.user", "Another secure password 4!")
+        authorize = agent_memory_authorizer(self.auth)
+        self.assertTrue(authorize(admin.user_id, "agent_memory:share", "agent-a"))
+        self.assertFalse(authorize(user.user_id, "agent_memory:share", "agent-a"))
+        self.assertFalse(authorize(user.user_id, "agent_memory:unknown", "agent-a"))
+        self.assertFalse(authorize(user.user_id, "agent_memory:read", ""))
 
     def test_workflow_approval_uses_authenticated_identity_not_request_claims(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
