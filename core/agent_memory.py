@@ -444,7 +444,6 @@ class AgentMemoryStore:
         if not self._allowed(actor_id, "agent_memory:renew", agent_id):
             raise PermissionError("memory renewal is not authorized")
         now = datetime.now(timezone.utc)
-        expires = (now + timedelta(days=retention_days)).isoformat()
         event_id = uuid4().hex
         with self._lock, self._connect() as db:
             row = db.execute(
@@ -457,6 +456,13 @@ class AgentMemoryStore:
             if row["lifecycle_status"] in {"rejected", "retired"}:
                 raise ValueError("terminal_memory_status_cannot_be_renewed")
             previous = row["lifecycle_status"]
+            # Retention is an extension, not a replacement lifetime: never
+            # shorten an existing expiry when the owner renews a record.
+            expiry_base = (
+                datetime.fromisoformat(row["expires_at"])
+                if row["expires_at"] is not None else now
+            )
+            expires = (max(expiry_base, now) + timedelta(days=retention_days)).isoformat()
             db.execute(
                 """UPDATE agent_memories SET expires_at=?,
                    lifecycle_updated_at=?, lifecycle_reason=?
