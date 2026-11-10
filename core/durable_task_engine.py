@@ -63,6 +63,9 @@ class DurableTaskEngine:
             """)
             # Existing databases need an additive migration. Old rows have no
             # trustworthy fingerprint, so replaying them is rejected safely.
+            goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
+            if "owner_id" not in goal_columns:
+                c.execute("ALTER TABLE goals ADD COLUMN owner_id TEXT")
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
@@ -116,11 +119,16 @@ class DurableTaskEngine:
         c.execute("INSERT INTO run_events(goal_id,task_id,event_type,detail_json,created_at) VALUES(?,?,?,?,?)",
                   (goal, task, kind, self._json(detail), self.clock()))
 
-    def create_goal(self, goal_id=None):
+    def create_goal(self, goal_id=None, *, owner_id=None):
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 256
+            or not owner_id.strip() or owner_id != owner_id.strip()
+        ):
+            raise ValueError("owner_id must be non-empty bounded authenticated identity text")
         goal_id, now = goal_id or str(uuid.uuid4()), self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("INSERT INTO goals VALUES(?,?,?,?)", (goal_id,"active",now,now))
+            c.execute("INSERT INTO goals(id,state,created_at,updated_at,owner_id) VALUES(?,?,?,?,?)", (goal_id,"active",now,now,owner_id))
             self._event(c,goal_id,None,"goal.created",{})
             c.commit()
         return goal_id
@@ -357,7 +365,7 @@ class DurableTaskEngine:
             c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id)); self._event(c,goal_id,None,"goal.completed",{})
 
     def get_task(self,task_id):
-        with closing(self._connect()) as c: r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
+        with closing(self._connect()) as c: r=c.execute("SELECT t.*, g.owner_id AS owner_id FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.id=?",(task_id,)).fetchone()
         if r is None: raise TaskNotFound("task not found")
         return self._decode(r)
 
@@ -367,7 +375,7 @@ class DurableTaskEngine:
         return dict(r)
 
     def list_tasks(self,goal_id):
-        with closing(self._connect()) as c: rows=c.execute("SELECT * FROM tasks WHERE goal_id=? ORDER BY created_at,id",(goal_id,)).fetchall()
+        with closing(self._connect()) as c: rows=c.execute("SELECT t.*, g.owner_id AS owner_id FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.goal_id=? ORDER BY t.created_at,t.id",(goal_id,)).fetchall()
         return [self._decode(r) for r in rows]
 
     def list_events(self,goal_id,*,after_id=0,limit=100):
