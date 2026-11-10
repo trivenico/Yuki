@@ -128,6 +128,22 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
                 "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
             )
 
+    def test_sse_rejects_boolean_id_as_integer_response_id(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+                self.chunks = [
+                    b'data: {"jsonrpc":"2.0","id":true,"result":{}}\n\n',
+                    b"",
+                ]
+            def read1(self, limit):
+                return self.chunks.pop(0)
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_response_missing"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":1}, headers={}
+            )
+
     def test_sse_enforces_line_size_limit(self):
         class StreamingResponse(Response):
             def __init__(self):
