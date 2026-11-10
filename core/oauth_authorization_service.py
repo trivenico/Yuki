@@ -7,6 +7,7 @@ It is a host-side building block; it does not expose an HTTP callback route.
 from __future__ import annotations
 
 from urllib.parse import parse_qs, urlsplit
+import secrets
 
 from core.oauth2_pkce import (
     OAuthAuthorizationError,
@@ -30,6 +31,7 @@ class OAuthAuthorizationService:
         allowed_authorization_hosts, redirect_uri: str,
         issuer: str, resource: str, scopes, identity_verifier,
         authorization_response_iss_parameter_supported: bool = False,
+        oidc_verifier=None,
     ):
         required = {
             "provider_id": provider_id, "account_id": account_id,
@@ -67,17 +69,23 @@ class OAuthAuthorizationService:
         self._issuer = issuer
         self._resource = resource
         self._scopes = tuple(scopes)
+        self._oidc_verifier = oidc_verifier
+        if oidc_verifier is not None and not callable(getattr(oidc_verifier, "verify", None)):
+            raise TypeError("a trusted OIDC ID-token verifier is required")
+        self._authorization_scopes = tuple(dict.fromkeys((*self._scopes, *(("openid",) if oidc_verifier is not None else ()))))
         self._require_response_issuer = authorization_response_iss_parameter_supported
 
     def begin(self, *, owner_id: str, session_id: str) -> dict:
         """Create an owner/session-bound, short-lived S256 authorization request."""
+        oidc_nonce = secrets.token_urlsafe(32) if self._oidc_verifier is not None else None
         request = create_pkce_authorization_request(
             authorization_endpoint=self._authorization_endpoint,
             allowed_authorization_hosts=self._allowed_authorization_hosts,
             client_id=self._client_id,
             redirect_uri=self._redirect_uri,
-            scopes=self._scopes,
+            scopes=self._authorization_scopes,
             resource=self._resource,
+            oidc_nonce=oidc_nonce,
         )
         try:
             expires_at = self._transactions.create(
@@ -89,6 +97,7 @@ class OAuthAuthorizationService:
                 issuer=self._issuer,
                 resource=self._resource,
                 ttl_seconds=600,
+                oidc_nonce=oidc_nonce,
             )
         except Exception:
             raise OAuthAuthorizationServiceError("authorization_transaction_creation_failed") from None
@@ -157,10 +166,22 @@ class OAuthAuthorizationService:
             )
             grant = validate_oauth_token_response(
                 document,
-                requested_scopes=self._scopes,
+                requested_scopes=self._authorization_scopes,
                 expected_issuer=transaction.issuer,
                 expected_resource=transaction.resource,
             )
+            # OIDC grants are verified against the nonce stored in the consumed,
+            # owner/session-bound transaction before any credential is persisted.
+            if self._oidc_verifier is not None:
+                if grant.id_token is None or transaction.oidc_nonce is None:
+                    raise OAuthAuthorizationServiceError("oidc_identity_token_missing")
+                self._oidc_verifier.verify(
+                    id_token=grant.id_token,
+                    expected_nonce=transaction.oidc_nonce,
+                    access_token=grant.access_token,
+                )
+            elif grant.id_token is not None:
+                raise OAuthAuthorizationServiceError("unexpected_oidc_identity_token")
             # Bind this authorization grant to the provider account selected by
             # trusted host configuration before persisting any credential.
             self._identity_verifier.verify(access_token=grant.access_token)
