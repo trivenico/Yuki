@@ -110,6 +110,25 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
             gateway.issue_approval(self.request, approved_by="admin")
         self.assertFalse(gateway.authorize(self.request).allowed)
 
+    def test_policy_version_change_invalidates_pending_approval(self):
+        token = self.gateway.issue_approval(self.request, approved_by="admin")
+        self.gateway.policy_engine = ToolPolicyEngine((
+            PolicyRule(
+                "approval-required", Decision.REQUIRE_APPROVAL,
+                capability="workspace:write", principal_id="alice",
+                target="repo:project-a", risk=Risk.HIGH,
+            ),
+        ), policy_version="policy-v8")
+        result = self.gateway.authorize(self.request, approval_token=token)
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.status, "approval_invalid")
+
+    def test_allow_decisions_are_audited(self):
+        allowed = self.make_request(capability="workspace:read")
+        result = self.gateway.authorize(allowed)
+        self.assertTrue(result.allowed)
+        self.assertEqual(self.gateway.audit_events()[0]["outcome"], "allowed")
+
     def test_approval_issuance_requires_trusted_approver(self):
         with self.assertRaises(PermissionError):
             self.gateway.issue_approval(self.request, approved_by="alice")
