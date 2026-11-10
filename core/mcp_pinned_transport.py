@@ -142,7 +142,12 @@ class PinnedMCPHTTPTransport:
                     message = json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     raise MCPPinnedTransportError("mcp_sse_invalid_event") from None
-                if isinstance(message, dict) and message.get("id") == expected_id:
+                if (
+                    isinstance(message, dict)
+                    and message.get("jsonrpc") == "2.0"
+                    and type(message.get("id")) is type(expected_id)
+                    and message.get("id") == expected_id
+                ):
                     return json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
                 return None
             if line.startswith(b":"):
