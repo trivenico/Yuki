@@ -61,7 +61,6 @@ class DurableSkillWorker:
     def _invoke_with_lease_heartbeat(
         self, task_id: str, skill_name: str, argument: str,
         policy_context: SkillPolicyContext | None = None,
-        approval_token: str | None = None,
     ):
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
@@ -86,6 +85,17 @@ class DurableSkillWorker:
         )
         heartbeat_thread.start()
         try:
+            # Resolve credentials only after lease renewal is active: approval
+            # storage may be slow, and must not let the claimed task lease lapse.
+            approval_token = None
+            if self.approval_token_resolver is not None:
+                if policy_context is None:
+                    raise RuntimeError("trusted task provenance is required for approval lookup")
+                approval_token = self.approval_token_resolver(policy_context, skill_name)
+                if approval_token is not None and (
+                    not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
+                ):
+                    raise RuntimeError("approval resolver returned an invalid credential")
             if policy_context is None:
                 result = self.runtime.invoke(skill_name, argument)
             else:
@@ -166,17 +176,8 @@ class DurableSkillWorker:
         try:
             # Approval credentials come only from an injected trusted resolver,
             # never from the durable task payload or model-generated arguments.
-            approval_token = None
-            if self.approval_token_resolver is not None:
-                if policy_context is None:
-                    raise RuntimeError("trusted task provenance is required for approval lookup")
-                approval_token = self.approval_token_resolver(policy_context, skill_name)
-                if approval_token is not None and (
-                    not isinstance(approval_token, str) or not 40 <= len(approval_token) <= 256
-                ):
-                    raise RuntimeError("approval resolver returned an invalid credential")
             result = self._invoke_with_lease_heartbeat(
-                task_id, skill_name, argument, policy_context, approval_token,
+                task_id, skill_name, argument, policy_context,
             )
             if result.ok:
                 # Persist only status metadata, never skill output which may
