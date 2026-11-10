@@ -135,7 +135,10 @@ class PinnedOAuthHTTPTransportTests(unittest.TestCase):
         for headers in (
             {"Host": "attacker.example"},
             {"Content-Length": "0"},
-            {"X-Test": "safe\r\nInjected: yes"},
+            {"Content-Type": "text/plain"},
+            {"X-Test": "safe\\r\\nInjected: yes"},
+            {"Bad Header": "value"},
+            {"X-Test": "one", "x-test": "two"},
         ):
             with self.subTest(headers=headers), self.assertRaises(OAuthHTTPError):
                 self.transport.request_json("GET", "https://oauth.example.com/metadata", headers=headers)
