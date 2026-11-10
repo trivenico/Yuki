@@ -143,6 +143,13 @@ class ApprovalBrokerWorkerIntegrationTests(unittest.TestCase):
                 self.engine, self.runtime, worker_id="worker-1", owner_id="alice",
             )
 
+    def test_worker_rejects_resolver_bound_to_another_worker(self):
+        with self.assertRaisesRegex(ValueError, "different worker identity"):
+            DurableSkillWorker(
+                self.engine, self.runtime, worker_id="worker-2", owner_id="alice",
+                approval_token_resolver=self.broker.resolver(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
