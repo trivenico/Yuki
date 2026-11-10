@@ -5,6 +5,7 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import re
 import sqlite3
 from contextlib import closing
 import time
@@ -204,7 +205,7 @@ class DurableTaskEngine:
             raise ValueError("task_id is invalid")
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256:
             raise ValueError("owner_id is invalid")
-        if not isinstance(request_id, str) or not __import__("re").fullmatch(r"[0-9a-f]{32}", request_id):
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
             raise ValueError("request_id is invalid")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 86400:
             raise ValueError("ttl_seconds must be between 1 and 86400")
@@ -212,7 +213,7 @@ class DurableTaskEngine:
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
             row = c.execute(
-                """SELECT t.state,g.state AS goal_state,g.owner_id
+                """SELECT t.state,t.goal_id,g.state AS goal_state,g.owner_id
                    FROM tasks t JOIN goals g ON g.id=t.goal_id WHERE t.id=?""",
                 (task_id,),
             ).fetchone()
@@ -233,9 +234,7 @@ class DurableTaskEngine:
                    created_at=excluded.created_at""",
                 (task_id, request_id, now + ttl_seconds, now),
             )
-            self._event(c, row["owner_id"] and c.execute(
-                "SELECT goal_id FROM tasks WHERE id=?", (task_id,)
-            ).fetchone()["goal_id"], task_id, "task.approval_held",
+            self._event(c, row["goal_id"], task_id, "task.approval_held",
                 {"request_id": request_id, "expires_at": now + ttl_seconds})
             c.commit()
 
