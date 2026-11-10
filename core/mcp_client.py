@@ -72,7 +72,7 @@ class MCPHTTPClient:
             payload["id"] = self._request_id
         if params is not None:
             payload["params"] = params
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
         authorization = self._authorization_header()
         if authorization is not None:
             headers["Authorization"] = authorization
