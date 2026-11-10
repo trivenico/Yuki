@@ -6,6 +6,7 @@ from api.runtime import build_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
+from core.durable_task_engine import DurableTaskEngine
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 
@@ -83,6 +84,23 @@ class ConversationRuntimeTests(unittest.TestCase):
                 {"type": "lifespan.shutdown.complete"},
             ])
             self.assertTrue(runtime._closed)
+
+
+    def test_runtime_owns_and_closes_injected_durable_task_engine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            engine = DurableTaskEngine(root / "durable.sqlite")
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), durable_task_engine=engine,
+            )
+            self.assertIs(runtime.task_engine, engine)
+            self.assertIsNotNone(runtime.app.task_service)
+            runtime.close()
+            runtime.close()
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                engine.create_goal()
 
     def test_invalid_dependencies_fail_before_store_creation(self):
         with tempfile.TemporaryDirectory() as directory:

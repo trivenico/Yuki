@@ -11,6 +11,7 @@ from pathlib import Path
 from api.runtime import build_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
+from core.durable_task_engine import DurableTaskEngine
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
@@ -58,11 +59,17 @@ def create_app():
         max_tool_calls=1,
         max_duration_seconds=120,
     )
-    return build_conversation_runtime(
-        config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=provider_manager.catalog,
-        provider_selector=provider_manager.select,
-    )
+    task_engine = DurableTaskEngine(workspace / "durable_tasks.sqlite3")
+    try:
+        return build_conversation_runtime(
+            config, auth_service=auth, agent_loop=agent_loop,
+            provider_catalog=provider_manager.catalog,
+            provider_selector=provider_manager.select,
+            durable_task_engine=task_engine,
+        )
+    except Exception:
+        task_engine.close()
+        raise
 
 
 def main():

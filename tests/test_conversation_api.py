@@ -9,6 +9,8 @@ from api.conversations import YukiConversationAPI
 from core.auth import BuiltInAuthService
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
+from core.authenticated_task_service import AuthenticatedDurableTaskService
+from core.durable_task_engine import DurableTaskEngine
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
@@ -33,9 +35,12 @@ class ConversationAPITests(unittest.TestCase):
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
         loop = AgentExecutionLoop(model, protocol, stream_model=lambda **kwargs: iter([{'type': 'text_delta', 'text': 'Hello '}, {'type': 'text_delta', 'text': 'from Yuki'}]))
         service = ConversationService(ConversationStore(root / "conversations.sqlite"), loop)
-        self.app = YukiConversationAPI(self.auth, service)
+        self.task_engine = DurableTaskEngine(root / "durable-tasks.sqlite")
+        self.task_service = AuthenticatedDurableTaskService(self.auth, self.task_engine)
+        self.app = YukiConversationAPI(self.auth, service, task_service=self.task_service)
 
     def tearDown(self):
+        self.task_engine.close()
         self.tempdir.cleanup()
 
     def request(self, method, path, payload=None, token=None, query=b""):
@@ -307,6 +312,78 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
+
+
+    def test_authenticated_durable_goal_task_and_event_lifecycle(self):
+        status, data, _ = self.request("POST", "/v1/goals", {}, self.issued.token)
+        self.assertEqual(status, 201)
+        goal_id = data["goal_id"]
+        self.assertEqual(self.task_engine.get_goal(goal_id)["owner_id"], self.user.user_id)
+
+        status, data, _ = self.request(
+            "POST", f"/v1/goals/{goal_id}/tasks",
+            {"task_type": "review", "payload": {"description": "inspect"},
+             "idempotency_key": "api-task-1", "max_attempts": 1},
+            self.issued.token,
+        )
+        self.assertEqual(status, 201)
+        task_id = data["task"]["id"]
+        self.assertEqual(data["task"]["owner_id"], self.user.user_id)
+
+        status, data, _ = self.request("GET", f"/v1/goals/{goal_id}", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["goal"]["owner_id"], self.user.user_id)
+        status, data, _ = self.request("GET", f"/v1/goals/{goal_id}/tasks", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual([item["id"] for item in data["tasks"]], [task_id])
+        status, data, _ = self.request("GET", f"/v1/goals/{goal_id}/events", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertTrue(any(item["event_type"] == "task.queued" for item in data["events"]))
+        status, data, _ = self.request("GET", f"/v1/tasks/{task_id}", token=self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["task"]["id"], task_id)
+        status, data, _ = self.request("POST", f"/v1/tasks/{task_id}/cancel", {}, self.issued.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["task"]["state"], "cancelled")
+
+    def test_durable_task_api_requires_authentication_and_rejects_forged_top_level_owner(self):
+        status, data, _ = self.request("POST", "/v1/goals", {})
+        self.assertEqual(status, 401)
+        status, data, _ = self.request(
+            "POST", "/v1/goals", {"owner_id": "forged"}, self.issued.token
+        )
+        self.assertEqual(status, 400)
+
+    def test_durable_task_api_hides_other_owners_goals_and_tasks(self):
+        goal_id = self.task_service.create_goal(self.issued.token)
+        task = self.task_service.submit(
+            self.issued.token, goal_id, "review", {"description": "private"},
+            idempotency_key="private-task", max_attempts=1,
+        )
+        self.auth.create_account("other-user", "a-secure-other-password")
+        other = self.auth.authenticate("other-user", "a-secure-other-password")
+        for method, path in (
+            ("GET", f"/v1/goals/{goal_id}"),
+            ("GET", f"/v1/goals/{goal_id}/tasks"),
+            ("GET", f"/v1/goals/{goal_id}/events"),
+            ("GET", f"/v1/tasks/{task['id']}"),
+            ("POST", f"/v1/tasks/{task['id']}/cancel"),
+        ):
+            payload = {} if method == "POST" else None
+            status, data, _ = self.request(method, path, payload, other.token)
+            self.assertEqual(status, 404, (method, path, data))
+            self.assertEqual(data, {"error": "not_found"})
+
+    def test_durable_task_api_rejects_unknown_request_fields(self):
+        goal_id = self.task_service.create_goal(self.issued.token)
+        status, data, _ = self.request(
+            "POST", f"/v1/goals/{goal_id}/tasks",
+            {"task_type": "review", "payload": {}, "idempotency_key": "bad",
+             "owner_id": "forged"},
+            self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(data, {"error": "invalid_request"})
 
 if __name__ == "__main__":
     unittest.main()
