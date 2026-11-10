@@ -260,8 +260,9 @@ class ProviderManager:
     def create_selected_runtime_adapter(self, *, allow_cloud=False):
         """Construct the selected provider through exact-model routing where supported.
 
-        OpenAI cloud use must be explicitly authorized by the caller. Providers
-        without exact model pinning retain their existing adapter path.
+        Every non-local provider or configured endpoint requires explicit
+        authorization, including cached adapters and provider-level routes.
+        Providers without exact model pinning retain their existing adapter path.
         """
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
