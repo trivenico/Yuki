@@ -46,9 +46,14 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             run_id="goal-1", step_id="task-1",
         )
 
-    def test_approval_uses_authenticated_identity_not_caller_supplied_actor(self):
-        token = self.service.approve("approver-session", self.request)
-        result = self.gateway.authorize(self.request, approval_token=token)
+    def test_approval_uses_authenticated_identity_and_protected_delivery(self):
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway,
+            deliver_credential=lambda request_id, request, token, ttl: delivered.append(token),
+        )
+        self.assertIsNone(service.approve("owner-session", self.request))
+        result = self.gateway.authorize(self.request, approval_token=delivered[0])
         self.assertTrue(result.allowed)
         self.assertTrue(result.approval_consumed)
 
@@ -70,10 +75,16 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
             self.service.audit_events("invalid-session")
         self.assertEqual(self.service.audit_events("reader-session"), ())
 
-    def test_approval_credential_is_not_returned_by_audit(self):
-        token = self.service.approve("approver-session", self.request)
-        audit = repr(self.service.audit_events("reader-session"))
-        self.assertNotIn(token, audit)
+    def test_approval_credential_is_not_returned_by_service_or_audit(self):
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway,
+            deliver_credential=lambda request_id, request, token, ttl: delivered.append(token),
+        )
+        result = service.approve("owner-session", self.request)
+        audit = repr(service.audit_events("reader-session"))
+        self.assertIsNone(result)
+        self.assertNotIn(delivered[0], audit)
 
 
     def test_authenticated_inbox_delivery_keeps_token_out_of_response(self):
