@@ -1,6 +1,6 @@
 """Persistent, owner-scoped inference jobs for paired Yuki devices."""
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
 from pathlib import Path
@@ -11,7 +11,7 @@ def _now(): return datetime.now(timezone.utc)
 def _stamp(v): return v.astimezone(timezone.utc).isoformat()
 @dataclass(frozen=True)
 class InferenceJob:
- job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; lease_token:str|None=None
+ job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; lease_token:str|None=field(default=None, repr=False, compare=False)
  def public_dict(self):
   d=asdict(self); d.pop("input_text"); d.pop("lease_token", None); return d
 class InferenceJobService:
