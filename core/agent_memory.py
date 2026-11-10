@@ -429,6 +429,13 @@ class AgentMemoryStore:
                 (event_id, actor_id, agent_id, memory_id, previous, status,
                  reason.strip(), now),
             )
+            # Terminal decisions make the record ineligible for retrieval.
+            # Remove derived vectors in this same transaction so rejected or
+            # retired content does not linger in the persistent embedding cache.
+            if status in {"rejected", "retired"}:
+                self._delete_embedding_cache_rows(
+                    db, actor_id=actor_id, memory_ids=[memory_id]
+                )
             updated = db.execute(
                 "SELECT * FROM agent_memories WHERE memory_id=?", (memory_id,)
             ).fetchone()
