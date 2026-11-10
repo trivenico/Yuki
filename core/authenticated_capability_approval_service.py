@@ -7,6 +7,7 @@ server-side registered skill metadata.
 from __future__ import annotations
 
 from typing import Any, Callable
+import re
 
 from core.auth import AuthenticationError
 from core.capability_approval_gateway import CapabilityApprovalGateway
@@ -24,6 +25,7 @@ class AuthenticatedCapabilityApprovalService:
         task_engine: Any,
         skill_registry: Any,
         deliver_credential: Callable[[str, str], None] | None = None,
+        approval_worker_id: str | None = None,
     ) -> None:
         if not callable(getattr(auth, "resolve_session", None)):
             raise TypeError("auth must provide resolve_session(token)")
@@ -35,11 +37,31 @@ class AuthenticatedCapabilityApprovalService:
             raise TypeError("skill_registry must provide get(skill_name)")
         if deliver_credential is not None and not callable(deliver_credential):
             raise TypeError("deliver_credential must be callable")
+        inferred_worker_id = getattr(getattr(deliver_credential, "__self__", None), "worker_id", None)
+        if inferred_worker_id is not None and (
+            not isinstance(inferred_worker_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", inferred_worker_id)
+        ):
+            raise ValueError("credential broker exposes an invalid worker identity")
+        if (
+            approval_worker_id is not None
+            and inferred_worker_id is not None
+            and approval_worker_id != inferred_worker_id
+        ):
+            raise ValueError("approval_worker_id must match the credential broker identity")
+        if approval_worker_id is None:
+            approval_worker_id = inferred_worker_id
+        if approval_worker_id is not None and (
+            not isinstance(approval_worker_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}", approval_worker_id)
+        ):
+            raise ValueError("approval_worker_id must be a bounded trusted worker identity")
         self.auth = auth
         self.gateway = gateway
         self.task_engine = task_engine
         self.skill_registry = skill_registry
         self.deliver_credential = deliver_credential
+        self.approval_worker_id = approval_worker_id
 
     def _principal(self, session_token: str, permission: str | None = None):
         user = self.auth.resolve_session(session_token)
@@ -150,11 +172,22 @@ class AuthenticatedCapabilityApprovalService:
         )
         try:
             self.deliver_credential(request_id, token)
+            if self.approval_worker_id is not None:
+                self.task_engine.bind_task_worker(
+                    identity["step_id"], request_id, self.approval_worker_id,
+                )
         except Exception:
             try:
                 self.gateway.revoke(token, revoked_by=user.user_id)
             except Exception:
                 pass
+            broker = getattr(self.deliver_credential, "__self__", None)
+            revoke_delivery = getattr(broker, "revoke", None)
+            if callable(revoke_delivery):
+                try:
+                    revoke_delivery(request_id)
+                except Exception:
+                    pass
             self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
             raise RuntimeError("protected approval credential delivery failed") from None
         self.task_engine.release_task_approval_hold(identity["step_id"], request_id)
