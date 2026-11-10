@@ -231,6 +231,24 @@ class YukiConversationAPI:
                     optional = {"dependencies", "max_attempts", "delay_seconds"}
                     if not required.issubset(payload) or set(payload) - required - optional:
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    if (
+                        not isinstance(payload.get("task_type"), str)
+                        or not 1 <= len(payload["task_type"]) <= 128
+                        or not isinstance(payload.get("payload"), dict)
+                        or not isinstance(payload.get("idempotency_key"), str)
+                        or not 1 <= len(payload["idempotency_key"]) <= 256
+                        or ("dependencies" in payload and not isinstance(payload["dependencies"], list))
+                        or ("max_attempts" in payload and (
+                            type(payload["max_attempts"]) is not int
+                            or not 1 <= payload["max_attempts"] <= 20
+                        ))
+                        or ("delay_seconds" in payload and (
+                            isinstance(payload["delay_seconds"], bool)
+                            or not isinstance(payload["delay_seconds"], (int, float))
+                            or not 0 <= payload["delay_seconds"] <= 86400
+                        ))
+                    ):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
                     task = await asyncio.to_thread(
                         self.task_service.submit, session_token, goal_tasks_match.group(1),
                         payload["task_type"], payload["payload"],
