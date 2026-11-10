@@ -18,7 +18,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable
 
-from core.tool_policy import Decision, PolicyRequest
+from core.tool_policy import Decision, PolicyRequest, Risk
 
 
 @dataclass(frozen=True)
@@ -260,7 +260,7 @@ class CapabilityApprovalGateway:
                 db.commit()
                 return False
             raw = json.loads(row["request_json"])
-            request = PolicyRequest(**raw)
+            raw["risk"] = Risk(raw["risk"])\n            request = PolicyRequest(**raw)
             try:
                 trusted = self.authorize_approver(revoked_by, request)
             except Exception as error:
