@@ -5,6 +5,10 @@ model is activated automatically. This is a local file tool, not a multi-user DB
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from itertools import islice
+from typing import Iterable
+
 import json
 import math
 import os
@@ -202,9 +206,6 @@ def recommend(registry, *, benchmark_id, max_results=10):
 
 # Model capability metadata is intentionally separate from evaluation reports:
 # a benchmark score does not prove that a model supports a modality or tool API.
-from dataclasses import dataclass
-from itertools import islice
-from typing import Iterable
 
 MODEL_CAPABILITIES = frozenset({
     "text", "reasoning", "coding", "vision_input", "audio_input",
