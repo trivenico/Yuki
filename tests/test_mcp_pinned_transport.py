@@ -140,6 +140,22 @@ class PinnedMCPHTTPTransportTests(unittest.TestCase):
                 "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
             )
 
+    def test_sse_enforces_event_size_limit(self):
+        class StreamingResponse(Response):
+            def __init__(self):
+                super().__init__([("Content-Type", "text/event-stream")], b"")
+                self.payload = b"".join(
+                    b"data: " + b"x" * 60000 + b"\n" for _ in range(5)
+                ) + b"\n"
+            def read1(self, limit):
+                value, self.payload = self.payload[:limit], self.payload[limit:]
+                return value
+        self.transport._factory = lambda *args, **kwargs: Connection(response=StreamingResponse())
+        with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_sse_event_too_large"):
+            self.transport.post_json(
+                "https://mcp.example.com/rpc", payload={"jsonrpc":"2.0","id":77}, headers={}
+            )
+
     def test_bounds_response(self):
         self.transport.MAX_RESPONSE_BYTES = 4
         with self.assertRaisesRegex(MCPPinnedTransportError, "mcp_response_too_large"):
