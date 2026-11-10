@@ -92,8 +92,16 @@ class ProviderManager:
                 adapter = self.create_routed_model_adapter(required=("text",), provider_preference=(key,), allow_cloud=allow_cloud)
             else:
                 adapter = self._build_adapter(key)
+                # Non-exact-model adapters (for example Gemini CLI and hybrid)
+                # must pass the same availability gate before selection commits.
+                try:
+                    available = adapter.is_available()
+                except Exception:
+                    available = False
+                if available is not True:
+                    raise RuntimeError("provider is not available")
         except Exception as exc:
-            return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
+            return f"Cannot select {key}: provider configuration, availability, or construction failed ({type(exc).__name__})."
         # Commit selected name and availability-checked adapter atomically.
         self._selected = key
         self._selected_adapter = adapter
