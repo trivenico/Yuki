@@ -35,7 +35,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         with patch.object(OllamaProvider, "is_available", return_value=True):
             self.assertEqual(manager.select("ollama"), "Selected provider: ollama")
             self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
-            self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
+            self.assertEqual(manager.select("hybrid", allow_cloud=True), "Selected provider: hybrid")
             self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
