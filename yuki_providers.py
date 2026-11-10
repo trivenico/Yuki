@@ -189,12 +189,20 @@ class ProviderManager:
 
         if type(allow_cloud) is not bool:
             raise TypeError("allow_cloud must be a boolean")
+        if isinstance(provider_preference, (str, bytes)):
+            raise TypeError("provider_preference must be an iterable, not text")
+        try:
+            preferences = tuple(islice(iter(provider_preference), 33))
+        except TypeError as exc:
+            raise TypeError("provider_preference must be iterable") from exc
+        if len(preferences) > 32:
+            raise ValueError("at most 32 provider preferences are allowed")
         selected = self.model_capability_registry().route(
             required=required,
-            provider_preference=provider_preference,
+            provider_preference=preferences,
             model_preference=model_preference,
             allow_cloud=allow_cloud,
-            strict_provider_preference=bool(tuple(provider_preference)),
+            strict_provider_preference=bool(preferences),
             min_context_window=min_context_window,
         )
         provider, model = selected.provider, selected.model_id.split("/", 1)[1]
