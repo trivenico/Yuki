@@ -237,6 +237,8 @@ def invoke_registered_skill(
     policy_engine: Any = None,
     policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
     policy_context: SkillPolicyContext | None = None,
+    approval_gateway: Any = None,
+    approval_token_resolver: Callable[[Any], str | None] | None = None,
 ) -> SkillInvocationResult:
     """Invoke one registry member after checking its risk and one-shot approval.
 
@@ -284,20 +286,39 @@ def invoke_registered_skill(
             skill_name, "skill_identity_changed"
         )
 
-    if policy_engine is not None:
+    central_approval_consumed = False
+    if policy_engine is not None or approval_gateway is not None:
         try:
             from core.tool_policy import Decision
             if policy_context is not None and not isinstance(policy_context, SkillPolicyContext):
                 raise ValueError("invalid trusted policy context")
+            if not callable(policy_request_factory):
+                raise ValueError("trusted policy request factory is required")
             policy_request = policy_request_factory(skill_name, argument, skill, policy_context)
-            policy_result = policy_engine.evaluate(policy_request)
-            if policy_result.decision != Decision.ALLOW:
-                status = "central_policy_" + policy_result.decision.value
-                record(status)
-                return SkillInvocationResult(
-                    False, "Skill blocked by Yuki's central security policy.",
-                    skill_name, status,
+            if approval_gateway is not None:
+                if policy_engine is not None or not callable(approval_token_resolver):
+                    raise ValueError("approval gateway requires an exclusive token resolver")
+                approval_token = approval_token_resolver(policy_request)
+                gateway_result = approval_gateway.authorize(
+                    policy_request, approval_token=approval_token,
                 )
+                if not gateway_result.allowed:
+                    status = "central_policy_" + gateway_result.status
+                    record(status)
+                    return SkillInvocationResult(
+                        False, "Skill blocked by Yuki's central security policy.",
+                        skill_name, status,
+                    )
+                central_approval_consumed = gateway_result.approval_consumed
+            else:
+                policy_result = policy_engine.evaluate(policy_request)
+                if policy_result.decision != Decision.ALLOW:
+                    status = "central_policy_" + policy_result.decision.value
+                    record(status)
+                    return SkillInvocationResult(
+                        False, "Skill blocked by Yuki's central security policy.",
+                        skill_name, status,
+                    )
         except Exception:
             record("central_policy_error")
             return SkillInvocationResult(
@@ -312,7 +333,7 @@ def invoke_registered_skill(
         or risk not in known_risks
         or risk in {"high", "critical"}
     )
-    if needs_approval and not approvals.consume(skill_name, argument, principal_id=policy_context.principal_id if policy_context else None):
+    if needs_approval and not central_approval_consumed and not approvals.consume(skill_name, argument, principal_id=policy_context.principal_id if policy_context else None):
         record("approval_required")
         return SkillInvocationResult(False, "Explicit one-shot approval is required.", skill_name, "approval_required")
 
