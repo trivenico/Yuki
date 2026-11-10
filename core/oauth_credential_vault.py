@@ -172,7 +172,7 @@ class SQLiteOAuthCredentialVault:
         account = self._identifier(account_id, "account_id")
         access = self._token(access_token, "access_token", required=True)
         refresh = self._token(refresh_token, "refresh_token", required=False)
-        if type(expires_at) is not int or expires_at <= int(self._clock()):
+        if type(expires_at) is not int or not int(self._clock()) < expires_at <= int(self._clock()) + 31_536_000:
             raise OAuthCredentialError("invalid_token_expiry")
         normalized_scopes = self._scopes(scopes)
         access_key, access_cipher = self._encrypt(access, self._aad(owner, provider, account, "access"))
@@ -221,7 +221,7 @@ class SQLiteOAuthCredentialVault:
         if row[2] is not None and row[3] is not None:
             refresh = self._decrypt(row[2], row[3], self._aad(owner, provider, account, "refresh"), "refresh_token")
         try:
-            scopes = tuple(json.loads(row[5]))
+            scopes = self._scopes(json.loads(row[5]))
         except (TypeError, ValueError):
             raise OAuthCredentialError("invalid_stored_scopes") from None
         return StoredOAuthCredential(
@@ -314,7 +314,7 @@ class SQLiteOAuthCredentialVault:
         result = []
         for provider, account, expiry, scopes_json, version, connected in rows:
             try:
-                scopes = json.loads(scopes_json)
+                scopes = self._scopes(json.loads(scopes_json))
             except (TypeError, ValueError):
                 raise OAuthCredentialError("invalid_stored_scopes") from None
             result.append({"provider_id": provider, "account_id": account, "expires_at": expiry,
