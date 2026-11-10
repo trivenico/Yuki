@@ -22,6 +22,8 @@ class ApprovedSkillRuntime:
         audit: Callable[[str, str], None] | None = None,
         policy_engine: Any = None,
         policy_request_factory: Callable[[str, str, Any, SkillPolicyContext | None], Any] | None = None,
+        approval_gateway: Any = None,
+        approval_token_resolver: Callable[[Any], str | None] | None = None,
     ):
         self.registry = registry
         self.approval_store = approval_store
@@ -32,9 +34,20 @@ class ApprovedSkillRuntime:
             raise TypeError("policy_engine must provide evaluate(request)")
         if policy_request_factory is not None and not callable(policy_request_factory):
             raise TypeError("policy_request_factory must be callable")
+        if approval_gateway is not None:
+            if not callable(getattr(approval_gateway, "authorize", None)):
+                raise TypeError("approval_gateway must provide authorize(request, approval_token=...)")
+            if policy_engine is not None:
+                raise ValueError("configure either policy_engine or approval_gateway, not both")
+            if not callable(policy_request_factory) or not callable(approval_token_resolver):
+                raise ValueError("approval gateway requires a policy request factory and protected token resolver")
+        elif approval_token_resolver is not None:
+            raise ValueError("approval_token_resolver requires approval_gateway")
         self.audit = audit
         self.policy_engine = policy_engine
         self.policy_request_factory = policy_request_factory
+        self.approval_gateway = approval_gateway
+        self.approval_token_resolver = approval_token_resolver
         self.wiring = ApprovedSkillWiringService(registry, approval_store)
 
     def discover(self, root):
@@ -69,4 +82,6 @@ class ApprovedSkillRuntime:
             policy_engine=self.policy_engine,
             policy_request_factory=self.policy_request_factory,
             policy_context=policy_context,
+            approval_gateway=self.approval_gateway,
+            approval_token_resolver=self.approval_token_resolver,
         )
