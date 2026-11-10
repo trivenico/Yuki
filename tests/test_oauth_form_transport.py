@@ -2,7 +2,17 @@ import unittest
 from urllib.parse import parse_qs
 
 from core.oauth_http_transport import OAuthHTTPError, PinnedOAuthHTTPTransport
-from tests.test_oauth_http_transport import FakeResponse, record
+import socket
+
+def record(address):
+    return (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))
+
+class FakeResponse:
+    status = 200
+    def getheader(self, name, default=None):
+        return "application/json" if name.lower() == "content-type" else default
+    def read(self, amount=-1):
+        return b'{"ok":true}'[:amount]
 
 
 class FakeConnection:
