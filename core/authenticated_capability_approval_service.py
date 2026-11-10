@@ -85,18 +85,17 @@ class AuthenticatedCapabilityApprovalService:
         request: PolicyRequest,
         *,
         ttl_seconds: int = 300,
-    ) -> str:
-        """Approve one exact operation and return its opaque one-time credential.
-
-        The caller must deliver the returned credential directly to a trusted
-        resolver; it must not put it in task payloads, model context, or logs.
-        """
+    ) -> None:
+        """Compatibility helper that routes approval through the protected inbox."""
         if not isinstance(request, PolicyRequest):
             raise TypeError("request must be a validated PolicyRequest")
         user = self._principal(session_token, "workflow:approve")
-        return self.gateway.issue_approval(
-            request, approved_by=user.user_id, ttl_seconds=ttl_seconds,
-        )
+        if request.principal_id != user.user_id:
+            raise PermissionError("approval requests must belong to the authenticated principal")
+        if self.deliver_credential is None:
+            raise RuntimeError("protected credential delivery is not configured")
+        request_id = self.gateway.request_approval(request)
+        self.approve_pending(session_token, request_id, ttl_seconds=ttl_seconds)
 
     def revoke(self, session_token: str, approval_token: str) -> bool:
         """Revoke an unconsumed credential using the authenticated actor."""
