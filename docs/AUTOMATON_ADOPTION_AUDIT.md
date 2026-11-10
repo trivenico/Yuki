@@ -8,7 +8,7 @@
 
 Automaton is useful as a reference for a persistent agent runtime composed of a Think/Act/Observe/Persist loop, durable wake events, centralized tool policy, model routing, memory retrieval, agent messaging, and guarded self-modification.
 
-Yuki already has parts of this foundation: durable tasks/workflows, specialist coordination, local memory, provider routing, approvals, security scanning, and paired-device inference foundations. The opportunity is to consolidate these capabilities behind a durable runtime contract instead of creating parallel subsystems.
+Yuki has partial foundations, but they must not be mistaken for an end-to-end autonomous runtime. The inspected distributed-placement branch contains durable workflow/task and specialist-worker primitives, while the repository README explicitly describes the legacy workflow engine as a bounded allow-listed step runner that does not start schedulers, webhooks, or background jobs. The README also says the prompt guard is heuristic rather than a security boundary, MCP discovery is not wired to runtime execution, plugin imports execute with Yuki's permissions (not a sandbox), and provider usage metering is not yet connected to real inference in that documented revision. Paired-device reservation work is separately in progress in PR #604. The opportunity is to consolidate these partial capabilities behind one durable runtime contract, while preserving those documented limitations until exact integrations and tests prove otherwise.
 
 ## Patterns worth adopting
 
@@ -105,7 +105,7 @@ Acceptance: tests prove protected-path edits, traversal, symlink escapes, missin
 
 ## Gaps observed in Yuki
 
-This review is based on the repository README and distributed inference/job/scheduler files inspected during this work. The README explicitly says Yuki is not production-ready and distinguishes implemented foundations from capabilities not yet wired end-to-end.
+This review compares the repository README (the documented baseline) with the distributed-placement branch and PR #604. They are not identical snapshots. The README explicitly says Yuki is not production-ready and distinguishes implemented foundations from capabilities not yet wired end-to-end; where the README describes a legacy subsystem, this audit does not silently promote it to a newer end-to-end capability.
 
 1. Durable workflow/task primitives exist, but there is not yet one fully unified resumable agent-turn runtime across all interfaces and specialist roles.
 2. Scheduler and specialist coordination exist; a single durable heartbeat/wake-event contract needs consolidation and restart semantics.
