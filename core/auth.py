@@ -21,9 +21,14 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage",
+        "agent_memory:read", "agent_memory:write", "agent_memory:share",
+        "agent_memory:correct", "agent_memory:retire", "agent_memory:review",
+        "agent_memory:renew", "agent_memory:delete", "agent_memory:prune"}),
     "operator": frozenset({"workflow:read", "workflow:approve"}),
-    "user": frozenset({"workflow:read"}),
+    "user": frozenset({"workflow:read", "agent_memory:read", "agent_memory:write",
+        "agent_memory:correct", "agent_memory:retire", "agent_memory:review",
+        "agent_memory:renew", "agent_memory:delete", "agent_memory:prune"}),
 }
 
 
@@ -132,7 +137,7 @@ class BuiltInAuthService:
         password = self._validate_password(password)
         salt = secrets.token_bytes(16)
         digest = self._password_digest(password, salt)
-        user_id, now = secrets.token_urlsafe(18), _timestamp(_utcnow())
+        user_id, now = "usr_" + secrets.token_urlsafe(18), _timestamp(_utcnow())
         with self._connect() as db:
             db.execute(
                 "INSERT INTO auth_users(user_id,username,password_salt,password_hash,password_iterations,role,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -146,7 +151,7 @@ class BuiltInAuthService:
         password = self._validate_password(password)
         salt = secrets.token_bytes(16)
         digest = self._password_digest(password, salt)
-        user_id, now = secrets.token_urlsafe(18), _timestamp(_utcnow())
+        user_id, now = "usr_" + secrets.token_urlsafe(18), _timestamp(_utcnow())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM auth_users LIMIT 1").fetchone():
@@ -230,6 +235,28 @@ class BuiltInAuthService:
             db.execute("UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (_timestamp(_utcnow()), user_id))
             return result.rowcount == 1
 
+    def has_permission(self, user_id, permission):
+        """Check a capability against the current, enabled account record.
+
+        This deliberately re-reads SQLite on every decision so disabling an
+        account immediately revokes memory access without trusting stale
+        session or in-process role data.
+        """
+        if not isinstance(user_id, str) or not user_id or len(user_id) > 200:
+            return False
+        if not isinstance(permission, str) or permission not in {
+            "agent_memory:read", "agent_memory:write", "agent_memory:share",
+            "agent_memory:correct", "agent_memory:retire", "agent_memory:review",
+            "agent_memory:renew", "agent_memory:delete", "agent_memory:prune",
+        }:
+            return False
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT role, disabled FROM auth_users WHERE user_id=?",
+                (user_id,),
+            ).fetchone()
+        return bool(row and not row["disabled"] and permission in _ROLE_PERMISSIONS[row["role"]])
+
     def list_users(self):
         with self._connect() as db:
             return [self._user(row) for row in db.execute(
@@ -252,6 +279,37 @@ class _Connection:
             self.connection.rollback()
         self.connection.close()
         return False
+
+def agent_memory_authorizer(auth_service):
+    """Build the fail-closed AgentMemoryStore authorization callback.
+
+    Actor identity is the authenticated account ID supplied by the
+    ConversationService. The callback never trusts a username, role claim,
+    request body, or agent-supplied permission.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+
+    allowed_actions = {
+        "agent_memory:read", "agent_memory:write", "agent_memory:share",
+        "agent_memory:correct", "agent_memory:retire", "agent_memory:review",
+        "agent_memory:renew", "agent_memory:delete", "agent_memory:prune",
+    }
+
+    def authorize(actor_id, action, resource_id):
+        if action not in allowed_actions:
+            return False
+        if not isinstance(resource_id, str) or len(resource_id) > 200:
+            return False
+        if action == "agent_memory:prune":
+            if resource_id != "":
+                return False
+        elif not resource_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}", resource_id):
+            return False
+        return auth_service.has_permission(actor_id, action)
+
+    return authorize
+
 
 
 def workflow_principal_resolver(auth_service):
