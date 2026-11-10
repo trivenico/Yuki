@@ -200,7 +200,7 @@ class AgentMemoryStore:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             rows = db.execute("""SELECT * FROM agent_memories
-                WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+                WHERE actor_id=? AND ((scope='private' AND agent_id=?) OR (scope='shared' AND ?=1))
                 AND (expires_at IS NULL OR expires_at>?)
                 AND superseded_by IS NULL
                 AND lifecycle_status NOT IN ('rejected', 'retired')
@@ -236,7 +236,7 @@ class AgentMemoryStore:
         )
         now = datetime.now(timezone.utc).isoformat()
         sql = """SELECT * FROM agent_memories
-            WHERE actor_id=? AND (agent_id=? OR (scope='shared' AND ?=1))
+            WHERE actor_id=? AND ((scope='private' AND agent_id=?) OR (scope='shared' AND ?=1))
             AND (expires_at IS NULL OR expires_at>?)
             AND superseded_by IS NULL
             AND lifecycle_status NOT IN ('rejected', 'retired')"""
