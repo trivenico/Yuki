@@ -1,6 +1,7 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import os
 import uuid
 from getpass import getpass
 from pathlib import Path
@@ -523,7 +524,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 def main():
     providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=(providers.current().name in {"openai", "gemini", "hybrid"})))
+    cloud_authorized = os.environ.get("YUKI_ALLOW_CLOUD", "").strip().lower() == "true"
+    agent = YukiAgent(provider=providers.create_selected_runtime_adapter(allow_cloud=cloud_authorized))
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
