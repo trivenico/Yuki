@@ -15,7 +15,7 @@ class AgentMemoryRetrieverTests(unittest.TestCase):
         self.permissions = {
             "owner": {
                 "agent_memory:write", "agent_memory:read",
-                "agent_memory:share", "agent_memory:delete", "agent_memory:review",
+                "agent_memory:share", "agent_memory:delete", "agent_memory:retire",
             }
         }
         authorize = lambda actor, action, _agent: action in self.permissions.get(actor, set())
