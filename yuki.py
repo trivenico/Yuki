@@ -98,13 +98,13 @@ def _build_durable_policy_runtime(principal_id):
         if risk_value not in {risk.value for risk in Risk}:
             continue
         rules.append(PolicyRule(
-            rule_id=f"durable-low-risk-{item['name']}",
+            rule_id=f"durable-registered-skill-{item['name']}",
             decision=Decision.ALLOW,
             principal_id=principal_id,
             trigger="durable_task",
             capability="skill.invoke",
             target=item["name"],
-            risk=Risk.LOW,
+            risk=Risk(risk_value),
         ))
     engine = ToolPolicyEngine(rules, policy_version="yuki-durable-cli-v1")
 
