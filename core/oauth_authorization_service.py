@@ -173,6 +173,8 @@ class OAuthAuthorizationService:
             # OIDC grants are verified against the nonce stored in the consumed,
             # owner/session-bound transaction before any credential is persisted.
             if self._oidc_verifier is not None:
+                if "openid" not in grant.granted_scopes:
+                    raise OAuthAuthorizationServiceError("oidc_scope_not_granted")
                 if grant.id_token is None or transaction.oidc_nonce is None:
                     raise OAuthAuthorizationServiceError("oidc_identity_token_missing")
                 self._oidc_verifier.verify(
