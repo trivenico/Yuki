@@ -88,17 +88,17 @@ class ProviderManager:
         if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         # Enforce cloud consent at the shared provider boundary, not only
-        # in browser/UI callers. Catalog privacy is the authoritative routing
-        # classification; unknown and third-party destinations fail closed.
+        # in browser/UI callers. Keep authorization failures distinct from
+        # adapter-construction PermissionErrors so callers receive accurate errors.
+        catalog_entry = next(
+            (item for item in self.catalog() if item.get("name") == key), None
+        )
+        privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
+        if privacy != "local_runtime" and not allow_cloud:
+            return f"Cannot select {key}: explicit cloud consent is required."
+        if privacy == "unknown":
+            return f"Cannot select {key}: provider privacy is unknown; refusing selection."
         try:
-            catalog_entry = next(
-                (item for item in self.catalog() if item.get("name") == key), None
-            )
-            privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
-            if privacy in {"cloud_provider", "third_party_gateway", "task_policy"} and not allow_cloud:
-                raise PermissionError("cloud consent is required")
-            if privacy == "unknown":
-                raise PermissionError("provider privacy is unknown")
             if key in {"openai", "ollama"}:
                 adapter = self.create_routed_model_adapter(required=("text",), provider_preference=(key,), allow_cloud=allow_cloud)
             else:
@@ -111,8 +111,6 @@ class ProviderManager:
                     available = False
                 if available is not True:
                     raise RuntimeError("provider is not available")
-        except PermissionError:
-            return f"Cannot select {key}: explicit cloud consent is required."
         except Exception as exc:
             return f"Cannot select {key}: provider configuration, availability, or construction failed ({type(exc).__name__})."
         # Commit selected name and availability-checked adapter atomically.
@@ -126,15 +124,15 @@ class ProviderManager:
             self._selected_adapter = self._build_adapter(self._selected)
         return self._selected_adapter
 
-    def create_selected_agent_model(self):
+    def create_selected_agent_model(self, *, allow_cloud=False):
         """Return the selected provider through the bounded agent chat contract.
 
-        Text-only providers (Gemini CLI and hybrid routing) are rejected rather
-        than silently flattening transcripts or routing tool requests elsewhere.
+        Cloud-capable routes require explicit caller authorization. Text-only
+        providers are rejected rather than silently flattening transcripts.
         """
         from providers.agent_adapter import ProviderAgentAdapter
 
-        provider = self.create_selected_adapter()
+        provider = self.create_selected_runtime_adapter(allow_cloud=allow_cloud)
         if provider is None:
             raise RuntimeError("No provider is selected.")
         if not callable(getattr(provider, "generate_chat", None)):
