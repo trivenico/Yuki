@@ -14,6 +14,7 @@ from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.web_memory import build_web_reasoning_context
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
 from providers.runtime_manager import ProviderRuntimeManager
@@ -44,6 +45,10 @@ def create_app():
             if str(exc) != "Initial administrator already exists.":
                 raise
 
+    # Memory remains disabled unless explicitly opted in. When enabled, its
+    # local model and database are initialized before serving any requests.
+    reasoning_context_builder = build_web_reasoning_context(auth, workspace)
+
     provider = create_provider(config)
     adapter = ProviderAgentAdapter(provider)
     provider_manager = ProviderRuntimeManager(
@@ -62,6 +67,7 @@ def create_app():
         config, auth_service=auth, agent_loop=agent_loop,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
+        reasoning_context_builder=reasoning_context_builder,
     )
 
 
