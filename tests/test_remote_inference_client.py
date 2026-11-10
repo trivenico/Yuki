@@ -18,10 +18,11 @@ class FakeOpener:
 class RemoteClientTests(unittest.TestCase):
     def setUp(self): self.client=RemoteInferenceJobClient("https://yuki.example","x"*32)
     def test_claim_parses_job_and_sends_device_auth(self):
-        opener=FakeOpener(json.dumps({"job":{"job_id":"a"*32,"model_id":"local/model","input_text":"hello","lease_expires_at":"2030-01-01T00:00:00+00:00"}}).encode())
+        opener=FakeOpener(json.dumps({"job":{"job_id":"a"*32,"model_id":"local/model","input_text":"hello","lease_expires_at":"2030-01-01T00:00:00+00:00","lease_token":"t"*43}}).encode())
         with patch("urllib.request.build_opener",return_value=opener):
             job=self.client.claim_next()
         self.assertEqual(job.input_text,"hello")
+        self.assertEqual(job.lease_token,"t"*43)
         self.assertEqual(opener.request.get_header("Authorization"),"Bearer "+"x"*32)
         self.assertTrue(opener.request.full_url.endswith("/v1/inference/claim"))
     def test_idle_claim(self):
@@ -30,8 +31,8 @@ class RemoteClientTests(unittest.TestCase):
     def test_complete_sends_only_result(self):
         opener=FakeOpener(b'{"job":{"status":"succeeded"}}')
         with patch("urllib.request.build_opener",return_value=opener):
-            self.client.complete_job("x"*32,"a"*32,result_text="ok")
-        self.assertEqual(json.loads(opener.request.data),{"result_text":"ok"})
+            self.client.complete_job("x"*32,"a"*32,lease_token="t"*43,result_text="ok")
+        self.assertEqual(json.loads(opener.request.data),{"lease_token":"t"*43,"result_text":"ok"})
     def test_reject_insecure_remote_endpoint(self):
         with self.assertRaisesRegex(ValueError,"HTTPS"):
             RemoteInferenceJobClient("http://remote.example","x"*32)
