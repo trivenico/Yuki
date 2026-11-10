@@ -54,6 +54,8 @@ def build_conversation_runtime(
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
     device_agent: Any | None = None,
+    reasoning_context_builder: Any | None = None,
+    reasoning_agent_id: str = "yuki",
 ) -> ConversationRuntime:
     """Build an authenticated ASGI API with the configured persistence backend.
 
@@ -67,7 +69,10 @@ def build_conversation_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     store = create_conversation_store(config)
     try:
-        service = ConversationService(store, agent_loop)
+        service = ConversationService(
+            store, agent_loop, reasoning_context_builder=reasoning_context_builder,
+            reasoning_agent_id=reasoning_agent_id,
+        )
         app = YukiConversationAPI(
             auth_service, service, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
