@@ -1,5 +1,6 @@
+import base64
 import hashlib
-import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,20 +26,25 @@ class OAuthPKCETransactionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = str(Path(self.temp.name) / "oauth.sqlite3")
         self.vault = _TestVault()
-        self.store = OAuthPKCETransactionStore(self.path, encrypt=self.vault.encrypt, decrypt=self.vault.decrypt)
+        self.store = OAuthPKCETransactionStore(
+            self.path, encrypt=self.vault.encrypt, decrypt=self.vault.decrypt,
+            allowed_authorization_hosts=["www.upwork.com"],
+        )
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def _create(self):
-        return self.store.create(
-            owner_id="owner-1", provider_id="upwork",
-            issuer="https://www.upwork.com",
-            authorization_endpoint="https://www.upwork.com/oauth/v2/authorize",
-            client_id="registered-client",
-            redirect_uri="https://yuki.example.com/oauth/callback",
-            scopes=["jobs:read", "profile:read"],
-        )
+    def _create(self, **overrides):
+        values = {
+            "owner_id": "owner-1", "provider_id": "upwork",
+            "issuer": "https://www.upwork.com",
+            "authorization_endpoint": "https://www.upwork.com/oauth/v2/authorize",
+            "client_id": "registered-client",
+            "redirect_uri": "https://yuki.example.com/oauth/callback",
+            "scopes": ["jobs:read", "profile:read"],
+        }
+        values.update(overrides)
+        return self.store.create(**values)
 
     def test_generates_state_s256_and_registered_redirect_parameters(self):
         result = self._create()
@@ -47,14 +53,14 @@ class OAuthPKCETransactionTests(unittest.TestCase):
         self.assertEqual(query["code_challenge_method"], ["S256"])
         verifier = self.store.consume(state=result["state"], owner_id="owner-1",
                                       provider_id="upwork", issuer="https://www.upwork.com")
-        expected = __import__("base64").urlsafe_b64encode(
+        expected = base64.urlsafe_b64encode(
             hashlib.sha256(verifier["code_verifier"].encode("ascii")).digest()
         ).rstrip(b"=").decode("ascii")
         self.assertEqual(query["code_challenge"], [expected])
         self.assertEqual(verifier["client_id"], "registered-client")
         self.assertEqual(verifier["scopes"], ["jobs:read", "profile:read"])
 
-    def test_database_never_contains_plaintext_state_or_verifier(self):
+    def test_database_never_contains_plaintext_state_or_verifier_or_scopes(self):
         result = self._create()
         with open(self.path, "rb") as stream:
             raw = stream.read()
@@ -79,15 +85,12 @@ class OAuthPKCETransactionTests(unittest.TestCase):
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(OAuthTransactionError):
                 self.store.consume(state=result["state"], **kwargs)
-        # A mismatched callback invalidates the transaction to prevent later replay.
         with self.assertRaises(OAuthTransactionError):
             self.store.consume(state=result["state"], owner_id="owner-1",
                                provider_id="upwork", issuer="https://www.upwork.com")
 
     def test_expired_transaction_is_rejected(self):
-        self.store.ttl_seconds = 60
         result = self._create()
-        import sqlite3
         with sqlite3.connect(self.path) as db:
             db.execute("UPDATE oauth_pkce_transactions SET expires_at='2000-01-01T00:00:00+00:00'")
         with self.assertRaises(OAuthTransactionError):
@@ -96,27 +99,37 @@ class OAuthPKCETransactionTests(unittest.TestCase):
 
     def test_invalid_urls_scopes_and_vault_are_rejected(self):
         with self.assertRaises(ValueError):
-            self.store.create(owner_id="owner-1", provider_id="upwork", issuer="http://upwork.com",
-                              authorization_endpoint="https://upwork.com/auth", client_id="id",
-                              redirect_uri="https://yuki.example.com/callback", scopes=["jobs:read"])
+            self._create(issuer="http://upwork.com")
         with self.assertRaises(ValueError):
-            self.store.create(owner_id="owner-1", provider_id="upwork", issuer="https://upwork.com",
-                              authorization_endpoint="https://upwork.com/auth", client_id="id",
-                              redirect_uri="https://yuki.example.com/callback", scopes=["bad scope"])
-        broken = OAuthPKCETransactionStore(str(Path(self.temp.name) / "broken.sqlite3"),
-                                           encrypt=lambda *_: (_ for _ in ()).throw(RuntimeError("secret")),
-                                           decrypt=self.vault.decrypt)
+            self._create(scopes=["bad scope"])
+        with self.assertRaises(ValueError):
+            self._create(authorization_endpoint="https://attacker.example/authorize")
+        broken = OAuthPKCETransactionStore(
+            str(Path(self.temp.name) / "broken.sqlite3"),
+            encrypt=lambda *_: (_ for _ in ()).throw(RuntimeError("secret")),
+            decrypt=self.vault.decrypt,
+            allowed_authorization_hosts=["www.upwork.com"],
+        )
         with self.assertRaises(OAuthTransactionError):
             broken.create(owner_id="owner-1", provider_id="upwork", issuer="https://upwork.com",
-                          authorization_endpoint="https://upwork.com/auth", client_id="id",
+                          authorization_endpoint="https://www.upwork.com/auth", client_id="id",
                           redirect_uri="https://yuki.example.com/callback", scopes=["jobs:read"])
 
     def test_reserved_endpoint_parameters_cannot_override_security_values(self):
         with self.assertRaises(ValueError):
-            self.store.create(owner_id="owner-1", provider_id="upwork", issuer="https://upwork.com",
-                              authorization_endpoint="https://upwork.com/auth?state=attacker",
-                              client_id="id", redirect_uri="https://yuki.example.com/callback",
-                              scopes=["jobs:read"])
+            self._create(authorization_endpoint="https://www.upwork.com/auth?state=attacker")
+
+    def test_pending_transaction_capacity_is_bounded(self):
+        self.store.MAX_PENDING_PER_OWNER = 1
+        self._create()
+        with self.assertRaises(OAuthTransactionError):
+            self._create()
+
+    def test_state_must_be_canonical_base64url(self):
+        result = self._create()
+        with self.assertRaises(OAuthTransactionError):
+            self.store.consume(state="!" + result["state"][1:], owner_id="owner-1",
+                               provider_id="upwork", issuer="https://www.upwork.com")
 
 
 if __name__ == "__main__":
