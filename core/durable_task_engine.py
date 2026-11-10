@@ -133,7 +133,7 @@ class DurableTaskEngine:
             c.commit()
         return goal_id
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, owner_id=None, dependencies=(), max_attempts=3, delay_seconds=0):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
@@ -155,8 +155,17 @@ class DurableTaskEngine:
         task_id = str(uuid.uuid4())
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            goal = c.execute("SELECT state FROM goals WHERE id=?",(goal_id,)).fetchone()
+            goal = c.execute("SELECT state,owner_id FROM goals WHERE id=?",(goal_id,)).fetchone()
             if goal is None: raise TaskNotFound("goal not found")
+            if goal["owner_id"] is not None and (
+                not isinstance(owner_id, str) or not owner_id.strip()
+                or owner_id != goal["owner_id"]
+            ):
+                raise TaskConflict("authenticated owner does not match goal owner")
+            if owner_id is not None and (
+                not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 256
+            ):
+                raise ValueError("owner_id must be non-empty bounded authenticated identity text")
             old = c.execute("SELECT * FROM tasks WHERE goal_id=? AND idempotency_key=?",(goal_id,idempotency_key)).fetchone()
             if old is not None:
                 # Exact replays stay idempotent even after the goal becomes
