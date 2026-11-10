@@ -4,6 +4,7 @@ import sqlite3
 import unittest
 from pathlib import Path
 from core.agent_memory import AgentMemoryStore
+from core.embedding_index import SQLiteEmbeddingIndex
 
 class AgentMemoryTests(unittest.TestCase):
  def setUp(self):
@@ -178,6 +179,30 @@ class AgentMemoryTests(unittest.TestCase):
   with self.assertRaises(PermissionError):
    self.store.transition_lifecycle(actor_id="owner",agent_id="research",
     memory_id=item["memory_id"],status="approved",reason="Reviewed")
+
+
+ def test_terminal_lifecycle_transition_invalidates_cached_embeddings(self):
+  index=SQLiteEmbeddingIndex(self.store.database_path,model_id="test-embedding-v1")
+  for status in ("rejected","retired"):
+   item=self.store.remember(actor_id="owner",agent_id="research",
+    content="Sensitive obsolete memory "+status,source="agent")
+   index.put_many(actor_id="owner",memories=[item],vectors=[[0.1,0.2]])
+   self.assertEqual(index.stats(actor_id="owner")["vector_count"],1)
+   self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+    memory_id=item["memory_id"],status=status,reason="Owner decision")
+   self.assertEqual(index.stats(actor_id="owner")["vector_count"],0)
+   self.assertEqual(self.store.list_memories(actor_id="owner",agent_id="research"),[])
+
+ def test_approval_preserves_valid_embedding_cache(self):
+  index=SQLiteEmbeddingIndex(self.store.database_path,model_id="test-embedding-v1")
+  item=self.store.remember(actor_id="owner",agent_id="research",
+   content="Reviewed active memory",source="owner")
+  index.put_many(actor_id="owner",memories=[item],vectors=[[0.1,0.2]])
+  approved=self.store.transition_lifecycle(actor_id="owner",agent_id="research",
+   memory_id=item["memory_id"],status="approved",reason="Owner verified")
+  self.assertEqual(approved["lifecycle_status"],"approved")
+  self.assertEqual(index.stats(actor_id="owner")["vector_count"],1)
+
 
 
 if __name__=="__main__": unittest.main()
