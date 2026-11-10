@@ -39,6 +39,68 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_plans_are_owner_scoped_and_idempotency_keys_are_per_owner(self):
+        shared_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor in {"alice", "bob"} and action in self.grants,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            shared_runtime, self.db_path, self.agents,
+            authorize=lambda actor, action, resource: actor in {"alice", "bob"} and action in {
+                "agent:plan", "agent:dispatch", "agent:read", "agent:cancel"
+            },
+        )
+        alice = coordinator.submit(
+            actor_id="alice", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("collect", "Alice research", ("research",))],
+        )
+        bob = coordinator.submit(
+            actor_id="bob", idempotency_key="same-client-key",
+            subtasks=[SubtaskSpec("collect", "Bob research", ("research",))],
+        )
+        self.assertNotEqual(alice.plan_id, bob.plan_id)
+        self.assertEqual(alice.idempotency_key, "same-client-key")
+        self.assertEqual(bob.idempotency_key, "same-client-key")
+        self.assertEqual(
+            coordinator.get_plan(actor_id="alice", plan_id=alice.plan_id).subtasks[0].description,
+            "Alice research",
+        )
+        with self.assertRaises(PermissionError):
+            coordinator.get_plan(actor_id="bob", plan_id=alice.plan_id)
+        with self.assertRaises(PermissionError):
+            coordinator.advance(actor_id="bob", plan_id=alice.plan_id)
+        with self.assertRaises(PermissionError):
+            coordinator.cancel_plan(actor_id="bob", plan_id=alice.plan_id)
+        with self.assertRaises(PermissionError):
+            coordinator.get_plan(actor_id="alice", plan_id=bob.plan_id)
+
+    def test_legacy_ownerless_plans_are_not_claimed_during_migration(self):
+        legacy_db = str(Path(self.tmp.name) / "legacy.sqlite3")
+        raw = sqlite3.connect(legacy_db)
+        raw.execute("""
+            CREATE TABLE agent_plans (
+                plan_id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                request_digest TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        raw.execute(
+            "INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
+            ("legacy-plan", "legacy-key", "0" * 64, "2026-01-01T00:00:00+00:00"),
+        )
+        raw.commit()
+        raw.close()
+        legacy = SpecialistAgentCoordinator(
+            self.runtime, legacy_db, self.agents, authorize=self.agent_auth,
+        )
+        with self.assertRaises(PermissionError):
+            legacy.get_plan(actor_id="alice", plan_id="legacy-plan")
+        with self.assertRaises(PermissionError):
+            legacy.advance(actor_id="alice", plan_id="legacy-plan")
+        with self.assertRaises(PermissionError):
+            legacy.cancel_plan(actor_id="alice", plan_id="legacy-plan")
+
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
             "translator", "Translation specialist", frozenset({"translate"}), "emit",
