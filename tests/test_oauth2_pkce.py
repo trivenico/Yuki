@@ -41,6 +41,19 @@ class OAuthPKCEPrimitiveTests(unittest.TestCase):
         self.assertEqual(params["code_challenge"], [expected])
         self.assertEqual(params["resource"], ["https://mcp.example.com/mcp"])
 
+    def test_oidc_nonce_is_included_only_when_configured(self):
+        nonce = "random-oidc-nonce-value-123456"
+        request = self._request(oidc_nonce=nonce)
+        params = parse_qs(urlsplit(request.authorization_url).query)
+        self.assertEqual(params["nonce"], [nonce])
+        ordinary = self._request()
+        self.assertNotIn("nonce", parse_qs(urlsplit(ordinary.authorization_url).query))
+
+    def test_rejects_invalid_oidc_nonce(self):
+        for nonce in ("", "too-short", "contains spaces", "x" * 513):
+            with self.subTest(nonce=nonce), self.assertRaises(OAuthAuthorizationError):
+                self._request(oidc_nonce=nonce)
+
     def test_each_request_has_independent_state_and_verifier(self):
         first, second = self._request(), self._request()
         self.assertNotEqual(first.state, second.state)
