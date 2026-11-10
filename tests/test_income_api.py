@@ -131,6 +131,12 @@ class AuthenticatedIncomeOpportunityAPITests(unittest.TestCase):
         self.assertEqual((status, body["error"]), (400, "invalid_query"))
 
         status, body = self.request(
+            "GET", "/v1/income/opportunities", token=self.owner_one.token,
+            query=b"x=" * 1025,
+        )
+        self.assertEqual((status, body["error"]), (400, "invalid_query"))
+
+        status, body = self.request(
             "POST", "/v1/income/opportunities", self.create_payload(), self.owner_one.token
         )
         opportunity_id = body["opportunity"]["opportunity_id"]
