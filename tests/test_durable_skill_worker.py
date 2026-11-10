@@ -294,6 +294,59 @@ class DurableSkillWorkerTests(unittest.TestCase):
                         heartbeat_interval_seconds=interval,
                     )
 
+    def test_worker_renews_lease_during_slow_approval_resolution(self):
+        import threading
+        import time
+
+        resolving = threading.Event()
+        release = threading.Event()
+
+        class SlowApprovalRuntime:
+            policy_engine = object()
+            approval_gateway = object()
+
+            def invoke(self, _skill_name, _argument, *, policy_context, approval_token):
+                self.received = (policy_context, approval_token)
+                return type("Result", (), {
+                    "ok": True, "status": "completed", "message": "done"
+                })()
+
+        runtime = SlowApprovalRuntime()
+
+        def resolve_approval(_policy_context, _skill_name):
+            resolving.set()
+            if not release.wait(timeout=8):
+                raise RuntimeError("approval lookup timed out")
+            return "a" * 40
+
+        task = self.submit("read_demo", "approval-wait", key="slow-approval-resolution")
+        worker = DurableSkillWorker(
+            self.engine,
+            runtime,
+            worker_id="approval-heartbeat-worker",
+            lease_seconds=2,
+            heartbeat_interval_seconds=0.05,
+            owner_id="test-owner",
+            approval_token_resolver=resolve_approval,
+        )
+        outcomes = []
+        thread = threading.Thread(target=lambda: outcomes.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(resolving.wait(timeout=2))
+        try:
+            # The resolver is deliberately slower than the original lease.
+            # The task must remain owned while trusted authorization is fetched.
+            time.sleep(2.2)
+            self.assertEqual(self.engine.recover_expired_leases(), 0)
+            self.assertEqual(self.engine.get_task(task["id"])["state"], "running")
+        finally:
+            release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not finish after approval resolution")
+        self.assertEqual(outcomes[0]["state"], "succeeded")
+        self.assertEqual(runtime.received[1], "a" * 40)
+        self.assertEqual(self.engine.get_task(task["id"])["state"], "succeeded")
+
     def test_worker_renews_lease_during_long_running_invocation(self):
         import threading
 
