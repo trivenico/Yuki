@@ -345,13 +345,13 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.service.renew(self.device.token, reservation.reservation_id, reservation.token,
                                fencing_token=reservation.fencing_token + 1)
         self.clock.advance(1)
-        expiry = self.service.renew(reservation.reservation_id, reservation.token,
-                                    fencing_token=reservation.fencing_token)
+        expiry = self.service.renew(self.device.token, reservation.reservation_id,
+                                    reservation.token, fencing_token=reservation.fencing_token)
         self.assertGreater(datetime.fromisoformat(expiry), datetime.fromisoformat(reservation.expires_at))
         self.assertTrue(self.service.release(self.device.token, reservation.reservation_id, reservation.token,
                                              fencing_token=reservation.fencing_token))
-        self.assertFalse(self.service.release(reservation.reservation_id, reservation.token,
-                                              fencing_token=reservation.fencing_token))
+        self.assertFalse(self.service.release(self.device.token, reservation.reservation_id,
+                                              reservation.token, fencing_token=reservation.fencing_token))
 
     def test_reservation_secret_cannot_be_used_from_another_device(self):
         reservation = self.reserve()
