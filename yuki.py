@@ -52,6 +52,7 @@ def save_memory(memory):
 
 _SKILL_APPROVAL_DB = Path(__file__).with_name('.yuki') / 'skill_approvals.sqlite3'
 _DURABLE_TASK_DB = Path(__file__).with_name('.yuki') / 'durable_tasks.sqlite3'
+_LOCAL_OWNER_ID = "owner:local"
 
 
 def _get_durable_task_engine():
@@ -302,7 +303,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if durable_command == "goal create":
             try:
                 with _get_durable_task_engine() as engine:
-                    goal_id = engine.create_goal()
+                    goal_id = engine.create_goal(owner_id=_LOCAL_OWNER_ID)
                 write_audit_event("durable:goal:create", "completed")
                 return f"Durable goal created: {goal_id}"
             except Exception as error:
@@ -326,6 +327,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                         "skill.invoke",
                         {"skill_name": skill_name, "argument": argument},
                         idempotency_key=key,
+                        owner_id=_LOCAL_OWNER_ID,
                         max_attempts=1,
                     )
                 write_audit_event("durable:task:submit", "completed")
