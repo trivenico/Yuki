@@ -128,9 +128,12 @@ class ProviderManager:
     def catalog(self):
         """Return sanitized provider/model metadata without making network calls."""
         from providers.catalog import build_provider_catalog
-        return build_provider_catalog(
+        entries = build_provider_catalog(
             config=self._config, environ=self._environ, provider_manager=self
         )
+        for item in entries:
+            item["selected"] = item.get("name") == self._selected
+        return entries
 
     def routing_registry(self):
         """Return a capability-filtered registry for explicit, policy-aware routing."""
