@@ -211,6 +211,7 @@ class SpecialistTaskWorker:
         self.experience_actor_id = experience_actor_id.strip() if isinstance(experience_actor_id, str) else None
         self.last_experience_error_code = None
         self.last_experience_error_type = None
+        self.last_experience_error_detail = None
         if (learning_pipeline is None) != (learning_actor_id is None):
             raise ValueError("learning_pipeline and learning_actor_id must be supplied together.")
         if learning_pipeline is not None and not isinstance(learning_pipeline, AgentLearningPipeline):
@@ -349,9 +350,15 @@ class SpecialistTaskWorker:
             )
             self.last_experience_error_code = None
             self.last_experience_error_type = None
+            self.last_experience_error_detail = None
         except Exception as exc:
             self.last_experience_error_code = "experience_recording_failed"
             self.last_experience_error_type = type(exc).__name__
+            # Keep a bounded validation hint for local diagnostics; do not expose
+            # arbitrary exception text from storage/provider implementations.
+            self.last_experience_error_detail = (
+                str(exc)[:160] if isinstance(exc, (ValueError, TypeError)) else None
+            )
 
     def _evaluate_learning(self, task: TaskRecord, agent_id: str, outcome: str) -> None:
         """Best-effort evaluation from a trusted assessor; never changes task state."""

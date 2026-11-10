@@ -119,7 +119,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         )
         result = worker.run_once()
         self.assertEqual(result.state, "succeeded")
-        self.assertIsNone(worker.last_experience_error_type, f"experience store failed: {worker.last_experience_error_type}")
+        self.assertIsNone(
+            worker.last_experience_error_type,
+            f"experience store failed: {worker.last_experience_error_type} "
+            f"{worker.last_experience_error_detail}",
+        )
         summary = experience_store.summary(actor_id="alice", agent_id="code-review")
         self.assertEqual(summary["sample_count"], 1)
         self.assertEqual(summary["success_count"], 1)

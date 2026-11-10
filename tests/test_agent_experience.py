@@ -59,6 +59,10 @@ class AgentExperienceStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.record(outcome="unknown")
 
+    def test_url_safe_task_ids_are_accepted(self):
+        item = self.record(task_id="_task-url-safe")
+        self.assertEqual(item["task_id"], "_task-url-safe")
+
     def test_memory_usefulness_is_not_inferred(self):
         item = self.record(memory_useful=None)
         self.assertIsNone(item["memory_useful"])

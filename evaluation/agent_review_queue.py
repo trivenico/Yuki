@@ -1,7 +1,7 @@
 """Owner-scoped human review queue for specialist-agent evaluations.
 
-A review decision records approval of the evaluation report only. It does not
-write memories, change agent rankings, or alter model routing.
+A review decision records approval of the evaluation report only. Knowledge
+promotion is a separate, explicitly authorized operation.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ _NOTE_MAX = 2000
 
 
 class AgentEvaluationReviewQueue:
-    """Persist evaluation reports that require human review."""
+    """Persist evaluation reports that require review."""
 
     def __init__(self, database_path: str, *, authorize):
         if not isinstance(database_path, str) or not database_path.strip():
@@ -118,13 +118,30 @@ class AgentEvaluationReviewQueue:
             ).fetchall()
         return [self._serialize(row) for row in rows]
 
+    def get_review(self, *, actor_id: str, evaluation_id: str) -> dict:
+        """Return one owner-scoped review record, including its decision."""
+        if not isinstance(evaluation_id, str) or not re.fullmatch(
+            r"eval-[A-Za-z0-9_-][A-Za-z0-9_.:@/-]{0,199}", evaluation_id
+        ):
+            raise ValueError("invalid_evaluation_id")
+        if not self._allowed(actor_id, "agent_evaluation:read", ""):
+            raise PermissionError("evaluation review read is not authorized")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM agent_evaluation_reviews WHERE actor_id=? AND evaluation_id=?",
+                (actor_id, evaluation_id),
+            ).fetchone()
+        if row is None:
+            raise LookupError("evaluation_review_not_found")
+        return self._serialize(row)
+
     def decide(
         self, *, reviewer_actor_id: str, evaluation_id: str,
         decision: str, note: str = "",
     ) -> dict:
         """Approve or reject one pending report; never mutate memory or routing."""
         if not isinstance(evaluation_id, str) or not re.fullmatch(
-            r"eval-[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}", evaluation_id
+            r"eval-[A-Za-z0-9_-][A-Za-z0-9_.:@/-]{0,199}", evaluation_id
         ):
             raise ValueError("invalid_evaluation_id")
         if decision not in {"approved", "rejected"}:
