@@ -15,7 +15,6 @@ from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
-from providers.factory import create_provider
 from yuki_providers import ProviderManager
 
 
@@ -48,7 +47,7 @@ def create_app():
     # router. The initial cloud choice comes from trusted deployment config;
     # interactive changes require a separate explicit confirmation.
     provider_manager = ProviderManager(config, environ=os.environ)
-    selected_name = (config.get("provider") or os.environ.get("YUKI_PROVIDER", "openai")).strip().lower()
+    selected_name = str(config.get("provider") or os.environ.get("YUKI_PROVIDER", "openai")).strip().lower()
     adapter = ProviderAgentAdapter(
         provider_manager.create_selected_runtime_adapter(allow_cloud=(selected_name == "openai"))
     )
