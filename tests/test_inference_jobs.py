@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,11 +23,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
 
     def _expire(self):
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             db.execute(
                 "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
                 ("2000-01-01T00:00:00+00:00", self.job.job_id),
             )
+            db.commit()
 
     def test_reclaim_rotates_secret_and_fences_stale_completion(self):
         first = self.jobs.claim_next(self.device.token)
@@ -35,7 +37,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertNotIn(first.lease_token, repr(first))
         self.assertIsNone(self.jobs.get_job("owner", self.job.job_id).lease_token)
 
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             stored = db.execute(
                 "SELECT lease_token_hash FROM inference_jobs WHERE job_id=?",
                 (self.job.job_id,),
