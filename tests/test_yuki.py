@@ -71,9 +71,13 @@ class ProviderTests(unittest.TestCase):
 
 class ProviderManagerTests(unittest.TestCase):
     def test_real_provider_is_default_and_unimplemented_provider_is_rejected(self):
-        manager = ProviderManager(environ={})
+        from providers.openai_compatible import OpenAICompatibleProvider
+        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
         self.assertEqual(manager.current().name, "openai")
-        self.assertEqual(manager.select("openai"), "Selected provider: openai")
+        # Cloud selection is explicit and validates a configured, available
+        # exact model before changing the active provider.
+        with patch.object(OpenAICompatibleProvider, "is_available", return_value=True):
+            self.assertEqual(manager.select("openai", allow_cloud=True), "Selected provider: openai")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
         self.assertEqual(manager.current().name, "openai")
