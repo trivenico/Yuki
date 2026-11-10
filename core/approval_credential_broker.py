@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 import secrets
 import sqlite3
 import time
@@ -42,7 +44,7 @@ class ApprovalCredentialBroker:
         if not callable(seal) or not callable(unseal) or not callable(clock):
             raise TypeError("seal, unseal, and clock must be callable")
         self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self._prepare_private_database_file()
         self.gateway, self.worker_id = gateway, worker_id
         self.seal, self.unseal, self.clock = seal, unseal, clock
         with closing(self._connect()) as db:
@@ -65,6 +67,36 @@ class ApprovalCredentialBroker:
                 CREATE INDEX IF NOT EXISTS idx_worker_credentials_lookup
                 ON approval_worker_credentials(principal_id,goal_id,task_id,worker_id,status)
             """)
+
+    def _prepare_private_database_file(self) -> None:
+        """Create or harden the SQLite file before SQLite opens it.
+
+        On POSIX, the database is owner-only (0600). Symlinks and non-regular
+        files are rejected so a configured path cannot redirect credential
+        storage. Windows ACLs must be provisioned by the deployment.
+        """
+        path = Path(self.database_path)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(self.database_path, flags, 0o600)
+        except FileExistsError:
+            try:
+                metadata = path.lstat()
+            except OSError:
+                raise PermissionError("credential database path cannot be inspected") from None
+            if not stat.S_ISREG(metadata.st_mode):
+                raise PermissionError("credential database must be a regular non-symlink file")
+            if os.name == "posix":
+                if hasattr(os, "getuid") and metadata.st_uid != os.getuid():
+                    raise PermissionError("credential database must be owned by the current user")
+                os.chmod(self.database_path, 0o600)
+        except OSError:
+            raise PermissionError("credential database could not be created safely") from None
+        else:
+            os.close(descriptor)
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
