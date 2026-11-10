@@ -268,8 +268,24 @@ class CapabilityApprovalGateway:
             db.commit()
         return tuple(dict(row) for row in rows)
 
+    def pending_request_identity(self, request_id: str) -> dict[str, str]:
+        """Return the owner and task identifiers for a pending request only."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT principal_id,step_id,status,expires_at
+                   FROM capability_approval_requests WHERE request_id=?""",
+                (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= now:
+            raise PermissionError("approval request is unavailable")
+        return {"principal_id": row["principal_id"], "step_id": row["step_id"]}
+
     def approve_request(
         self, request_id: str, *, approved_by: str, ttl_seconds: int = 300,
+        expected_request: PolicyRequest | None = None,
     ) -> str:
         """Atomically approve one inbox item and mint its one-shot credential."""
         if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
@@ -303,6 +319,11 @@ class CapabilityApprovalGateway:
             raw["risk"] = Risk(raw["risk"])
             request = PolicyRequest(**raw)
             digest = self._request_digest(request)
+            if expected_request is not None:
+                expected_digest = self._request_digest(expected_request)
+                if not hmac.compare_digest(expected_digest, digest):
+                    db.rollback()
+                    raise PermissionError("underlying task changed since approval was requested")
             if not hmac.compare_digest(digest, row["request_sha256"]):
                 db.rollback()
                 raise PermissionError("approval request integrity check failed")
