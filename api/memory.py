@@ -22,7 +22,7 @@ async def dispatch_memory_request(store: Any, owner_id: str, method: str,
     if path == "/v1/memory" and method == "GET":
         try:
             raw = scope.get("query_string", b"").decode("ascii")
-            query = parse_qs(raw, keep_blank_values=True, max_num_fields=2)
+            query = parse_qs(raw, keep_blank_values=True, max_num_fields=2, errors="strict")
             if set(query) - {"q", "limit"} or any(len(values) != 1 for values in query.values()):
                 return 400, {"error": "invalid_request"}
             limit_value = query.get("limit", ["50"])[0]
