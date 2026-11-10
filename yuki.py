@@ -184,6 +184,7 @@ The runtime defaults to the real OpenAI API. The mock adapter is reserved for au
 
 
 def handle_command(message, memory, tasks, agent, providers, policy=None):
+    global _CLI_SESSION_TOKEN
     command = message.strip()
     if not command:
         return ""
@@ -333,7 +334,6 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         return "Usage: /skill list | diagnostics | install PATH | inspect NAME | approve NAME [argument] | invoke NAME [argument]"
 
     if command == "/auth" or command.startswith("/auth "):
-        global _CLI_SESSION_TOKEN
         parts = command.split(maxsplit=2)
         action = parts[1] if len(parts) > 1 else "status"
         if action == "status":
