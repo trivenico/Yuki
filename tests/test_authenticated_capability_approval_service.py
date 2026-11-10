@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from core.auth import AuthenticationError
 from core.authenticated_capability_approval_service import AuthenticatedCapabilityApprovalService
 from core.capability_approval_gateway import CapabilityApprovalGateway
-from core.durable_task_engine import DurableTaskEngine
+from core.durable_task_engine import DurableTaskEngine, TaskConflict
 from core.tool_policy import Decision, PolicyRule, Risk, ToolPolicyEngine
 
 
@@ -162,6 +162,28 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "only queued tasks"):
             service.approve_pending("approver-session", request_id)
         self.assertEqual(delivered, [])
+
+    def test_expired_hold_cannot_be_renewed_after_worker_claim(self):
+        now = [100.0]
+        engine = DurableTaskEngine(
+            Path(self.temp.name) / "expiry.sqlite", clock=lambda: now[0],
+        )
+        self.addCleanup(engine.close)
+        goal_id = engine.create_goal(owner_id="alice")
+        task = engine.submit(
+            goal_id, "skill.invoke",
+            {"skill_name": "write_demo", "argument": "safe-value"},
+            idempotency_key="expiry-test", owner_id="alice", max_attempts=1,
+        )
+        request_id = "a" * 32
+        engine.hold_task_for_approval(
+            task["id"], "alice", request_id, ttl_seconds=1,
+        )
+        now[0] = 102.0
+        claimed = engine.claim("worker-after-expiry", owner_id="alice")
+        self.assertEqual(claimed["id"], task["id"])
+        with self.assertRaises(TaskConflict):
+            engine.renew_task_approval_hold(task["id"], request_id)
 
     def test_worker_cannot_claim_task_while_approval_is_pending(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
