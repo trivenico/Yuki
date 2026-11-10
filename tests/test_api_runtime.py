@@ -39,6 +39,25 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
+    def test_runtime_injects_reasoning_context_builder(self):
+        class FakeBuilder:
+            def build(self, **kwargs):
+                return {}
+            def assemble_prompt(self, context):
+                return ""
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            builder = FakeBuilder()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                reasoning_context_builder=builder, reasoning_agent_id="yuki",
+            )
+            self.assertIs(runtime.app.conversations.reasoning_context_builder, builder)
+            self.assertEqual(runtime.app.conversations.reasoning_agent_id, "yuki")
+            runtime.close()
+
     def test_runtime_injects_provider_catalog_callback(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
