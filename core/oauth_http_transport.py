@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import re
 import socket
 import ssl
 from urllib.parse import urlencode, urlsplit
@@ -95,6 +96,26 @@ class PinnedOAuthHTTPTransport:
         # Deterministic choice avoids retrying alternate DNS answers on failure.
         return sorted(addresses)[0]
 
+    @staticmethod
+    def _custom_headers(headers, *, reserved):
+        if headers is None:
+            return {}
+        if not isinstance(headers, dict):
+            raise OAuthHTTPError("invalid_oauth_headers")
+        result = {}
+        seen = set()
+        for key, value in headers.items():
+            if (not isinstance(key, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", key)
+                    or not isinstance(value, str)
+                    or any(ord(c) < 0x20 or ord(c) == 0x7f for c in value)):
+                raise OAuthHTTPError("invalid_oauth_headers")
+            normalized = key.lower()
+            if normalized in reserved or normalized in seen:
+                raise OAuthHTTPError("invalid_oauth_headers")
+            seen.add(normalized)
+            result[key] = value
+        return result
+
     def request_json(self, method, endpoint, *, payload=None, headers=None):
         if method not in {"GET", "POST"}:
             raise OAuthHTTPError("oauth_http_method_not_allowed")
@@ -102,15 +123,11 @@ class PinnedOAuthHTTPTransport:
         pinned_ip = self._resolve_public_ip(host)
         body = None
         request_headers = {"Accept": "application/json", "User-Agent": "Yuki-OAuth/1.0"}
-        if headers is not None:
-            if not isinstance(headers, dict):
-                raise OAuthHTTPError("invalid_oauth_headers")
-            for key, value in headers.items():
-                if (not isinstance(key, str) or not isinstance(value, str)
-                        or key.lower() in {"host", "connection", "content-length", "transfer-encoding"}
-                        or any(ord(c) < 0x20 or ord(c) == 0x7f for c in key + value)):
-                    raise OAuthHTTPError("invalid_oauth_headers")
-                request_headers[key] = value
+        custom_headers = self._custom_headers(
+            headers,
+            reserved={"host", "connection", "content-length", "transfer-encoding", "content-type"},
+        )
+        request_headers.update(custom_headers)
         if payload is not None:
             try:
                 body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -176,15 +193,11 @@ class PinnedOAuthHTTPTransport:
             "User-Agent": "Yuki-OAuth/1.0",
             "Content-Type": "application/x-www-form-urlencoded",
         }
-        if headers is not None:
-            if not isinstance(headers, dict):
-                raise OAuthHTTPError("invalid_oauth_headers")
-            for key, value in headers.items():
-                if (not isinstance(key, str) or not isinstance(value, str)
-                        or key.lower() in {"host", "connection", "content-length", "transfer-encoding", "content-type"}
-                        or any(ord(c) < 0x20 or ord(c) == 0x7f for c in key + value)):
-                    raise OAuthHTTPError("invalid_oauth_headers")
-                request_headers[key] = value
+        custom_headers = self._custom_headers(
+            headers,
+            reserved={"host", "connection", "content-length", "transfer-encoding", "content-type"},
+        )
+        request_headers.update(custom_headers)
         connection = self._connection_factory(
             host, pinned_ip, port=443, timeout=self.timeout, context=self._ssl_context
         )
