@@ -137,7 +137,7 @@ class BuiltInAuthService:
         password = self._validate_password(password)
         salt = secrets.token_bytes(16)
         digest = self._password_digest(password, salt)
-        user_id, now = secrets.token_urlsafe(18), _timestamp(_utcnow())
+        user_id, now = "usr_" + secrets.token_urlsafe(18), _timestamp(_utcnow())
         with self._connect() as db:
             db.execute(
                 "INSERT INTO auth_users(user_id,username,password_salt,password_hash,password_iterations,role,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -151,7 +151,7 @@ class BuiltInAuthService:
         password = self._validate_password(password)
         salt = secrets.token_bytes(16)
         digest = self._password_digest(password, salt)
-        user_id, now = secrets.token_urlsafe(18), _timestamp(_utcnow())
+        user_id, now = "usr_" + secrets.token_urlsafe(18), _timestamp(_utcnow())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM auth_users LIMIT 1").fetchone():
