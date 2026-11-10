@@ -120,3 +120,16 @@ Personal owner usage should not have arbitrary Yuki-imposed quotas, but runtime 
 ## Current MCP adapter dependency note
 
 The guarded MCP adapter is being developed on the policy/approval integration branch because the current `main` branch does not yet contain `core/tool_policy.py`. PR #630 exposed this dependency mistake in CI and was superseded by PR #631. Keep the dependency relationship explicit until the security stack is merged.
+
+## Model strategy: frontier, efficient and local models
+
+Do not hard-code one global "best model". Public benchmark leaderboards are snapshots with different test coverage, prompting, inference settings, and scoring methodology. Compare models per task using reproducible internal evaluations.
+
+Use three model tiers:
+- **Frontier reasoning/coding:** strongest available cloud model for difficult planning, architecture, code review and high-stakes reasoning. Route only when the task warrants the latency and provider cost.
+- **Fast/efficient:** smaller or faster cloud models for classification, summarization, extraction, routine tool selection and short transformations.
+- **Local/private:** locally hosted open-weight models for private data, offline operation, routine work and predictable marginal cost when hardware permits.
+
+Capability metadata must be measured or verified per provider/model version. At minimum track tool-call reliability, JSON/schema adherence, coding task pass rate, retrieval-grounded factuality, multimodal input/output, context handling, latency, cancellation behavior, and exact-vs-estimated usage. Never infer a capability solely from a model family name.
+
+The November 2026 public landscape includes multiple frontier vendors and open-weight alternatives; independent aggregators disagree on composite rankings and some models have incomplete benchmark coverage. Treat those leaderboards as candidate discovery, not deployment policy. Run Yuki's own task suite and keep raw benchmark source, date, model ID, prompt version, and evaluation configuration with each result.
