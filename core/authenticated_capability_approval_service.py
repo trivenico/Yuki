@@ -123,8 +123,6 @@ class AuthenticatedCapabilityApprovalService:
         # have been claimed, cancelled, modified, or had its goal paused after
         # the inbox item was created.
         identity = self.gateway.pending_request_identity(request_id)
-        if identity["principal_id"] != user.user_id:
-            raise PermissionError("only the task owner may approve this request")
         current_request = self._request_from_owned_task(
             identity["principal_id"], identity["step_id"],
         )
