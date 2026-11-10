@@ -268,6 +268,22 @@ class CapabilityApprovalGateway:
             db.commit()
         return tuple(dict(row) for row in rows)
 
+    def get_pending_request(self, request_id: str) -> PolicyRequest:
+        """Load a pending request for trusted internal credential delivery only."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT request_json,status,expires_at FROM capability_approval_requests
+                   WHERE request_id=?""", (request_id,),
+            ).fetchone()
+        if row is None or row["status"] != "pending" or row["expires_at"] <= self.clock():
+            raise PermissionError("approval request is unavailable")
+        raw = json.loads(row["request_json"])
+        raw["risk"] = Risk(raw["risk"])
+        request = PolicyRequest(**raw)
+        return request
+
     def approve_request(
         self, request_id: str, *, approved_by: str, ttl_seconds: int = 300,
     ) -> str:
