@@ -11,7 +11,7 @@ Provide a bounded JSON transport for OAuth metadata and token endpoints that clo
 - Resolve DNS once per request, reject the request if any returned address is non-global, and pin the TCP connection to one deterministic public IP from that answer set.
 - TLS certificate validation and SNI continue to use the original hostname, not the pinned IP.
 - No automatic redirects; all 3xx responses fail closed.
-- GET and JSON POST only.
+- GET and JSON POST for metadata-style endpoints.\n- Standard `application/x-www-form-urlencoded` POST for OAuth token endpoints, with bounded string fields and protected content-type handling.
 - Bounded request and response bodies, JSON content-type enforcement, object-only JSON responses, and bounded timeout.
 - Custom headers are validated; callers cannot override Host, connection framing, or content length.
 - Stable sanitized transport errors do not include URLs, tokens, or response bodies.
