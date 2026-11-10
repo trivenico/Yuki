@@ -29,6 +29,7 @@ class OAuthAuthorizationService:
         authorization_endpoint: str, token_endpoint: str,
         allowed_authorization_hosts, redirect_uri: str,
         issuer: str, resource: str, scopes, identity_verifier,
+        authorization_response_iss_parameter_supported: bool = False,
     ):
         required = {
             "provider_id": provider_id, "account_id": account_id,
@@ -50,6 +51,8 @@ class OAuthAuthorizationService:
             raise TypeError("a trusted provider identity verifier is required")
         if not isinstance(scopes, (list, tuple)) or not scopes:
             raise ValueError("at least one OAuth scope is required")
+        if type(authorization_response_iss_parameter_supported) is not bool:
+            raise ValueError("authorization response issuer capability must be boolean")
         self._transactions = transaction_store
         self._vault = credential_vault
         self._transport = transport
@@ -64,6 +67,7 @@ class OAuthAuthorizationService:
         self._issuer = issuer
         self._resource = resource
         self._scopes = tuple(scopes)
+        self._require_response_issuer = authorization_response_iss_parameter_supported
 
     def begin(self, *, owner_id: str, session_id: str) -> dict:
         """Create an owner/session-bound, short-lived S256 authorization request."""
@@ -116,6 +120,8 @@ class OAuthAuthorizationService:
                 callback_url=callback_url,
                 expected_redirect_uri=self._redirect_uri,
                 expected_state=state,
+                expected_issuer=self._issuer,
+                require_issuer=self._require_response_issuer,
             )
             transaction = self._transactions.consume(
                 state=state, owner_id=owner_id, session_id=session_id,
@@ -135,6 +141,8 @@ class OAuthAuthorizationService:
                 callback_url=callback_url,
                 expected_redirect_uri=transaction.redirect_uri,
                 expected_state=transaction.state,
+                expected_issuer=transaction.issuer,
+                require_issuer=self._require_response_issuer,
             )
             # Authorization codes are single-use. Never retry an ambiguous exchange.
             document = self._transport.request_form(
