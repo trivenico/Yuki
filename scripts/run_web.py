@@ -38,12 +38,10 @@ def _load_provider_selection(path: Path):
         or data.get("schema_version") != 2
         or not isinstance(data.get("provider"), str)
         or not isinstance(data.get("model"), str)
-        or not data["provider"] or not data["model"]
+        or not data["provider"]
         or type(data.get("cloud_authorized")) is not bool
     ):
         raise RuntimeError("Persisted provider selection has an unsupported schema.")
-    if data["provider"] != "openai" and data["cloud_authorized"]:
-        raise RuntimeError("Persisted cloud consent is inconsistent with the selected provider.")
     return data
 
 
@@ -51,9 +49,8 @@ def _persist_provider_selection(path: Path, *, provider: str, model: str, cloud_
     """Atomically persist provider/model identifiers without credentials."""
     if (
         not isinstance(provider, str) or not provider or len(provider) > 32
-        or not isinstance(model, str) or not model or len(model) > 120
+        or not isinstance(model, str) or len(model) > 120
         or type(cloud_authorized) is not bool
-        or (provider != "openai" and cloud_authorized)
     ):
         raise ValueError("Invalid provider selection state.")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,17 +119,19 @@ def create_app():
         persisted["cloud_authorized"] if persisted is not None
         else os.environ.get("YUKI_ALLOW_CLOUD", "").strip().lower() == "true"
     )
-    if selected_name == "openai" and not cloud_authorized:
-        raise RuntimeError(
-            "OpenAI is a cloud provider. Set YUKI_ALLOW_CLOUD=true for an explicitly "
-            "authorized initial deployment, or select a local provider."
-        )
+
     catalog_entry = next(
         (item for item in provider_manager.catalog() if item.get("name") == selected_name), None
     )
-    if catalog_entry is None or not catalog_entry.get("configured_model"):
-        raise RuntimeError("The selected provider has no configured exact model.")
-    if persisted is not None and persisted["model"] != catalog_entry["configured_model"]:
+    if catalog_entry is None:
+        raise RuntimeError("The selected provider is not present in the configured catalog.")
+    if catalog_entry.get("privacy") != "local_runtime" and not cloud_authorized:
+        raise RuntimeError(
+            "The selected provider is cloud-hosted. Set YUKI_ALLOW_CLOUD=true for an "
+            "explicit initial deployment choice, or choose a local provider."
+        )
+    configured_model = catalog_entry.get("configured_model") or ""
+    if persisted is not None and persisted["model"] != configured_model:
         raise RuntimeError(
             "Persisted provider model no longer matches configuration; review "
             "provider-selection.json before starting Yuki."
@@ -145,6 +144,16 @@ def create_app():
         return provider_manager.catalog()
 
     def select_provider(name: str, *, allow_cloud: bool = False):
+        target = next(
+            (item for item in provider_manager.catalog()
+             if item.get("name") == name.strip().lower()), None
+        )
+        if target is None or not target.get("implemented"):
+            raise ValueError("provider_not_implemented")
+        if target.get("privacy") != "local_runtime" and not allow_cloud:
+            raise ValueError("cloud_consent_required")
+        previous_name = provider_manager.current().name
+        previous_adapter = provider_manager._selected_adapter
         result = provider_manager.select(name, allow_cloud=allow_cloud)
         if result != f"Selected provider: {name.strip().lower()}":
             raise ValueError("provider_not_ready")
@@ -153,10 +162,18 @@ def create_app():
             item for item in provider_manager.catalog()
             if item.get("name") == name.strip().lower()
         )
-        _persist_provider_selection(
-            selection_path, provider=name.strip().lower(),
-            model=entry.get("configured_model"), cloud_authorized=allow_cloud,
-        )
+        try:
+            _persist_provider_selection(
+                selection_path, provider=name.strip().lower(),
+                model=entry.get("configured_model") or "",
+                cloud_authorized=allow_cloud,
+            )
+        except Exception:
+            # Restore the router's previous committed state if durable publication
+            # fails; the agent adapter has not yet been changed.
+            provider_manager._selected = previous_name
+            provider_manager._selected_adapter = previous_adapter
+            raise
         # Publish the adapter only after exact-model validation and durable state.
         adapter.provider = selected_adapter
         return {
