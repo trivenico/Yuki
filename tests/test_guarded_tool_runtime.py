@@ -77,6 +77,82 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             with self.subTest(result_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_result_chars=value)
 
+
+    def test_central_policy_must_allow_before_legacy_policy_and_execution(self):
+        from core.tool_policy import (
+            Decision, PolicyRequest, PolicyResult, Risk, argument_digest,
+        )
+
+        calls = []
+        class Engine:
+            def __init__(self, decision):
+                self.decision = decision
+                self.requests = []
+            def evaluate(self, request):
+                self.requests.append(request)
+                return PolicyResult(self.decision, "v1", ("rule",), "test")
+
+        def request_factory(name, argument):
+            return PolicyRequest(
+                principal_id="owner:local",
+                trigger="interactive",
+                capability="tool:" + name,
+                target="local:tool",
+                argument_sha256=argument_digest(argument),
+                risk=Risk.LOW,
+                run_id="run-1",
+                step_id="step-1",
+            )
+
+        engine = Engine(Decision.DENY)
+        runtime = GuardedToolRuntime(
+            {"echo": lambda value: calls.append(value) or value},
+            Policy(True),
+            policy_engine=engine,
+            policy_request_factory=request_factory,
+        )
+        self.assertIn("central security policy", runtime.invoke("echo", "hello"))
+        self.assertEqual(calls, [])
+        self.assertEqual(engine.requests[0].argument_sha256, argument_digest("hello"))
+
+    def test_central_policy_approval_and_quarantine_do_not_execute(self):
+        from core.tool_policy import Decision, PolicyResult
+        class Engine:
+            def __init__(self, decision):
+                self.decision = decision
+            def evaluate(self, request):
+                return PolicyResult(self.decision, "v1", ("rule",), "test")
+        for decision in (Decision.REQUIRE_APPROVAL, Decision.QUARANTINE):
+            calls = []
+            runtime = GuardedToolRuntime(
+                {"echo": lambda value: calls.append(value) or value},
+                Policy(True),
+                policy_engine=Engine(decision),
+                policy_request_factory=lambda name, argument: object(),
+            )
+            self.assertIn("central security policy", runtime.invoke("echo", "hello"))
+            self.assertEqual(calls, [])
+
+    def test_central_policy_factory_or_engine_failure_denies(self):
+        class BrokenEngine:
+            def evaluate(self, request):
+                raise RuntimeError("policy unavailable")
+        calls = []
+        runtime = GuardedToolRuntime(
+            {"echo": lambda value: calls.append(value) or value},
+            Policy(True),
+            policy_engine=BrokenEngine(),
+            policy_request_factory=lambda name, argument: object(),
+        )
+        self.assertIn("evaluation failed", runtime.invoke("echo", "hello"))
+        self.assertEqual(calls, [])
+
+    def test_central_policy_requires_engine_and_factory_together(self):
+        from core.tool_policy import ToolPolicyEngine
+        engine = ToolPolicyEngine([], policy_version="v1")
+        with self.assertRaises(ValueError):
+            GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), policy_engine=engine)
+
     def test_audit_failure_does_not_change_authorization_or_result(self):
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: argument},
