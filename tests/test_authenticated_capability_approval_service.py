@@ -187,6 +187,21 @@ class AuthenticatedCapabilityApprovalServiceTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             engine.renew_task_approval_hold(task["id"], request_id)
 
+    def test_approved_task_is_affined_to_credential_worker(self):
+        delivered = []
+        service = AuthenticatedCapabilityApprovalService(
+            self.auth, self.gateway, task_engine=self.engine,
+            skill_registry=FakeRegistry(),
+            deliver_credential=lambda rid, token: delivered.append((rid, token)),
+            approval_worker_id="credential-worker",
+        )
+        request_id = service.request_approval("requester-session", self.task["id"])
+        service.approve_pending("approver-session", request_id)
+        self.assertEqual(len(delivered), 1)
+        self.assertIsNone(self.engine.claim("different-worker", owner_id="alice"))
+        claimed = self.engine.claim("credential-worker", owner_id="alice")
+        self.assertEqual(claimed["id"], self.task["id"])
+
     def test_worker_cannot_claim_task_while_approval_is_pending(self):
         request_id = self.service.request_approval("requester-session", self.task["id"])
         self.assertIsNone(self.engine.claim("worker-1", owner_id="alice"))
