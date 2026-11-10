@@ -87,7 +87,18 @@ class ProviderManager:
             return f"Unknown provider: {key}"
         if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
+        # Enforce cloud consent at the shared provider boundary, not only
+        # in browser/UI callers. Catalog privacy is the authoritative routing
+        # classification; unknown and third-party destinations fail closed.
         try:
+            catalog_entry = next(
+                (item for item in self.catalog() if item.get("name") == key), None
+            )
+            privacy = catalog_entry.get("privacy") if catalog_entry else "unknown"
+            if privacy in {"cloud_provider", "third_party_gateway"} and not allow_cloud:
+                raise PermissionError("cloud consent is required")
+            if privacy == "unknown":
+                raise PermissionError("provider privacy is unknown")
             if key in {"openai", "ollama"}:
                 adapter = self.create_routed_model_adapter(required=("text",), provider_preference=(key,), allow_cloud=allow_cloud)
             else:
@@ -100,6 +111,8 @@ class ProviderManager:
                     available = False
                 if available is not True:
                     raise RuntimeError("provider is not available")
+        except PermissionError:
+            return f"Cannot select {key}: explicit cloud consent is required."
         except Exception as exc:
             return f"Cannot select {key}: provider configuration, availability, or construction failed ({type(exc).__name__})."
         # Commit selected name and availability-checked adapter atomically.
