@@ -1,4 +1,8 @@
 """Regression tests for the durable approval audit log."""
+import hashlib
+import hmac
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,6 +48,16 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             import sqlite3
             db = sqlite3.connect(path)
             try:
+                # The ordinary SQL API is guarded by append-only triggers.
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
+                with self.assertRaises(sqlite3.IntegrityError):
+                    db.execute("DELETE FROM approval_audit_events WHERE event_id = 1")
+                db.rollback()
+                # A database owner can remove triggers; the hash chain must still
+                # detect a subsequent out-of-band row mutation.
+                db.execute("DROP TRIGGER approval_audit_no_update")
+                db.execute("DROP TRIGGER approval_audit_no_delete")
                 db.execute("UPDATE approval_audit_events SET skill_id = 'tampered' WHERE event_id = 1")
                 db.commit()
             finally:
@@ -59,6 +73,104 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
                 self.assertNotIn(b"secret-pending-token", handle.read())
             self.assertTrue(audit.verify_chain())
 
+    def test_session_identity_is_hmac_hashed_and_chain_verified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = b"s" * 32
+            audit = SQLiteApprovalAuditLog(
+                str(Path(tmp) / "audit.sqlite3"), identity_key=key
+            )
+            audit.append(
+                event_type="requested", pending_id="pending-session",
+                actor="local-cli", session_id="session-secret",
+                skill_id="notes.write",
+            )
+            event = audit.list_events()[0]
+            expected = hmac.new(
+                key, b"session-secret", hashlib.sha256
+            ).hexdigest()
+            self.assertEqual(event["session_hash"], expected)
+            self.assertNotEqual(event["session_hash"], "session-secret")
+            self.assertTrue(audit.verify_chain())
+
+    def test_migrates_legacy_schema_missing_both_hash_columns(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "legacy.sqlite3")
+            db = sqlite3.connect(path)
+            db.execute("""
+                CREATE TABLE approval_audit_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    pending_id TEXT NOT NULL,
+                    actor_hash TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL
+                )
+            """)
+            db.execute(
+                "INSERT INTO approval_audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (1, "requested", "legacy-bearer", "actor-hash", "notes.write",
+                 "2026-01-01T00:00:00+00:00", "0" * 64, "0" * 64),
+            )
+            db.execute("""
+                CREATE TRIGGER approval_audit_no_update
+                BEFORE UPDATE ON approval_audit_events
+                BEGIN SELECT RAISE(ABORT, 'append-only'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER approval_audit_no_delete
+                BEFORE DELETE ON approval_audit_events
+                BEGIN SELECT RAISE(ABORT, 'append-only'); END
+            """)
+            db.commit()
+            db.close()
+            audit = SQLiteApprovalAuditLog(path, identity_key=b"m" * 32)
+            event = audit.list_events()[0]
+            self.assertEqual(event["pending_id_hash"], hashlib.sha256(b"legacy-bearer").hexdigest())
+            self.assertEqual(event["session_hash"], hmac.new(
+                b"m" * 32, b"legacy-session-unspecified", hashlib.sha256
+            ).hexdigest())
+            self.assertTrue(audit.verify_chain())
+
+    def test_actor_hash_uses_configured_hmac_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = b"k" * 32
+            audit = SQLiteApprovalAuditLog(
+                str(Path(tmp) / "audit.sqlite3"), identity_key=key
+            )
+            audit.append(
+                event_type="requested", pending_id="pending-1",
+                actor="owner@example.test", skill_id="notes.write",
+            )
+            event = audit.list_events()[0]
+            expected = hmac.new(
+                key, b"owner@example.test", hashlib.sha256
+            ).hexdigest()
+            self.assertEqual(event["actor_hash"], expected)
+            self.assertNotEqual(
+                event["actor_hash"], hashlib.sha256(b"owner@example.test").hexdigest()
+            )
+            self.assertTrue(audit.verify_chain())
+
+    def test_production_requires_identity_hmac_key(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"YUKI_ENV": "production"}, clear=False):
+                os.environ.pop("YUKI_AUDIT_HMAC_KEY", None)
+                with self.assertRaisesRegex(ValueError, "must be configured in production"):
+                    SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+
+    def test_rejects_short_identity_hmac_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                SQLiteApprovalAuditLog(
+                    str(Path(tmp) / "audit.sqlite3"), identity_key=b"short"
+                )
+
     def test_actor_identifier_is_not_persisted_in_plaintext(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "audit.sqlite3")
@@ -66,6 +178,14 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             audit.append(event_type="requested", pending_id="pending-1", actor="secret-actor-123", skill_id="notes.write")
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file mode semantics")
+    def test_audit_database_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "audit.sqlite3"
+            audit = SQLiteApprovalAuditLog(str(path))
+            audit.append(event_type="requested", pending_id="p1", actor="owner", skill_id="notes.write")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
+from core.auth import BuiltInAuthService
+from core.identity import AuthenticatedIdentity
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationConflict, ConversationNotFound, ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
@@ -41,6 +43,49 @@ class ConversationServiceTests(unittest.TestCase):
             expected_version=version,
             tools=[],
         )
+
+    def test_tool_execution_requires_verified_identity_and_request_scoped_factory(self):
+        with self.assertRaises(PermissionError):
+            self.service.reply(
+                owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                user_text="Use a tool", request_id="tool-no-identity", expected_version=0,
+                tools=[{"name": "files.read"}],
+            )
+
+    def test_verified_identity_must_match_conversation_owner(self):
+        root = Path(self.tempdir.name)
+        auth = BuiltInAuthService(str(root / "identity.sqlite3"), password_iterations=100_000)
+        auth.bootstrap_admin("owner-a", "a-secure-test-password")
+        issued = auth.authenticate("owner-a", "a-secure-test-password")
+        identity = AuthenticatedIdentity.from_session(auth, issued.token)
+        with self.assertRaises(PermissionError):
+            self.service.reply(
+                owner_id="owner-b", conversation_id=self.conversation["conversation_id"],
+                user_text="Hello", request_id="wrong-owner", expected_version=0,
+                tools=[], identity=identity,
+            )
+
+    def test_request_scoped_factory_receives_verified_identity(self):
+        root = Path(self.tempdir.name)
+        auth = BuiltInAuthService(str(root / "factory-identity.sqlite3"), password_iterations=100_000)
+        auth.bootstrap_admin("owner-a", "a-secure-test-password")
+        issued = auth.authenticate("owner-a", "a-secure-test-password")
+        identity = AuthenticatedIdentity.from_session(auth, issued.token)
+        observed = []
+
+        def factory(received_identity):
+            observed.append(received_identity)
+            return self.loop
+
+        scoped_conversation = self.store.create_conversation(owner_id=identity.actor_id)
+        service = ConversationService(self.store, self.loop, agent_loop_factory=factory)
+        result = service.reply(
+            owner_id=identity.actor_id, conversation_id=scoped_conversation["conversation_id"],
+            user_text="Scoped request", request_id="scoped-request", expected_version=0,
+            tools=[], identity=identity,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(observed, [identity])
 
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
