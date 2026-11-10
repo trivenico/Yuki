@@ -348,6 +348,67 @@ class CapabilityApprovalGateway:
             db.commit()
         return token
 
+    def approval_delivery_binding(self, request_id: str, token: str) -> dict[str, Any]:
+        """Return verified task metadata for trusted credential delivery only."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        token_hash = self._token_digest(token)
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT r.principal_id,r.capability,r.target,r.run_id,r.step_id,
+                          r.policy_version,r.expires_at,r.status,
+                          a.token_sha256,a.expires_at AS credential_expires_at,
+                          a.consumed_at,a.revoked_at
+                   FROM capability_approval_requests r
+                   JOIN capability_approvals a
+                     ON a.request_sha256=r.request_sha256
+                    AND a.policy_version=r.policy_version
+                   WHERE r.request_id=? AND a.token_sha256=?""",
+                (request_id, token_hash),
+            ).fetchone()
+        if (row is None or row["status"] != "approved"
+                or row["credential_expires_at"] <= now
+                or row["expires_at"] <= now
+                or row["consumed_at"] is not None or row["revoked_at"] is not None):
+            raise PermissionError("approved credential is unavailable for delivery")
+        return {
+            "principal_id": row["principal_id"], "capability": row["capability"],
+            "target": row["target"], "run_id": row["run_id"], "step_id": row["step_id"],
+            "policy_version": row["policy_version"],
+            "expires_at": min(row["expires_at"], row["credential_expires_at"]),
+        }
+
+    def approval_delivery_binding_by_digest(self, request_id: str, credential_sha256: str) -> dict[str, Any]:
+        """Return immutable task metadata for a stored credential digest."""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id):
+            raise ValueError("request_id is invalid")
+        if not isinstance(credential_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", credential_sha256):
+            raise ValueError("credential digest is invalid")
+        now = self.clock()
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT r.principal_id,r.capability,r.target,r.run_id,r.step_id,
+                          r.policy_version,r.expires_at,r.status,
+                          a.expires_at AS credential_expires_at,a.consumed_at,a.revoked_at
+                   FROM capability_approval_requests r
+                   JOIN capability_approvals a
+                     ON a.request_sha256=r.request_sha256
+                    AND a.policy_version=r.policy_version
+                   WHERE r.request_id=? AND a.token_sha256=?""",
+                (request_id, credential_sha256),
+            ).fetchone()
+        if (row is None or row["status"] != "approved"
+                or row["credential_expires_at"] <= now or row["expires_at"] <= now
+                or row["consumed_at"] is not None or row["revoked_at"] is not None):
+            raise PermissionError("approved credential binding is unavailable")
+        return {
+            "principal_id": row["principal_id"], "capability": row["capability"],
+            "target": row["target"], "run_id": row["run_id"], "step_id": row["step_id"],
+            "policy_version": row["policy_version"],
+            "expires_at": min(row["expires_at"], row["credential_expires_at"]),
+        }
+
     def authorize(
         self, request: PolicyRequest, *, approval_token: str | None = None,
     ) -> CapabilityDecision:
