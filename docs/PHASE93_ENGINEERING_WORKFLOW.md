@@ -23,3 +23,20 @@ This is an opt-in service, not a hosted API endpoint or a general autonomous cod
 ## Validation
 
 The dedicated test suite covers a successful inspection-to-edit-to-test path and confirms that unauthorized inspection and disallowed tool requests stop before edits. CI runs Python 3.11 tests on Ubuntu, macOS and Windows. Merge only after exact-head required checks pass.
+
+
+## Post-change validation and rollback
+
+The engineering workflow now runs its explicitly allow-listed, digest-approved
+test target inside the approved workspace-change transaction boundary. The
+workspace service retains the original file bytes until validation and the
+success audit both complete. If tests fail, time out, the validator raises, or
+the success audit fails, replaced files are restored from staged backups and
+the operation fails closed. A rollback failure is surfaced as an operator
+recovery condition.
+
+The validation callback is application-owned; callers must never pass a
+model-generated callback. Test execution still requires the separate
+`tests:execute` permission and digest-bound approval. This improves failure
+handling but does not make the workspace editor a sandbox; use the existing
+sandboxed coding runner for untrusted build or code execution.

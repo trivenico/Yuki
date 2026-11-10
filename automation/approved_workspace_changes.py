@@ -131,8 +131,11 @@ class ApprovedWorkspaceChanges:
         except Exception as exc:
             raise RuntimeError("audit unavailable; workspace operation denied.") from exc
 
-    def apply(self, *, principal: ToolPrincipal, changes: Sequence[FileChange]) -> ChangeResult:
+    def apply(self, *, principal: ToolPrincipal, changes: Sequence[FileChange],
+              validate: Callable[[], bool] | None = None) -> ChangeResult:
         _validate_principal(principal, self.trusted_principal, "workspace:write")
+        if validate is not None and not callable(validate):
+            raise ToolInputError("validate must be a trusted callable or None.")
         if not isinstance(changes, (tuple, list)) or not 1 <= len(changes) <= _MAX_CHANGES:
             raise ToolInputError("one to eight file changes are required.")
         normalized = []
@@ -189,6 +192,10 @@ class ApprovedWorkspaceChanges:
             for relative, target, old, temp_path in staged:
                 os.replace(temp_path, target)
                 replaced.append((relative, target, old))
+            # Run validation while original bytes are still available for rollback.
+            # The callback must be application-owned, not model-supplied.
+            if validate is not None and validate() is not True:
+                raise WorkspaceChangeError("post-change validation failed; changes will be rolled back.")
             # Treat failure to persist the success audit event as an operation failure.
             self._audit(principal.actor_id, "workspace.apply", "succeeded", digest, [x[0] for x in normalized])
         except Exception as exc:
