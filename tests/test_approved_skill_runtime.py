@@ -117,7 +117,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.status, "central_policy_deny")
         self.assertEqual(calls, [])
-        self.assertEqual(engine.requests, [("weather", "change", skill, None)])
+        self.assertEqual(engine.requests, [("weather", "change", skill)])
 
     def test_central_policy_evaluation_failure_fails_closed(self):
         class SideEffectSkill:
