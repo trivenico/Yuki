@@ -116,7 +116,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
         # Keep this registry/factory contract test independent of whether the
         # Gemini CLI happens to be installed on the CI runner.
         with patch.object(GeminiCLIProvider, "is_available", return_value=True):
-            self.assertEqual(manager.select("gemini"), "Selected provider: gemini")
+            self.assertEqual(manager.select("gemini", allow_cloud=True), "Selected provider: gemini")
             self.assertIsInstance(manager.create_selected_adapter(), GeminiCLIProvider)
 
 
