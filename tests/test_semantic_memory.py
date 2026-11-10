@@ -54,6 +54,22 @@ class SemanticMemoryRetrieverTests(unittest.TestCase):
         self.assertEqual(results[0]["retrieval"], "local_hybrid")
         self.assertGreaterEqual(results[0]["semantic_score"], results[1]["semantic_score"])
 
+    def test_batch_embedder_encodes_query_and_candidates_in_one_call(self):
+        class BatchEmbedder(FakeLocalEmbedder):
+            def __init__(self):
+                self.batch_calls = 0
+            def encode_many(self, texts):
+                self.batch_calls += 1
+                return [self.encode(text) for text in texts]
+
+        embedder = BatchEmbedder()
+        retriever = SemanticMemoryRetriever(self.store, embedder)
+        results = retriever.search(
+            actor_id="owner", agent_id="research", query="automobile",
+        )
+        self.assertEqual(len(results), 2)
+        self.assertEqual(embedder.batch_calls, 1)
+
     def test_retrieval_is_actor_authorized(self):
         with self.assertRaises(PermissionError):
             self.retriever.search(actor_id="intruder", agent_id="research", query="vehicle")
