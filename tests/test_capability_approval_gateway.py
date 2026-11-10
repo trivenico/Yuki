@@ -84,8 +84,9 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         self.assertFalse(result.allowed)
         self.assertEqual(result.status, "approval_invalid")
         events = self.gateway.audit_events()
-        self.assertEqual(events[0]["event_type"], "approval_revoked")
-        self.assertEqual(events[0]["outcome"], "revoked")
+        revocations = [event for event in events if event["event_type"] == "approval_revoked"]
+        self.assertEqual(len(revocations), 1)
+        self.assertEqual(revocations[0]["outcome"], "revoked")
 
     def test_unmatched_or_denied_policy_never_allows_execution(self):
         denied = self.make_request(target="repo:production")
@@ -143,13 +144,14 @@ class CapabilityApprovalGatewayTests(unittest.TestCase):
         result = reopened.authorize(self.request, approval_token=token)
         self.assertTrue(result.allowed)
 
-    def test_audit_contains_digest_not_raw_arguments_or_token(self):
+    def test_audit_contains_request_digest_not_raw_arguments_or_token(self):
         token = self.gateway.issue_approval(self.request, approved_by="admin")
         self.gateway.authorize(self.request, approval_token=token)
         audit = repr(self.gateway.audit_events())
         self.assertNotIn(token, audit)
         self.assertNotIn("secret-argument", audit)
-        self.assertIn("a" * 64, audit)
+        self.assertNotIn(self.request.argument_sha256, audit)
+        self.assertIn(self.gateway._request_digest(self.request), audit)
 
 
 if __name__ == "__main__":
