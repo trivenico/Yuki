@@ -126,6 +126,32 @@ class MCPOAuthMetadataTests(unittest.TestCase):
                     expected_issuer="https://login.example.com/tenant",
                 )
 
+    def test_oidc_metadata_requires_trusted_jwks_uri_and_supported_algorithms(self):
+        metadata = validate_authorization_server_metadata(
+            self._as_metadata(
+                jwks_uri="https://login.example.com/tenant/keys",
+                id_token_signing_alg_values_supported=["RS256", "ES256", "HS256"],
+            ),
+            expected_issuer="https://login.example.com/tenant",
+        )
+        self.assertEqual(metadata.jwks_uri, "https://login.example.com/tenant/keys")
+        self.assertEqual(metadata.id_token_signing_alg_values_supported, ("RS256", "ES256"))
+
+    def test_rejects_oidc_metadata_with_missing_jwks_or_no_supported_algorithm(self):
+        for overrides in (
+            {"jwks_uri": "https://login.example.com/keys"},
+            {"id_token_signing_alg_values_supported": ["RS256"]},
+            {"jwks_uri": "http://login.example.com/keys",
+             "id_token_signing_alg_values_supported": ["RS256"]},
+            {"jwks_uri": "https://login.example.com/keys",
+             "id_token_signing_alg_values_supported": ["HS256", "none"]},
+        ):
+            with self.subTest(overrides=overrides), self.assertRaises(OAuthMetadataError):
+                validate_authorization_server_metadata(
+                    self._as_metadata(**overrides),
+                    expected_issuer="https://login.example.com/tenant",
+                )
+
     def test_registration_priority_prefers_preregistered_then_cimd_then_dcr(self):
         dcr = validate_authorization_server_metadata(
             self._as_metadata(), expected_issuer="https://login.example.com/tenant"
