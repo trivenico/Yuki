@@ -264,6 +264,8 @@ class DurableTaskEngine:
             "unsupported_task_type": "task type is not supported by this worker",
             "unsafe_retry_policy": "side-effecting tasks must use a single attempt",
             "invalid_payload": "skill invocation payload is invalid",
+            "missing_authenticated_owner": "durable task has no authenticated owner",
+            "invalid_authenticated_owner": "durable task owner provenance is invalid",
         }
         if not isinstance(reason, str) or reason not in messages:
             raise ValueError("invalid task rejection reason")
