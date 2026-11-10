@@ -117,6 +117,9 @@ class OIDCIdentityTokenTests(unittest.TestCase):
         self.transport.document = {"keys": [self.jwk, dict(self.jwk)]}
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_not_found"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
+        self.transport.document = {"keys": [self.jwk, {"kid": "key-1", "kty": "oct"}]}
+        with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_not_found"):
+            self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
         self.transport.document = {"keys": [{**self.jwk, "d": "private"}]}
         with self.assertRaisesRegex(OIDCIdentityTokenError, "signing_key_invalid"):
             self.verifier.verify(id_token=self.token(), expected_nonce="nonce-value-1234567890")
