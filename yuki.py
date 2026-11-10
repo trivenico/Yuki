@@ -95,7 +95,7 @@ def _build_durable_policy_runtime(principal_id):
     for item in registry.describe():
         skill = registry.get(item["name"])
         risk_value = str(getattr(skill, "risk", "high")).lower()
-        if risk_value != Risk.LOW.value or bool(getattr(skill, "requires_approval", True)):
+        if risk_value not in {risk.value for risk in Risk}:
             continue
         rules.append(PolicyRule(
             rule_id=f"durable-low-risk-{item['name']}",
