@@ -37,6 +37,8 @@ class ApprovedSkillRuntime:
         if approval_gateway is not None:
             if not callable(getattr(approval_gateway, "authorize", None)):
                 raise TypeError("approval_gateway must provide authorize(request, approval_token=...)")
+            if not callable(getattr(getattr(approval_gateway, "policy_engine", None), "evaluate", None)):
+                raise TypeError("approval_gateway must expose its policy evaluator for fail-closed token resolution")
             if policy_engine is not None:
                 raise ValueError("configure either policy_engine or approval_gateway, not both")
             if not callable(policy_request_factory) or not callable(approval_token_resolver):
